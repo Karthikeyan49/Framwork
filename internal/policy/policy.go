@@ -9,9 +9,9 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-const Version = "m1-native-v1"
+const Version = "m5-native-v1"
 
-type Resource struct{ TenantID, Type, OwnerID string }
+type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID string }
 type Subject struct {
 	User   identity.User
 	Access tenant.Access
@@ -66,6 +66,30 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			if resource.Type == "membership" && (role == "owner" || role == "admin") {
 				return true
 			}
+		case "metadata.read", "metadata.compile":
+			if resource.Type == "metadata" {
+				return true
+			}
+		case "preview.read":
+			if resource.Type == "preview" {
+				return true
+			}
+		case "preview.write":
+			if resource.Type == "preview" && role != "viewer" {
+				return true
+			}
+		case "data.entity.read", "data.field.read", "data.row.read", "data.aggregate.read":
+			if dataResource(action, resource) {
+				return true
+			}
+		case "data.entity.write", "data.field.write", "data.row.write":
+			if role != "viewer" && dataResource(action, resource) {
+				return true
+			}
+		case "metadata.write":
+			if resource.Type == "metadata" && (role == "owner" || role == "admin") {
+				return true
+			}
 		case "profile.read":
 			if resource.Type == "user" && resource.OwnerID == actor {
 				return true
@@ -73,4 +97,20 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 		}
 	}
 	return false
+}
+
+func dataResource(action string, r Resource) bool {
+	if r.AppID == "" || r.EntityID == "" {
+		return false
+	}
+	if action == "data.entity.read" || action == "data.entity.write" {
+		return r.Type == "entity"
+	}
+	if action == "data.aggregate.read" {
+		return r.Type == "aggregate"
+	}
+	if action == "data.field.read" || action == "data.field.write" {
+		return r.Type == "field" && r.FieldID != ""
+	}
+	return r.Type == "row" && r.RecordID != ""
 }

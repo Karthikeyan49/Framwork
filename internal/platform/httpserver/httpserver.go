@@ -21,6 +21,7 @@ type Options struct {
 	Probes       map[string]Probe
 	ProbeTimeout time.Duration
 	Register     func(*http.ServeMux)
+	AllowPOST    func(string) bool
 }
 type ErrorResponse struct {
 	Code      string `json:"code"`
@@ -161,19 +162,23 @@ func middleware(next http.Handler, opts Options) http.Handler {
 			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 			if r.Method == http.MethodOptions {
 				method := r.Header.Get("Access-Control-Request-Method")
-				if method != http.MethodGet && method != http.MethodHead {
+				if method != http.MethodGet && method != http.MethodHead && !(method == http.MethodPost && opts.AllowPOST != nil && opts.AllowPOST(r.URL.Path)) {
 					Error(w, r, http.StatusForbidden, "method_denied", "Method is not permitted")
 					return
 				}
-				w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD")
+				methods := "GET, HEAD"
+				if opts.AllowPOST != nil && opts.AllowPOST(r.URL.Path) {
+					methods += ", POST"
+				}
+				w.Header().Set("Access-Control-Allow-Methods", methods)
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Traceparent, Tracestate")
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		// M0 exposes read-only operational endpoints; no request body is accepted.
-		if r.ContentLength > 0 || len(r.TransferEncoding) > 0 {
+		// Bodies are accepted only on an explicitly registered write-route allowlist.
+		if (r.ContentLength > 0 || len(r.TransferEncoding) > 0) && !(r.Method == http.MethodPost && opts.AllowPOST != nil && opts.AllowPOST(r.URL.Path)) {
 			Error(w, r, http.StatusRequestEntityTooLarge, "body_not_allowed", "Request bodies are not accepted")
 			return
 		}

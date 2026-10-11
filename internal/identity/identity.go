@@ -13,6 +13,8 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 )
 
 var ErrUnauthenticated = errors.New("authentication required")
@@ -152,8 +154,12 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-func (Store) Resolve(ctx context.Context, tx *sql.Tx, p Principal) (User, error) {
+func (Store) Resolve(ctx context.Context, tx postgres.Executor, p Principal) (User, error) {
 	var u User
+	// Rebinding identity invalidates any earlier actor/tenant scope, even on denial.
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.auth_issuer','',true),set_config('app.auth_subject','',true),set_config('app.actor_id','',true),set_config('app.tenant_id','',true)`); err != nil {
+		return u, err
+	}
 	if p.issuer == "" || p.subject == "" {
 		return u, ErrUnauthenticated
 	}
@@ -170,7 +176,7 @@ func (Store) Resolve(ctx context.Context, tx *sql.Tx, p Principal) (User, error)
 
 // Provision is an operator-only port. The runtime database role cannot call it
 // successfully. It never grants roles implicitly or accepts token tenant claims.
-func (Store) Provision(ctx context.Context, tx *sql.Tx, issuer, subject, name string, active bool) (string, error) {
+func (Store) Provision(ctx context.Context, tx postgres.Executor, issuer, subject, name string, active bool) (string, error) {
 	var id string
 	if issuer == "" || subject == "" || len(subject) > 255 || name == "" || len(name) > 200 {
 		return id, errors.New("invalid user")

@@ -5,7 +5,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
 	"github.com/Karthikeyan49/Framwork/internal/identity"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 )
 
 var ErrDenied = errors.New("tenant access denied")
@@ -29,18 +31,26 @@ type Store struct{}
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `SELECT t.id,t.name,t.active,m.user_id,m.role,m.active,r.name FROM iam.tenants t JOIN iam.memberships m ON m.tenant_id=t.id JOIN iam.roles r ON r.name=m.role LIMIT 0`)
-	return err
+	if err != nil {
+		return err
+	}
+	var actor, tenantID any
+	var matches bool
+	return db.QueryRowContext(ctx, `SELECT iam.authenticated_actor(),iam.current_tenant_id(),iam.tenant_matches_scope(NULL)`).Scan(&actor, &tenantID, &matches)
 }
 
-func (Store) BindActor(ctx context.Context, tx *sql.Tx, user identity.User) error {
+func (Store) BindActor(ctx context.Context, tx postgres.Executor, user identity.User) error {
 	actor := user.ID()
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.actor_id','',true),set_config('app.tenant_id','',true)`); err != nil {
+		return err
+	}
 	if !ValidID(actor) {
 		return ErrDenied
 	}
-	_, err := tx.ExecContext(ctx, `SELECT set_config('app.actor_id',$1,true)`, actor)
+	_, err := tx.ExecContext(ctx, `SELECT set_config('app.tenant_id','',true),set_config('app.actor_id',$1,true)`, actor)
 	return err
 }
-func (Store) List(ctx context.Context, tx *sql.Tx, user identity.User) ([]Summary, error) {
+func (Store) List(ctx context.Context, tx postgres.Executor, user identity.User) ([]Summary, error) {
 	actor := user.ID()
 	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.name FROM iam.tenants t JOIN iam.memberships m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.active AND t.active ORDER BY t.id LIMIT 100`, actor)
 	if err != nil {
@@ -57,8 +67,11 @@ func (Store) List(ctx context.Context, tx *sql.Tx, user identity.User) ([]Summar
 	}
 	return result, rows.Err()
 }
-func (Store) Resolve(ctx context.Context, tx *sql.Tx, user identity.User, selected string) (Access, error) {
+func (Store) Resolve(ctx context.Context, tx postgres.Executor, user identity.User, selected string) (Access, error) {
 	actor := user.ID()
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tenant_id','',true)`); err != nil {
+		return Access{}, err
+	}
 	if !ValidID(actor) || !ValidID(selected) {
 		return Access{}, ErrDenied
 	}
@@ -73,6 +86,13 @@ func (Store) Resolve(ctx context.Context, tx *sql.Tx, user identity.User, select
 	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.tenant_id',$1,true)`, selected); err != nil {
 		return Access{}, err
 	}
+	var matches bool
+	if err = tx.QueryRowContext(ctx, `SELECT iam.tenant_matches_scope($1::uuid)`, selected).Scan(&matches); err != nil {
+		return Access{}, err
+	}
+	if !matches {
+		return Access{}, ErrDenied
+	}
 	return Access{actor, selected, []string{role}}, nil
 }
 
@@ -82,7 +102,7 @@ type Member struct {
 	Active bool   `json:"active"`
 }
 
-func (Store) Members(ctx context.Context, tx *sql.Tx, access Access) ([]Member, error) {
+func (Store) Members(ctx context.Context, tx postgres.Executor, access Access) ([]Member, error) {
 	if access.actor == "" || access.tenant == "" {
 		return nil, ErrDenied
 	}
@@ -104,7 +124,7 @@ func (Store) Members(ctx context.Context, tx *sql.Tx, access Access) ([]Member, 
 
 // Provision owns tenant/membership writes; callers must use an explicit operator
 // transaction and append audit evidence in that same transaction.
-func (Store) Provision(ctx context.Context, tx *sql.Tx, tenantID, name, userID, role string, active bool) error {
+func (Store) Provision(ctx context.Context, tx postgres.Executor, tenantID, name, userID, role string, active bool) error {
 	if !ValidID(tenantID) || !ValidID(userID) || name == "" || len(name) > 200 || !ValidRole(role) {
 		return errors.New("invalid membership")
 	}
@@ -137,7 +157,7 @@ func ValidRole(s string) bool { return s == "owner" || s == "admin" || s == "mem
 
 // A disabled identity may not retain an active owner membership. Operators must
 // transfer ownership first; there is no implicit reactivation or privilege grant.
-func (Store) CheckDisable(ctx context.Context, tx *sql.Tx, userID string) error {
+func (Store) CheckDisable(ctx context.Context, tx postgres.Executor, userID string) error {
 	var owns bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM iam.memberships WHERE user_id=$1 AND role='owner' AND active)`, userID).Scan(&owns)
 	if err != nil {

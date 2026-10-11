@@ -1,5 +1,10 @@
-# compiler
+# Compiler V1 (M4)
 
-Reserved module boundary. No implementation in M0. See docs/architecture/12_MODULE_BOUNDARIES.md.
+Compile validated metadata Source with a trusted versioned Catalog; return stable
+Diagnostic objects or an immutable Program. Runtime receives Program, never raw
+source. The canonical IR includes compiler/catalog/schema identities and explicit
+entity/field plans. See ADR-017 and compiler_test/testdata golden corpus.
 
-Expose explicit contracts when its milestone starts. Storage and implementation details stay private; consumers must not import private subpackages or access module tables.
+The HTTP compile operation is read-only and audited. It never approves, promotes,
+executes or provisions a production application. Unsupported schema upgrades,
+release bases and capabilities fail closed. Workflow/tool execution is later work.

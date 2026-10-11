@@ -1,0 +1,14 @@
+{
+ "schema_version":"1.0.0", "app_id":"app.vendors", "namespace":"example.vendors", "base_version":null,
+ "definitions":[
+  {"id":"entity.vendor","schema_version":"1.0.0","namespace":"example.vendors","label":"Vendor","kind":"entity","entity":{"fields":["field.vendor.id","field.vendor.name","field.vendor.parent"]}},
+  {"id":"field.vendor.id","schema_version":"1.0.0","namespace":"example.vendors","label":"Identifier","kind":"field","field":{"entity_ref":"entity.vendor","type":"string","required":true}},
+  {"id":"field.vendor.name","schema_version":"1.0.0","namespace":"example.vendors","label":"Name","kind":"field","field":{"entity_ref":"entity.vendor","type":"string","required":true}},
+  {"id":"field.vendor.parent","schema_version":"1.0.0","namespace":"example.vendors","label":"Parent","kind":"field","field":{"entity_ref":"entity.vendor","type":"reference","required":false,"reference_to":"entity.vendor"}},
+  {"id":"relationship.vendor.parent","schema_version":"1.0.0","namespace":"example.vendors","label":"Parent vendor","kind":"relationship","relationship":{"from_entity":"entity.vendor","to_entity":"entity.vendor","from_field":"field.vendor.parent","to_field":"field.vendor.id","cardinality":"many_to_one"}},
+  {"id":"page.vendor.edit","schema_version":"1.0.0","namespace":"example.vendors","label":"Vendor editor","kind":"page","page":{"entity_ref":"entity.vendor","components":[{"type":"form","children":[{"type":"text_input","field_ref":"field.vendor.name","label":"Name"}]}]}},
+  {"id":"rule.vendor.named","schema_version":"1.0.0","namespace":"example.vendors","label":"Named vendor","kind":"rule","rule":{"entity_ref":"entity.vendor","result_type":"bool","expression":{"op":"neq","args":[{"op":"field","field_ref":"field.vendor.name"},{"op":"literal","value":""}]}}},
+  {"id":"workflow.vendor.review","schema_version":"1.0.0","namespace":"example.vendors","label":"Review vendor","kind":"workflow","workflow":{"entity_ref":"entity.vendor","trigger":"manual","initial_state":"state.review","states":[{"id":"state.review","type":"approval","approval_roles":["owner"],"transitions":[{"to":"state.complete"}]},{"id":"state.complete","type":"complete","transitions":[]}]}},
+  {"id":"tool.vendor.notify","schema_version":"1.0.0","namespace":"example.vendors","label":"Notify in test mode","kind":"tool","tool":{"input_schema":{"type":"object","properties":{"vendor_id":{"type":"string","maxLength":128}},"required":["vendor_id"],"additionalProperties":false},"output_schema":{"type":"object","properties":{},"required":[],"additionalProperties":false},"permissions":["vendor.notify"],"side_effect":"write","sandbox_mode":"simulate","approval":"user","timeout_ms":1000,"retry":{"max_attempts":3,"initial_backoff_ms":100,"max_backoff_ms":1000},"audit":"required","tenant_scope":"required"}}
+ ]
+}

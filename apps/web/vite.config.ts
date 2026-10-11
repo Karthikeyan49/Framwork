@@ -18,6 +18,6 @@ export default defineConfig(({ mode }) => {
     strictPort: true,
     proxy: { '/api': { target, rewrite: (path) => path.replace(/^\/api/, '') } },
   },
-  test: { environment: 'jsdom', setupFiles: './src/test/setup.ts', restoreMocks: true },
+  test: { include: ['src/**/*.test.{ts,tsx}', 'tooling/**/*.test.ts'], environment: 'jsdom', setupFiles: './src/test/setup.ts', restoreMocks: true },
   }
 })

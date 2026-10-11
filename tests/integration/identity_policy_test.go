@@ -29,6 +29,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/config"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
@@ -223,7 +224,7 @@ func TestM1AuthenticatedTenantAndPolicyBoundary(t *testing.T) {
 
 type failedAudit struct{}
 
-func (failedAudit) Append(context.Context, *sql.Tx, audit.Entry) error {
+func (failedAudit) Append(context.Context, postgres.Executor, audit.Entry) error {
 	return errors.New("simulated unavailable audit sink")
 }
 
@@ -588,7 +589,7 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 		t.Fatal("fresh migration provider failed")
 	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 3 {
+	if err != nil || len(results) != 8 {
 		t.Fatal("fresh migration chain failed")
 	}
 	results, err = provider.Up(ctx)
@@ -614,6 +615,73 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 	var count int
 	if err = runtimeDB.QueryRowContext(ctx, `SELECT count(*) FROM iam.memberships`).Scan(&count); err != nil || count != 0 {
 		t.Fatal("fresh IAM context fails closed")
+	}
+
+	// Reusable RLS is installed and deliberately broken only in this disposable DB.
+	if _, err = migrate.ExecContext(ctx, `CREATE TABLE runtime.m2_guard (tenant_id uuid NOT NULL,id int NOT NULL,PRIMARY KEY(tenant_id,id)); SELECT runtime.install_tenant_rls('runtime.m2_guard'::regclass)`); err != nil {
+		t.Fatal("fresh RLS fixture failed")
+	}
+	for _, ddl := range []string{`ALTER TABLE runtime.m2_guard DISABLE ROW LEVEL SECURITY`, `ALTER TABLE runtime.m2_guard NO FORCE ROW LEVEL SECURITY`, `GRANT TRUNCATE ON runtime.m2_guard TO framework_app`, `GRANT REFERENCES(id) ON runtime.m2_guard TO framework_app`, `REVOKE ALL ON runtime.m2_guard FROM framework_app; GRANT SELECT(id) ON runtime.m2_guard TO framework_app; ALTER TABLE runtime.m2_guard DISABLE ROW LEVEL SECURITY`} {
+		if _, err = migrate.ExecContext(ctx, ddl); err != nil {
+			t.Fatal("isolated security drift failed")
+		}
+		called := false
+		err = postgres.WithRuntime(ctx, runtimeDB, func(context.Context, postgres.Executor) error { called = true; return nil })
+		if !errors.Is(err, postgres.ErrUnavailable) || called || postgres.Ping(ctx, runtimeDB) == nil {
+			t.Fatal("unsafe table privileges/RLS accepted")
+		}
+		if _, err = migrate.ExecContext(ctx, `ALTER TABLE runtime.m2_guard ENABLE ROW LEVEL SECURITY; ALTER TABLE runtime.m2_guard FORCE ROW LEVEL SECURITY; REVOKE TRUNCATE ON runtime.m2_guard FROM framework_app; REVOKE SELECT(id),REFERENCES(id) ON runtime.m2_guard FROM framework_app; GRANT SELECT,INSERT,UPDATE,DELETE ON runtime.m2_guard TO framework_app`); err != nil {
+			t.Fatal("security drift recovery failed")
+		}
+		if err = postgres.WithRuntime(ctx, runtimeDB, func(context.Context, postgres.Executor) error { return nil }); err != nil {
+			t.Fatal("security drift recovery unavailable")
+		}
+	}
+	checkNonInheritedOwnerMembership(t, ctx, adminURL, name)
+	registry, err := metadata.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry.Ready(ctx, runtimeDB) != nil {
+		t.Fatal("fresh metadata readiness failed")
+	}
+	for _, contract := range []struct{ table, name string }{{"control.metadata_heads", "metadata_head_revision"}, {"control.metadata_versions", "metadata_envelope_required"}} {
+		var definition string
+		if err = migrate.QueryRowContext(ctx, `SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint WHERE conrelid=$1::regclass AND conname=$2`, contract.table, contract.name).Scan(&definition); err != nil {
+			t.Fatal("metadata constraint fixture unavailable")
+		}
+		if _, err = migrate.ExecContext(ctx, "ALTER TABLE "+contract.table+" DROP CONSTRAINT "+contract.name); err != nil {
+			t.Fatal("isolated metadata drift failed")
+		}
+		if registry.Ready(ctx, runtimeDB) == nil {
+			t.Fatal("metadata accepted missing integrity constraint")
+		}
+		if _, err = migrate.ExecContext(ctx, "ALTER TABLE "+contract.table+" ADD CONSTRAINT "+contract.name+" "+definition); err != nil {
+			t.Fatal("isolated metadata constraint recovery failed")
+		}
+		if registry.Ready(ctx, runtimeDB) != nil {
+			t.Fatal("metadata constraint recovery unavailable")
+		}
+	}
+	if _, err = migrate.ExecContext(ctx, `ALTER TABLE control.metadata_versions DISABLE TRIGGER metadata_immutable`); err != nil {
+		t.Fatal("isolated metadata trigger drift failed")
+	}
+	if registry.Ready(ctx, runtimeDB) == nil {
+		t.Fatal("metadata accepted disabled immutable trigger")
+	}
+	if _, err = migrate.ExecContext(ctx, `ALTER TABLE control.metadata_versions ENABLE TRIGGER metadata_immutable`); err != nil {
+		t.Fatal("metadata trigger recovery failed")
+	}
+	// Prove the trigger backstop with its owner in this empty disposable database.
+	// Shared development metadata is never subjected to a TRUNCATE probe.
+	for _, statement := range []string{
+		`UPDATE control.metadata_versions SET source_hash=source_hash WHERE false`,
+		`DELETE FROM control.metadata_versions WHERE false`,
+		`TRUNCATE control.metadata_heads,control.metadata_versions`,
+	} {
+		if _, mutationErr := migrate.ExecContext(ctx, statement); mutationErr == nil || !strings.Contains(mutationErr.Error(), "metadata source revisions are immutable") {
+			t.Fatal("metadata owner mutation did not hit immutable trigger")
+		}
 	}
 	// Exercise drift only in the uniquely owned disposable verification database.
 	// A previously applied IAM schema alone must not hide an absent audit upgrade.

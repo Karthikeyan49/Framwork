@@ -1,0 +1,152 @@
+package access
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/identity"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
+	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"io"
+	"mime"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var previewPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/versions/[0-9]+/entities/entity\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(query|commands)$`)
+
+func readDataCommand(r *http.Request, dest any) error {
+	typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || typ != "application/json" {
+		return data.ErrInvalid
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, data.MaxRecordBytes+1))
+	if err != nil || len(raw) > data.MaxRecordBytes {
+		return data.ErrInvalid
+	}
+	value, err := metadata.DecodeJSON(raw)
+	if err != nil {
+		return data.ErrInvalid
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return data.ErrInvalid
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(dest) != nil {
+		return data.ErrInvalid
+	}
+	return nil
+}
+func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry) (reply, error) {
+	if !a.PreviewEnabled || a.Registry == nil {
+		return denied(404, "not_found", "Preview runtime is unavailable"), nil
+	}
+	app := r.PathValue("app")
+	revision, err := strconv.ParseInt(r.PathValue("revision"), 10, 64)
+	if err != nil || revision < 1 || revision > 1e9 || len(app) > 160 || !metadataAppID.MatchString(app) {
+		return denied(400, "invalid_preview", "Invalid preview selection"), nil
+	}
+	version, err := a.Registry.Get(ctx, q, access, app, revision)
+	if errors.Is(err, metadata.ErrNotFound) {
+		return denied(404, "not_found", "Preview source not found"), nil
+	}
+	if err != nil {
+		return reply{}, err
+	}
+	source, err := a.Registry.Parse(version.Document)
+	if err != nil {
+		return reply{}, err
+	}
+	program, diagnostics := compiler.Compile(source, compiler.PlatformCatalog())
+	if !program.Valid() {
+		return reply{status: 422, body: struct {
+			Diagnostics []compiler.Diagnostic `json:"diagnostics"`
+		}{diagnostics}}, nil
+	}
+	scope, err := data.NewScope(program, revision)
+	if err != nil {
+		return reply{}, err
+	}
+	metadataEvidence(ctx, evidence, version)
+	evidence.State.IRHash = program.Hash()
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", compiler.Version), attribute.String("ir_hash", program.Hash()), attribute.String("data_mode", "preview"))
+	guard := func(ctx context.Context, action string, resource data.Resource) error {
+		decision := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, action, policy.Resource{TenantID: access.TenantID(), Type: strings.Split(action, ".")[1], OwnerID: resource.OwnerID, AppID: app, EntityID: resource.EntityID, FieldID: resource.FieldID, RecordID: resource.RecordID}, policy.Context{RequestID: evidence.RequestID, TraceID: evidence.TraceID}))
+		event := *evidence
+		event.Action = action
+		event.Resource = strings.Split(action, ".")[1]
+		event.DecisionID = decision.ID
+		event.PolicyVersion = decision.Version
+		event.Allow = decision.Allow
+		event.State.EntityID = resource.EntityID
+		event.State.FieldID = resource.FieldID
+		event.State.RecordID = resource.RecordID
+		if err := a.Audit.Append(ctx, q, event); err != nil {
+			return err
+		}
+		if !decision.Allow {
+			return data.ErrDenied
+		}
+		return nil
+	}
+	if r.Method == http.MethodGet {
+		// Capability hints improve UX; each command/query still enforces live policy.
+		canWrite := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, "preview.write", policy.Resource{TenantID: access.TenantID(), Type: "preview", AppID: app}, policy.Context{})).Allow
+		return reply{status: 200, body: struct {
+			Mode     string      `json:"mode"`
+			Revision int64       `json:"revision"`
+			Hash     string      `json:"ir_hash"`
+			IR       compiler.IR `json:"ir"`
+			CanWrite bool        `json:"can_write"`
+		}{"preview", revision, program.Hash(), program.IR(), canWrite}}, nil
+	}
+	entity := r.PathValue("entity")
+	evidence.State.EntityID = entity
+	if len(entity) > 160 {
+		evidence.State.EntityID = ""
+		return denied(400, "invalid_entity", "Invalid entity selection"), nil
+	}
+	var result any
+	if strings.HasSuffix(r.URL.Path, "/query") {
+		var query data.Query
+		if err = readDataCommand(r, &query); err == nil {
+			result, err = (data.Store{}).Query(ctx, q, scope, access, entity, query, guard)
+		}
+	} else {
+		var command data.Command
+		if err = readDataCommand(r, &command); err == nil {
+			var record data.Record
+			record, err = (data.Store{}).Command(ctx, q, scope, access, entity, command, guard)
+			result = record
+			evidence.State.RecordID = record.ID
+			evidence.State.RecordVersion = record.Version
+		}
+	}
+	switch {
+	case err == nil:
+		return reply{status: 200, body: result}, nil
+	case errors.Is(err, data.ErrInvalid), errors.Is(err, data.ErrBudget):
+		return denied(400, "invalid_query_or_command", "Data request violates the typed contract or budget"), nil
+	case errors.Is(err, data.ErrDenied):
+		return denied(403, "forbidden", "Data access is denied"), nil
+	case errors.Is(err, data.ErrConflict):
+		return denied(409, "record_conflict", "Reload the record before retrying"), nil
+	case errors.Is(err, data.ErrNotFound):
+		return denied(404, "not_found", "Record not found"), nil
+	default:
+		return reply{}, err
+	}
+}

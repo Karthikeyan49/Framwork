@@ -50,7 +50,7 @@ try {
   const traceID = '00112233445566778899aabbccddeeff'
   const readiness = await get(`${base}/readyz`, { headers: { traceparent: `00-${traceID}-0011223344556677-01` } })
   assert.equal(readiness.status, 200)
-  assert.deepEqual(await readiness.json(), { status: 'ready', dependencies: { postgres: 'ok', redis: 'ok', identity: 'ok', tenant: 'ok', audit: 'ok' } })
+  assert.deepEqual(await readiness.json(), { status: 'ready', dependencies: { postgres: 'ok', redis: 'ok', identity: 'ok', tenant: 'ok', audit: 'ok', metadata: 'ok', data: 'ok' } })
   const web = await ready('http://127.0.0.1:5173/')
   assert.match(await web.text(), /Framework Console/)
   const proxy = await get('http://127.0.0.1:5173/api/readyz')

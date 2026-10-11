@@ -1,10 +1,11 @@
 # AI-native ERP/CRM framework
 
 A Go modular-monolith and React/TypeScript foundation for one reusable,
-metadata-driven enterprise runtime. **M0 + M1:** local infrastructure, telemetry,
+metadata-driven enterprise runtime. **M0–M6:** local infrastructure, telemetry,
 cryptographic identity, trusted tenant membership, central policy and durable
-audit. ERP entities, metadata/compiler/runtime features and AI authoring remain
-later milestones.
+audit, bounded transactions, reusable tenant RLS and a typed draft metadata registry.
+Canonical compiler IR, bounded typed preview CRUD/query execution and dynamic React
+forms/tables/details are implemented. Production activation and AI remain later work.
 
 AI will propose structured drafts; the compiler, sandbox, verification, approval
 and promotion pipeline will produce immutable versions for deterministic runtime
@@ -48,7 +49,7 @@ make migration-status
 The API defaults to loopback port 8080; the browser development server to 5173.
 The development proxy maps `/api/*` to the API. Deployment must serve frontend SPA
 fallback routes and proxy `/api` to the backend, or set public VITE_API_BASE_URL to
-an approved HTTPS API origin at build time. The access console validates identity/workspace access; ERP pages remain later work.
+an approved HTTPS API origin at build time. The access console validates identity/workspace access; compiled draft previews are available after selecting a verified workspace.
 
 ## Verification
 
@@ -68,10 +69,13 @@ Operational API:
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /healthz` | 200 while process is serving; independent of PG/Redis/collector |
-| `GET /readyz` | 200 if PostgreSQL/Redis and identity/tenant/audit schema contracts pass; 503 otherwise |
+| `GET /readyz` | 200 if PostgreSQL/Redis and identity/tenant/audit/metadata/data schema contracts pass; 503 otherwise |
 | `GET /v1/session` | Verified active user and at most 100 active memberships |
 | `GET /v1/tenants/{id}/access` | Verified active membership and a recorded policy decision |
 | `GET /v1/tenants/{id}/members` | At most 100 members, authorized owner/admin only |
+| `POST /v1/tenants/{id}/metadata/{app}/versions` | Owner/admin: structurally validated immutable draft append |
+| `GET /v1/tenants/{id}/metadata/{app}/versions` | Active member: up to 50 revision headers, `?before=N` cursor |
+| `GET /v1/tenants/{id}/metadata/{app}/versions/{revision}` | Active member: validated historical draft source |
 
 Responses include server-generated `X-Request-ID`. Errors use `{code,message,request_id}`
 and do not include private driver/panic details. OTel propagates W3C trace context;
@@ -130,11 +134,12 @@ unbounded loading and accidental server-detail disclosure.
 cmd/{api,worker,migrate,iam}/             Process entrypoints
 internal/{config,platform,observability}/  M0 infrastructure and composition
 internal/{identity,tenant,policy,audit}/   M1 public ports and owned persistence
-internal/platform/access/             Identity/tenant/policy/audit HTTP composition
+internal/metadata/                   M3 models, validation and registry ports
+internal/platform/access/             Identity/tenant/policy/audit/metadata HTTP composition
 internal/runtime/{data,rules,workflow}/  Later runtime modules, no M0 logic
 apps/web/                            React shell, router, typed API client, tests
-db/{migrations,rls,seeds}/            Embedded M0/M1 migrations; narrow IAM RLS backstop
-contracts/jsonschema/                Future typed metadata contracts
+db/{migrations,rls,seeds}/            Embedded M0–M3 migrations and reusable tenant RLS
+contracts/jsonschema/                Embedded typed metadata contract
 tests/{integration,e2e,security,performance}/
 infra/{compose,otel}/                Local PostgreSQL/Redis/collector
 scripts/                            Setup, env, process helpers and validation
@@ -153,7 +158,7 @@ Migration 00001 adds the iam/control/runtime/audit schemas without business data
 Goose runs it transactionally under the migration role and serializes CLI calls via
 PG advisory locking. A repeat up applies zero migrations. The app role cannot own
 schemas, create tables, or read the migration ledger. M1 adds read-only runtime IAM grants, forced actor/tenant RLS and insert-only audit.
-M2 will introduce reusable business-data RLS and access contracts. Migration 00003
+M2 adds reusable bounded transaction/Executor contracts and membership-backed tenant RLS. Migration 00003
 adds audit state/provenance without modifying already-applied versions.
 
 No destructive down command is exposed. Failed migration transactions do not mark
@@ -213,4 +218,122 @@ operator DML; privileged DDL administration and immutable external archival requ
 separate operational controls. Lists are bounded to 100 without pagination in M1.
 
 See [M1 completion report](docs/M1_COMPLETION_REPORT.md) and
-[independent review](docs/M1_INDEPENDENT_REVIEW.md). Stop before M2 until authorized.
+[independent review](docs/M1_INDEPENDENT_REVIEW.md). M3 is complete; stop before M4 until authorized.
+
+## M2 tenant data boundary
+
+Protected API access now uses a single checked connection and bounded transaction,
+clears pooled identity context, verifies live actor/membership-backed tenant scope,
+and sends results only after audit and commit. Repository ports receive a query
+executor without lifecycle methods. Errors, cancellation and panics roll back;
+failed cleanup discards the connection. Commit uncertainty never triggers a blind retry.
+
+Migration 00004 hardens IAM RLS and adds a migration-only installer for future
+runtime/control tenant tables: ENABLE + FORCE RLS, USING + WITH CHECK, tenant-inclusive
+keys and scoped relationships. No production business entity tables, metadata registry,
+query AST or dynamic CRUD endpoints are introduced. Normal app credentials cannot
+run DDL/install RLS, own protected tables or bypass row security.
+
+Use the existing `make infra-up migrate migration-status`, `make check`,
+`make test` and `make build` commands. Integration tests exercise the actual
+installer on unique disposable tables with the normal database role, plus fresh
+migration and privilege/RLS drift recovery in a disposable database.
+
+See [ADR-015](docs/adr/015-m2-tenant-data-boundary.md),
+[RLS migration contract](db/rls/README.md),
+[M2 completion report](docs/M2_COMPLETION_REPORT.md) and
+[independent review](docs/M2_INDEPENDENT_REVIEW.md).
+
+## M3 metadata authoring registry
+
+The schema 1.0.0 envelope is `{schema_version,app_id,namespace,base_version,definitions}`.
+See [vendor draft](contracts/examples/vendor-draft-v1.json) for entity, field,
+relationship, page, rule, workflow and tool definitions. The source and its typed
+normalized form are capped at 256 KiB/500 definitions. Input is strict JSON or a
+JSON-compatible YAML subset; aliases, anchors, merge keys, custom tags and multiple
+YAML documents are rejected. Unknown properties/schema versions, duplicate IDs,
+NUL strings and unsafe executable properties are rejected.
+
+An authorized append body contains exactly `expected_revision` and `document`:
+
+```json
+{
+  "expected_revision": 0,
+  "document": {
+    "schema_version": "1.0.0",
+    "app_id": "app.example",
+    "namespace": "example",
+    "base_version": null,
+    "definitions": [{
+      "id": "entity.vendor", "schema_version": "1.0.0",
+      "namespace": "example", "label": "Vendor", "kind": "entity",
+      "entity": {"fields": []}
+    }]
+  }
+}
+```
+
+POST this command to `/v1/tenants/{verified-workspace-id}/metadata/app.example/versions`
+with the bearer token and `Content-Type: application/json` (or `application/yaml`).
+The tenant selection is verified against live membership; payload tenant claims
+are never accepted. Initial expected revision is 0; subsequent appends use the
+current revision. The response is a draft revision with source hash and database
+creator/time. GET the revision route to inspect normalized JSON. Only this bounded
+append route permits POST/CORS POST. Commands allow 4 KiB envelope overhead.
+
+All tenant roles may read; owner/admin may write. Source, head and mandatory audit
+commit atomically; historical rows cannot be updated or deleted by ordinary roles.
+A stale revision or namespace change returns 409. Overlapping writers can return
+503 under the bounded repeatable-read transaction; reload/inspect committed history
+before retrying. No automatic write retry. Validation errors use the standard
+error envelope plus safe `issues`; raw source values/SQL errors are not logged.
+
+A source hash identifies storage, not compiler IR, approval or production release.
+References may remain unresolved. M4 will compile types/symbols/graphs/capabilities;
+M3 executes no rules, workflows or tools, creates no ERP tables and activates no
+release. Authoring UI is later work; no AI endpoint is provided. Never put secrets
+in tenant-readable metadata labels or values.
+
+Apply migrations 00005–00007 before starting the M3 binary. Readiness verifies
+required storage/head constraints, immutable trigger, RLS and restricted grants.
+Recover through reviewed forward fixes; retain history when reverting a binary.
+Integration tests keep immutable metadata/audit evidence under their unique
+fixture tenants after IAM fixture cleanup. No automatic metadata seed is installed.
+
+See [ADR-016](docs/adr/016-m3-metadata-source-registry.md),
+[M3 completion report](docs/M3_COMPLETION_REPORT.md) and
+[independent review](docs/M3_INDEPENDENT_REVIEW.md). Stop before M4 — Compiler V1.
+
+## Compiled application previews (M4–M6)
+
+Development/test only: append a structurally validated source using the existing
+metadata API (see contracts/examples/contacts-draft-v1.json), then compile it with
+`GET /v1/tenants/{tenant}/metadata/{app}/versions/{revision}/compile`. Compilation
+returns deterministic IR/hash or422 diagnostics and does not activate the draft.
+In Workspace access, connect, select a workspace, enter the application ID and draft
+revision, then Load preview. Forms/tables/details use isolated records pinned to that
+source revision and IR hash; a new revision begins a separate preview dataset.
+
+Preview API: `GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}`; entity queries
+and commands are POST under that path at `/entities/{entity}/query` and `/commands`.
+Commands use operation create/update/delete, typed values and expected_version for
+update/delete. Viewer is read-only; server policy governs every operation. Query
+projection32, page100, typed filters, one declared join and bounded aggregates apply.
+Queries authorize the unfiltered candidate dataset before predicates; any denied
+record/used field rejects the whole query. Preview ceiling1,000 candidates and the
+3-second transaction budget are conservative limits, not production scale claims.
+
+`make browser-install` uses installed Chromium or installs Playwright-managed Chromium
+(no security checks disabled). After `make build`, with infrastructure running and
+API/Vite ports free, `make test-e2e` launches owned servers and verifies browser CRUD,
+exact values, conflict recovery, paging, safe text and server-enforced read-only access.
+CI installs managed Chromium with OS dependencies. E2E fixtures are unique development
+users/tenants/drafts; existing data is preserved. Tokens stay in memory and browser
+traces/video/screenshots are off. Generated dependencies/builds/artifacts stay ignored.
+
+Decisions: [ADR017](docs/adr/017-m4-compiler-ir.md),
+[ADR018](docs/adr/018-m5-preview-data-runtime.md),
+[ADR019](docs/adr/019-m6-compiled-ui-renderer.md). Completion and independent review
+reports are under docs/M4*, M5*, M6*. Rules/workflows/tools/outbox/sandbox/promotion,
+released schema migrations, AI builder and full scale/security certification remain
+their later milestones. Do not start M7 without a new user task.

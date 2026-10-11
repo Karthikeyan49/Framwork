@@ -6,9 +6,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 )
 
 type State struct {
+	IRHash           string `json:"ir_hash,omitempty"`
+	EntityID         string `json:"entity_id,omitempty"`
+	FieldID          string `json:"field_id,omitempty"`
+	RecordID         string `json:"record_id,omitempty"`
+	RecordVersion    int64  `json:"record_version,omitempty"`
+	MetadataApp      string `json:"metadata_app,omitempty"`
+	MetadataRevision int64  `json:"metadata_revision,omitempty"`
+	MetadataHash     string `json:"metadata_hash,omitempty"`
 	OperatorRef      string `json:"operator_ref,omitempty"`
 	Role             string `json:"role,omitempty"`
 	UserActive       *bool  `json:"user_active,omitempty"`
@@ -20,7 +30,7 @@ type Entry struct {
 	State                                                                              State
 }
 type Writer interface {
-	Append(context.Context, *sql.Tx, Entry) error
+	Append(context.Context, postgres.Executor, Entry) error
 }
 type Postgres struct{}
 
@@ -40,11 +50,11 @@ func (Postgres) Ready(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func (Postgres) Append(ctx context.Context, tx *sql.Tx, e Entry) error {
+func (Postgres) Append(ctx context.Context, tx postgres.Executor, e Entry) error {
 	if e.Action == "" || len(e.Action) > 80 || len(e.Resource) > 80 || len(e.DecisionID) > 64 || len(e.RequestID) > 64 || len(e.TraceID) > 32 || len(e.PolicyVersion) > 80 {
 		return errors.New("invalid audit evidence")
 	}
-	if len(e.State.OperatorRef) > 64 || len(e.State.Role) > 20 {
+	if len(e.State.IRHash) > 64 || len(e.State.EntityID) > 160 || len(e.State.FieldID) > 160 || len(e.State.RecordID) > 36 || e.State.RecordVersion < 0 || e.State.RecordVersion > 9007199254740991 || len(e.State.MetadataApp) > 160 || len(e.State.MetadataHash) > 64 || e.State.MetadataRevision < 0 || e.State.MetadataRevision > 1000000000 || len(e.State.OperatorRef) > 64 || len(e.State.Role) > 20 {
 		return errors.New("invalid audit state")
 	}
 	state, err := json.Marshal(e.State)

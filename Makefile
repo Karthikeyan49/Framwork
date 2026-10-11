@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 GO := ./scripts/go.sh
-GO_PACKAGES := ./cmd/... ./internal/... ./db/... ./tests/security/...
+GO_PACKAGES := ./cmd/... ./internal/... ./db/... ./contracts/... ./tests/security/...
 NPM := npm --cache $(CURDIR)/.local/cache/npm --prefix apps/web
 COMPOSE := docker compose --env-file .env -f infra/compose/compose.yaml
 
@@ -44,6 +44,12 @@ build:
 	$(GO) build -o bin/iam ./cmd/iam
 	$(NPM) run build
 fmt:
-	find cmd internal db tests -name '*.go' -type f -exec "$$($(GO) env GOROOT)/bin/gofmt" -w {} +
+	find cmd internal db contracts tests -name '*.go' -type f -exec "$$($(GO) env GOROOT)/bin/gofmt" -w {} +
 docs-verify:
 	node scripts/verify-docs.mjs
+
+.PHONY: test-e2e browser-install
+browser-install:
+	node scripts/browser-install.mjs
+test-e2e:
+	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.local/cache/ms-playwright $(NPM) run test:e2e

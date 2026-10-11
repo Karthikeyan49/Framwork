@@ -7,7 +7,7 @@ preserved verbatim under docs; validate it with make docs-verify.
 
 ## Milestone discipline
 
-M0 and M1 are implemented. Stop after the requested milestone; never begin M2 without
+M0–M6 are implemented. Stop after the requested milestone; never begin M7 without
 a new task. Follow docs/implementation/50_IMPLEMENTATION_ROADMAP.md. Each milestone
 requires tests, negative checks, recovery notes, an independent review, and human
 approval (docs/agents/82_TWO_AGENT_PROTOCOL.md). Reviewers should inspect and run
@@ -31,9 +31,17 @@ checks independently; avoid concurrent edits to the same files.
 - IAM provisioning is an explicit operator CLI with separate migration credentials,
   atomic state/audit writes, and serialized last-owner checks. No runtime IAM writes.
   Read ADR-014 before changing authentication, roles, policy or audit contracts.
-- M1 IAM already has a narrow RLS backstop; reusable business-data RLS and access
-  remain M2. Tenant data must use transaction-scoped tenant context. The normal
-  app role must not own tenant tables, be superuser, or have BYPASSRLS.
+- M2 runtime transactions use postgres.WithRuntime and narrow Executor ports.
+  Never execute transaction-control/role-changing SQL in repository callbacks.
+  Identity rebind and failed tenant switches clear previous scope. Future tenant
+  migrations must atomically call runtime.install_tenant_rls and use tenant-inclusive
+  keys/FKs. Policy remains mandatory. Read ADR-015 before changing this boundary.
+  The normal app role must not own tenant tables, be superuser, or have BYPASSRLS.
+  M5 preview storage/typed Query AST/CRUD use these boundaries; no raw SQL payloads.
+- M3 metadata uses closed typed JSON/YAML authoring schemas and immutable draft
+  source revisions with expected-revision appends, forced tenant RLS and atomic
+  audit. Source hashes are storage identities, never M4 IR or approved releases.
+  No source execution/activation. Read ADR-016 before changing registry contracts.
 - Metadata production releases are immutable; promotion freezes and revalidates a
   revision, approval, base, migration, and bundle before atomic activation.
 - Side effects require governed tools, idempotency, capability checks, safe sandbox
@@ -55,3 +63,13 @@ running it. Integration tests need the local stack and fail rather than silently
 skip missing services. Later business E2E/RLS/compiler suites are not M0 evidence.
 Document significant new decisions in docs/adr using its template. Keep source
 buildkit documents unchanged. Add tests for failure modes, not just happy paths.
+
+- M4 compiler.Program is immutable, canonical and the only runtime input. Read ADR017.
+- M5/M6 operate only isolated development/test previews, pinned to tenant/app/source
+  revision/IR hash. Never substitute draft data for an approved production release.
+  Read ADR018/019: unfiltered visibility proof, candidate/page limits, CAS and audit;
+  typed versioned UI registry, aborted/stale request isolation and safe text rendering.
+- M7 rule execution and all later workflows/tools/outbox/sandbox/promotion/AI are
+  not implemented. Tests/plans in IR are requirements, not executed business tests.
+- Browser verification: make browser-install then make test-e2e after make build,
+  with local stack running and no API/Vite already occupying owned test ports.
