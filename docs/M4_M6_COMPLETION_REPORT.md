@@ -150,7 +150,8 @@ manifests, tests, CI, ADRs and reports are intended for this push. Generated bin
 node_modules, .local, browser artifacts/fuzz caches, .env and identity keys remain
 ignored and must not be committed. The canonical IR golden is intentional test source.
 The previous remote main base is7d60ad50087a624beb53626025c5c409a58cdba6.
-Commit/push and final clean status are recorded after completion, without force-push.
+Implementation was committed/pushed and remote SHA/clean status verified; see the
+Git delivery evidence below. No force-push.
 
 Cloud setup install_script/start_skill were saved as a draft with tested setup/build/
 browser/start/check instructions; no credentials or network/repository membership
@@ -169,3 +170,42 @@ Final setup command `make setup env browser-install` PASS: locked241-package npm
 install, verified Go modules, preserved .env/identity keys, system Chromium selected.
 Then `make check test build`, `make migration-status`, and the production npm audit
 passed on the final implementation. Final source/API normal-role review remains PASS.
+
+## Verified Git delivery
+
+Implementation commit: `6989475cb1e63ba6ff7a4319c4a04b993a2c40e3`.
+88 source/test/documentation files committed, including all accumulated M2–M6 work.
+Staged-file inspection passed: no generated directories, private-key blocks or
+bearer-token literals. `git diff --cached --check` passed.
+
+Actual Git commands/results:
+
+| Command | Result |
+| --- | --- |
+| `git add .github/workflows/ci.yml AGENTS.md CLAUDE.md Makefile README.md apps/web contracts db docs go.mod go.sum internal scripts tests` | PASS |
+| `git diff --cached --check` | PASS |
+| `git diff --cached --stat` | PASS;88files,10,471insertions/164deletions across accumulated milestones |
+| `git commit -m "feat: deliver M2-M6 tenant data, compiler, runtime and dynamic UI"` | PASS;6989475 |
+| `git push origin main` | PASS;7d60ad5→6989475, no force-push |
+| `git rev-parse HEAD` | PASS;6989475cb1e63ba6ff7a4319c4a04b993a2c40e3 |
+| `git ls-remote origin refs/heads/main` | PASS;exact same implementation SHA |
+| `git status --porcelain=v1` | PASS;empty after implementation push |
+
+This delivery record is finalized in a documentation follow-up commit. Final branch
+and remote equality are checked again after pushing that report; the final response
+identifies the latest tip. No generated artifacts or secrets are committed.
+
+After frozen setup and the final app-scoped policy change, `make test-e2e` passed all
+3browser tests again (4.7s), and `node scripts/with-env.mjs node scripts/smoke.mjs`
+passed again with owned processes shut down. The prepared development stack remains
+running; application processes are stopped. Original84architecture hashes remain
+unchanged. The saved cloud draft is not publication/new-task restoration evidence.
+
+M4 STATUS: PASS
+M5 STATUS: PASS
+M6 STATUS: PASS
+
+Recommended next milestone:
+M7 — Rule Engine
+
+M7 is not implemented; wait for the next user task.
