@@ -1,0 +1,16 @@
+{
+  "name": "AI-Native ERP/CRM Framework V2 Research Build Kit",
+  "date": "2026-10-11",
+  "goal": "Address every known framework drawback with architecture, implementation controls and verification.",
+  "start_here": [
+    "README.md",
+    "00_MASTER_PLAYBOOK.md",
+    "01_DRAWBACK_SOLUTION_MATRIX.md",
+    "architecture/10_TARGET_ARCHITECTURE.md",
+    "implementation/50_IMPLEMENTATION_ROADMAP.md",
+    "agents/83_INITIAL_CLAUDE_PROMPT.md",
+    "verification/99_FINAL_SYSTEM_VERIFICATION.md"
+  ],
+  "architecture": "Go modular monolith + React/TypeScript + PostgreSQL + Redis + OpenTelemetry; optional OPA/Temporal; WASM later",
+  "markdown_count": 83
+}
