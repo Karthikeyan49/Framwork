@@ -336,24 +336,49 @@ All migration source, tests, verified docs, ADR and reports belong in the dedica
 migration branch's review. At the initial implementation handoff, changes were
 intentionally uncommitted and no remote push or main merge had occurred. The Git
 manifest below records that pre-commit snapshot. Ignored `.env`, keys, `.local/`, `node_modules`, `bin/`,
-`dist/`, logs and test artifacts must not be committed. The local checkpoint tag
-provides source recovery, not a remote backup or a database backup.
+`dist/`, logs and test artifacts must not be committed. The checkpoint tag
+provides source recovery; it does not back up databases or ignored private files.
+
+### Subsequent Git publication — 2026-10-12 (Asia/Kolkata)
+
+Following the user's explicit request to push everything, implementation commit
+`134b923` (`feat: migrate to V3 and implement M6R remediation`) was successfully
+pushed to `origin/migration/v3-m6r`. It includes all 126 changed source, test,
+migration and documentation paths. The recovery tag `pre-v3-m6r-2026-10-12` was
+published in the same atomic push. No main merge or force push was performed.
+Private credentials/checkpoints, dependencies and generated artifacts stayed ignored.
+The original pre-commit manifest below remains as historical handoff evidence.
+
+Executed successfully:
+
+```sh
+git add --all
+git diff --cached --check
+git commit -m "feat: migrate to V3 and implement M6R remediation"
+git push --atomic --set-upstream origin migration/v3-m6r refs/tags/pre-v3-m6r-2026-10-12
+```
+
+This publication addendum is committed separately so that it records a completed
+push rather than predicting its success. Only documentation changed after the
+verified implementation; the previously recorded test results still apply.
 
 The cloud-environment-onboarding setup workflow saved refreshed V3 startup
 instructions as a configuration **draft**. Persistence was confirmed, with
 `requires_publish=true`. Apply it by Review/Save/Publish in environment settings.
 No repository membership, secret value, domain allowance or installation script
 was changed in that update. Saving did not publish/apply the configuration or
-establish fresh-task restoration of the local uncommitted migration.
+establish fresh-task restoration. Git publication makes the migration source
+available remotely but does not itself verify a fresh environment installation.
 
 **M6R STATUS: PASS. Safe to proceed to M7 — Rule Engine V2 development after the
 next user task. M7 has not been implemented.**
 
 ## Exact Git change manifest
 
-The following snapshot includes tracked modifications, the deliberately removed
-visibility implementation and all untracked deliverables. `??` denotes files to
-add in the migration commit; generated/private ignored files are excluded.
+The following initial handoff snapshot includes tracked modifications, the
+deliberately removed visibility implementation and then-untracked deliverables.
+`??` denoted paths not yet added at that handoff; they are now included in the
+implementation commit. Generated/private ignored files are excluded.
 
 ```text
  M .env.example
