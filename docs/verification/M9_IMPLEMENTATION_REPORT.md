@@ -190,10 +190,25 @@ No Rust/Python, microservices, Kubernetes, code generation or event sourcing.
 ## Git and cloud environment
 
 Changes belong on `milestone/m9-workflow-runtime-v2` with the pre-M9 checkpoint.
-Publication is being finalized on this branch. Main is not merged/reset/force-pushed. `.env`, `.local`,
+Implementation commit `f12bd4dc3cd0c46efba6eefb74e8e25e392bc37f` was pushed
+and verified against `refs/heads/milestone/m9-workflow-runtime-v2`. Recovery tag
+`pre-m9-2026-10-12` was pushed and verified at the original M8 HEAD. This publication
+record is a documentation follow-up commit. Main is not merged/reset/force-pushed. `.env`, `.local`,
 `bin`, `node_modules`, `dist` and caches are ignored and must not be committed.
-Cloud startup instructions will be updated to M9 after verified publication;
-draft save does not publish or prove fresh-task restoration.
+M9 `start_skill` was saved successfully in the cloud environment draft; existing
+installation/network/secrets were preserved. The repository declaration is updated
+to the final exact local HEAD after this documentation commit. Review and save the
+changes in environment settings, then publish the environment. Draft saving does
+not publish or prove fresh-task restoration.
+
+Git commands executed: `git status --short --branch`, `git switch -c milestone/m9-workflow-runtime-v2`,
+`git tag pre-m9-2026-10-12`, `git add` with the enumerated source/report paths,
+`git commit -m "feat: implement M9 workflow runtime v2 with durable recovery"`,
+`git push -u origin milestone/m9-workflow-runtime-v2`, `git push origin pre-m9-2026-10-12`,
+`git ls-remote origin refs/heads/milestone/m9-workflow-runtime-v2 refs/tags/pre-m9-2026-10-12`,
+and `git diff --check`. All publication operations succeeded; tracked artifacts
+contain no environment/credential/build outputs. The final documentation push
+and remote equality/clean-tree checks follow this record.
 
 M9 STATUS: PASS (documented development/test workflow scope)
 
