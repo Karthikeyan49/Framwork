@@ -213,6 +213,30 @@ the user must review/save and publish the draft in environment settings.
 Commit source, tests, migration SQL, docs and managed build/CI/config examples.
 Do not commit generated binaries, node_modules, frontend dist, local test logs,
 Redis ACL material, .env or identity keys. These remain ignored. Git publication
-and final remote verification are recorded below once executed; main stays unchanged.
+and final remote verification are recorded below; main stays unchanged.
 
 Recommended next milestone: **M9 — Workflow Runtime V2**, only after a new user task.
+
+## Git publication
+
+Implementation/tests/reports: `7ccc9953a47a36718769a04e3da2d24d2c5053d7`,44 files,
+3,247 insertions and89 deletions. GitHub read-back confirmed that exact branch SHA.
+The final documentation publication record is committed on the same branch.
+
+Executed and passed:
+
+```sh
+git diff --cached --check
+git commit -m 'feat(events): implement M8 transactional outbox and inbox'
+git config --add remote.origin.fetch '+refs/heads/milestone/m8-outbox-inbox:refs/remotes/origin/milestone/m8-outbox-inbox'
+git push --set-upstream origin milestone/m8-outbox-inbox
+git push origin pre-m8-2026-10-12
+git ls-remote origin refs/heads/milestone/m8-outbox-inbox refs/tags/pre-m8-2026-10-12 refs/heads/main
+git status --short --branch
+```
+
+Recovery tag points to `084aa559389761acd16083953d34820638a8d55d`. Main remains
+`9da3f5f40fcdbed53ebe5af694cf0a14c600cbe7`. No merge/force push occurred. Source,
+SQL, tests and docs are committed; generated/private files are ignored. The tree
+was clean after implementation publication; final report publication is verified
+by remote read-back before the final response. Remote CI remains NOT RUN/UNCONFIRMED.
