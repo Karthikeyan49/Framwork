@@ -158,7 +158,7 @@ func project(r Record, ids []string) Record {
 	r.Values = out
 	return r
 }
-func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard) (Page, error) {
+func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard, resolve ...ScopeResolver) (Page, error) {
 	e, err := plan(s, a, entity)
 	if err != nil {
 		return Page{}, err
@@ -167,6 +167,9 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	defer span.End()
 	span.SetAttributes(attribute.String("entity_id", entity), attribute.String("ir_hash", s.Hash()), attribute.Int64("metadata_version", s.Revision()), attribute.String("data_mode", "preview"))
 	if err = g.check(ctx, "data.entity.read", Resource{EntityID: entity}); err != nil {
+		return Page{}, err
+	}
+	if err = g.check(ctx, "data.row.read", Resource{EntityID: entity}); err != nil {
 		return Page{}, err
 	}
 	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > 2048 || len(query.Projection) == 0 || len(query.Projection) > 32 {
@@ -186,6 +189,16 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	}
 	b := builder{args: base(s, a, entity)}
 	where := `r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5`
+	accessScope, err := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity})
+	if err != nil {
+		return Page{}, err
+	}
+	n := 0
+	scopePredicate, err := scopeSQL(ctx, e, accessScope, a, "r", &b, 0, &n)
+	if err != nil {
+		return Page{}, err
+	}
+	where += " AND (" + scopePredicate + ")"
 	if query.Filter != nil {
 		nodes := 0
 		condition, err := filterSQL(ctx, e, *query.Filter, &b, g, 0, &nodes)
@@ -272,6 +285,9 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 		if err = g.check(ctx, "data.entity.read", Resource{EntityID: target.ID}); err != nil {
 			return Page{}, err
 		}
+		if err = g.check(ctx, "data.row.read", Resource{EntityID: target.ID}); err != nil {
+			return Page{}, err
+		}
 		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: relation.FromField}); err != nil {
 			return Page{}, err
 		}
@@ -283,7 +299,29 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 				return Page{}, err
 			}
 		}
-		joinSQL = ` LEFT JOIN runtime.preview_records j ON j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
+		joinSQL = ` LEFT JOIN ` + st.recordsTable() + ` j ON j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
+		targetScope, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID})
+		if er != nil {
+			return Page{}, er
+		}
+		ns := 0
+		jp, er := scopeSQL(ctx, target, targetScope, a, "j", &b, 0, &ns)
+		if er != nil {
+			return Page{}, er
+		}
+		joinSQL += " AND (" + jp + ")"
+		for _, id := range query.Join.Projection {
+			fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID, FieldID: id})
+			if er != nil {
+				return Page{}, er
+			}
+			nodes := 0
+			pred, er := scopeSQL(ctx, target, fs, a, "j", &b, 0, &nodes)
+			if er != nil {
+				return Page{}, er
+			}
+			joinSQL += " AND (" + pred + ")"
+		}
 		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,j.custom_data`
 	}
 	if query.Aggregate != nil {
@@ -306,14 +344,28 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 			return Page{}, err
 		}
 	}
-	if err = authorizeCandidates(ctx, q, s, a, entity, seen, query.Join, target, g); err != nil {
-		return Page{}, err
+	keys := []string{}
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity, FieldID: key})
+		if er != nil {
+			return Page{}, er
+		}
+		n := 0
+		fp, er := scopeSQL(ctx, e, fs, a, "r", &b, 0, &n)
+		if er != nil {
+			return Page{}, er
+		}
+		where += " AND (" + fp + ")"
 	}
 	order := "ASC"
 	if desc {
 		order = "DESC"
 	}
-	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,` + joinedColumns + ` FROM runtime.preview_records r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
 	rows, err := q.QueryContext(ctx, statement, b.args...)
 	if err != nil {
 		return Page{}, err
@@ -322,7 +374,6 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	records := []Record{}
 	var lastValue any
 	hasMore := false
-	pending := []Resource{}
 	for rows.Next() {
 		var r Record
 		var raw, joinedRaw []byte
@@ -335,25 +386,12 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 		if err = readValues(e, &r, raw); err != nil {
 			return Page{}, err
 		}
-		pending = append(pending, Resource{EntityID: entity, RecordID: r.ID, OwnerID: r.CreatedBy})
-		keys := make([]string, 0, len(seen))
-		for key := range seen {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			pending = append(pending, Resource{EntityID: entity, FieldID: key, RecordID: r.ID, OwnerID: r.CreatedBy})
-		}
 		if query.Join != nil {
 			r.Related = map[string]*Record{query.Join.Relationship: nil}
 			if jid.Valid {
 				joined := Record{ID: jid.String, Version: version.Int64, CreatedBy: owner.String, CreatedAt: created.Time, UpdatedAt: updated.Time}
 				if err = readValues(target, &joined, joinedRaw); err != nil {
 					return Page{}, err
-				}
-				pending = append(pending, Resource{EntityID: target.ID, RecordID: joined.ID, OwnerID: joined.CreatedBy})
-				for _, key := range query.Join.Projection {
-					pending = append(pending, Resource{EntityID: target.ID, FieldID: key, RecordID: joined.ID, OwnerID: joined.CreatedBy})
 				}
 				joined = project(joined, query.Join.Projection)
 				r.Related[query.Join.Relationship] = &joined
@@ -375,15 +413,6 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	}
 	if err = rows.Close(); err != nil {
 		return Page{}, err
-	}
-	for _, resource := range pending {
-		action := "data.row.read"
-		if resource.FieldID != "" {
-			action = "data.field.read"
-		}
-		if err = g.check(ctx, action, resource); err != nil {
-			return Page{}, err
-		}
 	}
 	if hasMore && query.Aggregate != nil {
 		return Page{}, ErrBudget

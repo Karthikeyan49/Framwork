@@ -51,8 +51,9 @@ func checkRuntime(ctx context.Context, db queryer) error {
 	var privileged bool
 	if err := db.QueryRowContext(ctx, `SELECT rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication
  OR current_user<>session_user OR pg_catalog.current_setting('row_security')<>'on'
+ OR (session_user IN('framework_app','framework_worker','framework_dispatcher') AND EXISTS(SELECT 1 FROM pg_roles other WHERE other.rolname IN('framework_app','framework_worker','framework_dispatcher','framework_audit_writer') AND other.rolname<>session_user AND pg_has_role(session_user,other.oid,'MEMBER')))
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_roles danger WHERE
-   (danger.rolsuper OR danger.rolbypassrls OR danger.rolcreatedb OR danger.rolcreaterole OR danger.rolreplication OR danger.rolname IN ('framework_migrator','pg_read_all_data','pg_write_all_data','pg_read_server_files','pg_write_server_files','pg_execute_server_program'))
+   (danger.rolsuper OR danger.rolbypassrls OR danger.rolcreatedb OR danger.rolcreaterole OR danger.rolreplication OR danger.rolname IN ('framework_migrator','framework_maintenance','pg_read_all_data','pg_write_all_data','pg_read_server_files','pg_write_server_files','pg_execute_server_program'))
    AND pg_catalog.pg_has_role(session_user,danger.oid,'MEMBER'))
  OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname IN ('iam','audit','control','runtime','public')
    AND (n.nspowner=r.oid OR pg_catalog.pg_has_role(session_user,n.nspowner,'MEMBER') OR pg_catalog.has_schema_privilege(n.oid,'CREATE')))

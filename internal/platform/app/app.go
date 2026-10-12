@@ -19,6 +19,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/cache"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
+	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
@@ -35,7 +36,14 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		defer cancel()
 		telemetry.Shutdown(shutdown)
 	}()
-	db, err := postgres.Open(c.DatabaseURL)
+	databaseURL := c.DatabaseURL
+	if service == "framework-worker" {
+		if c.WorkerDatabaseURL == "" {
+			return errors.New("dedicated worker database credential required")
+		}
+		databaseURL = c.WorkerDatabaseURL
+	}
+	db, err := postgres.Open(databaseURL)
 	if err != nil {
 		return err
 	}
@@ -48,7 +56,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if service == "framework-worker" {
 		probe, cancel := context.WithTimeout(ctx, c.DependencyTimeout)
 		defer cancel()
-		if postgres.Ping(probe, db) != nil || redis.Ping(probe) != nil {
+		if jobs.CheckRole(probe, db, "framework_worker") != nil || redis.Ping(probe) != nil {
 			return errors.New("worker dependencies unavailable")
 		}
 		logger.Info("worker started", "service", service, "environment", c.Environment)

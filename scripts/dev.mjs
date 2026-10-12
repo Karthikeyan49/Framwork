@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { runtimeEnv } from './runtime-env.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseEnv } from 'node:util'
@@ -7,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const env = { ...parseEnv(fs.readFileSync(path.join(root, '.env'), 'utf8')), ...process.env }
 console.log(`Development coordinator PID: ${process.pid}. Stop with Ctrl-C or SIGTERM to this owned PID.`)
 const children = [
-  spawn(path.join(root, 'bin/api'), [], { cwd: root, env, stdio: 'inherit' }),
+  spawn(path.join(root, 'bin/api'), [], { cwd: root, env:runtimeEnv(env,'api'), stdio: 'inherit' }),
   spawn(path.join(root, 'bin/worker'), [], { cwd: root, env, stdio: 'inherit' }),
   // The detached frontend must not take over the parent terminal's raw input.
   spawn('npm', ['--prefix', 'apps/web', 'run', 'dev'], { cwd: root, env, stdio: ['ignore', 'inherit', 'inherit'], detached: process.platform !== 'win32' }),

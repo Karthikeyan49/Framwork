@@ -17,6 +17,7 @@ type Config struct {
 	Environment       string
 	HTTPAddr          string
 	DatabaseURL       string
+	WorkerDatabaseURL string
 	RedisURL          string
 	CORSOrigins       []string
 	OTelEndpoint      string
@@ -29,7 +30,7 @@ type Config struct {
 }
 
 func Load(getenv func(string) string) (Config, error) {
-	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
+	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), WorkerDatabaseURL: getenv("WORKER_DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
 	switch c.Environment {
 	case "development", "test", "production":
 	default:
@@ -56,10 +57,23 @@ func Load(getenv func(string) string) (Config, error) {
 	if err := c.LogLevel.UnmarshalText([]byte(value(getenv, "LOG_LEVEL", "info"))); err != nil {
 		return c, fmt.Errorf("LOG_LEVEL is invalid")
 	}
-	for _, entry := range []struct {
+	connections := []struct {
 		name, raw string
 		schemes   []string
-	}{{"DATABASE_URL", c.DatabaseURL, []string{"postgres", "postgresql"}}, {"REDIS_URL", c.RedisURL, []string{"redis", "rediss"}}} {
+	}{{"DATABASE_URL", c.DatabaseURL, []string{"postgres", "postgresql"}}, {"REDIS_URL", c.RedisURL, []string{"redis", "rediss"}}}
+	if c.WorkerDatabaseURL != "" {
+		connections = append(connections, struct {
+			name, raw string
+			schemes   []string
+		}{"WORKER_DATABASE_URL", c.WorkerDatabaseURL, []string{"postgres", "postgresql"}})
+	}
+	if raw := getenv("DISPATCHER_DATABASE_URL"); raw != "" {
+		connections = append(connections, struct {
+			name, raw string
+			schemes   []string
+		}{"DISPATCHER_DATABASE_URL", raw, []string{"postgres", "postgresql"}})
+	}
+	for _, entry := range connections {
 		u, err := url.Parse(entry.raw)
 		if err != nil || u.Hostname() == "" || !contains(entry.schemes, u.Scheme) {
 			return c, fmt.Errorf("%s must be a valid connection URL", entry.name)
@@ -72,7 +86,7 @@ func Load(getenv func(string) string) (Config, error) {
 			if !ok || strings.TrimSpace(pass) == "" {
 				return c, fmt.Errorf("%s requires credentials in production", entry.name)
 			}
-			if entry.name == "DATABASE_URL" {
+			if entry.name != "REDIS_URL" {
 				if err := verifyPostgres(entry.raw, u); err != nil {
 					return c, fmt.Errorf("DATABASE_URL %s", err)
 				}

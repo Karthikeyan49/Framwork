@@ -3,10 +3,13 @@ package access
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
@@ -114,6 +117,43 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 		}{"preview", revision, program.Hash(), program.IR(), canWrite}}, nil
 	}
 	entity := r.PathValue("entity")
+	teams, err := (tenant.Store{}).Teams(ctx, q, access)
+	if err != nil {
+		return reply{}, err
+	}
+	scopes := map[string]policy.DataScope{}
+	resolve := func(ctx context.Context, action string, resource data.Resource) (policy.DataScope, error) {
+		engine, ok := a.Policy.(policy.ScopeEngine)
+		if !ok {
+			return policy.DataScope{}, policy.ErrScope
+		}
+		key := action + ":" + resource.EntityID + ":" + resource.FieldID
+		if scope, ok := scopes[key]; ok {
+			return scope, nil
+		}
+		typ := "entity"
+		if resource.FieldID != "" {
+			typ = "field"
+		}
+		scope, e := engine.DataScope(ctx, policy.Subject{User: u, Access: access}, action, policy.Resource{TenantID: access.TenantID(), Type: typ, AppID: app, EntityID: resource.EntityID, FieldID: resource.FieldID}, policy.ScopeContext{Teams: teams, RequestID: evidence.RequestID, TraceID: evidence.TraceID})
+		entry := *evidence
+		entry.Action = strings.Replace(action, "data.", "data.scope.", 1)
+		entry.Resource = typ
+		entry.Allow = e == nil
+		entry.State.EntityID = resource.EntityID
+		entry.State.FieldID = resource.FieldID
+		raw, _ := json.Marshal(scope)
+		hash := sha256.Sum256(raw)
+		entry.State.ScopeHash = hex.EncodeToString(hash[:])
+		if er := a.Audit.Append(ctx, q, entry); er != nil {
+			return policy.DataScope{}, er
+		}
+		if e != nil {
+			return policy.DataScope{}, e
+		}
+		scopes[key] = scope
+		return scope, nil
+	}
 	evidence.State.EntityID = entity
 	if len(entity) > 160 {
 		evidence.State.EntityID = ""
@@ -123,16 +163,34 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	if strings.HasSuffix(r.URL.Path, "/query") {
 		var query data.Query
 		if err = readDataCommand(r, &query); err == nil {
-			result, err = (data.Store{}).Query(ctx, q, scope, access, entity, query, guard)
+			result, err = (data.Store{}).Query(ctx, q, scope, access, entity, query, guard, resolve)
 		}
 	} else {
 		var command data.Command
 		if err = readDataCommand(r, &command); err == nil {
 			var record data.Record
-			record, err = (data.Store{}).Command(ctx, q, scope, access, entity, command, guard)
+			record, err = (data.Store{}).Command(ctx, q, scope, access, entity, command, guard, resolve)
 			result = record
 			evidence.State.RecordID = record.ID
 			evidence.State.RecordVersion = record.Version
+			if err == nil {
+				id, e := events.NewID()
+				if e != nil {
+					return reply{}, e
+				}
+				eventType := map[string]string{"create": "record.created", "update": "record.updated", "delete": "record.deleted"}[command.Operation]
+				entry := *evidence
+				entry.Action = eventType
+				entry.Resource = "record"
+				entry.Allow = true
+				writer := a.Events
+				if writer == nil {
+					writer = events.Postgres{}
+				}
+				if e = events.Append(ctx, q, a.Audit, writer, entry, events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version}); e != nil {
+					return reply{}, e
+				}
+			}
 		}
 	}
 	switch {

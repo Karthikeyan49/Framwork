@@ -1,5 +1,6 @@
 // Runs owned foundation processes, real dependency probes, telemetry and proxy requests.
 import { spawn, execFileSync } from 'node:child_process'
+import { runtimeEnv } from './runtime-env.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -12,7 +13,7 @@ fs.mkdirSync(path.join(root, '.local'), { recursive: true })
 const owned = []
 function start(command, args, name, detached = false) {
   const log = fs.openSync(path.join(root, '.local', `smoke-${name}.log`), 'w', 0o600)
-  const child = spawn(command, args, { cwd: root, env: process.env, stdio: ['ignore', log, log], detached })
+  const child = spawn(command, args, { cwd: root, env: runtimeEnv(process.env,name), stdio: ['ignore', log, log], detached })
   fs.closeSync(log)
   const exit = new Promise((resolve) => {
     child.on('error', () => resolve({ code: 1, signal: null }))

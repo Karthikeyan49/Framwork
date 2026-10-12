@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
@@ -24,6 +25,7 @@ type API struct {
 	Auth           identity.Authenticator
 	Policy         policy.Engine
 	Audit          audit.Writer
+	Events         events.Writer
 	Registry       *metadata.Registry
 	PreviewEnabled bool
 }

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { runtimeEnv } from './runtime-env.mjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const env = { ...process.env }
 if (fs.existsSync(path.join(root, '.env'))) {
@@ -11,7 +12,8 @@ if (fs.existsSync(path.join(root, '.env'))) {
 }
 const [command, ...args] = process.argv.slice(2)
 if (!command) { console.error('A command is required.'); process.exit(1) }
-const child = spawn(command, args, { cwd: root, env, stdio: 'inherit' })
+const runtimeKind = [command,...args].some(a=>a==='./cmd/worker'||/^(?:.*\/)?bin\/worker$/.test(a)) ? 'worker' : [command,...args].some(a=>a==='./cmd/api'||/^(?:.*\/)?bin\/api$/.test(a)) ? 'api' : undefined
+const child = spawn(command, args, { cwd: root, env: runtimeKind ? runtimeEnv(env,runtimeKind) : env, stdio: 'inherit' })
 child.on('error', () => { console.error('Could not start command.'); process.exitCode = 1 })
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal))
 child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0) })

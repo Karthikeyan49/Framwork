@@ -151,6 +151,10 @@ func pageID(r data.Record) string { return r.ID }
 
 type denyDataPolicy struct{ action, field string }
 
+func (p denyDataPolicy) DataScope(ctx context.Context, s policy.Subject, a string, r policy.Resource, c policy.ScopeContext) (policy.DataScope, error) {
+	return (policy.Native{}).DataScope(ctx, s, a, r, c)
+}
+
 func (p denyDataPolicy) Decide(ctx context.Context, s policy.Subject, a string, r policy.Resource, c policy.Context) policy.Decision {
 	d := (policy.Native{}).Decide(ctx, s, a, r, c)
 	if a == p.action && (p.field == "" || r.FieldID == p.field) {
@@ -349,6 +353,15 @@ func TestM5DeclaredJoinAndReferenceDeleteRace(t *testing.T) {
 }
 
 type contextualDataPolicy struct{ mode string }
+
+func (p contextualDataPolicy) DataScope(ctx context.Context, s policy.Subject, a string, r policy.Resource, c policy.ScopeContext) (policy.DataScope, error) {
+	// V3 adapters express record-conditional field restrictions as SQL scopes,
+	// rather than depending on application-memory callbacks after fetching rows.
+	if p.mode == "field_at_row" && a == "data.read" && r.FieldID == "field.contact.name" {
+		return policy.DataScope{Kind: "NONE"}, policy.ErrScope
+	}
+	return (policy.Native{}).DataScope(ctx, s, a, r, c)
+}
 
 func (p contextualDataPolicy) Decide(ctx context.Context, s policy.Subject, action string, r policy.Resource, c policy.Context) policy.Decision {
 	d := (policy.Native{}).Decide(ctx, s, action, r, c)

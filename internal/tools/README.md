@@ -1,5 +1,7 @@
-# tools
+# Tool delivery contracts — M6R
 
-Reserved module boundary. No implementation in M0. See docs/architecture/12_MODULE_BOUNDARIES.md.
-
-Expose explicit contracts when its milestone starts. Storage and implementation details stay private; consumers must not import private subpackages or access module tables.
+Delivery models native keys, reference lookup, dedupe windows and non-idempotent
+providers. Retry/reconciliation rules keep timeout and crash outcomes unknown until
+resolved; successful effects are not replayed. These are admission/decision contracts,
+not external connectors or exactly-once guarantees. M10 implements governed execution;
+M17 adds connectors. See ADR-020 and delivery_test.go.

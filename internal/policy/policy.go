@@ -9,7 +9,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-const Version = "m5-native-v1"
+const Version = "m6r-native-v1"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID string }
 type Subject struct {
@@ -112,5 +112,7 @@ func dataResource(action string, r Resource) bool {
 	if action == "data.field.read" || action == "data.field.write" {
 		return r.Type == "field" && r.FieldID != ""
 	}
-	return r.Type == "row" && r.RecordID != ""
+	// Read action permission may be checked once for a collection. SQL DataScope
+	// supplies its mandatory row predicate; action permission alone exposes no rows.
+	return r.Type == "row" && (r.RecordID != "" || action == "data.row.read" && r.OwnerID == "")
 }

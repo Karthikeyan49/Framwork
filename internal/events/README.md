@@ -1,5 +1,7 @@
-# events
+# Transactional event intent — M6R
 
-Reserved module boundary. No implementation in M0. See docs/architecture/12_MODULE_BOUNDARIES.md.
-
-Expose explicit contracts when its milestone starts. Storage and implementation details stay private; consumers must not import private subpackages or access module tables.
+Append coordinates audit evidence and an outbox intent using the same caller-owned
+Executor as the business mutation. Failure propagates to WithRuntime and rolls back
+all changes. No DB-commit-then-publish dual write exists. Intents contain identifiers,
+versions and event class, without business payloads or secrets. M8 adds delivery,
+inbox deduplication and recovery scheduling. See ADR-020 and M6R atomicity tests.

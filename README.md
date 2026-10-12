@@ -9,8 +9,7 @@ forms/tables/details are implemented. Production activation and AI remain later 
 
 AI will propose structured drafts; the compiler, sandbox, verification, approval
 and promotion pipeline will produce immutable versions for deterministic runtime
-execution. The original architecture buildkit is preserved verbatim in [docs](docs/README.md).
-Start with [the master playbook](docs/00_MASTER_PLAYBOOK.md), [roadmap](docs/implementation/50_IMPLEMENTATION_ROADMAP.md),
+execution. V3 is authoritative: read the [V3 kit](docs/v3/README.md), [master playbook](docs/v3/00_MASTER_PLAYBOOK_V3.md), and [V3 roadmap](docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md). Retained [V2 documents](docs/README.md) supplement unchanged specifications. Read the [compatibility audit](docs/migration/M0_M6_AUDIT_REPORT.md), [M6R decision](docs/adr/020-v3-m6r-architecture-remediation.md),
 [agent contract](AGENTS.md), and [M0 tooling decision](docs/adr/013-m0-foundation-tooling.md), and
 [M1 identity decision](docs/adr/014-m1-identity-policy-audit.md).
 
@@ -29,7 +28,8 @@ make dev
 
 This installs locked dependencies, preserves or generates a 0600 `.env` with random
 development passwords, starts the local stack, applies migrations, builds the
-programs, and runs API/idle worker/Vite. Ctrl-C stops those application processes;
+programs, and runs API/idle worker/Vite. V3 assigns separate API/worker credentials;
+operator and dispatcher secrets are excluded from application children. Ctrl-C stops those application processes;
 `make infra-down` stops local containers and retains PostgreSQL data.
 
 The coordinator prints its PID. Some cloud runners close a command connection
@@ -56,7 +56,8 @@ an approved HTTPS API origin at build time. The access console validates identit
 ```sh
 make check             # source checksums, nonmutating Go format, vet, integrity, TS lint/typecheck
 make test              # Go race/unit tests, frontend tests, real PG/Redis integration
-make build             # API, worker, migration binary, frontend production bundle
+make build             # API, worker, operator binaries, frontend bundle
+make release-check     # operator-only supported active-IR deployment gate
 node scripts/with-env.mjs node scripts/smoke.mjs  # live API, telemetry, worker and proxy smoke
 ```
 
@@ -138,7 +139,7 @@ internal/metadata/                   M3 models, validation and registry ports
 internal/platform/access/             Identity/tenant/policy/audit/metadata HTTP composition
 internal/runtime/{data,rules,workflow}/  Later runtime modules, no M0 logic
 apps/web/                            React shell, router, typed API client, tests
-db/{migrations,rls,seeds}/            Embedded M0–M3 migrations and reusable tenant RLS
+db/{migrations,rls,seeds}/            Embedded forward migrations and reusable tenant RLS
 contracts/jsonschema/                Embedded typed metadata contract
 tests/{integration,e2e,security,performance}/
 infra/{compose,otel}/                Local PostgreSQL/Redis/collector
@@ -337,3 +338,33 @@ Decisions: [ADR017](docs/adr/017-m4-compiler-ir.md),
 reports are under docs/M4*, M5*, M6*. Rules/workflows/tools/outbox/sandbox/promotion,
 released schema migrations, AI builder and full scale/security certification remain
 their later milestones. Do not start M7 without a new user task.
+
+## V3 migration and recovery
+
+M6R adds generic records, SQL DataScope, least-privilege worker roles, immutable
+release/approval contracts, transactional audit/outbox and ERP value contracts.
+See [the implementation report](docs/migration/M6R_IMPLEMENTATION_REPORT.md).
+There are no public production activation endpoints or AI execution capabilities.
+M7 has not begun. Use the V3 roadmap; M8 is outbox/inbox, M9 workflows, M10 tools,
+M11 sandbox, M12 candidate builder and M13 approval/promotion services.
+
+For an existing database, stop all legacy API/worker writers before migration.
+Take and test an encrypted operational backup plus schema/row checkpoints. Keep
+existing credentials and volumes. Local development uses make infra-up and make
+migrate, which provisions development-only dedicated roles before applying 9–16.
+No Down or destructive reset is exposed. Legacy tables and a read-only adapter remain.
+The final barrier waits for legacy transactions, reconciles late inserts and aborts
+on divergence rather than overwriting data. The report contains the rehearsal and
+forward-recovery instructions. Do not restart old writers after cutover.
+
+For production, provision reviewed roles using operator-controlled infrastructure;
+local credential helpers reject production. Run the migrate binary with explicit
+MIGRATION_DATABASE_URL and production TLS/auth configuration, then release-check
+before deploying binaries. Never mount operator/dispatcher credentials into API or
+worker processes. A failed compatibility check blocks deployment.
+
+Rollback of release metadata is an audited, approved pointer switch after storage
+and external-effect assessment. It cannot undo destructive schema changes or remote
+actions. Code rollback must retain V3 storage/role compatibility; returning an old
+binary to the legacy writable adapter is unsafe. Restore into a separate verified
+recovery environment or apply a reviewed forward reconciliation; retain both copies.

@@ -11,6 +11,8 @@ import (
 )
 
 type State struct {
+	ArtifactHash     string `json:"artifact_hash,omitempty"`
+	ScopeHash        string `json:"scope_hash,omitempty"`
 	IRHash           string `json:"ir_hash,omitempty"`
 	EntityID         string `json:"entity_id,omitempty"`
 	FieldID          string `json:"field_id,omitempty"`
@@ -54,7 +56,7 @@ func (Postgres) Append(ctx context.Context, tx postgres.Executor, e Entry) error
 	if e.Action == "" || len(e.Action) > 80 || len(e.Resource) > 80 || len(e.DecisionID) > 64 || len(e.RequestID) > 64 || len(e.TraceID) > 32 || len(e.PolicyVersion) > 80 {
 		return errors.New("invalid audit evidence")
 	}
-	if len(e.State.IRHash) > 64 || len(e.State.EntityID) > 160 || len(e.State.FieldID) > 160 || len(e.State.RecordID) > 36 || e.State.RecordVersion < 0 || e.State.RecordVersion > 9007199254740991 || len(e.State.MetadataApp) > 160 || len(e.State.MetadataHash) > 64 || e.State.MetadataRevision < 0 || e.State.MetadataRevision > 1000000000 || len(e.State.OperatorRef) > 64 || len(e.State.Role) > 20 {
+	if len(e.State.ArtifactHash) > 64 || len(e.State.ScopeHash) > 64 || len(e.State.IRHash) > 64 || len(e.State.EntityID) > 160 || len(e.State.FieldID) > 160 || len(e.State.RecordID) > 36 || e.State.RecordVersion < 0 || e.State.RecordVersion > 9007199254740991 || len(e.State.MetadataApp) > 160 || len(e.State.MetadataHash) > 64 || e.State.MetadataRevision < 0 || e.State.MetadataRevision > 1000000000 || len(e.State.OperatorRef) > 64 || len(e.State.Role) > 20 {
 		return errors.New("invalid audit state")
 	}
 	state, err := json.Marshal(e.State)

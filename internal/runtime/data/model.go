@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"time"
 )
 
@@ -49,6 +51,8 @@ type Record struct {
 	ID        string             `json:"id"`
 	Version   int64              `json:"version"`
 	CreatedBy string             `json:"created_by"`
+	OwnerID   string             `json:"owner_user_id,omitempty"`
+	TeamID    string             `json:"owner_team_id,omitempty"`
 	CreatedAt time.Time          `json:"created_at"`
 	UpdatedAt time.Time          `json:"updated_at"`
 	Values    map[string]any     `json:"values"`
@@ -96,3 +100,14 @@ type Command struct {
 	ExpectedVersion int64          `json:"expected_version,omitempty"`
 	Values          map[string]any `json:"values,omitempty"`
 }
+
+// RecordStore is independent of physical storage; Domain Packs supply typed adapters.
+type RecordStore interface {
+	Query(context.Context, postgres.Executor, Scope, tenant.Access, string, Query, Guard, ...ScopeResolver) (Page, error)
+	Command(context.Context, postgres.Executor, Scope, tenant.Access, string, Command, Guard, ...ScopeResolver) (Record, error)
+}
+type StorageClass string
+
+const DynamicStorage StorageClass = "DYNAMIC_JSONB"
+const DomainPackStorage StorageClass = "TYPED_DOMAIN_PACK"
+const LegacyStorage StorageClass = "LEGACY_PREVIEW"

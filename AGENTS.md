@@ -1,3 +1,12 @@
+# V3 authority and current remediation
+
+Read all docs/v3 Markdown and docs/migration/M0_M6_AUDIT_REPORT.md. V3 is authoritative
+where it supersedes V2; retained V2 specs supplement unchanged modules. M6R only is
+authorized now; M6 had confirmed open issues. Never begin M7 until M6R independent
+review has no BLOCKER/HIGH findings. Preserve existing data, migrations and safe code.
+No tenant DDL; immutable stored production IR; exact hash approval; SQL DataScope;
+separate worker/dispatcher roles; transactional audit/outbox; tool-specific guarantees.
+
 # Coding-agent contract
 
 Read README.md, docs/00_MASTER_PLAYBOOK.md, docs/01_DRAWBACK_SOLUTION_MATRIX.md,
@@ -7,8 +16,8 @@ preserved verbatim under docs; validate it with make docs-verify.
 
 ## Milestone discipline
 
-M0–M6 are implemented. Stop after the requested milestone; never begin M7 without
-a new task. Follow docs/implementation/50_IMPLEMENTATION_ROADMAP.md. Each milestone
+M0–M6 are retained and remediated by M6R. Stop after the requested milestone; never
+begin M7 without a new task. Follow docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md. Each milestone
 requires tests, negative checks, recovery notes, an independent review, and human
 approval (docs/agents/82_TWO_AGENT_PROTOCOL.md). Reviewers should inspect and run
 checks independently; avoid concurrent edits to the same files.
@@ -67,9 +76,11 @@ buildkit documents unchanged. Add tests for failure modes, not just happy paths.
 - M4 compiler.Program is immutable, canonical and the only runtime input. Read ADR017.
 - M5/M6 operate only isolated development/test previews, pinned to tenant/app/source
   revision/IR hash. Never substitute draft data for an approved production release.
-  Read ADR018/019: unfiltered visibility proof, candidate/page limits, CAS and audit;
+  Read ADR018/019 as historical decisions and ADR020 for V3 SQL DataScope, bounds, CAS and audit;
   typed versioned UI registry, aborted/stale request isolation and safe text rendering.
-- M7 rule execution and all later workflows/tools/outbox/sandbox/promotion/AI are
-  not implemented. Tests/plans in IR are requirements, not executed business tests.
+- M6R includes release/approval, audit/outbox, delivery, sandbox and ERP contracts.
+  Public production services, rule execution, inbox/dispatch, workflow/tool execution,
+  sandbox orchestration and AI remain later V3 milestones. Tests/plans in IR are
+  requirements, not executed business acceptance tests. Read ADR020 and both migration reports.
 - Browser verification: make browser-install then make test-e2e after make build,
   with local stack running and no API/Vite already occupying owned test ports.

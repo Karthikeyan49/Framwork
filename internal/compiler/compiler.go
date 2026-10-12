@@ -67,10 +67,14 @@ type IR struct {
 
 // Program is minted by Compile. Copies of IR cannot mutate its trusted state.
 type Program struct {
-	raw  []byte
-	hash string
+	raw        []byte
+	hash       string
+	sourceHash string
 }
 
+func (p Program) MatchesSource(s metadata.Source) bool {
+	return p.sourceHash != "" && p.sourceHash == digest(s.JSON())
+}
 func (p Program) Valid() bool           { return len(p.raw) > 0 && p.hash != "" }
 func (p Program) Hash() string          { return p.hash }
 func (p Program) JSON() json.RawMessage { return append(json.RawMessage(nil), p.raw...) }
@@ -153,6 +157,9 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		sort.Strings(d.Entity.Fields)
 		e := Entity{ID: d.ID, Label: d.Label, Fields: []Field{}}
+		if len(d.Entity.Fields) < 1 || len(d.Entity.Fields) > 32 {
+			add("/"+d.ID, "entity_field_budget", "Runtime entities require 1–32 fields")
+		}
 		for _, id := range d.Entity.Fields {
 			fd, ok := resolve(id, "field", "/"+d.ID+"/fields")
 			if !ok {
@@ -179,8 +186,14 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 	}
 	expression := expressionChecker(fields, membership, add)
-	var component func(metadata.Component, string, string, bool)
-	component = func(c metadata.Component, owner, path string, inForm bool) {
+	componentNodes := 0
+	var component func(metadata.Component, string, string, bool, int)
+	component = func(c metadata.Component, owner, path string, inForm bool, depth int) {
+		componentNodes++
+		if componentNodes > 1000 || depth > 8 {
+			add(path, "component_budget", "UI component count/depth exceeds renderer limits")
+			return
+		}
 		if c.Type == "form" && inForm {
 			add(path, "nested_form", "Forms cannot contain another form")
 		}
@@ -208,7 +221,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 			add(path, "unavailable_component", "This component requires a capability unavailable in this compiler version")
 		}
 		for i, child := range c.Children {
-			component(child, owner, fmt.Sprintf("%s/children/%d", path, i), inForm || c.Type == "form")
+			component(child, owner, fmt.Sprintf("%s/children/%d", path, i), inForm || c.Type == "form", depth+1)
 		}
 	}
 	for i := range doc.Definitions {
@@ -228,7 +241,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		if p := d.Page; p != nil {
 			resolve(p.EntityRef, "entity", path)
 			for j, c := range p.Components {
-				component(c, p.EntityRef, fmt.Sprintf("%s/components/%d", path, j), false)
+				component(c, p.EntityRef, fmt.Sprintf("%s/components/%d", path, j), false, 0)
 			}
 		}
 		if r := d.Rule; r != nil {
@@ -279,7 +292,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 	if err != nil {
 		return Program{}, []Diagnostic{{"", "serialization", "IR serialization failed"}}
 	}
-	return Program{raw, digest(raw)}, diagnostics
+	return Program{raw: raw, hash: digest(raw), sourceHash: digest(source.JSON())}, diagnostics
 }
 func contains(values []string, value string) bool {
 	for _, v := range values {

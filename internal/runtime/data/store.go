@@ -15,15 +15,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-type Store struct{}
+type Store struct{ legacy bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool
-	err := db.QueryRowContext(ctx, `SELECT count(*)=2 AND bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_catalog.pg_class WHERE oid IN ('runtime.preview_datasets'::regclass,'runtime.preview_records'::regclass)`).Scan(&valid)
+	err := db.QueryRowContext(ctx, `SELECT count(*)=2 AND bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass)`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
-	_, err = db.ExecContext(ctx, `SELECT d.mode,d.write_version,r.custom_data,r.row_version,r.created_by FROM runtime.preview_datasets d JOIN runtime.preview_records r USING(tenant_id,app_id,metadata_revision,ir_hash) LIMIT 0`)
+	_, err = db.ExecContext(ctx, `SELECT d.mode,d.write_version,r.custom_data,r.row_version,r.created_by FROM runtime.record_sets d JOIN runtime.records r USING(tenant_id,app_id,metadata_revision,ir_hash) LIMIT 0`)
 	return err
 }
 func base(s Scope, a tenant.Access, entity string) []any {
@@ -67,11 +67,21 @@ func readValues(e compiler.Entity, r *Record, raw []byte) error {
 	}
 	return nil
 }
-func current(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e compiler.Entity, id string) (Record, error) {
+func current(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e compiler.Entity, id string, resolve ...ScopeResolver) (Record, error) {
 	var r Record
 	var raw []byte
 	args := append(base(s, a, e.ID), id)
-	err := q.QueryRowContext(ctx, `SELECT id::text,row_version,created_by::text,created_at,updated_at,custom_data FROM runtime.preview_records WHERE `+recordWhere+` AND id=$6`, args...).Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw)
+	b := builder{args: args}
+	accessScope, err := recordScope(ctx, resolve, e, "data.read")
+	if err != nil {
+		return r, err
+	}
+	nodes := 0
+	predicate, err := scopeSQL(ctx, e, accessScope, a, "r", &b, 0, &nodes)
+	if err != nil {
+		return r, err
+	}
+	err = q.QueryRowContext(ctx, `SELECT id::text,row_version,created_by::text,created_at,updated_at,custom_data,owner_user_id::text,COALESCE(owner_team_id::text,'') FROM runtime.records r WHERE `+recordWhere+` AND id=$6 AND (`+predicate+`)`, b.args...).Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &r.OwnerID, &r.TeamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -85,10 +95,10 @@ func current(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 // A dataset counter write serializes all preview commands and rejects stale
 // repeatable-read snapshots. Reference checks/deletes cannot race each other.
 func lockDataset(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access) error {
-	_, err := q.ExecContext(ctx, `INSERT INTO runtime.preview_datasets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,app_id,metadata_revision,ir_hash) DO UPDATE SET write_version=runtime.preview_datasets.write_version+1`, a.TenantID(), s.AppID(), s.Revision(), s.Hash())
+	_, err := q.ExecContext(ctx, `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,app_id,metadata_revision,ir_hash) DO UPDATE SET write_version=runtime.record_sets.write_version+1`, a.TenantID(), s.AppID(), s.Revision(), s.Hash())
 	return err
 }
-func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, c Command, g Guard) (Record, error) {
+func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, c Command, g Guard, resolve ...ScopeResolver) (Record, error) {
 	e, err := plan(s, a, entity)
 	if err != nil {
 		return Record{}, err
@@ -115,12 +125,15 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 		if !tenant.ValidID(c.ID) || c.ExpectedVersion < 1 || c.ExpectedVersion >= 9007199254740991 {
 			return Record{}, ErrInvalid
 		}
-		existing, err = current(ctx, q, s, a, e, c.ID)
+		existing, err = current(ctx, q, s, a, e, c.ID, resolve...)
 		if err != nil {
 			return Record{}, err
 		}
-		if err = g.check(ctx, "data.row.write", Resource{EntityID: entity, RecordID: c.ID, OwnerID: existing.CreatedBy}); err != nil {
+		if err = g.check(ctx, "data.row.write", Resource{EntityID: entity, RecordID: c.ID, OwnerID: existing.OwnerID}); err != nil {
 			return Record{}, err
+		}
+		if er := authorizeExistingWrite(ctx, q, s, a, e, existing, resolve); er != nil {
+			return Record{}, er
 		}
 		if existing.Version != c.ExpectedVersion {
 			return Record{}, ErrConflict
@@ -128,7 +141,7 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 	}
 	owner := a.ActorID()
 	if existing.ID != "" {
-		owner = existing.CreatedBy
+		owner = existing.OwnerID
 	}
 	if err = g.check(ctx, "data.entity.read", Resource{EntityID: entity}); err != nil {
 		return Record{}, err
@@ -174,7 +187,7 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 				}
 				args := append(base(s, a, target.ID), f.ID, c.ID)
 				var used bool
-				if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runtime.preview_records WHERE `+recordWhere+` AND custom_data->>$6=$7)`, args...).Scan(&used); err != nil {
+				if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runtime.records WHERE `+recordWhere+` AND custom_data->>$6=$7)`, args...).Scan(&used); err != nil {
 					return Record{}, err
 				}
 				if used {
@@ -183,7 +196,17 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 			}
 		}
 		args := append(base(s, a, entity), c.ID, c.ExpectedVersion)
-		result, err := q.ExecContext(ctx, `DELETE FROM runtime.preview_records WHERE `+recordWhere+` AND id=$6 AND row_version=$7`, args...)
+		b := builder{args: args}
+		writeScope, er := recordScope(ctx, resolve, e, "data.write")
+		if er != nil {
+			return Record{}, er
+		}
+		nodes := 0
+		pred, er := scopeSQL(ctx, e, writeScope, a, "r", &b, 0, &nodes)
+		if er != nil {
+			return Record{}, er
+		}
+		result, err := q.ExecContext(ctx, `DELETE FROM runtime.records r WHERE `+recordWhere+` AND id=$6 AND row_version=$7 AND (`+pred+`)`, b.args...)
 		if err != nil {
 			return Record{}, err
 		}
@@ -204,14 +227,14 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 		if err = g.check(ctx, "data.entity.read", Resource{EntityID: target.ID}); err != nil {
 			return Record{}, err
 		}
-		referenced, err := current(ctx, q, s, a, target, normalized[f.ID].(string))
+		referenced, err := current(ctx, q, s, a, target, normalized[f.ID].(string), resolve...)
 		if errors.Is(err, ErrNotFound) {
 			return Record{}, ErrInvalid
 		}
 		if err != nil {
 			return Record{}, err
 		}
-		if err = g.check(ctx, "data.row.read", Resource{EntityID: target.ID, RecordID: referenced.ID, OwnerID: referenced.CreatedBy}); err != nil {
+		if err = g.check(ctx, "data.row.read", Resource{EntityID: target.ID, RecordID: referenced.ID, OwnerID: referenced.OwnerID}); err != nil {
 			return Record{}, err
 		}
 	}
@@ -226,12 +249,47 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 		return Record{}, err
 	}
 	args := append(base(s, a, entity), c.ID, string(raw))
+	// Authorize the proposed state before any business mutation, including CREATE.
+	// This SQL candidate row is bounded and never contains caller-provided SQL.
+	writeScope, er := resolveScope(ctx, resolve, "data.write", Resource{EntityID: entity})
+	if er != nil {
+		return Record{}, er
+	}
+	cb := builder{args: []any{a.TenantID(), s.AppID(), s.Revision(), s.Hash(), entity, c.ID, owner, string(raw), existing.TeamID}}
+	n := 0
+	wp, er := scopeSQL(ctx, e, writeScope, a, "r", &cb, 0, &n)
+	if er != nil {
+		return Record{}, er
+	}
+	readScope, er := recordScope(ctx, resolve, e, "data.read")
+	if er != nil {
+		return Record{}, er
+	}
+	n = 0
+	rp, er := scopeSQL(ctx, e, readScope, a, "r", &cb, 0, &n)
+	if er != nil {
+		return Record{}, er
+	}
+	var permitted bool
+	er = q.QueryRowContext(ctx, `SELECT COALESCE((`+wp+`) AND (`+rp+`),false) FROM (SELECT $1::uuid tenant_id,$2::text app_id,$3::bigint metadata_revision,$4::text ir_hash,$5::text entity_id,$6::uuid id,$7::uuid owner_user_id,NULLIF($9::text,'')::uuid owner_team_id,$8::jsonb custom_data) r`, cb.args...).Scan(&permitted)
+	if er != nil {
+		return Record{}, er
+	}
+	if !permitted {
+		return Record{}, ErrDenied
+	}
 	if c.Operation == "create" {
-		_, err = q.ExecContext(ctx, `INSERT INTO runtime.preview_records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`, args...)
+		_, err = q.ExecContext(ctx, `INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`, args...)
 	} else {
 		args = append(args, c.ExpectedVersion)
+		b := builder{args: args}
+		n := 0
+		pred, er := scopeSQL(ctx, e, writeScope, a, "r", &b, 0, &n)
+		if er != nil {
+			return Record{}, er
+		}
 		var result sql.Result
-		result, err = q.ExecContext(ctx, `UPDATE runtime.preview_records SET custom_data=$7::jsonb,row_version=row_version+1,updated_at=clock_timestamp() WHERE `+recordWhere+` AND id=$6 AND row_version=$8`, args...)
+		result, err = q.ExecContext(ctx, `UPDATE runtime.records r SET custom_data=$7::jsonb,row_version=row_version+1,updated_at=clock_timestamp(),updated_by=iam.authenticated_actor() WHERE `+recordWhere+` AND id=$6 AND row_version=$8 AND (`+pred+`)`, b.args...)
 		if err == nil {
 			n, _ := result.RowsAffected()
 			if n != 1 {
@@ -242,7 +300,19 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 	if err != nil {
 		return Record{}, err
 	}
-	r, err := current(ctx, q, s, a, e, c.ID)
+	// Reference projections share the same transaction and tenant-inclusive FKs.
+	if _, err = q.ExecContext(ctx, "DELETE FROM runtime.record_links WHERE "+recordWhere+" AND id=$6", append(base(s, a, entity), c.ID)...); err != nil {
+		return Record{}, err
+	}
+	for _, f := range e.Fields {
+		if f.Type == "reference" && normalized[f.ID] != nil {
+			args := append(base(s, a, entity), c.ID, f.ID, f.ReferenceTo, normalized[f.ID])
+			if _, err = q.ExecContext(ctx, "INSERT INTO runtime.record_links(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,field_id,target_entity,target_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", args...); err != nil {
+				return Record{}, err
+			}
+		}
+	}
+	r, err := current(ctx, q, s, a, e, c.ID, resolve...)
 	if err != nil {
 		return Record{}, err
 	}

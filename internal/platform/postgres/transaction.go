@@ -38,7 +38,7 @@ func (e executor) QueryRowContext(ctx context.Context, q string, args ...any) *s
 
 const clearContext = `SELECT pg_catalog.set_config('app.auth_issuer','',false),
  pg_catalog.set_config('app.auth_subject','',false),pg_catalog.set_config('app.actor_id','',false),
- pg_catalog.set_config('app.tenant_id','',false)`
+ pg_catalog.set_config('app.tenant_id','',false),pg_catalog.set_config('app.job_id','',false)`
 
 // WithRuntime leases one connection, checks THAT connection's effective role,
 // resets persistent identity context, and owns a bounded transaction. The caller

@@ -14,7 +14,7 @@ infra-up: env
 	$(COMPOSE) up -d --wait --wait-timeout 90
 infra-down:
 	$(COMPOSE) down
-migrate:
+migrate: roles-init
 	node scripts/with-env.mjs $(GO) run ./cmd/migrate up
 migration-status:
 	node scripts/with-env.mjs $(GO) run ./cmd/migrate status
@@ -26,6 +26,7 @@ worker:
 	node scripts/with-env.mjs $(GO) run ./cmd/worker
 test-unit:
 	$(GO) test -race $(GO_PACKAGES)
+	node --test scripts/*.test.mjs
 	$(NPM) test
 test-integration:
 	node scripts/with-env.mjs $(GO) test -race -tags=integration -count=1 ./tests/integration
@@ -42,6 +43,7 @@ build:
 	$(GO) build -o bin/worker ./cmd/worker
 	$(GO) build -o bin/migrate ./cmd/migrate
 	$(GO) build -o bin/iam ./cmd/iam
+	$(GO) build -o bin/release-check ./cmd/release-check
 	$(NPM) run build
 fmt:
 	find cmd internal db contracts tests -name '*.go' -type f -exec "$$($(GO) env GOROOT)/bin/gofmt" -w {} +
@@ -53,3 +55,12 @@ browser-install:
 	node scripts/browser-install.mjs
 test-e2e:
 	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.local/cache/ms-playwright $(NPM) run test:e2e
+
+.PHONY: roles-init
+roles-init:
+	node scripts/m6r-env.mjs
+	node scripts/with-env.mjs node scripts/m6r-roles.mjs
+
+.PHONY: release-check
+release-check:
+	node scripts/with-env.mjs $(GO) run ./cmd/release-check

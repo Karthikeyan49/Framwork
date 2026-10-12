@@ -94,8 +94,8 @@ func TestFoundationDependenciesAndMigration(t *testing.T) {
 		t.Fatalf("migration not repeatable: count=%d", len(second))
 	}
 	var count int
-	if err := migrationDB.QueryRowContext(ctx, `SELECT count(*) FROM pg_namespace WHERE nspname IN ('iam','control','runtime','audit') AND nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)`).Scan(&count); err != nil || count != 4 {
-		t.Fatalf("migration role does not own four schemas: count=%d", count)
+	if err := migrationDB.QueryRowContext(ctx, `SELECT count(*) FROM pg_namespace WHERE nspname IN ('iam','control','runtime','audit') AND nspowner=(SELECT oid FROM pg_roles WHERE rolname='framework_schema_owner' AND NOT rolcanlogin)`).Scan(&count); err != nil || count != 4 {
+		t.Fatalf("NOLOGIN schema owner does not own four schemas: count=%d", count)
 	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE public.m0_privilege_probe (id integer)`); err == nil {
 		_, _ = migrationDB.ExecContext(ctx, `DROP TABLE public.m0_privilege_probe`)
