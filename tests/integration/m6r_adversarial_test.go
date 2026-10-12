@@ -141,18 +141,9 @@ func TestIndependentM6RWorkerRoutingAndPool(t *testing.T) {
 		t.Fatal("dispatcher unavailable")
 	}
 	defer dispatcher.Close()
-	tickets, e := jobs.Routes(ctx, dispatcher)
-	if e != nil {
-		t.Fatal("dispatcher routes unavailable")
-	}
-	var ticket jobs.Ticket
-	for _, x := range tickets {
-		if x.JobID() == job {
-			ticket = x
-		}
-	}
-	if ticket.JobID() == "" {
-		t.Fatal("own test route outside routing batch")
+	ticket, e := jobs.FindRoute(ctx, dispatcher, f.tenantA, job)
+	if e != nil || ticket.JobID() != job {
+		t.Fatal("exact dispatcher route unavailable")
 	}
 	if e = postgres.WithRuntime(ctx, dispatcher, func(ctx context.Context, q postgres.Executor) error {
 		var n int

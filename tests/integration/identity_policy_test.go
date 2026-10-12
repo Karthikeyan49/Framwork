@@ -589,7 +589,7 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 		t.Fatal("fresh migration provider failed")
 	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 17 {
+	if err != nil || len(results) != 19 {
 		t.Fatal("fresh migration chain failed")
 	}
 	results, err = provider.Up(ctx)

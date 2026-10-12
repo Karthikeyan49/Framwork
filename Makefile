@@ -9,6 +9,7 @@ setup:
 	./scripts/bootstrap.sh
 env:
 	node scripts/env.mjs
+	node scripts/m8-env.mjs
 	node scripts/with-env.mjs node scripts/dev-identity.mjs
 infra-up: env
 	$(COMPOSE) up -d --wait --wait-timeout 90
@@ -24,6 +25,8 @@ api:
 	node scripts/with-env.mjs $(GO) run ./cmd/api
 worker:
 	node scripts/with-env.mjs $(GO) run ./cmd/worker
+dispatcher:
+	node scripts/with-env.mjs $(GO) run ./cmd/dispatcher
 test-unit:
 	$(GO) test -race $(GO_PACKAGES)
 	node --test scripts/*.test.mjs
@@ -41,6 +44,8 @@ build:
 	mkdir -p bin
 	$(GO) build -o bin/api ./cmd/api
 	$(GO) build -o bin/worker ./cmd/worker
+	$(GO) build -o bin/dispatcher ./cmd/dispatcher
+	$(GO) build -o bin/event-replay ./cmd/event-replay
 	$(GO) build -o bin/migrate ./cmd/migrate
 	$(GO) build -o bin/iam ./cmd/iam
 	$(GO) build -o bin/release-check ./cmd/release-check
@@ -71,3 +76,7 @@ test-rules-fuzz:
 	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzRuleCompile$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
 	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzRuleRestoreAndInputs$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
 	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzFixedDecimalMoney$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
+
+.PHONY: test-events-fuzz
+test-events-fuzz:
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzPointer$$' -fuzztime=10s -parallel=2 ./internal/events

@@ -191,7 +191,7 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 				if writer == nil {
 					writer = events.Postgres{}
 				}
-				if e = events.Append(ctx, q, a.Audit, writer, entry, events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version}); e != nil {
+				if e = events.Append(ctx, q, a.Audit, writer, entry, events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version, RequestID: entry.RequestID}); e != nil {
 					return reply{}, e
 				}
 			}

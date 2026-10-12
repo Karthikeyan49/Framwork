@@ -200,6 +200,7 @@ func TestWorkerLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.OTelEndpoint = ""
+	c.EventRedisURL = os.Getenv("EVENT_RECEIVER_REDIS_URL")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx, "framework-worker", c, slog.New(slog.NewJSONHandler(io.Discard, nil))) }()

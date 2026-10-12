@@ -336,9 +336,9 @@ traces/video/screenshots are off. Generated dependencies/builds/artifacts stay i
 Decisions: [ADR017](docs/adr/017-m4-compiler-ir.md),
 [ADR018](docs/adr/018-m5-preview-data-runtime.md),
 [ADR019](docs/adr/019-m6-compiled-ui-renderer.md). Completion and independent review
-reports are under docs/M4*, M5*, M6*. Workflows/tools/outbox/sandbox/promotion,
+reports are under docs/M4*, M5*, M6*. Workflows/tools/sandbox/promotion,
 released schema migrations, AI builder and full scale/security certification remain
-their later milestones. Do not start M8 without a new user task.
+their later milestones. Do not start M9 without a new user task.
 
 ## V3 migration and recovery
 
@@ -352,7 +352,7 @@ M11 sandbox, M12 candidate builder and M13 approval/promotion services.
 For an existing database, stop all legacy API/worker writers before migration.
 Take and test an encrypted operational backup plus schema/row checkpoints. Keep
 existing credentials and volumes. Local development uses make infra-up and make
-migrate, which provisions development-only dedicated roles before applying 9–17.
+migrate, which provisions development-only dedicated roles before applying 9–19.
 No Down or destructive reset is exposed. Legacy tables and a read-only adapter remain.
 The final barrier waits for legacy transactions, reconciles late inserts and aborts
 on divergence rather than overwriting data. The report contains the rehearsal and
@@ -397,3 +397,40 @@ GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzRuleCompile$' -fuzztime=
 GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzRuleRestoreAndInputs$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
 GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzFixedDecimalMoney$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
 ```
+
+## M8 — Transactional Outbox + Inbox
+
+Read [ADR022](docs/adr/022-m8-transactional-delivery.md),
+[delivery and recovery semantics](internal/events/README.md), and
+[M8 verification](docs/verification/M8_IMPLEMENTATION_REPORT.md).
+`make dev` now runs API, dispatcher, worker and web with separate credential
+bindings. `make env` preserves secrets and generates local broker ACL identities;
+`make infra-up migrate build` prepares migrations18/19 and binaries. Existing
+PostgreSQL volumes, data and all historical intents remain intact.
+
+`EVENTS_ENABLED=true` is development/test only. New preview CRUD atomically freezes
+an immutable event; the dispatcher publishes its reference, and a receipt-only
+worker commits policy/audit/inbox completion. Redis can restart without losing
+authoritative events. Production activation, workflows and external tools remain
+later milestones; production preview delivery is rejected. Set EVENTS_ENABLED=false
+to pause delivery without removing event or inbox history. Manual process commands
+are `make api`, `make dispatcher`, `make worker`; `make test` runs M8 failure tests
+alongside all existing regressions. M8 tests own disposable databases and restart
+the local Redis cache; run them against development/test infrastructure only.
+
+For operator-reviewed recovery, inspect delivery generation/attempts and fix the
+underlying membership/configuration problem first. Then use separate operator
+credentials (never mount them into API/worker/dispatcher):
+
+```sh
+node scripts/with-env.mjs bin/event-replay \
+  -tenant <tenant-uuid> -event <event-uuid> -generation <expected-generation> \
+  -operator <review-reference> -reason <reviewed-reason>
+```
+
+Replay retains event bytes/identity, attempts and inbox. Completed events remain
+completed; stale generations, active leases and legacy paused intents are refused.
+A dead predecessor blocks its aggregate successors until recovery. Old binaries
+may be used only with delivery disabled and additive schemas retained; database
+rollback never deletes event/inbox evidence. Apply reviewed forward fixes or restore
+a verified backup into a separate recovery environment. See the report for limits.

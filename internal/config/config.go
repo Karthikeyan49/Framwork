@@ -14,23 +14,48 @@ import (
 )
 
 type Config struct {
-	Environment       string
-	HTTPAddr          string
-	DatabaseURL       string
-	WorkerDatabaseURL string
-	RedisURL          string
-	CORSOrigins       []string
-	OTelEndpoint      string
-	LogLevel          slog.Level
-	DependencyTimeout time.Duration
-	ShutdownTimeout   time.Duration
-	AuthIssuer        string
-	AuthAudience      string
-	AuthJWKSFile      string
+	Environment           string
+	HTTPAddr              string
+	DatabaseURL           string
+	WorkerDatabaseURL     string
+	DispatcherDatabaseURL string
+	EventsEnabled         bool
+	EventRedisURL         string
+	RedisURL              string
+	CORSOrigins           []string
+	OTelEndpoint          string
+	LogLevel              slog.Level
+	DependencyTimeout     time.Duration
+	ShutdownTimeout       time.Duration
+	AuthIssuer            string
+	AuthAudience          string
+	AuthJWKSFile          string
 }
 
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), WorkerDatabaseURL: getenv("WORKER_DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
+	c.DispatcherDatabaseURL = getenv("DISPATCHER_DATABASE_URL")
+	c.EventRedisURL = getenv("EVENT_REDIS_URL")
+	switch getenv("EVENTS_ENABLED") {
+	case "", "false":
+	case "true":
+		c.EventsEnabled = true
+	default:
+		return c, fmt.Errorf("EVENTS_ENABLED must be true or false")
+	}
+	if c.EventsEnabled && c.Environment == "production" {
+		return c, fmt.Errorf("M8 preview event delivery requires development/test; production consumers require release activation")
+	}
+	if c.EventRedisURL != "" {
+		options, err := redis.ParseURL(c.EventRedisURL)
+		u, urlErr := url.Parse(c.EventRedisURL)
+		if err != nil || urlErr != nil || u.Hostname() == "" || u.User == nil || u.RawQuery != "" || u.Fragment != "" || options.Password == "" || (options.Username != "event_dispatcher" && options.Username != "event_worker") || (u.Scheme != "redis" && u.Scheme != "rediss") {
+			return c, fmt.Errorf("EVENT_REDIS_URL requires a dedicated unambiguous sender/receiver binding")
+		}
+		if c.Environment == "production" && (options.TLSConfig == nil || options.TLSConfig.InsecureSkipVerify) {
+			return c, fmt.Errorf("EVENT_REDIS_URL requires verified TLS in production")
+		}
+	}
 	switch c.Environment {
 	case "development", "test", "production":
 	default:
@@ -130,6 +155,22 @@ func value(getenv func(string) string, key, fallback string) string {
 		return s
 	}
 	return fallback
+}
+
+// EventBinding verifies a process-specific sender/receiver identity before it
+// can consume delivery attempts. A successful Redis PING is not that proof.
+func (c Config) EventBinding(service string) error {
+	u, err := url.Parse(c.EventRedisURL)
+	expected := "event_worker"
+	if service == "framework-dispatcher" {
+		expected = "event_dispatcher"
+	} else if service != "framework-worker" {
+		return fmt.Errorf("unknown event process")
+	}
+	if err != nil || u.User == nil || u.User.Username() != expected {
+		return fmt.Errorf("dedicated event process binding required")
+	}
+	return nil
 }
 func contains(xs []string, s string) bool {
 	for _, x := range xs {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/config"
+	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/observability"
@@ -43,28 +44,73 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		}
 		databaseURL = c.WorkerDatabaseURL
 	}
+	if service == "framework-dispatcher" {
+		if c.DispatcherDatabaseURL == "" {
+			return errors.New("dedicated dispatcher database credential required")
+		}
+		databaseURL = c.DispatcherDatabaseURL
+	}
 	db, err := postgres.Open(databaseURL)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	if service == "framework-worker" || service == "framework-dispatcher" {
+		role := "framework_worker"
+		if service == "framework-dispatcher" {
+			role = "framework_dispatcher"
+		}
+		probe, cancel := context.WithTimeout(ctx, c.DependencyTimeout)
+		err := jobs.CheckRole(probe, db, role)
+		cancel()
+		if err != nil {
+			return errors.New("event role unavailable")
+		}
+		if !c.EventsEnabled {
+			logger.Info("event delivery disabled", "service", service)
+			<-ctx.Done()
+			return nil
+		}
+		if c.Environment == "production" || c.EventRedisURL == "" {
+			return errors.New("preview event delivery configuration unavailable")
+		}
+		if err := c.EventBinding(service); err != nil {
+			return err
+		}
+		probe, cancel = context.WithTimeout(ctx, c.DependencyTimeout)
+		err = events.Ready(probe, db, role)
+		if err == nil && service == "framework-worker" {
+			err = (audit.Postgres{}).Ready(probe, db)
+		}
+		cancel()
+		if err != nil {
+			return errors.New("event storage contract unavailable")
+		}
+		broker, err := events.OpenRedis(c.EventRedisURL)
+		if err != nil {
+			return err
+		}
+		defer broker.Close()
+		probe, cancel = context.WithTimeout(ctx, c.DependencyTimeout)
+		err = broker.Ping(probe)
+		cancel()
+		if err != nil {
+			return errors.New("event transport unavailable")
+		}
+		logger.Info("event delivery started", "service", service, "mode", "preview")
+		if service == "framework-dispatcher" {
+			events.RunDispatcher(ctx, events.Dispatcher{DB: db, Transport: broker}, logger)
+		} else {
+			events.RunConsumer(ctx, events.Consumer{DB: db, Policy: policy.Native{}, Audit: audit.Postgres{}}, broker, logger)
+		}
+		logger.Info("event delivery stopped", "service", service)
+		return nil
+	}
 	redis, err := cache.Open(c.RedisURL)
 	if err != nil {
 		return err
 	}
 	defer redis.Close()
-	if service == "framework-worker" {
-		probe, cancel := context.WithTimeout(ctx, c.DependencyTimeout)
-		defer cancel()
-		if jobs.CheckRole(probe, db, "framework_worker") != nil || redis.Ping(probe) != nil {
-			return errors.New("worker dependencies unavailable")
-		}
-		logger.Info("worker started", "service", service, "environment", c.Environment)
-		// Intentionally idle in M0. No workflows, queue, business state or jobs.
-		<-ctx.Done()
-		logger.Info("worker stopped")
-		return nil
-	}
 	keyFile, err := os.Open(c.AuthJWKSFile)
 	if err != nil {
 		return errors.New("authentication key set unavailable")
@@ -86,7 +132,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	identityProbe := func(ctx context.Context) error {
 		return (identity.Store{}).Ready(ctx, db)
 	}
-	handler := httpserver.Handler(httpserver.Options{Logger: logger, Origins: c.CORSOrigins, Register: accessAPI.Register, AllowPOST: accessAPI.AcceptsPOST, ProbeTimeout: c.DependencyTimeout, Probes: map[string]httpserver.Probe{"postgres": func(ctx context.Context) error { return postgres.Ping(ctx, db) }, "redis": redis.Ping, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
+	handler := httpserver.Handler(httpserver.Options{Logger: logger, Origins: c.CORSOrigins, Register: accessAPI.Register, AllowPOST: accessAPI.AcceptsPOST, ProbeTimeout: c.DependencyTimeout, Probes: map[string]httpserver.Probe{"postgres": func(ctx context.Context) error { return postgres.Ping(ctx, db) }, "redis": redis.Ping, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
 	server := httpserver.New(c.HTTPAddr, handler)
 	listener, err := net.Listen("tcp", c.HTTPAddr)
 	if err != nil {

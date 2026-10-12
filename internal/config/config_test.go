@@ -25,6 +25,11 @@ func TestConfiguration(t *testing.T) {
 		{"bad address", map[string]string{"HTTP_ADDR": "invalid"}, true},
 		{"invalid log level", map[string]string{"LOG_LEVEL": "verbose"}, true},
 		{"invalid telemetry", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://user:secret@collector"}, true},
+		{"bad event flag", map[string]string{"EVENTS_ENABLED": "maybe"}, true},
+		{"production preview events", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "EVENTS_ENABLED": "true"}, true},
+		{"dedicated broker", map[string]string{"EVENT_REDIS_URL": "redis://event_worker:private@localhost:6379/0"}, false},
+		{"ambient broker admin", map[string]string{"EVENT_REDIS_URL": "redis://:private@localhost:6379/0"}, true},
+		{"broker credential alias", map[string]string{"EVENT_REDIS_URL": "redis://event_worker:private@localhost:6379/0?password=override"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

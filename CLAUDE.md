@@ -1,9 +1,9 @@
-# V3 authority and M7 Rule Engine V2
+# V3 authority and M8 Transactional Outbox + Inbox
 
 Read all docs/v3 Markdown and docs/migration/M0_M6_AUDIT_REPORT.md. V3 is authoritative
 where it supersedes V2; retained V2 specs supplement unchanged modules. M6R passed
-independent review. The user has authorized M7 only; do not begin M8 without a new
-task. Preserve existing data, migrations and safe code. Read ADR021 and the M7 reports.
+independent review. The user has authorized M8 only; do not begin M9 without a new
+task. Preserve existing data, migrations and safe code. Read ADR021/022 and the M7/M8 reports.
 No tenant DDL; immutable stored production IR; exact hash approval; SQL DataScope;
 separate worker/dispatcher roles; transactional audit/outbox; tool-specific guarantees.
 
@@ -12,7 +12,7 @@ separate worker/dispatcher roles; transactional audit/outbox; tool-specific guar
 Read and obey AGENTS.md, README.md, docs/00_MASTER_PLAYBOOK.md, the architectural
 source documents, relevant milestone verification, and docs/adr before coding.
 
-Current scope is M7 Rule Engine V2 over retained M0–M6/M6R. Do not implement M8 or
+Current scope is M8 Transactional Outbox + Inbox over retained M0–M7/M6R. Do not implement M9 or
 later business behavior without a new user task. Implement the smallest coherent
 milestone, run the documented commands, record actual results and recovery notes,
 then request independent review per docs/agents/82_TWO_AGENT_PROTOCOL.md. Review
@@ -40,3 +40,10 @@ Read ADR021 for opt-in schema/IR1.1 and DSL2 plans, explicit fixed-decimal/calen
 semantics, pinned vendored zoneinfo, evaluation budgets and scoped audited preview.
 Restore validates persisted plans without compiling source; legacy1.0 stays non-executable
 by the DSL2 engine. Pure rule values never replace authorization or execute effects.
+
+Read ADR022/internal/events/README.md for immutable envelope hashes, PG-owned
+fenced delivery, Redis reference transport, exact routed worker tickets, atomic
+inbox/effect/audit completion, ACK after confirmed commit and durable dead-letter/
+reviewed replay. Preserve inbox and event identity; never infer universal external
+exactly-once. New local handlers must use explicit business/policy/DataScope ports.
+Receipt-only preview composition does not authorize production or M9 behavior.

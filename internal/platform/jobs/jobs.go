@@ -15,6 +15,19 @@ var ErrJob = errors.New("worker job denied")
 
 type Ticket struct{ job, tenant, release string }
 
+// FindRoute avoids assuming that a bounded routing page contains a particular
+// job. It remains dispatcher-only and returns no business payload.
+func FindRoute(ctx context.Context, db *sql.DB, tenantID, id string) (Ticket, error) {
+	if CheckRole(ctx, db, "framework_dispatcher") != nil {
+		return Ticket{}, ErrJob
+	}
+	var t Ticket
+	err := postgres.WithRuntime(ctx, db, func(ctx context.Context, q postgres.Executor) error {
+		return q.QueryRowContext(ctx, `SELECT id::text,tenant_id::text,release_hash FROM control.job_routes WHERE tenant_id=$1::uuid AND id=$2::uuid`, tenantID, id).Scan(&t.job, &t.tenant, &t.release)
+	})
+	return t, err
+}
+
 func (t Ticket) JobID() string       { return t.job }
 func (t Ticket) ReleaseHash() string { return t.release }
 func CheckRole(ctx context.Context, db *sql.DB, expected string) error {
