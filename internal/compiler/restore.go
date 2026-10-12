@@ -42,12 +42,15 @@ func Restore(raw []byte, expectedHash string, supportedIR []string) (Program, er
 	if validateStoredEntities(ir) != nil {
 		return Program{}, errors.New("stored runtime model disagrees with application")
 	}
+	if validateStoredRules(ir) != nil {
+		return Program{}, errors.New("stored rule model disagrees with application")
+	}
 	return Program{raw: append([]byte(nil), raw...), hash: expectedHash}, nil
 }
 
 // Verify the versioned physical-layout derivation, not today's compiler pipeline.
 func validateStoredEntities(ir IR) error {
-	if ir.IRVersion != IRVersion || ir.SchemaSnapshot != SchemaSnapshot || ir.Migration.Class != "NONE" || len(ir.Migration.Steps) != 0 {
+	if !contains(SupportedIRVersions(), ir.IRVersion) || ir.SchemaSnapshot != SchemaSnapshot || ir.Migration.Class != "NONE" || len(ir.Migration.Steps) != 0 {
 		return errors.New("unsupported stored layout")
 	}
 	v, e := metadata.NewValidator()

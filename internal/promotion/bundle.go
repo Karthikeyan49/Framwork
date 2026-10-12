@@ -80,7 +80,7 @@ func Build(source metadata.Source, program compiler.Program, b Bundle) (Candidat
 	b.IRHash = program.Hash()
 	b.CompilerVersion = ir.CompilerVersion
 	b.IRVersion = ir.IRVersion
-	if validateBundle(b, []string{compiler.IRVersion}) != nil {
+	if validateBundle(b, compiler.SupportedIRVersions()) != nil {
 		return Candidate{}, ErrGate
 	}
 	raw, e := json.Marshal(b)

@@ -5,7 +5,8 @@ metadata-driven enterprise runtime. **M0–M6:** local infrastructure, telemetry
 cryptographic identity, trusted tenant membership, central policy and durable
 audit, bounded transactions, reusable tenant RLS and a typed draft metadata registry.
 Canonical compiler IR, bounded typed preview CRUD/query execution and dynamic React
-forms/tables/details are implemented. Production activation and AI remain later work.
+forms/tables/details are implemented. M6R adds V3 storage/authorization/release
+foundations; M7 adds pure typed Rule Engine V2. Production activation and AI remain later work.
 
 AI will propose structured drafts; the compiler, sandbox, verification, approval
 and promotion pipeline will produce immutable versions for deterministic runtime
@@ -335,9 +336,9 @@ traces/video/screenshots are off. Generated dependencies/builds/artifacts stay i
 Decisions: [ADR017](docs/adr/017-m4-compiler-ir.md),
 [ADR018](docs/adr/018-m5-preview-data-runtime.md),
 [ADR019](docs/adr/019-m6-compiled-ui-renderer.md). Completion and independent review
-reports are under docs/M4*, M5*, M6*. Rules/workflows/tools/outbox/sandbox/promotion,
+reports are under docs/M4*, M5*, M6*. Workflows/tools/outbox/sandbox/promotion,
 released schema migrations, AI builder and full scale/security certification remain
-their later milestones. Do not start M7 without a new user task.
+their later milestones. Do not start M8 without a new user task.
 
 ## V3 migration and recovery
 
@@ -345,13 +346,13 @@ M6R adds generic records, SQL DataScope, least-privilege worker roles, immutable
 release/approval contracts, transactional audit/outbox and ERP value contracts.
 See [the implementation report](docs/migration/M6R_IMPLEMENTATION_REPORT.md).
 There are no public production activation endpoints or AI execution capabilities.
-M7 has not begun. Use the V3 roadmap; M8 is outbox/inbox, M9 workflows, M10 tools,
+Use the V3 roadmap; M8 is outbox/inbox, M9 workflows, M10 tools,
 M11 sandbox, M12 candidate builder and M13 approval/promotion services.
 
 For an existing database, stop all legacy API/worker writers before migration.
 Take and test an encrypted operational backup plus schema/row checkpoints. Keep
 existing credentials and volumes. Local development uses make infra-up and make
-migrate, which provisions development-only dedicated roles before applying 9–16.
+migrate, which provisions development-only dedicated roles before applying 9–17.
 No Down or destructive reset is exposed. Legacy tables and a read-only adapter remain.
 The final barrier waits for legacy transactions, reconciles late inserts and aborts
 on divergence rather than overwriting data. The report contains the rehearsal and
@@ -368,3 +369,31 @@ and external-effect assessment. It cannot undo destructive schema changes or rem
 actions. Code rollback must retain V3 storage/role compatibility; returning an old
 binary to the legacy writable adapter is unsafe. Restore into a separate verified
 recovery environment or apply a reviewed forward reconciliation; retain both copies.
+
+## M7 — Rule Engine V2
+
+Read [ADR021](docs/adr/021-m7-rule-engine-v2.md),
+[rule semantics](internal/runtime/rules/README.md), the
+[implementation report](docs/verification/M7_IMPLEMENTATION_REPORT.md) and
+[independent review](docs/verification/M7_INDEPENDENT_REVIEW.md).
+Opt-in metadata schema 1.1.0 requires DSL 2.0.0 and emits typed rule plans in IR1.1.0.
+Existing schema/IR1.0.0 remains supported with its original hashes; it contains no
+executable DSL2 plans. Use [the example](contracts/examples/contacts-rules-v2.json)
+for exact Money thresholds, minor-unit rounding and a pinned business calendar.
+
+With migration17 applied, development/test preview exposes
+`POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/rules/{rule}/evaluate`
+with `{"record_id":"<UUID>"}`. It loads the record through existing action/field/
+DataScope/RLS checks, enforces record-specific rule authorization, computes only a
+value and commits audit before returning it. Requests cannot supply expressions,
+values, tenant context, calendar overrides or tools. No production route is exposed.
+Money/decimal JSON outputs use exact strings; no automatic business action follows.
+
+`make test` includes deterministic/property tests and fuzz seeds. For timed fuzzing:
+
+```sh
+make test-rules-fuzz
+GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzRuleCompile$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
+GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzRuleRestoreAndInputs$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
+GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzFixedDecimalMoney$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
+```

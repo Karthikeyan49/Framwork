@@ -75,12 +75,14 @@ func (z TimeZone) Location() (*time.Location, error) {
 }
 
 type BusinessCalendar struct {
-	ID, Version             string
-	Zone                    TimeZone
-	WorkingDays             []time.Weekday
-	Holidays                []string
-	OpenMinute, CloseMinute int
-	FiscalStartMonth        time.Month
+	ID               string         `json:"id"`
+	Version          string         `json:"version"`
+	Zone             TimeZone       `json:"zone"`
+	WorkingDays      []time.Weekday `json:"working_days"`
+	Holidays         []string       `json:"holidays"`
+	OpenMinute       int            `json:"open_minute"`
+	CloseMinute      int            `json:"close_minute"`
+	FiscalStartMonth time.Month     `json:"fiscal_start_month"`
 }
 
 func (c BusinessCalendar) Validate() error {

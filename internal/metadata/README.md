@@ -18,3 +18,8 @@ forced RLS, immutable triggers and deferred head integrity protect storage.
 Read [ADR-016](../../docs/adr/016-m3-metadata-source-registry.md) for quotas,
 concurrency, security boundaries and recovery. No UI renderer, rule/workflow/tool
 execution, sandbox, promotion or AI behavior is implemented here.
+
+M7 additionally admits explicit schema1.1.0 through its own embedded closed schema.
+Its rules require DSL2.0.0 and may contain pinned calendar snapshots and typed
+literals. Schema1.0.0 is retained verbatim. Migration17 derives schema_version from
+the inserted envelope without extending runtime column grants or mutating history.

@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
 	"sort"
 )
 
 // MatchesStoredSource checks the V1 normalization contract, without compiling
 // again. A future IR major version needs its own normalization implementation.
 func MatchesStoredSource(p Program, source metadata.Source) bool {
-	if !p.Valid() || p.IR().IRVersion != IRVersion {
+	if !p.Valid() || !contains(SupportedIRVersions(), p.IR().IRVersion) {
 		return false
 	}
 	var doc metadata.Document
@@ -36,6 +37,15 @@ func MatchesStoredSource(p Program, source metadata.Source) bool {
 			sort.Strings(d.Tool.Permissions)
 			normalizeValueSchema(&d.Tool.InputSchema)
 			normalizeValueSchema(&d.Tool.OutputSchema)
+		}
+		if d.Rule != nil && d.Rule.DSLVersion == rules.Version {
+			entity, _ := p.Entity(d.Rule.EntityRef)
+			def := ruleDefinition(d.ID, *d.Rule, entity)
+			_, cs, e := rules.CanonicalInputs(def.Fields, def.Calendars)
+			if e != nil {
+				return false
+			}
+			d.Rule.Calendars = cs
 		}
 	}
 	raw, _ := json.Marshal(doc)

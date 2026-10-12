@@ -25,7 +25,7 @@ var metadataPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/metadata/app\.
 var metadataAppID = regexp.MustCompile(`^app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 
 func (a API) AcceptsPOST(path string) bool {
-	return a.Registry != nil && (metadataPOST.MatchString(path) || a.PreviewEnabled && previewPOST.MatchString(path))
+	return a.Registry != nil && (metadataPOST.MatchString(path) || a.PreviewEnabled && (previewPOST.MatchString(path) || rulesPOST.MatchString(path)))
 }
 func (a API) metadata(ctx context.Context, q postgres.Executor, r *http.Request, scope tenant.Access, evidence *audit.Entry) (reply, error) {
 	if a.Registry == nil {
@@ -110,7 +110,13 @@ func (a API) metadata(ctx context.Context, q postgres.Executor, r *http.Request,
 				return reply{}, err
 			}
 			program, diagnostics := compiler.Compile(source, compiler.PlatformCatalog())
-			trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", compiler.Version))
+			compilerVersion := compiler.Version
+			if program.Valid() {
+				compilerVersion = program.IR().CompilerVersion
+			} else if version.SchemaVersion == metadata.RuleSchemaVersion {
+				compilerVersion = compiler.RuleCompilerVersion
+			}
+			trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", compilerVersion))
 			status := 200
 			if !program.Valid() {
 				status = 422

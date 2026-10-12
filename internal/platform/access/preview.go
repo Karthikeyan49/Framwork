@@ -27,6 +27,7 @@ import (
 )
 
 var previewPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/versions/[0-9]+/entities/entity\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(query|commands)$`)
+var rulesPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/versions/[0-9]+/rules/rule\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/evaluate$`)
 
 func readDataCommand(r *http.Request, dest any) error {
 	typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -85,7 +86,7 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	}
 	metadataEvidence(ctx, evidence, version)
 	evidence.State.IRHash = program.Hash()
-	trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", compiler.Version), attribute.String("ir_hash", program.Hash()), attribute.String("data_mode", "preview"))
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", program.IR().CompilerVersion), attribute.String("ir_hash", program.Hash()), attribute.String("data_mode", "preview"))
 	guard := func(ctx context.Context, action string, resource data.Resource) error {
 		decision := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, action, policy.Resource{TenantID: access.TenantID(), Type: strings.Split(action, ".")[1], OwnerID: resource.OwnerID, AppID: app, EntityID: resource.EntityID, FieldID: resource.FieldID, RecordID: resource.RecordID}, policy.Context{RequestID: evidence.RequestID, TraceID: evidence.TraceID}))
 		event := *evidence
@@ -153,6 +154,9 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 		}
 		scopes[key] = scope
 		return scope, nil
+	}
+	if r.PathValue("rule") != "" {
+		return a.evaluateRule(ctx, q, r, u, access, evidence, program, scope, guard, resolve)
 	}
 	evidence.State.EntityID = entity
 	if len(entity) > 160 {

@@ -1,9 +1,9 @@
-# V3 authority and current remediation
+# V3 authority and M7 Rule Engine V2
 
 Read all docs/v3 Markdown and docs/migration/M0_M6_AUDIT_REPORT.md. V3 is authoritative
-where it supersedes V2; retained V2 specs supplement unchanged modules. M6R only is
-authorized now; M6 had confirmed open issues. Never begin M7 until M6R independent
-review has no BLOCKER/HIGH findings. Preserve existing data, migrations and safe code.
+where it supersedes V2; retained V2 specs supplement unchanged modules. M6R passed
+independent review. The user has authorized M7 only; do not begin M8 without a new
+task. Preserve existing data, migrations and safe code. Read ADR021 and the M7 reports.
 No tenant DDL; immutable stored production IR; exact hash approval; SQL DataScope;
 separate worker/dispatcher roles; transactional audit/outbox; tool-specific guarantees.
 
@@ -12,7 +12,7 @@ separate worker/dispatcher roles; transactional audit/outbox; tool-specific guar
 Read and obey AGENTS.md, README.md, docs/00_MASTER_PLAYBOOK.md, the architectural
 source documents, relevant milestone verification, and docs/adr before coding.
 
-Current scope is M6R remediation over retained M0–M6. Do not implement M7 rule execution or
+Current scope is M7 Rule Engine V2 over retained M0–M6/M6R. Do not implement M8 or
 later business behavior without a new user task. Implement the smallest coherent
 milestone, run the documented commands, record actual results and recovery notes,
 then request independent review per docs/agents/82_TWO_AGENT_PROTOCOL.md. Review
@@ -35,3 +35,8 @@ mandatory policy/audit and forward-only recovery. Schema-valid is not executable
 Read ADR017–020 for compiler/preview-data/dynamic-UI contracts. Raw source never
 executes; production preview routes are absent. Enforce action permission plus SQL DataScope before reads and mutations; never
 fetch unrestricted rows to filter policy in memory, automatically retry mutations, or evaluate metadata code.
+
+Read ADR021 for opt-in schema/IR1.1 and DSL2 plans, explicit fixed-decimal/calendar
+semantics, pinned vendored zoneinfo, evaluation budgets and scoped audited preview.
+Restore validates persisted plans without compiling source; legacy1.0 stays non-executable
+by the DSL2 engine. Pure rule values never replace authorization or execute effects.

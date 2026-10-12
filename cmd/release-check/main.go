@@ -24,7 +24,7 @@ func run() error {
 	defer db.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return promotion.CheckActiveCompatibility(ctx, db, []string{compiler.IRVersion})
+	return promotion.CheckActiveCompatibility(ctx, db, compiler.SupportedIRVersions())
 }
 func main() {
 	if run() != nil {

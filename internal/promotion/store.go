@@ -52,7 +52,7 @@ func (st Store) Stage(ctx context.Context, q postgres.Executor, a tenant.Access,
 	return st.evidence(ctx, q, a, c, "release.staged")
 }
 func bApplication(b Bundle) string {
-	p, e := compiler.Restore(b.IR, b.IRHash, []string{compiler.IRVersion})
+	p, e := compiler.Restore(b.IR, b.IRHash, compiler.SupportedIRVersions())
 	if e != nil {
 		return ""
 	}

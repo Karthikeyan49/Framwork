@@ -1,9 +1,13 @@
 // Package metadata owns validated authoring definitions and immutable source revisions.
 package metadata
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"github.com/Karthikeyan49/Framwork/internal/erp"
+)
 
 const SchemaVersion = "1.0.0"
+const RuleSchemaVersion = "1.1.0"
 const MaxBytes = 256 << 10
 
 type Document struct {
@@ -57,15 +61,18 @@ type Component struct {
 	Children  []Component `json:"children,omitempty"`
 }
 type Expression struct {
-	Op       string          `json:"op"`
-	Value    json.RawMessage `json:"value,omitempty"`
-	FieldRef string          `json:"field_ref,omitempty"`
-	Args     []Expression    `json:"args,omitempty"`
+	Op        string          `json:"op"`
+	Value     json.RawMessage `json:"value,omitempty"`
+	FieldRef  string          `json:"field_ref,omitempty"`
+	Args      []Expression    `json:"args,omitempty"`
+	ValueType string          `json:"value_type,omitempty"`
 }
 type Rule struct {
-	EntityRef  string     `json:"entity_ref"`
-	ResultType string     `json:"result_type"`
-	Expression Expression `json:"expression"`
+	EntityRef  string                 `json:"entity_ref"`
+	ResultType string                 `json:"result_type"`
+	Expression Expression             `json:"expression"`
+	DSLVersion string                 `json:"dsl_version,omitempty"`
+	Calendars  []erp.BusinessCalendar `json:"calendars,omitempty"`
 }
 type Retry struct {
 	MaxAttempts      int `json:"max_attempts"`

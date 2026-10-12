@@ -11,6 +11,9 @@ import (
 )
 
 type State struct {
+	RuleID           string `json:"rule_id,omitempty"`
+	RuleHash         string `json:"rule_hash,omitempty"`
+	RuleVersion      string `json:"rule_version,omitempty"`
 	ArtifactHash     string `json:"artifact_hash,omitempty"`
 	ScopeHash        string `json:"scope_hash,omitempty"`
 	IRHash           string `json:"ir_hash,omitempty"`
@@ -53,6 +56,9 @@ func (Postgres) Ready(ctx context.Context, db *sql.DB) error {
 }
 
 func (Postgres) Append(ctx context.Context, tx postgres.Executor, e Entry) error {
+	if len(e.State.RuleID) > 160 || len(e.State.RuleHash) > 64 || len(e.State.RuleVersion) > 20 {
+		return errors.New("invalid rule evidence")
+	}
 	if e.Action == "" || len(e.Action) > 80 || len(e.Resource) > 80 || len(e.DecisionID) > 64 || len(e.RequestID) > 64 || len(e.TraceID) > 32 || len(e.PolicyVersion) > 80 {
 		return errors.New("invalid audit evidence")
 	}

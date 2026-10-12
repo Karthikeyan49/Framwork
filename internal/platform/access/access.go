@@ -35,6 +35,7 @@ func (a API) Register(mux *http.ServeMux) {
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/query", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/commands", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/rules/{rule}/evaluate", a.serve)
 	}
 	mux.HandleFunc("GET /v1/session", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/access", a.serve)

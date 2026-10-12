@@ -1,9 +1,9 @@
-# V3 authority and current remediation
+# V3 authority and M7 Rule Engine V2
 
 Read all docs/v3 Markdown and docs/migration/M0_M6_AUDIT_REPORT.md. V3 is authoritative
-where it supersedes V2; retained V2 specs supplement unchanged modules. M6R only is
-authorized now; M6 had confirmed open issues. Never begin M7 until M6R independent
-review has no BLOCKER/HIGH findings. Preserve existing data, migrations and safe code.
+where it supersedes V2; retained V2 specs supplement unchanged modules. M6R passed
+independent review. The user has authorized M7 only; do not begin M8 without a new
+task. Preserve existing data, migrations and safe code. Read ADR021 and the M7 reports.
 No tenant DDL; immutable stored production IR; exact hash approval; SQL DataScope;
 separate worker/dispatcher roles; transactional audit/outbox; tool-specific guarantees.
 
@@ -17,7 +17,7 @@ preserved verbatim under docs; validate it with make docs-verify.
 ## Milestone discipline
 
 M0–M6 are retained and remediated by M6R. Stop after the requested milestone; never
-begin M7 without a new task. Follow docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md. Each milestone
+begin M8 without a new task. Follow docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md. Each milestone
 requires tests, negative checks, recovery notes, an independent review, and human
 approval (docs/agents/82_TWO_AGENT_PROTOCOL.md). Reviewers should inspect and run
 checks independently; avoid concurrent edits to the same files.
@@ -79,8 +79,15 @@ buildkit documents unchanged. Add tests for failure modes, not just happy paths.
   Read ADR018/019 as historical decisions and ADR020 for V3 SQL DataScope, bounds, CAS and audit;
   typed versioned UI registry, aborted/stale request isolation and safe text rendering.
 - M6R includes release/approval, audit/outbox, delivery, sandbox and ERP contracts.
-  Public production services, rule execution, inbox/dispatch, workflow/tool execution,
+  Public production services, inbox/dispatch, workflow/tool execution,
   sandbox orchestration and AI remain later V3 milestones. Tests/plans in IR are
   requirements, not executed business acceptance tests. Read ADR020 and both migration reports.
+- M7 rules consume immutable typed DSL2 plans only. Schema/IR1.1 is opt-in; preserve
+  legacy1.0 bytes/hashes and never execute legacy rules as DSL2 or recompile releases.
+  Expressions have no ambient clock, network, filesystem, DB, policy or tool ports.
+  Money/decimal use integer 10^-18 units with explicit rounding and bounds. Calendars
+  and the vendored timezone archive are hash/version pinned; never read host zoneinfo.
+  Rule results do not authorize actions. Preview evaluation still requires live
+  rule/action/entity/field permissions, SQL DataScope, RLS and committed audit.
 - Browser verification: make browser-install then make test-e2e after make build,
   with local stack running and no API/Vite already occupying owned test ports.

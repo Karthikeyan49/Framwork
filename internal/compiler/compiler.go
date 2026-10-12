@@ -10,10 +10,16 @@ import (
 	"strings"
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
 )
 
 const Version = "1.0.0"
 const IRVersion = "1.0.0"
+const RuleIRVersion = "1.1.0"
+const RuleCompilerVersion = "1.1.0"
+
+func SupportedIRVersions() []string { return []string{IRVersion, RuleIRVersion} }
+
 const SchemaSnapshot = "hybrid-preview-v1"
 
 type Diagnostic struct {
@@ -63,6 +69,7 @@ type IR struct {
 	Entities        []Entity          `json:"entities"`
 	Migration       MigrationPlan     `json:"migration"`
 	Tests           []TestCase        `json:"tests"`
+	Rules           []rules.Plan      `json:"rules,omitempty"`
 }
 
 // Program is minted by Compile. Copies of IR cannot mutate its trusted state.
@@ -186,6 +193,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 	}
 	expression := expressionChecker(fields, membership, add)
+	rulePlans := []rules.Plan{}
 	componentNodes := 0
 	var component func(metadata.Component, string, string, bool, int)
 	component = func(c metadata.Component, owner, path string, inForm bool, depth int) {
@@ -246,9 +254,28 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if r := d.Rule; r != nil {
 			resolve(r.EntityRef, "entity", path)
-			typ := expression(r.Expression, r.EntityRef, path+"/expression")
-			if typ != r.ResultType && !(r.ResultType == "decimal" && typ == "integer") {
-				add(path, "rule_type", "Rule result type must match its declared expression type")
+			if doc.SchemaVersion == metadata.RuleSchemaVersion {
+				var entity Entity
+				for _, e := range entities {
+					if e.ID == r.EntityRef {
+						entity = e
+					}
+				}
+				definition := ruleDefinition(d.ID, *r, entity)
+				executable, err := rules.Compile(definition)
+				if err != nil {
+					add(path, "rule_type", "Rule V2 violates type, currency, calendar or resource contracts")
+				} else {
+					plan := executable.Plan()
+					rulePlans = append(rulePlans, plan)
+					r.Calendars = plan.Calendars
+					tests = append(tests, TestCase{d.ID, "rule_determinism"})
+				}
+			} else {
+				typ := expression(r.Expression, r.EntityRef, path+"/expression")
+				if typ != r.ResultType && !(r.ResultType == "decimal" && typ == "integer") {
+					add(path, "rule_type", "Rule result type must match its declared expression type")
+				}
 			}
 		}
 		if w := d.Workflow; w != nil {
@@ -287,10 +314,18 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 	if len(diagnostics) > 0 {
 		return Program{}, diagnostics
 	}
-	ir := IR{IRVersion, Version, digest(catalogJSON), SchemaSnapshot, doc, entities, MigrationPlan{"NONE", []string{}}, tests}
+	ir := IR{IRVersion: IRVersion, CompilerVersion: Version, CatalogHash: digest(catalogJSON), SchemaSnapshot: SchemaSnapshot, Application: doc, Entities: entities, Migration: MigrationPlan{"NONE", []string{}}, Tests: tests}
+	if doc.SchemaVersion == metadata.RuleSchemaVersion {
+		ir.IRVersion = RuleIRVersion
+		ir.CompilerVersion = RuleCompilerVersion
+		ir.Rules = rulePlans
+	}
 	raw, err := json.Marshal(ir)
 	if err != nil {
 		return Program{}, []Diagnostic{{"", "serialization", "IR serialization failed"}}
+	}
+	if len(raw) > 4<<20 {
+		return Program{}, []Diagnostic{{"", "ir_budget", "Compiled application IR exceeds the 4 MiB limit"}}
 	}
 	return Program{raw: raw, hash: digest(raw), sourceHash: digest(source.JSON())}, diagnostics
 }

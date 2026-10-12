@@ -189,6 +189,12 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	}
 	b := builder{args: base(s, a, entity)}
 	where := `r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5`
+	if query.RecordID != "" {
+		if !tenant.ValidID(query.RecordID) {
+			return Page{}, ErrInvalid
+		}
+		where += " AND r.id=" + b.bind(query.RecordID) + "::uuid"
+	}
 	accessScope, err := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity})
 	if err != nil {
 		return Page{}, err
@@ -365,7 +371,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if desc {
 		order = "DESC"
 	}
-	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
 	rows, err := q.QueryContext(ctx, statement, b.args...)
 	if err != nil {
 		return Page{}, err
@@ -380,7 +386,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		var jid, owner sql.NullString
 		var version sql.NullInt64
 		var created, updated sql.NullTime
-		if err = rows.Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &jid, &version, &owner, &created, &updated, &joinedRaw); err != nil {
+		if err = rows.Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &r.OwnerID, &r.TeamID, &jid, &version, &owner, &created, &updated, &joinedRaw); err != nil {
 			return Page{}, err
 		}
 		if err = readValues(e, &r, raw); err != nil {

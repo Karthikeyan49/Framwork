@@ -24,6 +24,7 @@ jobs:
       - run: make check
       - run: make infra-up migrate migration-status
       - run: make test
+      - run: make test-rules-fuzz
       - run: make build
       - name: Install Chromium
         working-directory: apps/web

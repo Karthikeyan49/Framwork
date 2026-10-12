@@ -64,3 +64,10 @@ roles-init:
 .PHONY: release-check
 release-check:
 	node scripts/with-env.mjs $(GO) run ./cmd/release-check
+
+.PHONY: test-rules-fuzz
+RULE_FUZZ_TIME ?= 10s
+test-rules-fuzz:
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzRuleCompile$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzRuleRestoreAndInputs$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzFixedDecimalMoney$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules

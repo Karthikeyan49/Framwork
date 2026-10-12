@@ -77,6 +77,7 @@ type Aggregate struct {
 	Field string `json:"field,omitempty"`
 }
 type Query struct {
+	RecordID   string     `json:"record_id,omitempty"`
 	Projection []string   `json:"projection"`
 	Filter     *Filter    `json:"filter,omitempty"`
 	Sort       *Sort      `json:"sort,omitempty"`

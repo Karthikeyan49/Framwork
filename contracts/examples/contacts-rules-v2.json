@@ -1,0 +1,330 @@
+{
+  "schema_version": "1.1.0",
+  "app_id": "app.contacts",
+  "namespace": "example.contacts",
+  "base_version": null,
+  "definitions": [
+    {
+      "id": "entity.contact",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Contact",
+      "kind": "entity",
+      "entity": {
+        "fields": [
+          "field.contact.id",
+          "field.contact.name",
+          "field.contact.parent",
+          "field.contact.status",
+          "field.contact.balance",
+          "field.contact.joined",
+          "field.contact.follow_up"
+        ]
+      }
+    },
+    {
+      "id": "field.contact.id",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Identifier",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.contact",
+        "type": "string",
+        "required": true
+      }
+    },
+    {
+      "id": "field.contact.name",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Name",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.contact",
+        "type": "string",
+        "required": true
+      }
+    },
+    {
+      "id": "field.contact.parent",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Parent",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.contact",
+        "type": "reference",
+        "required": false,
+        "reference_to": "entity.contact"
+      }
+    },
+    {
+      "id": "page.contact.edit",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Contact editor",
+      "kind": "page",
+      "page": {
+        "entity_ref": "entity.contact",
+        "components": [
+          {
+            "type": "section",
+            "label": "Contacts",
+            "children": [
+              {
+                "type": "form",
+                "children": [
+                  {
+                    "type": "text_input",
+                    "field_ref": "field.contact.name",
+                    "label": "Name"
+                  },
+                  {
+                    "type": "select",
+                    "field_ref": "field.contact.status",
+                    "label": "Status"
+                  },
+                  {
+                    "type": "money_input",
+                    "field_ref": "field.contact.balance",
+                    "label": "Balance"
+                  },
+                  {
+                    "type": "date_input",
+                    "field_ref": "field.contact.joined",
+                    "label": "Joined"
+                  },
+                  {
+                    "type": "relation_picker",
+                    "field_ref": "field.contact.parent",
+                    "label": "Parent contact"
+                  }
+                ]
+              },
+              {
+                "type": "table",
+                "entity_ref": "entity.contact"
+              },
+              {
+                "type": "detail",
+                "entity_ref": "entity.contact"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule.contact.named",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Named contact",
+      "kind": "rule",
+      "rule": {
+        "entity_ref": "entity.contact",
+        "result_type": "bool",
+        "expression": {
+          "op": "neq",
+          "args": [
+            {
+              "op": "field",
+              "field_ref": "field.contact.name"
+            },
+            {
+              "op": "literal",
+              "value": ""
+            }
+          ]
+        },
+        "dsl_version": "2.0.0"
+      }
+    },
+    {
+      "id": "workflow.contact.review",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Review contact",
+      "kind": "workflow",
+      "workflow": {
+        "entity_ref": "entity.contact",
+        "trigger": "manual",
+        "initial_state": "state.review",
+        "states": [
+          {
+            "id": "state.review",
+            "type": "approval",
+            "approval_roles": ["owner"],
+            "transitions": [
+              {
+                "to": "state.complete"
+              }
+            ]
+          },
+          {
+            "id": "state.complete",
+            "type": "complete",
+            "transitions": []
+          }
+        ]
+      }
+    },
+    {
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "kind": "field",
+      "id": "field.contact.status",
+      "label": "Status",
+      "field": {
+        "entity_ref": "entity.contact",
+        "type": "enum",
+        "required": false,
+        "enum_values": ["active", "inactive"]
+      }
+    },
+    {
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "kind": "field",
+      "id": "field.contact.balance",
+      "label": "Balance",
+      "field": {
+        "entity_ref": "entity.contact",
+        "type": "money",
+        "required": false,
+        "currency": "USD"
+      }
+    },
+    {
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "kind": "field",
+      "id": "field.contact.joined",
+      "label": "Joined",
+      "field": {
+        "entity_ref": "entity.contact",
+        "type": "date",
+        "required": false
+      }
+    },
+    {
+      "id": "relationship.contact.parent",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Parent contact",
+      "kind": "relationship",
+      "relationship": {
+        "from_entity": "entity.contact",
+        "to_entity": "entity.contact",
+        "from_field": "field.contact.parent",
+        "to_field": "field.contact.id",
+        "cardinality": "many_to_one"
+      }
+    },
+    {
+      "id": "field.contact.follow_up",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Follow-up date",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.contact",
+        "type": "date",
+        "required": false
+      }
+    },
+    {
+      "id": "rule.contact.approval_required",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Approval threshold",
+      "kind": "rule",
+      "rule": {
+        "entity_ref": "entity.contact",
+        "dsl_version": "2.0.0",
+        "result_type": "bool",
+        "expression": {
+          "op": "gt",
+          "args": [
+            {
+              "op": "field",
+              "field_ref": "field.contact.balance"
+            },
+            {
+              "op": "typed_literal",
+              "value_type": "money",
+              "value": {
+                "amount": "500",
+                "currency": "USD"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rule.contact.rounded_balance",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Rounded amount",
+      "kind": "rule",
+      "rule": {
+        "entity_ref": "entity.contact",
+        "dsl_version": "2.0.0",
+        "result_type": "money",
+        "expression": {
+          "op": "money_round",
+          "args": [
+            {
+              "op": "field",
+              "field_ref": "field.contact.balance"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rule.contact.next_business_date",
+      "schema_version": "1.1.0",
+      "namespace": "example.contacts",
+      "label": "Next business date",
+      "kind": "rule",
+      "rule": {
+        "entity_ref": "entity.contact",
+        "dsl_version": "2.0.0",
+        "result_type": "date",
+        "calendars": [
+          {
+            "id": "calendar.office",
+            "version": "2026.1",
+            "zone": "Asia/Kolkata",
+            "working_days": [1, 2, 3, 4, 5],
+            "holidays": ["2026-10-14"],
+            "open_minute": 540,
+            "close_minute": 1080,
+            "fiscal_start_month": 4
+          }
+        ],
+        "expression": {
+          "op": "business_add_days",
+          "args": [
+            {
+              "op": "field",
+              "field_ref": "field.contact.follow_up"
+            },
+            {
+              "op": "typed_literal",
+              "value_type": "integer",
+              "value": 2
+            },
+            {
+              "op": "typed_literal",
+              "value_type": "string",
+              "value": "calendar.office@2026.1"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -9,9 +9,9 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-const Version = "m6r-native-v1"
+const Version = "m7-native-v1"
 
-type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID string }
+type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID string }
 type Subject struct {
 	User   identity.User
 	Access tenant.Access
@@ -58,6 +58,10 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			continue
 		}
 		switch action {
+		case "rules.evaluate":
+			if resource.Type == "rule" && resource.AppID != "" && resource.EntityID != "" && resource.RuleID != "" {
+				return true
+			}
 		case "tenant.access":
 			if resource.Type == "tenant" {
 				return true
