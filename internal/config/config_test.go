@@ -26,6 +26,8 @@ func TestConfiguration(t *testing.T) {
 		{"invalid log level", map[string]string{"LOG_LEVEL": "verbose"}, true},
 		{"invalid telemetry", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://user:secret@collector"}, true},
 		{"bad event flag", map[string]string{"EVENTS_ENABLED": "maybe"}, true},
+		{"bad workflow flag", map[string]string{"WORKFLOWS_ENABLED": "maybe"}, true},
+		{"production preview workflow", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "WORKFLOWS_ENABLED": "true"}, true},
 		{"production preview events", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "EVENTS_ENABLED": "true"}, true},
 		{"dedicated broker", map[string]string{"EVENT_REDIS_URL": "redis://event_worker:private@localhost:6379/0"}, false},
 		{"ambient broker admin", map[string]string{"EVENT_REDIS_URL": "redis://:private@localhost:6379/0"}, true},

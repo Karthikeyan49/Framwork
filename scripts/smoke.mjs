@@ -52,7 +52,7 @@ try {
   const traceID = '00112233445566778899aabbccddeeff'
   const readiness = await get(`${base}/readyz`, { headers: { traceparent: `00-${traceID}-0011223344556677-01` } })
   assert.equal(readiness.status, 200)
-  assert.deepEqual(await readiness.json(), { status: 'ready', dependencies: { postgres: 'ok', redis: 'ok', events:'ok', identity: 'ok', tenant: 'ok', audit: 'ok', metadata: 'ok', data: 'ok' } })
+  assert.deepEqual(await readiness.json(), { status: 'ready', dependencies: { postgres: 'ok', redis: 'ok', events:'ok', workflows:'ok', identity: 'ok', tenant: 'ok', audit: 'ok', metadata: 'ok', data: 'ok' } })
   const web = await ready('http://127.0.0.1:5173/')
   assert.match(await web.text(), /Framework Console/)
   const proxy = await get('http://127.0.0.1:5173/api/readyz')
@@ -65,6 +65,7 @@ try {
   // Runtime metrics export on a 10-second interval; sampled parent forces trace export.
   await delay(11000)
   assert.ok(fs.readFileSync(path.join(root, '.local/smoke-api.log'), 'utf8').includes(traceID), 'W3C request/trace correlation')
+  if(process.env.WORKFLOWS_ENABLED!=='false')assert.ok(fs.readFileSync(path.join(root,'.local/smoke-worker.log'),'utf8').includes('workflow execution started'),'M9 workflow runtime initialized')
   for(const name of ['worker','dispatcher'])assert.ok(fs.readFileSync(path.join(root, `.local/smoke-${name}.log`),'utf8').includes('event delivery started'),`${name} initialized M8 delivery`)
   for (const item of owned) await stop(item)
   const collector = execFileSync('docker', ['compose', '--env-file', '.env', '-f', 'infra/compose/compose.yaml', 'logs', '--since', since, 'otel-collector'], { cwd: root, encoding: 'utf8' })

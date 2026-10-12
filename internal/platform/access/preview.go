@@ -70,6 +70,10 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	if err != nil {
 		return reply{}, err
 	}
+	// In-flight reads/signals restore stored IR, never today's compiler output.
+	if r.PathValue("workflow") != "" && r.PathValue("instance") != "" {
+		return a.previewWorkflow(ctx, q, r, u, access, evidence, compiler.Program{}, revision)
+	}
 	source, err := a.Registry.Parse(version.Document)
 	if err != nil {
 		return reply{}, err
@@ -105,6 +109,9 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 			return data.ErrDenied
 		}
 		return nil
+	}
+	if r.PathValue("workflow") != "" {
+		return a.previewWorkflow(ctx, q, r, u, access, evidence, program, revision)
 	}
 	if r.Method == http.MethodGet {
 		// Capability hints improve UX; each command/query still enforces live policy.
@@ -192,6 +199,9 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 					writer = events.Postgres{}
 				}
 				if e = events.Append(ctx, q, a.Audit, writer, entry, events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version, RequestID: entry.RequestID}); e != nil {
+					return reply{}, e
+				}
+				if e = a.workflowTriggers(ctx, q, u, access, program, events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version, RequestID: entry.RequestID}); e != nil {
 					return reply{}, e
 				}
 			}

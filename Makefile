@@ -80,3 +80,7 @@ test-rules-fuzz:
 .PHONY: test-events-fuzz
 test-events-fuzz:
 	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzPointer$$' -fuzztime=10s -parallel=2 ./internal/events
+
+.PHONY: test-workflows-fuzz
+test-workflows-fuzz:
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzWorkflowRestore$$' -fuzztime=10s -parallel=2 ./internal/runtime/workflow

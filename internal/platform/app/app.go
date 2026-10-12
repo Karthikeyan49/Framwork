@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
@@ -24,6 +25,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
@@ -66,9 +68,37 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		if err != nil {
 			return errors.New("event role unavailable")
 		}
-		if !c.EventsEnabled {
+		if !c.EventsEnabled && (!c.WorkflowsEnabled || service == "framework-dispatcher") {
 			logger.Info("event delivery disabled", "service", service)
 			<-ctx.Done()
+			return nil
+		}
+		var wg sync.WaitGroup
+		jobCtx, stopJobs := context.WithCancel(ctx)
+		defer func() { stopJobs(); wg.Wait() }()
+		if service == "framework-worker" && c.WorkflowsEnabled {
+			probe, cancel = context.WithTimeout(ctx, c.DependencyTimeout)
+			err = workflow.Ready(probe, db, "framework_worker")
+			if err == nil {
+				err = (audit.Postgres{}).Ready(probe, db)
+			}
+			cancel()
+			if err != nil {
+				return errors.New("workflow storage contract unavailable")
+			}
+			store := access.WorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
+				var id string
+				if e := q.QueryRowContext(ctx, `SELECT current_setting('app.job_id',true)`).Scan(&id); e != nil {
+					return identity.User{}, e
+				}
+				return (identity.Store{}).ResolveWorker(ctx, q, id)
+			})
+			logger.Info("workflow execution started", "mode", "preview")
+			wg.Go(func() { (workflow.Worker{DB: db, Store: store}).Run(jobCtx, logger) })
+		}
+		if !c.EventsEnabled {
+			wg.Wait()
+			logger.Info("workflow execution stopped")
 			return nil
 		}
 		if c.Environment == "production" || c.EventRedisURL == "" {
@@ -104,6 +134,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 			events.RunConsumer(ctx, events.Consumer{DB: db, Policy: policy.Native{}, Audit: audit.Postgres{}}, broker, logger)
 		}
 		logger.Info("event delivery stopped", "service", service)
+		wg.Wait()
 		return nil
 	}
 	redis, err := cache.Open(c.RedisURL)
@@ -128,11 +159,16 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if err != nil {
 		return errors.New("metadata schema initialization failed")
 	}
-	accessAPI := access.API{DB: db, Auth: auth, Policy: policy.Native{}, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test"}
+	accessAPI := access.API{DB: db, Auth: auth, Policy: policy.Native{}, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
 	identityProbe := func(ctx context.Context) error {
 		return (identity.Store{}).Ready(ctx, db)
 	}
-	handler := httpserver.Handler(httpserver.Options{Logger: logger, Origins: c.CORSOrigins, Register: accessAPI.Register, AllowPOST: accessAPI.AcceptsPOST, ProbeTimeout: c.DependencyTimeout, Probes: map[string]httpserver.Probe{"postgres": func(ctx context.Context) error { return postgres.Ping(ctx, db) }, "redis": redis.Ping, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
+	handler := httpserver.Handler(httpserver.Options{Logger: logger, Origins: c.CORSOrigins, Register: accessAPI.Register, AllowPOST: accessAPI.AcceptsPOST, ProbeTimeout: c.DependencyTimeout, Probes: map[string]httpserver.Probe{"postgres": func(ctx context.Context) error { return postgres.Ping(ctx, db) }, "redis": redis.Ping, "workflows": func(ctx context.Context) error {
+		if !c.WorkflowsEnabled {
+			return nil
+		}
+		return workflow.Ready(ctx, db, "framework_app")
+	}, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
 	server := httpserver.New(c.HTTPAddr, handler)
 	listener, err := net.Listen("tcp", c.HTTPAddr)
 	if err != nil {

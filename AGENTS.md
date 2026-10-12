@@ -1,9 +1,9 @@
-# V3 authority and M8 Transactional Outbox + Inbox
+# V3 authority and M9 Workflow Runtime V2
 
 Read all docs/v3 Markdown and docs/migration/M0_M6_AUDIT_REPORT.md. V3 is authoritative
 where it supersedes V2; retained V2 specs supplement unchanged modules. M6R passed
-independent review. The user has authorized M8 only; do not begin M9 without a new
-task. Preserve existing data, migrations and safe code. Read ADR021/022 and the M7/M8 reports.
+independent review. The user has authorized M9 only; do not begin M10 without a new
+task. Preserve existing data, migrations and safe code. Read ADR021–023 and the M7/M8/M9 reports.
 No tenant DDL; immutable stored production IR; exact hash approval; SQL DataScope;
 separate worker/dispatcher roles; transactional audit/outbox; tool-specific guarantees.
 
@@ -17,7 +17,7 @@ preserved verbatim under docs; validate it with make docs-verify.
 ## Milestone discipline
 
 M0–M6 are retained and remediated by M6R. Stop after the requested milestone; never
-begin M9 without a new task. Follow docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md. Each milestone
+begin M10 without a new task. Follow docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md. Each milestone
 requires tests, negative checks, recovery notes, an independent review, and human
 approval (docs/agents/82_TWO_AGENT_PROTOCOL.md). Reviewers should inspect and run
 checks independently; avoid concurrent edits to the same files.
@@ -79,7 +79,7 @@ buildkit documents unchanged. Add tests for failure modes, not just happy paths.
   Read ADR018/019 as historical decisions and ADR020 for V3 SQL DataScope, bounds, CAS and audit;
   typed versioned UI registry, aborted/stale request isolation and safe text rendering.
 - M6R includes release/approval, audit/outbox, delivery, sandbox and ERP contracts.
-  Public production services, workflow/tool execution,
+  Public production services, external tool execution,
   sandbox orchestration and AI remain later V3 milestones. Tests/plans in IR are
   requirements, not executed business acceptance tests. Read ADR020 and both migration reports.
 - M7 rules consume immutable typed DSL2 plans only. Schema/IR1.1 is opt-in; preserve
@@ -96,8 +96,18 @@ buildkit documents unchanged. Add tests for failure modes, not just happy paths.
   Use PG clock/token/generation fencing, bounded retries and durable dead-letter
   evidence. Unknown outcomes retain redelivery. No network calls inside WithRuntime.
   Known serialization-aborted lease claims alone may retry; business mutations do not.
-  Legacy intents stay paused. Current consumer is preview receipts only; no M9 tools
-  or workflows. Production preview delivery is refused. Keep per-process DB/Redis ACL
+  Legacy intents stay paused. The M8 consumer handles preview receipts only;
+  M9 workflows use a separate PG durability port. Production preview delivery is refused. Keep per-process DB/Redis ACL
   bindings, readiness contracts and operator-only reviewed replay history.
 - Browser verification: make browser-install then make test-e2e after make build,
   with local stack running and no API/Vite already occupying owned test ports.
+
+M9 workflow rules: schema/IR1.2 is opt-in; legacy hashes are preserved. In-flight
+instances restore immutable stored IR/plans/inputs and never compile or repin.
+Use live policy + SQL DataScope, exact routed worker tickets, PG-time fenced
+leases, atomic receipts/local effects/history/audit/lifecycle outbox, bounded
+retries, version-bound approvals and explicit reviewed recovery. No self-approval.
+Unknown effects wait for reconciliation. Compensation has explicit limits.
+Only trusted local.noop is registered; transactional Go adapters enforce their
+own data/effect policy. External tools remain M10. Production activation is M13.
+Read ADR023 and internal/runtime/workflow/README.md. Stop before M10.

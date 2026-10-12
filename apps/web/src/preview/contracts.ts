@@ -93,7 +93,7 @@ export function decodePreview(
     throw new Error("Invalid preview");
   const ir = raw.ir;
   if (
-    (ir.ir_version !== rendererVersion && ir.ir_version !== "1.1.0") ||
+    (ir.ir_version !== rendererVersion && ir.ir_version !== "1.1.0" && ir.ir_version !== "1.2.0") ||
     typeof ir.compiler_version !== "string" ||
     ir.compiler_version.length === 0 ||
     ir.compiler_version.length > 80 ||

@@ -46,8 +46,9 @@ func (s Source) Hash() string          { return s.hash }
 func (s Source) JSON() json.RawMessage { return append(json.RawMessage(nil), s.raw...) }
 
 type Validator struct {
-	schema      *js.Schema
-	rulesSchema *js.Schema
+	schema         *js.Schema
+	rulesSchema    *js.Schema
+	workflowSchema *js.Schema
 }
 type noLoader struct{}
 
@@ -81,7 +82,11 @@ func NewValidator() (*Validator, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Validator{old, next}, nil
+	workflows, e := compile("application-v1.2.schema.json", WorkflowSchemaVersion)
+	if e != nil {
+		return nil, e
+	}
+	return &Validator{old, next, workflows}, nil
 }
 func (v *Validator) Parse(raw []byte) (Source, error) { return v.parse(raw, MaxBytes) }
 
@@ -101,6 +106,9 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 	active := v.schema
 	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == RuleSchemaVersion {
 		active = v.rulesSchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == WorkflowSchemaVersion {
+		active = v.workflowSchema
 	}
 	if active == nil {
 		return Source{}, ErrUnavailable

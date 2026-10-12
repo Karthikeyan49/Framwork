@@ -8,6 +8,7 @@ import (
 
 const SchemaVersion = "1.0.0"
 const RuleSchemaVersion = "1.1.0"
+const WorkflowSchemaVersion = "1.2.0"
 const MaxBytes = 256 << 10
 
 type Document struct {
@@ -80,24 +81,32 @@ type Retry struct {
 	MaxBackoffMS     int `json:"max_backoff_ms"`
 }
 type Activity struct {
-	ToolRef             string `json:"tool_ref"`
-	TimeoutMS           int    `json:"timeout_ms"`
-	Retry               Retry  `json:"retry"`
-	CompensationToolRef string `json:"compensation_tool_ref,omitempty"`
+	ToolRef              string `json:"tool_ref,omitempty"`
+	LocalRef             string `json:"local_ref,omitempty"`
+	Version              string `json:"version,omitempty"`
+	TimeoutMS            int    `json:"timeout_ms"`
+	Retry                Retry  `json:"retry"`
+	CompensationToolRef  string `json:"compensation_tool_ref,omitempty"`
+	CompensationLocalRef string `json:"compensation_local_ref,omitempty"`
 }
 type Transition struct {
 	To        string      `json:"to"`
+	On        string      `json:"on,omitempty"`
 	Condition *Expression `json:"condition,omitempty"`
 }
 type WorkflowState struct {
-	ID            string       `json:"id"`
-	Type          string       `json:"type"`
-	Transitions   []Transition `json:"transitions"`
-	Activity      *Activity    `json:"activity,omitempty"`
-	ApprovalRoles []string     `json:"approval_roles,omitempty"`
-	TimerMS       int          `json:"timer_ms,omitempty"`
+	ID                string       `json:"id"`
+	Type              string       `json:"type"`
+	Transitions       []Transition `json:"transitions"`
+	Activity          *Activity    `json:"activity,omitempty"`
+	ApprovalRoles     []string     `json:"approval_roles,omitempty"`
+	TimerMS           int          `json:"timer_ms,omitempty"`
+	ApprovalTimeoutMS int          `json:"approval_timeout_ms,omitempty"`
 }
 type Workflow struct {
+	DSLVersion   string          `json:"dsl_version,omitempty"`
+	Version      string          `json:"version,omitempty"`
+	TimeoutMS    int             `json:"timeout_ms,omitempty"`
 	EntityRef    string          `json:"entity_ref"`
 	Trigger      string          `json:"trigger"`
 	InitialState string          `json:"initial_state"`

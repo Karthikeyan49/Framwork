@@ -20,6 +20,7 @@ type Config struct {
 	WorkerDatabaseURL     string
 	DispatcherDatabaseURL string
 	EventsEnabled         bool
+	WorkflowsEnabled      bool
 	EventRedisURL         string
 	RedisURL              string
 	CORSOrigins           []string
@@ -36,6 +37,18 @@ func Load(getenv func(string) string) (Config, error) {
 	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), WorkerDatabaseURL: getenv("WORKER_DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
 	c.DispatcherDatabaseURL = getenv("DISPATCHER_DATABASE_URL")
 	c.EventRedisURL = getenv("EVENT_REDIS_URL")
+	switch getenv("WORKFLOWS_ENABLED") {
+	case "":
+		c.WorkflowsEnabled = c.Environment == "development" || c.Environment == "test"
+	case "false":
+	case "true":
+		c.WorkflowsEnabled = true
+	default:
+		return c, fmt.Errorf("WORKFLOWS_ENABLED must be true or false")
+	}
+	if c.WorkflowsEnabled && c.Environment == "production" {
+		return c, fmt.Errorf("M9 preview workflows require development/test; production requires approved release activation")
+	}
 	switch getenv("EVENTS_ENABLED") {
 	case "", "false":
 	case "true":

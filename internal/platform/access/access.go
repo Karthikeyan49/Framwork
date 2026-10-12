@@ -21,13 +21,15 @@ import (
 )
 
 type API struct {
-	DB             *sql.DB
-	Auth           identity.Authenticator
-	Policy         policy.Engine
-	Audit          audit.Writer
-	Events         events.Writer
-	Registry       *metadata.Registry
-	PreviewEnabled bool
+	DB               *sql.DB
+	Auth             identity.Authenticator
+	Policy           policy.Engine
+	Audit            audit.Writer
+	Events           events.Writer
+	WorkflowEvents   events.LifecycleWriter
+	Registry         *metadata.Registry
+	PreviewEnabled   bool
+	WorkflowsEnabled bool
 }
 
 func (a API) Register(mux *http.ServeMux) {
@@ -36,6 +38,11 @@ func (a API) Register(mux *http.ServeMux) {
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/query", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/commands", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/rules/{rule}/evaluate", a.serve)
+		if a.WorkflowsEnabled {
+			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/start", a.serve)
+			mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/instances/{instance}", a.serve)
+			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/instances/{instance}/signals", a.serve)
+		}
 	}
 	mux.HandleFunc("GET /v1/session", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/access", a.serve)
@@ -55,6 +62,15 @@ type reply struct {
 	issues        []metadata.Issue
 }
 
+// A service rejection must roll back its entire business transaction before
+// becoming an HTTP response. Audit the rejection in a fresh live-identity scope.
+type requestRejection struct {
+	response reply
+	evidence *audit.Entry
+}
+
+func (e *requestRejection) Error() string { return "request rejected" }
+
 func denied(status int, code, message string) reply {
 	return reply{status: status, code: code, message: message}
 }
@@ -70,9 +86,17 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
 	}
 	var response reply
+	var rejectedEvidence audit.Entry
 	err := postgres.WithRuntime(r.Context(), a.DB, func(ctx context.Context, tx postgres.Executor) error {
 		result, evidence, err := a.perform(ctx, tx, r, p, authErr)
 		if err != nil {
+			var rejected *requestRejection
+			if errors.As(err, &rejected) {
+				rejectedEvidence = evidence
+				if rejected.evidence != nil {
+					rejectedEvidence = *rejected.evidence
+				}
+			}
 			return err
 		}
 		if err = a.Audit.Append(ctx, tx, evidence); err != nil {
@@ -81,6 +105,32 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		response = result
 		return nil
 	})
+	var rejected *requestRejection
+	if errors.As(err, &rejected) {
+		err = postgres.WithRuntime(r.Context(), a.DB, func(ctx context.Context, q postgres.Executor) error {
+			u, e := (identity.Store{}).Resolve(ctx, q, p)
+			if e != nil {
+				return e
+			}
+			if e = (tenant.Store{}).BindActor(ctx, q, u); e != nil {
+				return e
+			}
+			access, e := (tenant.Store{}).Resolve(ctx, q, u, r.PathValue("tenant"))
+			if e != nil {
+				return e
+			}
+			if u.ID() != rejectedEvidence.ActorID || access.TenantID() != rejectedEvidence.TenantID {
+				return tenant.ErrDenied
+			}
+			rejectedEvidence.Action = "workflows.rejected"
+			rejectedEvidence.Resource = "workflow"
+			rejectedEvidence.Allow = false
+			return a.Audit.Append(ctx, q, rejectedEvidence)
+		})
+		if err == nil {
+			response = rejected.response
+		}
+	}
 	if err != nil {
 		httpserver.Error(w, r, 503, "service_unavailable", "A required service or security transaction is unavailable")
 		return

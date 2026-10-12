@@ -45,6 +45,9 @@ func Restore(raw []byte, expectedHash string, supportedIR []string) (Program, er
 	if validateStoredRules(ir) != nil {
 		return Program{}, errors.New("stored rule model disagrees with application")
 	}
+	if validateStoredWorkflows(ir) != nil {
+		return Program{}, errors.New("stored workflow model disagrees with application")
+	}
 	return Program{raw: append([]byte(nil), raw...), hash: expectedHash}, nil
 }
 

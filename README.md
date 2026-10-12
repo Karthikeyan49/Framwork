@@ -6,7 +6,8 @@ cryptographic identity, trusted tenant membership, central policy and durable
 audit, bounded transactions, reusable tenant RLS and a typed draft metadata registry.
 Canonical compiler IR, bounded typed preview CRUD/query execution and dynamic React
 forms/tables/details are implemented. M6R adds V3 storage/authorization/release
-foundations; M7 adds pure typed Rule Engine V2. Production activation and AI remain later work.
+foundations; M7 adds pure typed Rule Engine V2, M8 adds transactional delivery,
+and M9 adds durable Workflow Runtime V2. Production activation and AI remain later work.
 
 AI will propose structured drafts; the compiler, sandbox, verification, approval
 and promotion pipeline will produce immutable versions for deterministic runtime
@@ -29,7 +30,7 @@ make dev
 
 This installs locked dependencies, preserves or generates a 0600 `.env` with random
 development passwords, starts the local stack, applies migrations, builds the
-programs, and runs API/idle worker/Vite. V3 assigns separate API/worker credentials;
+programs, and runs API/worker/dispatcher/Vite. V3 assigns separate API/worker credentials;
 operator and dispatcher secrets are excluded from application children. Ctrl-C stops those application processes;
 `make infra-down` stops local containers and retains PostgreSQL data.
 
@@ -411,7 +412,7 @@ PostgreSQL volumes, data and all historical intents remain intact.
 `EVENTS_ENABLED=true` is development/test only. New preview CRUD atomically freezes
 an immutable event; the dispatcher publishes its reference, and a receipt-only
 worker commits policy/audit/inbox completion. Redis can restart without losing
-authoritative events. Production activation, workflows and external tools remain
+authoritative events. Production activation and external tools remain
 later milestones; production preview delivery is rejected. Set EVENTS_ENABLED=false
 to pause delivery without removing event or inbox history. Manual process commands
 are `make api`, `make dispatcher`, `make worker`; `make test` runs M8 failure tests
@@ -434,3 +435,28 @@ A dead predecessor blocks its aggregate successors until recovery. Old binaries
 may be used only with delivery disabled and additive schemas retained; database
 rollback never deletes event/inbox evidence. Apply reviewed forward fixes or restore
 a verified backup into a separate recovery environment. See the report for limits.
+
+## M9 — Workflow Runtime V2
+
+Read [ADR023](docs/adr/023-m9-workflow-runtime-v2.md), the
+[runtime/API contracts](internal/runtime/workflow/README.md) and
+[verification report](docs/verification/M9_IMPLEMENTATION_REPORT.md).
+Apply migrations20/21 with `make migrate` before deploying M9 binaries.
+`WORKFLOWS_ENABLED` defaults true for development/test and false for production;
+production refuses preview execution. `make worker` runs both M8 receipts and
+the independent PostgreSQL workflow loop. PostgreSQL owns timers/state/history;
+Redis is not the workflow durability provider.
+
+The [schema1.2 example](contracts/examples/workflow-draft-v1.2.json) demonstrates
+captured conditions, a local activity, timer, separate-actor approval and failure
+paths. Start/read/signal APIs are documented in the runtime contract. Local
+activities commit receipts/history/audit/lifecycle outbox atomically. Only
+`local.noop` is registered; external tools are M10. The existing React preview
+renders1.2 entity/page plans; a workflow authoring/editor UI is later work.
+
+`make test` runs actual crash, lost-COMMIT-response, isolation and recovery checks;
+`make test-workflows-fuzz` runs the bounded plan-restore campaign. Recovery never
+changes the instance's captured inputs, IR, plan/version or committed receipts.
+Unknown outcomes require reviewed reconciliation; compensation cannot undo
+arbitrary external actions. Pause with `WORKFLOWS_ENABLED=false` before rolling
+back binaries, retain all additive schemas/evidence, and use reviewed forward fixes.

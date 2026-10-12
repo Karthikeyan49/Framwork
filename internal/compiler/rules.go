@@ -43,7 +43,7 @@ func validateStoredRules(ir IR) error {
 		}
 		return nil
 	}
-	if ir.IRVersion != RuleIRVersion || ir.Application.SchemaVersion != metadata.RuleSchemaVersion {
+	if !(ir.IRVersion == RuleIRVersion && ir.Application.SchemaVersion == metadata.RuleSchemaVersion || ir.IRVersion == WorkflowIRVersion && ir.Application.SchemaVersion == metadata.WorkflowSchemaVersion) {
 		return rules.ErrInvalid
 	}
 	index := 0

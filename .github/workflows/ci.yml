@@ -26,6 +26,7 @@ jobs:
       - run: make test
       - run: make test-rules-fuzz
       - run: make test-events-fuzz
+      - run: make test-workflows-fuzz
       - run: make build
       - name: Install Chromium
         working-directory: apps/web

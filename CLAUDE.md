@@ -1,9 +1,9 @@
-# V3 authority and M8 Transactional Outbox + Inbox
+# V3 authority and M9 Workflow Runtime V2
 
 Read all docs/v3 Markdown and docs/migration/M0_M6_AUDIT_REPORT.md. V3 is authoritative
 where it supersedes V2; retained V2 specs supplement unchanged modules. M6R passed
-independent review. The user has authorized M8 only; do not begin M9 without a new
-task. Preserve existing data, migrations and safe code. Read ADR021/022 and the M7/M8 reports.
+independent review. The user has authorized M9 only; do not begin M10 without a new
+task. Preserve existing data, migrations and safe code. Read ADR021–023 and the M7/M8/M9 reports.
 No tenant DDL; immutable stored production IR; exact hash approval; SQL DataScope;
 separate worker/dispatcher roles; transactional audit/outbox; tool-specific guarantees.
 
@@ -12,7 +12,7 @@ separate worker/dispatcher roles; transactional audit/outbox; tool-specific guar
 Read and obey AGENTS.md, README.md, docs/00_MASTER_PLAYBOOK.md, the architectural
 source documents, relevant milestone verification, and docs/adr before coding.
 
-Current scope is M8 Transactional Outbox + Inbox over retained M0–M7/M6R. Do not implement M9 or
+Current scope is M9 Workflow Runtime V2 over retained M0–M8/M6R. Do not implement M10 or
 later business behavior without a new user task. Implement the smallest coherent
 milestone, run the documented commands, record actual results and recovery notes,
 then request independent review per docs/agents/82_TWO_AGENT_PROTOCOL.md. Review
@@ -46,4 +46,15 @@ fenced delivery, Redis reference transport, exact routed worker tickets, atomic
 inbox/effect/audit completion, ACK after confirmed commit and durable dead-letter/
 reviewed replay. Preserve inbox and event identity; never infer universal external
 exactly-once. New local handlers must use explicit business/policy/DataScope ports.
-Receipt-only preview composition does not authorize production or M9 behavior.
+The M8 receipt consumer does not authorize production or workflow effects;
+M9 uses its separate governed durability ports.
+
+M9 workflow rules: schema/IR1.2 is opt-in; legacy hashes are preserved. In-flight
+instances restore immutable stored IR/plans/inputs and never compile or repin.
+Use live policy + SQL DataScope, exact routed worker tickets, PG-time fenced
+leases, atomic receipts/local effects/history/audit/lifecycle outbox, bounded
+retries, version-bound approvals and explicit reviewed recovery. No self-approval.
+Unknown effects wait for reconciliation. Compensation has explicit limits.
+Only trusted local.noop is registered; transactional Go adapters enforce their
+own data/effect policy. External tools remain M10. Production activation is M13.
+Read ADR023 and internal/runtime/workflow/README.md. Stop before M10.

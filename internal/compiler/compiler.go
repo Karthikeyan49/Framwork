@@ -11,14 +11,17 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 )
 
 const Version = "1.0.0"
 const IRVersion = "1.0.0"
 const RuleIRVersion = "1.1.0"
 const RuleCompilerVersion = "1.1.0"
+const WorkflowIRVersion = "1.2.0"
+const WorkflowCompilerVersion = "1.2.0"
 
-func SupportedIRVersions() []string { return []string{IRVersion, RuleIRVersion} }
+func SupportedIRVersions() []string { return []string{IRVersion, RuleIRVersion, WorkflowIRVersion} }
 
 const SchemaSnapshot = "hybrid-preview-v1"
 
@@ -70,6 +73,7 @@ type IR struct {
 	Migration       MigrationPlan     `json:"migration"`
 	Tests           []TestCase        `json:"tests"`
 	Rules           []rules.Plan      `json:"rules,omitempty"`
+	Workflows       []workflow.Plan   `json:"workflows,omitempty"`
 }
 
 // Program is minted by Compile. Copies of IR cannot mutate its trusted state.
@@ -194,6 +198,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 	}
 	expression := expressionChecker(fields, membership, add)
 	rulePlans := []rules.Plan{}
+	workflowPlans := []workflow.Plan{}
 	componentNodes := 0
 	var component func(metadata.Component, string, string, bool, int)
 	component = func(c metadata.Component, owner, path string, inForm bool, depth int) {
@@ -254,7 +259,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if r := d.Rule; r != nil {
 			resolve(r.EntityRef, "entity", path)
-			if doc.SchemaVersion == metadata.RuleSchemaVersion {
+			if doc.SchemaVersion == metadata.RuleSchemaVersion || doc.SchemaVersion == metadata.WorkflowSchemaVersion {
 				var entity Entity
 				for _, e := range entities {
 					if e.ID == r.EntityRef {
@@ -280,7 +285,27 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if w := d.Workflow; w != nil {
 			resolve(w.EntityRef, "entity", path)
-			validateWorkflow(w, path, symbols, catalog, expression, add)
+			if doc.SchemaVersion == metadata.WorkflowSchemaVersion {
+				var entity Entity
+				for _, e := range entities {
+					if e.ID == w.EntityRef {
+						entity = e
+					}
+				}
+				definition := ruleDefinition(d.ID, metadata.Rule{EntityRef: w.EntityRef}, entity)
+				executable, err := workflow.CompileDefinition(d.ID, *w, definition.Fields, []string{"local.noop"})
+				if err != nil {
+					add(path, "workflow_contract", "Workflow V2 violates graph, condition, activity or approval contracts")
+				} else {
+					workflowPlans = append(workflowPlans, executable.Plan())
+					tests = append(tests, TestCase{d.ID, "workflow_failure_recovery"})
+				}
+				for i := range w.States {
+					sort.Strings(w.States[i].ApprovalRoles)
+				}
+			} else {
+				validateWorkflow(w, path, symbols, catalog, expression, add)
+			}
 			sort.Slice(w.States, func(i, j int) bool { return w.States[i].ID < w.States[j].ID })
 		}
 		if t := d.Tool; t != nil {
@@ -319,6 +344,12 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		ir.IRVersion = RuleIRVersion
 		ir.CompilerVersion = RuleCompilerVersion
 		ir.Rules = rulePlans
+	}
+	if doc.SchemaVersion == metadata.WorkflowSchemaVersion {
+		ir.IRVersion = WorkflowIRVersion
+		ir.CompilerVersion = WorkflowCompilerVersion
+		ir.Rules = rulePlans
+		ir.Workflows = workflowPlans
 	}
 	raw, err := json.Marshal(ir)
 	if err != nil {

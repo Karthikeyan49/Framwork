@@ -11,26 +11,32 @@ import (
 )
 
 type State struct {
-	EventID           string `json:"event_id,omitempty"`
-	ConsumerID        string `json:"consumer_id,omitempty"`
-	AggregateSequence int64  `json:"aggregate_sequence,omitempty"`
-	RuleID            string `json:"rule_id,omitempty"`
-	RuleHash          string `json:"rule_hash,omitempty"`
-	RuleVersion       string `json:"rule_version,omitempty"`
-	ArtifactHash      string `json:"artifact_hash,omitempty"`
-	ScopeHash         string `json:"scope_hash,omitempty"`
-	IRHash            string `json:"ir_hash,omitempty"`
-	EntityID          string `json:"entity_id,omitempty"`
-	FieldID           string `json:"field_id,omitempty"`
-	RecordID          string `json:"record_id,omitempty"`
-	RecordVersion     int64  `json:"record_version,omitempty"`
-	MetadataApp       string `json:"metadata_app,omitempty"`
-	MetadataRevision  int64  `json:"metadata_revision,omitempty"`
-	MetadataHash      string `json:"metadata_hash,omitempty"`
-	OperatorRef       string `json:"operator_ref,omitempty"`
-	Role              string `json:"role,omitempty"`
-	UserActive        *bool  `json:"user_active,omitempty"`
-	MembershipActive  *bool  `json:"membership_active,omitempty"`
+	WorkflowInstanceID string `json:"workflow_instance_id,omitempty"`
+	WorkflowID         string `json:"workflow_id,omitempty"`
+	WorkflowVersion    string `json:"workflow_version,omitempty"`
+	WorkflowPlanHash   string `json:"workflow_plan_hash,omitempty"`
+	WorkflowSequence   int64  `json:"workflow_sequence,omitempty"`
+	WorkflowStep       string `json:"workflow_step,omitempty"`
+	EventID            string `json:"event_id,omitempty"`
+	ConsumerID         string `json:"consumer_id,omitempty"`
+	AggregateSequence  int64  `json:"aggregate_sequence,omitempty"`
+	RuleID             string `json:"rule_id,omitempty"`
+	RuleHash           string `json:"rule_hash,omitempty"`
+	RuleVersion        string `json:"rule_version,omitempty"`
+	ArtifactHash       string `json:"artifact_hash,omitempty"`
+	ScopeHash          string `json:"scope_hash,omitempty"`
+	IRHash             string `json:"ir_hash,omitempty"`
+	EntityID           string `json:"entity_id,omitempty"`
+	FieldID            string `json:"field_id,omitempty"`
+	RecordID           string `json:"record_id,omitempty"`
+	RecordVersion      int64  `json:"record_version,omitempty"`
+	MetadataApp        string `json:"metadata_app,omitempty"`
+	MetadataRevision   int64  `json:"metadata_revision,omitempty"`
+	MetadataHash       string `json:"metadata_hash,omitempty"`
+	OperatorRef        string `json:"operator_ref,omitempty"`
+	Role               string `json:"role,omitempty"`
+	UserActive         *bool  `json:"user_active,omitempty"`
+	MembershipActive   *bool  `json:"membership_active,omitempty"`
 }
 type Entry struct {
 	ActorID, TenantID, Action, Resource, DecisionID, PolicyVersion, RequestID, TraceID string
@@ -59,6 +65,9 @@ func (Postgres) Ready(ctx context.Context, db *sql.DB) error {
 }
 
 func (Postgres) Append(ctx context.Context, tx postgres.Executor, e Entry) error {
+	if len(e.State.WorkflowInstanceID) > 36 || len(e.State.WorkflowID) > 160 || len(e.State.WorkflowVersion) > 20 || len(e.State.WorkflowPlanHash) > 64 || e.State.WorkflowSequence < 0 || len(e.State.WorkflowStep) > 200 {
+		return errors.New("invalid workflow evidence")
+	}
 	if len(e.State.EventID) > 36 || len(e.State.ConsumerID) > 80 || e.State.AggregateSequence < 0 {
 		return errors.New("invalid event evidence")
 	}
