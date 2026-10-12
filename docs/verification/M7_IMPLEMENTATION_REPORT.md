@@ -195,12 +195,25 @@ data/external-effect assessment; keep new sources/records for reviewed recovery.
 No destructive down migration or unsafe reverse copy was executed.
 
 Source, tests, schema, migration, vendored timezone data/license, ADR and reports
-belong in `milestone/m7-rule-engine-v2`. This report records the tested pre-commit
-snapshot below. Commit/push delivery will be confirmed separately; no main merge is
-part of M7. `.env`, keys, `.local/`, dependencies, binaries, dist, logs and fuzz/build
+are committed in `milestone/m7-rule-engine-v2`. The tested implementation commit
+`1827c726ef921328ab4fd98fafd08f38cbc2b27f` was successfully published to
+`origin/milestone/m7-rule-engine-v2`, with the `pre-m7-2026-10-12` checkpoint tag in
+the same atomic push. All51changed deliverables were included. No main merge or
+force push was performed. The manifest below records the initial pre-commit snapshot.
+This publication addendum records a completed push and is committed separately.
+`.env`, keys, `.local/`, dependencies, binaries, dist, logs and fuzz/build
 caches remain ignored and must not be committed. The cloud configuration remains
 a saved draft requiring its separate Review/Save/Publish; Git publication does not
 verify fresh-environment restoration or remote CI success.
+
+Git delivery commands actually executed:
+
+```sh
+git add --all
+git diff --cached --check
+git commit -m "feat: implement M7 typed rule engine v2"
+git push --atomic --set-upstream origin milestone/m7-rule-engine-v2 refs/tags/pre-m7-2026-10-12
+```
 
 **M7 STATUS: PASS. Recommended next milestone: M8 — Transactional Outbox + Inbox.
 Wait for the next user task; M8 has not been implemented.**
