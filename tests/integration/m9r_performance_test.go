@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -51,7 +54,8 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 	ctx := context.Background()
 	descriptor := m3Call(h, "GET", strings.Split(base, "/entities/")[0], token, 0, nil)
 	var release struct {
-		Hash string `json:"ir_hash"`
+		Hash string          `json:"ir_hash"`
+		IR   json.RawMessage `json:"ir"`
 	}
 	if descriptor.Code != 200 || json.Unmarshal(descriptor.Body.Bytes(), &release) != nil || release.Hash == "" {
 		t.Fatal("descriptor")
@@ -228,6 +232,41 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 	query.Limit = 100
 	query.Sort = &data.Sort{Field: "field.contact.balance"}
 	payload, _ := json.Marshal(query)
+	program, err := compiler.Restore(release.IR, release.Hash, compiler.SupportedIRVersions())
+	if err != nil {
+		t.Fatal("benchmark stored IR")
+	}
+	scope, err := data.NewScope(program, 1)
+	if err != nil {
+		t.Fatal("benchmark scope")
+	}
+	if err = postgres.WithRuntime(ctx, f.db, func(ctx context.Context, q postgres.Executor) error {
+		access, e := m3Scope(f, ctx, q, principal, f.tenantA)
+		if e != nil {
+			return e
+		}
+		observer := &pagePlanObserver{Executor: q}
+		page, e := (data.Store{}).Query(ctx, observer, scope, access, "entity.contact", query, func(context.Context, string, data.Resource) error { return nil }, func(context.Context, string, data.Resource) (policy.DataScope, error) {
+			return policy.DataScope{Kind: "ALL"}, nil
+		})
+		if e != nil {
+			return e
+		}
+		if len(page.Records) != 100 {
+			return errors.New("runtime plan page size")
+		}
+		if _, e = q.ExecContext(ctx, `SET LOCAL plan_cache_mode=force_generic_plan`); e != nil {
+			return e
+		}
+		var raw []byte
+		if e = q.QueryRowContext(ctx, `EXPLAIN(ANALYZE,BUFFERS,VERBOSE,FORMAT JSON) `+observer.query, observer.args...).Scan(&raw); e != nil {
+			return e
+		}
+		t.Logf("runtime_page_plan=%s", raw)
+		return nil
+	}); err != nil {
+		t.Fatal("runtime page plan", err)
+	}
 	expected := map[int]string{}
 	rows, err := f.operator.Query(`SELECT (custom_data->'field.contact.balance'->>'amount')::int,id::text FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND (custom_data->'field.contact.balance'->>'amount')::int<=100`, f.tenantA, application)
 	if err != nil {
@@ -314,6 +353,18 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 	if reportLatency(t, "numeric_http_10clients", times, time.Since(start)) > 750 {
 		t.Fatal("API p95 budget")
 	}
+}
+
+type pagePlanObserver struct {
+	postgres.Executor
+	query string
+	args  []any
+}
+
+func (o *pagePlanObserver) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	o.query = query
+	o.args = append([]any{}, args...)
+	return o.Executor.QueryContext(ctx, query, args...)
 }
 
 // Refuse to label a run as the reference tier just because a caller supplied a

@@ -37,6 +37,19 @@ passed SQL gates but failed the HTTP gate (p95 838.674 ms); this failure remains
 in the evidence. The same workload/resource limits and unchanged targets must
 be tested with the service's ordinary build, rather than raising a budget.
 
+After environment resumption the host changed from AMD EPYC9V74 to Intel Xeon
+Platinum8573C. The same4-CPU/8GiB PostgreSQL tier passed SQL gates but the ordinary
+HTTP gate failed (p95 1485.555ms; profiling run858.323ms). These are retained
+failures. Go CPU profiling used only2.53s in32.54s; compilation caching is not
+introduced as an assumed cure. The runtime sorts full JSONB rows while the SQL
+floor sorts narrow IDs/keys. Custom-sort execution now selects a bounded ID/key
+page in a MATERIALIZED CTE before fetching full records through their exact
+namespace/primary keys. RLS and all main DataScope/field/cursor predicates precede
+LIMIT. Fetch and declared left joins share that statement and snapshot; no hidden
+sort field becomes permitted. Worker source ports and UUID key pages keep their
+existing paths. This addition requires fresh correctness, performance and
+independent review before the gate can be accepted on the current host.
+
 The plan's unchanged gates are SQL p95 ≤100 ms for a key page and ≤500 ms for
 numeric sort/selective filter; HTTP p95 ≤750 ms. Capture EXPLAIN ANALYZE/BUFFERS
 and require membership InitPlan `Actual Loops=1`. Execute missing/foreign/stale

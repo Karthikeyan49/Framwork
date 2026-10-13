@@ -373,6 +373,15 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		order = "DESC"
 	}
 	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	if query.Sort != nil && !sf.CoreID && !st.workerSource {
+		// Bound the sort tuple to ID/key before fetching wide JSONB records. Both
+		// stages share one statement/snapshot and forced RLS; entity/field/row
+		// DataScope and cursor predicates select the page before LIMIT. The outer
+		// fetch is constrained to the same namespace and those selected IDs.
+		limit := fmt.Sprintf("$%d", len(b.args))
+		statement = `WITH selected_page AS MATERIALIZED (SELECT r.id,` + sortExpr + ` AS sort_value FROM ` + st.recordsTable() + ` r WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + limit + `)
+ SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN ` + st.recordsTable() + ` r ON r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
+	}
 	rows, err := q.QueryContext(ctx, statement, b.args...)
 	if err != nil {
 		return Page{}, err
