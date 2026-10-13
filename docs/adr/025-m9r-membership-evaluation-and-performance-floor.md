@@ -30,6 +30,13 @@ queries per SQL case and 100 HTTP requests across ten clients. Report p50, p95,
 p99, errors and throughput. Warm performance does not establish cold-start,
 larger-scale or production capacity.
 
+Latency acceptance uses the ordinary Go build used by the service. Race builds
+remain correctness checks; race instrumentation overhead is reported separately
+and is not a production latency measurement. The initial race-instrumented run
+passed SQL gates but failed the HTTP gate (p95 838.674 ms); this failure remains
+in the evidence. The same workload/resource limits and unchanged targets must
+be tested with the service's ordinary build, rather than raising a budget.
+
 The plan's unchanged gates are SQL p95 ≤100 ms for a key page and ≤500 ms for
 numeric sort/selective filter; HTTP p95 ≤750 ms. Capture EXPLAIN ANALYZE/BUFFERS
 and require membership InitPlan `Actual Loops=1`. Execute missing/foreign/stale
