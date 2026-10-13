@@ -1,60 +1,13 @@
-# V3 authority and M9 Workflow Runtime V2
-
-Read all docs/v3 Markdown and docs/migration/M0_M6_AUDIT_REPORT.md. V3 is authoritative
-where it supersedes V2; retained V2 specs supplement unchanged modules. M6R passed
-independent review. The user has authorized M9 only; do not begin M10 without a new
-task. Preserve existing data, migrations and safe code. Read ADR021–023 and the M7/M8/M9 reports.
-No tenant DDL; immutable stored production IR; exact hash approval; SQL DataScope;
-separate worker/dispatcher roles; transactional audit/outbox; tool-specific guarantees.
-
 # Implementation contract
 
-Read and obey AGENTS.md, README.md, docs/00_MASTER_PLAYBOOK.md, the architectural
-source documents, relevant milestone verification, and docs/adr before coding.
+Use [AGENTS.md](AGENTS.md) as the single coding-agent contract. Read its linked
+architecture, module ADRs and verification requirements before changing code.
 
-Current scope is M9 Workflow Runtime V2 over retained M0–M8/M6R. Do not implement M10 or
-later business behavior without a new user task. Implement the smallest coherent
-milestone, run the documented commands, record actual results and recovery notes,
-then request independent review per docs/agents/82_TWO_AGENT_PROTOCOL.md. Review
-findings must be fixed and reverified before claiming completion.
+Current work is [M9R foundation remediation](docs/migration/M9R_REMEDIATION_PLAN.md),
+following the [validated review](docs/verification/M0_M9_REVIEW_VALIDATION.md).
+The [supersession map](docs/migration/V2_V3_SUPERSESSION_MAP.md) identifies replaced
+historical instructions and capabilities that remain contracts or previews.
 
-The core invariants are: AI drafts only; deterministic runtime; trusted tenant
-context; server-side default-deny policy; least-privilege PostgreSQL + RLS;
-immutable metadata; sandbox before approval/promotion; transactional outbox;
-idempotent governed side effects; secret-free observability. Never introduce
-generic execute-SQL/shell tools or arbitrary metadata code execution.
-
-Read docs/adr/015-m2-tenant-data-boundary.md for runtime transaction ownership,
-verified transaction-local scope, RLS installation, tenant keys/FKs and recovery.
-Do not expose repository SQL executors to AI, metadata or request payloads.
-
-Read docs/adr/016-m3-metadata-source-registry.md for strict authoring schemas,
-immutable draft revisions, quota/hash round trips, expected-revision concurrency,
-mandatory policy/audit and forward-only recovery. Schema-valid is not executable.
-
-Read ADR017–020 for compiler/preview-data/dynamic-UI contracts. Raw source never
-executes; production preview routes are absent. Enforce action permission plus SQL DataScope before reads and mutations; never
-fetch unrestricted rows to filter policy in memory, automatically retry mutations, or evaluate metadata code.
-
-Read ADR021 for opt-in schema/IR1.1 and DSL2 plans, explicit fixed-decimal/calendar
-semantics, pinned vendored zoneinfo, evaluation budgets and scoped audited preview.
-Restore validates persisted plans without compiling source; legacy1.0 stays non-executable
-by the DSL2 engine. Pure rule values never replace authorization or execute effects.
-
-Read ADR022/internal/events/README.md for immutable envelope hashes, PG-owned
-fenced delivery, Redis reference transport, exact routed worker tickets, atomic
-inbox/effect/audit completion, ACK after confirmed commit and durable dead-letter/
-reviewed replay. Preserve inbox and event identity; never infer universal external
-exactly-once. New local handlers must use explicit business/policy/DataScope ports.
-The M8 receipt consumer does not authorize production or workflow effects;
-M9 uses its separate governed durability ports.
-
-M9 workflow rules: schema/IR1.2 is opt-in; legacy hashes are preserved. In-flight
-instances restore immutable stored IR/plans/inputs and never compile or repin.
-Use live policy + SQL DataScope, exact routed worker tickets, PG-time fenced
-leases, atomic receipts/local effects/history/audit/lifecycle outbox, bounded
-retries, version-bound approvals and explicit reviewed recovery. No self-approval.
-Unknown effects wait for reconciliation. Compensation has explicit limits.
-Only trusted local.noop is registered; transactional Go adapters enforce their
-own data/effect policy. External tools remain M10. Production activation is M13.
-Read ADR023 and internal/runtime/workflow/README.md. Stop before M10.
+Preserve working code/data, deliver small independently reviewed changes, and
+record actual evidence and gaps. A milestone PASS does not certify production
+readiness. Do not continue M10 without the remediation gate and a new user task.
