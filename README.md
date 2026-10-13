@@ -342,6 +342,8 @@ See [ADR-016](docs/adr/016-m3-metadata-source-registry.md),
 
 M9R adds explicit **preview** dataset bindings through the API, while retaining
 the existing scratch-preview UI. See [R2 progress](docs/migration/M9R_R2_IMPLEMENTATION_REPORT.md).
+The bounded equal-schema tranche passed [independent review](docs/verification/M9R_R2B_INDEPENDENT_REVIEW.md)
+at `145eaa4`; this does not complete schema evolution or the foundation gate.
 Owner/admin requests can `POST /v1/tenants/{tenant}/preview/{app}/datasets`
 with `workspace_id`, `mode` (`ADOPT` or `EMPTY`), `metadata_revision`, `ir_hash`
 and exact canonical `compiled_ir` from the matching compiled descriptor. No

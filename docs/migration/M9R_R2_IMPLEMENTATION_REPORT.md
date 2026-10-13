@@ -5,7 +5,7 @@ Report date: 14 October 2026 (IST).
 **R2 STATUS: PARTIAL.** The first tranche implements and independently verifies
 immutable storage-schema/evolution artifacts and pure record transformations.
 R2b implements explicit equal-schema preview bindings, bounded adoption and writer
-fencing; independent review is pending. Incompatible schema migration, multiple
+fencing; independent review passed at `145eaa4`. Incompatible schema migration, multiple
 data generations/new workflow pins and production activation remain pending.
 This is not production persistence or R2 completion.
 
@@ -84,7 +84,7 @@ contracts. Original React pages remain usable for unadopted scratch previews.
 | `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM5\|^TestM6R\|^TestM9RDataset\|^TestM8ImmutableEnvelope\|^TestM9DurableSnapshot\|^TestM9R(GenericGrantDrift\|ExactCapability\|ReadinessWithGeneric)' -v ./tests/integration` | PASS 73.627 s; existing CRUD/typed queries/joins/CAS/DataScope, migration/read equivalence, release compatibility, event ordering, immutable workflow pins, worker capability/grant drift, and the seven dataset roots |
 | `make test-e2e` | PASS: 4 browser tests, 15.1 s, real CRUD/stale recovery/pagination/read-only policy, credential redaction and mobile layout |
 | Final `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RDataset' -v ./tests/integration` after admission hardening | PASS 16.295 s; includes caller-catalog rejection, trusted catalog upgrade and stored-IR execution unchanged |
-| Independent R2b review / incompatible shadow conversion / final R1–R4 suite | NOT RUN at this checkpoint |
+| Independent R2b review / incompatible shadow conversion / final R1–R4 suite | Initial review pending at this checkpoint; final bounded review PASS below. Shadow conversion and final foundation suite NOT RUN |
 
 Current limits: binding accepts identical storage hashes only. Pure plans can
 describe/validate transformations, but no database shadow migration executes them
@@ -122,9 +122,10 @@ reference-heavy batches smaller than 100 rows so progress remains bounded.
 | Correction command executed | Result |
 |---|---|
 | `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RDataset' -v ./tests/integration` | PASS: nine roots 25.652 s, then ten roots 21.173 s with reference work budget; includes permanent legacy-link/audit rollback, owner/runtime TRUNCATE denial and 30-reference-field resume tests |
-| Independent pre-fix projection/TRUNCATE overlay | FAIL as expected at 8d54977; full evidence in the forthcoming review report |
+| Independent pre-fix projection/TRUNCATE overlay | FAIL as expected at 8d54977; full evidence in the linked review report |
 | Independent populated grant-drift and corruption/budget probes | PASS at 8d54977: column SELECT drift fails worker readiness and leaks no rows; unequal links, undeclared properties and excessive shares leave zero verification progress |
-| Independent correction re-verification at abd2192 | PASS: 14 selected dataset/worker/generic roots 43.711 s and five own adversarial overlay roots 13.312 s; final defensive guard inspection pending |
+| Independent correction re-verification at abd2192 | PASS: 14 selected dataset/worker/generic roots 43.711 s and five own adversarial overlay roots 13.312 s |
+| Final independent guard, heavy-reference progress, reconciliation and provenance/scope checks at 145eaa4 | PASS 11.572 s; bounded R2b accepted with no unresolved confirmed HIGH/MEDIUM finding |
 
 `make migrate` applied forward migration 29 locally.
 `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RReadinessWithGenericPreparedPlans$\|^TestM9RGenericGrantDriftFailsReadinessAndStillDeniesRawData$' -v ./tests/integration`
@@ -132,3 +133,8 @@ PASSED 3.669 s. The independent review confirmed that restore's 32-field limit
 already bounds a single record below 256 work units; an additional explicit
 over-budget denial protects future reader changes. This is defensive, not a
 reproduced current acceptance failure.
+
+The [independent review](../verification/M9R_R2B_INDEPENDENT_REVIEW.md) retains
+the initial failures and fault commands. R2b's equal-schema boundary is verified;
+full R2 and the R1–R4 foundation gate remain PARTIAL. R4 concurrent writes and
+command reconciliation are next; no production or M10 acceptance is inferred.

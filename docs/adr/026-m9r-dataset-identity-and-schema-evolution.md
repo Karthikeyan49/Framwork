@@ -1,7 +1,7 @@
 # ADR026: Durable datasets and explicit JSONB schema evolution
 
 Status: staged implementation. R2a schema plans/transforms independently verified;
-R2b preview equal-schema bindings implemented, independent review pending. Full
+R2b preview equal-schema bindings independently verified at `145eaa4`. Full
 schema evolution remains pending.
 
 ## Implemented tranche boundary

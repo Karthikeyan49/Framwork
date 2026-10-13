@@ -13,7 +13,7 @@ correctness/security review but failed the current-host HTTP performance gate.
 [R3a evidence](M9R_R3A_IMPLEMENTATION_REPORT.md) retain failed checks and limits.
 R2's first pure schema-plan/transform tranche passed independent review. Its
 equal-schema preview binding/adoption tranche passed root fault/regression and
-browser tests, with independent review pending. Full evolution and R4 remain
+browser tests and independent review at `145eaa4`. Full evolution and R4 remain
 open. M10 remains paused. R3b–R3d and R5–R7 are
 not complete. [R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md).
 
@@ -328,5 +328,5 @@ After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
 **Checkpoint status: R0/R1 verified; R3a correctness verified, HTTP performance
-PARTIAL; R2/R4 pending. The complete foundation
+PARTIAL; R2a/R2b verified, full R2 and R4 pending. The complete foundation
 gate and broader review findings are not accepted as resolved.**
