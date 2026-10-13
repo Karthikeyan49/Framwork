@@ -1,6 +1,8 @@
 # M9R R1 worker authority remediation
 
-Status: full regression passed; independent review corrections are being verified.
+Status: R1 boundary and independent attack/recovery checks passed. The complete
+integration suite passed before the final review corrections; focused correction
+tests and browser checks passed afterward. Final R1–R4 regression is still due.
 R2–R4 remain pending. This report does not declare all external
 review findings resolved or authorize M10/production exposure.
 
@@ -70,8 +72,11 @@ erase evidence automatically. See [the runbook](M9R_WORKER_RUNBOOK.md).
 | First `make test-integration` | FAIL198.344s: old unassigned worker-lifecycle expectation and hard-coded21-migration count; other regressions passed |
 | `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestWorkerLifecycle\|^TestM1FreshDatabaseMigrations' -v ./tests/integration` | PASS3.202s after explicit disposable assignment and complete migration-count/target verification |
 | Second `make test-integration` at2212d7e | PASS202.039s for the complete M0–M9 integration suite |
-| Independent stable-code review | Executed at2212d7e; one reproduced MEDIUM share-entity gap and two startup/config gaps; corrections pending re-verification |
-| Browser suite/live smoke | NOT RUN at this checkpoint |
+| Independent stable-code review | PASS after corrections at7afc940; see the independent report below. Prior reproduced gaps are retained as FAIL evidence |
+| `make check test-unit build` at7afc940 | PASS: Go race tests,5 Node tests,28 frontend tests, format/vet/lint/typecheck/docs and backend/frontend builds |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RReadinessWithGenericPreparedPlans$' -v ./tests/integration` | First FAIL during correction (missing query argument), then PASS1.736s: all three process roles and wrong-role denial |
+| `make test-e2e` at7afc940 | PASS:4 browser tests,6.6s, real UI CRUD/stale versions/pagination/read-only policy, credential redaction and mobile bounds |
+| Separate `scripts/smoke.mjs` launcher / hostile isolated process deployment | NOT RUN; actual worker/dispatcher process and secondary service startup are exercised by integration tests |
 
 During implementation, SQL dollar-quote syntax, same-statement audience lookup,
 readiness schema visibility, and old protocol assertions failed. They were fixed
@@ -99,6 +104,14 @@ for SECURITY DEFINER functions. Catalog checks are qualified. The catalog change
 is defense in depth: shipped workers lack TEMP, and no current TEMP exploit was
 claimed. Configuration now accepts a bounded receiver-name family while still
 enforcing exact service/audience matching and excluding the broker operator.
+
+Independent re-verification passed the share/credential/hierarchy overlays
+(10.493s), secondary configuration,5 Node tests, and20 focused integration roots
+(72.065s), including process death and unknown COMMIT. The reviewer then found a
+generic prepared-plan readiness failure. The API now plans worker authority
+functions only in the Go worker branch, without new API privileges. Its exact
+independent probe passed2.046s at7afc940. Full commands and limits are recorded
+in [the independent review](../verification/M9R_R1_INDEPENDENT_REVIEW.md).
 
 ## Limits and remaining gates
 
