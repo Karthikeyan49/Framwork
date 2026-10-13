@@ -43,7 +43,7 @@ func CheckRole(ctx context.Context, db *sql.DB, expected string) error {
 	}
 	if expected == "framework_worker" {
 		var valid bool
-		if e := db.QueryRowContext(ctx, `SELECT control.worker_principal()`).Scan(&valid); e != nil || !valid {
+		if e := db.QueryRowContext(ctx, `SELECT control.worker_principal() AND control.worker_grants_safe()`).Scan(&valid); e != nil || !valid {
 			return ErrJob
 		}
 	} else if role != expected {

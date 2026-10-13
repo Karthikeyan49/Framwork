@@ -1,7 +1,7 @@
 # M9R R1 worker authority remediation
 
-Status: implementation verified by focused tests; full regression and independent
-review are pending. R2–R4 remain pending. This report does not declare all external
+Status: full regression passed; independent review corrections are being verified.
+R2–R4 remain pending. This report does not declare all external
 review findings resolved or authorize M10/production exposure.
 
 ## Checkpoint and changes
@@ -41,7 +41,7 @@ dependencies were introduced.
 
 ## Database changes and recovery
 
-Forward migrations22–25 add assignment/context storage, audiences and pickup
+Forward migrations22–26 add assignment/context storage, audiences and pickup
 facts; replace narrow functions/policies; revoke broad/unused grants. Applied
 migrations remain unchanged; refinements are new forward migrations. No records,
 IR/plan/input pins, history, inbox, envelopes or audit facts are deleted.
@@ -66,8 +66,12 @@ erase evidence automatically. See [the runbook](M9R_WORKER_RUNBOOK.md).
 | `docker compose --env-file .env -f infra/compose/compose.yaml restart redis` | PASS: apply local receiver ACL cutover; persistent PostgreSQL data untouched |
 | `make migrate` | PASS: forward local application; disposable fixtures also migrate and verify repeat no-op |
 | `git diff --check` | PASS |
-| `make check test-unit build`; `make test-integration` | RUNNING at this checkpoint; results must be recorded before completion |
-| Independent stable-code review; browser suite/live smoke | NOT RUN at this checkpoint |
+| `make check test-unit build` | PASS: backend/operator binaries and frontend bundle built |
+| First `make test-integration` | FAIL198.344s: old unassigned worker-lifecycle expectation and hard-coded21-migration count; other regressions passed |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestWorkerLifecycle\|^TestM1FreshDatabaseMigrations' -v ./tests/integration` | PASS3.202s after explicit disposable assignment and complete migration-count/target verification |
+| Second `make test-integration` at2212d7e | PASS202.039s for the complete M0–M9 integration suite |
+| Independent stable-code review | Executed at2212d7e; one reproduced MEDIUM share-entity gap and two startup/config gaps; corrections pending re-verification |
+| Browser suite/live smoke | NOT RUN at this checkpoint |
 
 During implementation, SQL dollar-quote syntax, same-statement audience lookup,
 readiness schema visibility, and old protocol assertions failed. They were fixed
@@ -81,6 +85,20 @@ expired leases, private-context/assignment denial, masking, failed rebind, poole
 transaction lifetime, membership/assignment revocation, principal inheritance,
 replaced leases under REPEATABLE READ and removal of generic business mutation.
 Event tests exercise cross-audience DB denial and receiver-key ACL denial.
+
+Independent reviewer execution:
+
+- `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -overlay /tmp/m9r-review-attacks/overlay.json -run '^TestIndependentR1' -v ./tests/integration` — FAIL7.827s solely because shares omitted entity ID from the resource key. A legitimate source share and a different entity's same-UUID share were both visible. Other raw privilege/masking/forged-selector/SAVEPOINT/expiry probes passed.
+- `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9R(Worker\|Exact\|Populated\|Expired\|Offline\|Repeatable)' -v ./tests/integration` — PASS11.860s independently, seven roots executed.
+- `./scripts/go.sh test -race -count=1 -overlay /tmp/m9r-review-config/overlay.json -run '^TestIndependentSecondaryWorkerConfig$' -v ./internal/config` — FAIL: generic loading still rejected valid secondary receiver usernames; process binding itself already supported them.
+- The reviewer reproduced dispatcher loss of `WORKFLOWS_ENABLED=false`; the root's committed-style Node regression also failed before the fix.
+
+Migration26 supplies entity-inclusive shares, restrictive
+no-generic-data policies, shared grant-drift readiness and explicit `pg_temp` last
+for SECURITY DEFINER functions. Catalog checks are qualified. The catalog change
+is defense in depth: shipped workers lack TEMP, and no current TEMP exploit was
+claimed. Configuration now accepts a bounded receiver-name family while still
+enforcing exact service/audience matching and excluding the broker operator.
 
 ## Limits and remaining gates
 
@@ -96,6 +114,14 @@ Compiler/verifier admission is not established by a matching hash: R6. Event
 outage budgets, retention, workflow cycles, approval snapshots and production
 operations remain R7. Stable dataset identity, query cost and concurrent record
 writes are R2–R4 and are not changed by this checkpoint.
+
+Same-user local development contains multiple credentials in a host-readable
+`.env`. Verified claims concern DB authorization with isolated audience credentials.
+Hostile process protection requires an independently verified service identity/
+container and secret-isolation boundary; that deployment test is NOT RUN here.
+SAVEPOINT rollback can restore an earlier valid transaction context, but cannot
+expand its resource set or expiry. These prerequisites/caveats are explicit in
+ADR024 and the runbook.
 
 Source changes, migrations, tests, ADR/runbook and reports belong in Git. `.env`,
 private keys, role/receiver passwords, `.local`, binaries, dependencies, frontend

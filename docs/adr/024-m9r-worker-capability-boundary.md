@@ -32,6 +32,11 @@ identity and RLS helpers consult the protected context and current lease. Failed
 binding clears previous authority; another transaction or reused connection
 cannot reuse an old row. Rebinding an active transaction to another job denies.
 
+Clearing is transactional. An arbitrary SQL caller can ROLLBACK TO a SAVEPOINT
+to restore the previous valid capability; it remains confined to its original
+job/resources and expiry. The trusted wrapper aborts the entire transaction on
+failed binding. No claim of irreversible revocation through SQL rebind is made.
+
 Lease fencing must survive REPEATABLE READ, rather than re-reading an old MVCC
 generation. Workflow binding locks the instance before the job, revalidates the
 lease under lock and holds the fence through commit, matching API signal/save
@@ -78,6 +83,14 @@ compromised worker process holding its own audience/receiver credentials. A
 principal explicitly assigned a tenant has that declared job-processing scope.
 Operator/migrator, database superuser and trusted producer remain privileged.
 
+Process protection requires separate service identity/container boundaries,
+no readable operator/other-audience credential files and no inspection of other
+service process environments. The same-user local `make dev` launcher does not
+provide that isolation: its host `.env` contains several credentials. Tests verify
+database authorization using isolated audience credentials, not hostile-process
+isolation of that development host. Production deployment must establish and
+verify the service-secret/OS boundary before applying the process claim.
+
 Resource confinement does not attest honest execution by a malicious worker.
 Direct permitted instance/history/receipt changes may be fabricated within its
 own capability. Human approval signals remain an independent actor boundary.
@@ -94,6 +107,11 @@ M12/M13 authority work; matching artifact hashes alone do not prove provenance.
 3. Enable the new dispatcher/worker protocol and verify readiness/role grants.
 4. On failure disable workers and forward-fix; never automatically restore broad
    grants or delete evidence to recover. Old binaries must not run this protocol.
+
+Independent review additionally requires entity-inclusive share keys, explicit
+temporary-catalog lookup hardening and denial despite restored generic grants.
+Event-only readiness checks the same worker grants. Secondary receiver bindings
+and workflow enablement are verified through configuration and process composition.
 
 Required tests include populated two-tenant jobs, password-only self-claim denial,
 forged context denial, wrong audience/tenant/app/release/record/field/operation,

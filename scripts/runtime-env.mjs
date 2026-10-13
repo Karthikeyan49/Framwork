@@ -7,6 +7,6 @@ export function runtimeEnv(source,kind) {
   else if(kind==='dispatcher'){env.DATABASE_URL=source.DISPATCHER_DATABASE_URL;env.DISPATCHER_DATABASE_URL=source.DISPATCHER_DATABASE_URL;env.REDIS_URL=source.EVENT_SENDER_REDIS_URL;env.EVENT_REDIS_URL=source.EVENT_SENDER_REDIS_URL;env.EVENTS_ENABLED=source.EVENTS_ENABLED}
   else if(kind==='api') {env.DATABASE_URL=source.DATABASE_URL;env.REDIS_URL=source.REDIS_URL}
   else {delete env.REDIS_URL; for(const k of ['VITE_API_BASE_URL','APP_ENV'])if(source[k]!==undefined)env[k]=source[k]}
-  if(kind==='api'||kind==='worker'){if(source.WORKFLOWS_ENABLED!==undefined)env.WORKFLOWS_ENABLED=source.WORKFLOWS_ENABLED}
+  if(['api','worker','dispatcher'].includes(kind)){if(source.WORKFLOWS_ENABLED!==undefined)env.WORKFLOWS_ENABLED=source.WORKFLOWS_ENABLED}
   return env
 }

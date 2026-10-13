@@ -30,7 +30,9 @@ func TestConfiguration(t *testing.T) {
 		{"production preview workflow", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "WORKFLOWS_ENABLED": "true"}, true},
 		{"production preview events", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "EVENTS_ENABLED": "true"}, true},
 		{"dedicated broker", map[string]string{"EVENT_REDIS_URL": "redis://event_worker:private@localhost:6379/0"}, false},
+		{"secondary worker broker", map[string]string{"WORKER_DATABASE_URL": "postgres://tenant_worker:private@localhost/db?sslmode=disable", "EVENT_REDIS_URL": "redis://event_tenant_worker:private@localhost:6379/0"}, false},
 		{"ambient broker admin", map[string]string{"EVENT_REDIS_URL": "redis://:private@localhost:6379/0"}, true},
+		{"named broker admin", map[string]string{"EVENT_REDIS_URL": "redis://event_operator:private@localhost:6379/0"}, true},
 		{"broker credential alias", map[string]string{"EVENT_REDIS_URL": "redis://event_worker:private@localhost:6379/0?password=override"}, true},
 	}
 	for _, tc := range cases {
@@ -50,6 +52,21 @@ func TestConfiguration(t *testing.T) {
 				t.Fatal("credential in error")
 			}
 		})
+	}
+}
+
+func TestSecondaryWorkerServiceBinding(t *testing.T) {
+	base := map[string]string{"DATABASE_URL": "postgres://app:private@localhost/db?sslmode=disable", "REDIS_URL": "redis://:private@localhost:6379/0", "AUTH_ISSUER": "https://issuer.example", "AUTH_AUDIENCE": "api", "AUTH_JWKS_FILE": "/run/auth/public.json", "WORKER_DATABASE_URL": "postgres://tenant_worker:private@localhost/db?sslmode=disable", "EVENT_REDIS_URL": "redis://event_tenant_worker:private@localhost:6379/0"}
+	c, err := Load(func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.EventBinding("framework-worker"); err != nil {
+		t.Fatal("matching secondary audience rejected", err)
+	}
+	c.EventRedisURL = "redis://event_other_worker:private@localhost:6379/0"
+	if c.EventBinding("framework-worker") == nil {
+		t.Fatal("foreign receiver audience accepted")
 	}
 }
 

@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { runtimeEnv } from './runtime-env.mjs'
 const source={PATH:'/synthetic/bin',DATABASE_URL:'api-credential',WORKER_DATABASE_URL:'worker-credential',DISPATCHER_DATABASE_URL:'dispatcher-credential',MIGRATION_DATABASE_URL:'migration-credential',POSTGRES_PASSWORD:'operator-secret',REDIS_URL:'cache-credential',EVENT_SENDER_REDIS_URL:'sender-credential',EVENT_RECEIVER_REDIS_URL:'receiver-credential',EVENTS_ENABLED:'true',VITE_API_BASE_URL:'/api'}
+test('all backend children preserve explicit workflow enablement',()=>{
+ for(const value of ['false','true'])for(const kind of ['api','worker','dispatcher'])assert.equal(runtimeEnv({...source,WORKFLOWS_ENABLED:value},kind).WORKFLOWS_ENABLED,value)
+ assert.equal(runtimeEnv({...source,WORKFLOWS_ENABLED:'false'},'web').WORKFLOWS_ENABLED,undefined)
+})
 test('API/worker/dispatcher/frontend children receive only their credential bindings',()=>{
  for(const kind of ['api','worker','dispatcher','web']){const env=runtimeEnv(source,kind);for(const key of ['MIGRATION_DATABASE_URL','POSTGRES_PASSWORD','EVENT_SENDER_REDIS_URL','EVENT_RECEIVER_REDIS_URL'])assert.equal(env[key],undefined);if(kind==='api'){assert.equal(env.DATABASE_URL,'api-credential');assert.equal(env.WORKER_DATABASE_URL,undefined);assert.equal(env.DISPATCHER_DATABASE_URL,undefined);assert.equal(env.REDIS_URL,'cache-credential');assert.equal(env.EVENT_REDIS_URL,undefined)}else if(kind==='worker'){assert.equal(env.DATABASE_URL,'worker-credential');assert.equal(env.WORKER_DATABASE_URL,'worker-credential');assert.equal(env.DISPATCHER_DATABASE_URL,undefined);assert.equal(env.REDIS_URL,'receiver-credential');assert.equal(env.EVENT_REDIS_URL,'receiver-credential')}else if(kind==='dispatcher'){assert.equal(env.DATABASE_URL,'dispatcher-credential');assert.equal(env.DISPATCHER_DATABASE_URL,'dispatcher-credential');assert.equal(env.WORKER_DATABASE_URL,undefined);assert.equal(env.EVENT_REDIS_URL,'sender-credential')}else{assert.equal(env.DATABASE_URL,undefined);assert.equal(env.REDIS_URL,undefined);assert.equal(env.VITE_API_BASE_URL,'/api')}}
 })

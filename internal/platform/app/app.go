@@ -78,7 +78,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		defer func() { stopJobs(); wg.Wait() }()
 		if service == "framework-dispatcher" && c.WorkflowsEnabled {
 			var valid bool
-			if e := db.QueryRowContext(ctx, `SELECT has_function_privilege('control.claim_workflow(uuid)','EXECUTE') AND NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='runtime' AND c.relname='records' AND has_table_privilege(c.oid,'SELECT'))`).Scan(&valid); e != nil || !valid {
+			if e := db.QueryRowContext(ctx, `SELECT has_function_privilege('control.claim_workflow(uuid)','EXECUTE') AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='runtime' AND c.relname='records' AND has_table_privilege(c.oid,'SELECT'))`).Scan(&valid); e != nil || !valid {
 				return errors.New("workflow dispatch contract unavailable")
 			}
 			wg.Go(func() { jobs.RunWorkflowDispatcher(jobCtx, db, logger) })

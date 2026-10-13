@@ -15,12 +15,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/internal/config"
 	"github.com/Karthikeyan49/Framwork/internal/events"
+	"github.com/Karthikeyan49/Framwork/internal/identity"
+	"github.com/Karthikeyan49/Framwork/internal/platform/app"
 	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"io"
+	"log/slog"
 )
 
 // These tests exercise raw credentials, not only the trusted jobs.WithJob path.
@@ -42,6 +47,10 @@ func TestM9RWorkerCredentialCannotSelfIssueWorkflowLease(t *testing.T) {
 }
 
 func m9RBroker(t *testing.T, db *sql.DB) *events.RedisTransport {
+	broker, _ := m9RBrokerBinding(t, db)
+	return broker
+}
+func m9RBrokerBinding(t *testing.T, db *sql.DB) (*events.RedisTransport, string) {
 	t.Helper()
 	ctx := context.Background()
 	var principal string
@@ -70,7 +79,7 @@ func m9RBroker(t *testing.T, db *sql.DB) *events.RedisTransport {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { broker.Close() })
-	return broker
+	return broker, u.String()
 }
 
 func bindM9R(tx *sql.Tx, l jobs.WorkflowLease) (bool, error) {
@@ -186,6 +195,10 @@ func TestM9RExactCapabilityMaskedSourceAndTransactionLifetime(t *testing.T) {
 }
 
 func m9RSecondPrincipal(t *testing.T, m *m9Fixture) *sql.DB {
+	db, _ := m9RSecondPrincipalBinding(t, m)
+	return db
+}
+func m9RSecondPrincipalBinding(t *testing.T, m *m9Fixture) (*sql.DB, string) {
 	t.Helper()
 	u, err := url.Parse(os.Getenv("WORKER_DATABASE_URL"))
 	if err != nil {
@@ -240,7 +253,7 @@ func m9RSecondPrincipal(t *testing.T, m *m9Fixture) *sql.DB {
 	if err = db.QueryRow(`SELECT current_database(),session_user`).Scan(&actual, &role); err != nil || actual != binding.Database || role != principal {
 		t.Fatal("connected worker mismatch")
 	}
-	return db
+	return db, u.String()
 }
 
 func TestM9RPopulatedTenantsAndAuthenticatedAudience(t *testing.T) {
@@ -403,6 +416,150 @@ func TestM9RRepeatableReadCannotRestoreReplacedLease(t *testing.T) {
 	var abort *pgconn.PgError
 	if bound || !errors.As(err, &abort) || abort.Code != "40001" {
 		t.Fatal("stale MVCC lease did not abort at locked fence", err)
+	}
+}
+
+func TestM9RShareResourceIncludesEntity(t *testing.T) {
+	m := m9Setup(t, nil)
+	x := m.start(t, "share-entity")
+	if _, err := m.f.operator.Exec(`INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,created_by,owner_user_id,updated_by)
+ SELECT tenant_id,app_id,metadata_revision,ir_hash,'entity.other',id,custom_data,created_by,owner_user_id,updated_by FROM runtime.records WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, m.record.ID); err != nil {
+		t.Fatal("same UUID entity fixture", err)
+	}
+	if _, err := m.f.operator.Exec(`INSERT INTO runtime.record_shares(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,user_id,can_write)
+ SELECT tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,$3,entity_id='entity.other' FROM runtime.records WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, m.record.ID, m.f.alice); err != nil {
+		t.Fatal("populated shares", err)
+	}
+	l, found, err := m.worker.Claim(context.Background())
+	if err != nil || !found || l.Ticket.JobID() != x.ID {
+		t.Fatal(err)
+	}
+	tx, err := m.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if bound, err := bindM9R(tx, l); err != nil || !bound {
+		t.Fatal(err)
+	}
+	if _, err = (identity.Store{}).ResolveWorker(context.Background(), tx, x.ID); err != nil {
+		t.Fatal(err)
+	}
+	var own, foreign int
+	if err = tx.QueryRow(`SELECT count(*) FILTER(WHERE entity_id='entity.contact'),count(*) FILTER(WHERE entity_id='entity.other') FROM runtime.record_shares`).Scan(&own, &foreign); err != nil || own != 1 || foreign != 0 {
+		t.Fatal("share resource escaped exact entity", own, foreign, err)
+	}
+}
+
+func TestM9RGenericGrantDriftFailsReadinessAndStillDeniesRawData(t *testing.T) {
+	m := m9Setup(t, nil)
+	x := m.start(t, "grant-drift")
+	l, found, err := m.worker.Claim(context.Background())
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	if _, err = m.f.operator.Exec(`GRANT SELECT,UPDATE(row_version) ON runtime.records TO framework_worker`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = m.f.operator.Exec(`REVOKE SELECT,UPDATE(row_version) ON runtime.records FROM framework_worker`)
+	}()
+	if events.Ready(context.Background(), m.db, "framework_worker") == nil || jobs.CheckRole(context.Background(), m.db, "framework_worker") == nil {
+		t.Fatal("generic grant drift accepted by event-only/worker readiness")
+	}
+	tx, err := m.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if bound, err := bindM9R(tx, l); err != nil || !bound {
+		t.Fatal("existing capability fixture", err)
+	}
+	if _, err = (identity.Store{}).ResolveWorker(context.Background(), tx, x.ID); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err = tx.QueryRow(`SELECT count(*) FROM runtime.records`).Scan(&n); err != nil || n != 0 {
+		t.Fatal("restored generic grant disclosed records", err)
+	}
+	if result, err := tx.Exec(`UPDATE runtime.records SET row_version=row_version+1`); err != nil {
+		t.Fatal(err)
+	} else if n, err := result.RowsAffected(); err != nil || n != 0 {
+		t.Fatal("restored generic grant mutated records", err)
+	}
+	if err = tx.QueryRow(`SELECT count(*) FROM runtime.worker_source_record()`).Scan(&n); err != nil || n != 1 {
+		t.Fatal("masked source port lost confinement", err)
+	}
+}
+
+func TestM9RSecondaryWorkerServiceStartsWithBoundAudience(t *testing.T) {
+	m := m9Setup(t, nil)
+	bob := m.f.token(t, m.f.bobSubject, nil)
+	if r := m3Call(m.handler, "POST", "/v1/tenants/"+m.f.tenantB+"/metadata/"+m.app+"/versions", bob, 0, m.raw); r.Code != 201 {
+		t.Fatal(r.Code)
+	}
+	record := m5Create(t, m.handler, strings.Replace(m.entity, m.f.tenantA, m.f.tenantB, 1), bob, "Secondary service source")
+	base := strings.Replace(m.base, m.f.tenantA, m.f.tenantB, 1)
+	x := m9Decode(t, m5Call(m.handler, base+"/start", bob, map[string]string{"record_id": record.ID, "idempotency_key": "secondary-service"}))
+	dbB, workerURL := m9RSecondPrincipalBinding(t, m)
+	_, brokerURL := m9RBrokerBinding(t, dbB)
+	c, err := config.Load(func(k string) string {
+		switch k {
+		case "WORKER_DATABASE_URL":
+			return workerURL
+		case "EVENT_REDIS_URL":
+			return brokerURL
+		default:
+			return os.Getenv(k)
+		}
+	})
+	if err != nil {
+		t.Fatal("secondary configuration", err)
+	}
+	c.EventsEnabled = true
+	c.WorkflowsEnabled = true
+	c.OTelEndpoint = ""
+	dispatchConfig := c
+	dispatchConfig.EventsEnabled = false // Independent PG mailbox; no shared broker key mutation.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	workerDone, dispatcherDone := make(chan error, 1), make(chan error, 1)
+	go func() { workerDone <- app.Run(ctx, "framework-worker", c, logger) }()
+	go func() { dispatcherDone <- app.Run(ctx, "framework-dispatcher", dispatchConfig, logger) }()
+	deadline := time.Now().Add(10 * time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-workerDone:
+			t.Fatal("secondary worker exited", err)
+		case err := <-dispatcherDone:
+			t.Fatal("dispatcher exited", err)
+		default:
+		}
+		var status string
+		if err = m.f.operator.QueryRow(`SELECT status FROM runtime.workflow_instances WHERE tenant_id=$1 AND id=$2`, m.f.tenantB, x.ID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status == "WAITING_APPROVAL" {
+			ready = true
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("secondary service did not execute its assigned job")
+	}
+	cancel()
+	for _, done := range []chan error{workerDone, dispatcherDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal("service shutdown", err)
+			}
+		case <-time.After(4 * time.Second):
+			t.Fatal("service shutdown stalled")
+		}
 	}
 }
 

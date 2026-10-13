@@ -6,12 +6,15 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 )
+
+var brokerUserPattern = regexp.MustCompile(`^event_[a-z][a-z0-9_]{0,62}$`)
 
 type Config struct {
 	Environment           string
@@ -62,7 +65,7 @@ func Load(getenv func(string) string) (Config, error) {
 	if c.EventRedisURL != "" {
 		options, err := redis.ParseURL(c.EventRedisURL)
 		u, urlErr := url.Parse(c.EventRedisURL)
-		if err != nil || urlErr != nil || u.Hostname() == "" || u.User == nil || u.RawQuery != "" || u.Fragment != "" || options.Password == "" || (options.Username != "event_dispatcher" && options.Username != "event_worker") || (u.Scheme != "redis" && u.Scheme != "rediss") {
+		if err != nil || urlErr != nil || u.Hostname() == "" || u.User == nil || u.RawQuery != "" || u.Fragment != "" || options.Password == "" || !brokerUserPattern.MatchString(options.Username) || options.Username == "event_operator" || (u.Scheme != "redis" && u.Scheme != "rediss") {
 			return c, fmt.Errorf("EVENT_REDIS_URL requires a dedicated unambiguous sender/receiver binding")
 		}
 		if c.Environment == "production" && (options.TLSConfig == nil || options.TLSConfig.InsecureSkipVerify) {
@@ -183,6 +186,9 @@ func (c Config) EventBinding(service string) error {
 		binding, err := pgx.ParseConfig(c.WorkerDatabaseURL)
 		if err != nil {
 			return fmt.Errorf("worker audience binding required")
+		}
+		if contains([]string{"operator", "dispatcher", "worker"}, binding.User) {
+			return fmt.Errorf("reserved worker audience name")
 		}
 		if binding.User != "framework_worker" {
 			expected = "event_" + binding.User
