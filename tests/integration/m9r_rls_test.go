@@ -8,13 +8,40 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
 func TestM9RStatementMembershipRemainsFailClosed(t *testing.T) {
 	m8Database(t)
 	f, h, base, token, _ := m5Fixture(t)
 	m5Create(t, h, base, token, "Tenant A record")
+	if _, err := f.operator.Exec(`INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) SELECT $1,app_id,metadata_revision,ir_hash FROM runtime.record_sets WHERE tenant_id=$2`, f.tenantB, f.tenantA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.operator.Exec(`INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,created_by,updated_by,owner_user_id) SELECT $1,app_id,metadata_revision,ir_hash,entity_id,$3,custom_data,$4,$4,$4 FROM runtime.records WHERE tenant_id=$2`, f.tenantB, f.tenantA, uuid(t), f.bob); err != nil {
+		t.Fatal(err)
+	}
+	bob, err := f.verifier.Verify(f.token(t, f.bobSubject, nil))
+	if err != nil {
+		t.Fatal("tenant B principal")
+	}
+	if err = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+		if _, e := m3Scope(f, ctx, q, bob, f.tenantB); e != nil {
+			return e
+		}
+		var n int
+		if e := q.QueryRowContext(ctx, `SELECT count(*) FROM runtime.records`).Scan(&n); e != nil {
+			return e
+		}
+		if n != 1 {
+			return errors.New("negative tenant was not populated and accessible")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	principal, err := f.verifier.Verify(token)
 	if err != nil {
 		t.Fatal("principal")
@@ -64,8 +91,22 @@ func TestM9RStatementMembershipRemainsFailClosed(t *testing.T) {
 	}
 	if err = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
 		// Authentication can remain valid while tenant membership has been revoked.
-		if _, e := q.ExecContext(ctx, `SELECT set_config('app.auth_issuer','https://test-issuer.example',true),set_config('app.auth_subject',$1,true),set_config('app.tenant_id',$2,true)`, f.aliceSubject, f.tenantA); e != nil {
+		u, e := (identity.Store{}).Resolve(ctx, q, principal)
+		if e != nil {
 			return e
+		}
+		if e = (tenant.Store{}).BindActor(ctx, q, u); e != nil {
+			return e
+		}
+		if _, e := q.ExecContext(ctx, `SELECT set_config('app.tenant_id',$1,true)`, f.tenantA); e != nil {
+			return e
+		}
+		var validActor bool
+		if e := q.QueryRowContext(ctx, `SELECT iam.authenticated_actor()=$1::uuid AND iam.current_tenant_id()=$2::uuid`, f.alice, f.tenantA).Scan(&validActor); e != nil {
+			return e
+		}
+		if !validActor {
+			return errors.New("revocation test lacked valid actor/tenant context")
 		}
 		var n int
 		if e := q.QueryRowContext(ctx, `SELECT count(*) FROM runtime.records`).Scan(&n); e != nil {

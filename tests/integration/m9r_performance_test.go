@@ -183,7 +183,7 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 			return e
 		}
 		var raw []byte
-		if e := q.QueryRowContext(ctx, `EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) `+numeric, f.tenantA, application, release.Hash).Scan(&raw); e != nil {
+		if e := q.QueryRowContext(ctx, `EXPLAIN(ANALYZE,BUFFERS,VERBOSE,FORMAT JSON) `+numeric, f.tenantA, application, release.Hash).Scan(&raw); e != nil {
 			return e
 		}
 		t.Logf("numeric_plan=%s", raw)
@@ -200,7 +200,10 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 					if x["Actual Loops"] != float64(1) {
 						t.Error("InitPlan executed repeatedly")
 					}
-					found = true
+					output, _ := json.Marshal(x["Output"])
+					if strings.Contains(string(output), "iam.tenant_matches_scope(") {
+						found = true
+					}
 				}
 				for _, v := range x {
 					visit(v)
@@ -225,6 +228,27 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 	query.Limit = 100
 	query.Sort = &data.Sort{Field: "field.contact.balance"}
 	payload, _ := json.Marshal(query)
+	expected := map[int]string{}
+	rows, err := f.operator.Query(`SELECT (custom_data->'field.contact.balance'->>'amount')::int,id::text FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND (custom_data->'field.contact.balance'->>'amount')::int<=100`, f.tenantA, application)
+	if err != nil {
+		t.Fatal("expected page")
+	}
+	for rows.Next() {
+		var amount int
+		var id string
+		if err = rows.Scan(&amount, &id); err != nil {
+			rows.Close()
+			t.Fatal("expected row")
+		}
+		expected[amount] = id
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatal("expected rows")
+	}
+	rows.Close()
+	if len(expected) != 100 {
+		t.Fatal("expected page size")
+	}
 	call := func() (float64, error) {
 		start := time.Now()
 		request, e := http.NewRequest("POST", server.URL+base+"/query", bytes.NewReader(payload))
@@ -238,9 +262,16 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 			return 0, e
 		}
 		defer response.Body.Close()
-		_, e = io.Copy(io.Discard, response.Body)
-		if e != nil || response.StatusCode != 200 {
+		var page data.Page
+		e = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&page)
+		if e != nil || response.StatusCode != 200 || len(page.Records) != 100 || page.Next == "" {
 			return 0, fmt.Errorf("HTTP status%d", response.StatusCode)
+		}
+		for i, row := range page.Records {
+			amount, ok := row.Values["field.contact.balance"].(map[string]any)
+			if !ok || row.ID != expected[i+1] || amount["amount"] != fmt.Sprint(i+1) || amount["currency"] != "USD" || !strings.HasPrefix(fmt.Sprint(row.Values["field.contact.name"]), fmt.Sprintf("%08d", i+1)) {
+				return 0, errors.New("HTTP page contents/order/tenant mismatch")
+			}
 		}
 		return float64(time.Since(start).Microseconds()) / 1000, nil
 	}
