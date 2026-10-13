@@ -587,17 +587,37 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 		t.Fatal("migration binding invalid")
 	}
 	migrateURL.Path = "/" + name
+	query := migrateURL.Query()
+	query.Del("dbname")
+	query.Del("database")
+	query.Del("user")
+	migrateURL.RawQuery = query.Encode()
+	binding, e := pgx.ParseConfig(migrateURL.String())
+	if e != nil || binding.Database != name || binding.User != "framework_migrator" {
+		t.Fatal("effective fresh migration binding mismatch")
+	}
 	migrate, err := postgres.Open(migrateURL.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer migrate.Close()
+	var actual, role string
+	if e = migrate.QueryRowContext(ctx, `SELECT current_database(),session_user`).Scan(&actual, &role); e != nil || actual != name || role != "framework_migrator" {
+		t.Fatal("connected fresh migration binding mismatch")
+	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, migrate, migrations.Files, goose.WithDisableGlobalRegistry(true))
 	if err != nil {
 		t.Fatal("fresh migration provider failed")
 	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 21 {
+	files, fileErr := migrations.Files.ReadDir(".")
+	total := 0
+	for _, file := range files {
+		if strings.HasSuffix(file.Name(), ".sql") {
+			total++
+		}
+	}
+	if err != nil || fileErr != nil || total == 0 || len(results) != total {
 		t.Fatal("fresh migration chain failed")
 	}
 	results, err = provider.Up(ctx)
@@ -609,6 +629,15 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 		t.Fatal("runtime binding invalid")
 	}
 	runtimeURL.Path = "/" + name
+	query = runtimeURL.Query()
+	query.Del("dbname")
+	query.Del("database")
+	query.Del("user")
+	runtimeURL.RawQuery = query.Encode()
+	binding, e = pgx.ParseConfig(runtimeURL.String())
+	if e != nil || binding.Database != name || binding.User != "framework_app" {
+		t.Fatal("effective fresh runtime binding mismatch")
+	}
 	runtimeDB, err := postgres.Open(runtimeURL.String())
 	if err != nil {
 		t.Fatal(err)

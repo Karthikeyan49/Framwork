@@ -195,6 +195,8 @@ func TestAPIWithoutCollectorAndDependencyOutages(t *testing.T) {
 }
 
 func TestWorkerLifecycle(t *testing.T) {
+	m8Database(t)
+	newIAM(t) // Explicit tenant assignment in the owned disposable database.
 	c, err := config.Load(os.Getenv)
 	if err != nil {
 		t.Fatal(err)
