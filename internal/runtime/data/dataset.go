@@ -288,6 +288,7 @@ func (DatasetStore) VerifyAdoption(ctx context.Context, q postgres.Executor, a t
 	if !done {
 		batch = batch[:100]
 	}
+	work, processed := 0, 0
 	for _, v := range batch {
 		e, ok := p.Entity(v.entity)
 		if !ok {
@@ -306,11 +307,26 @@ func (DatasetStore) VerifyAdoption(ctx context.Context, q postgres.Executor, a t
 		if err != nil {
 			return Dataset{}, ErrUnavailable
 		}
+		// Bound round trips as well as rows: a reference-heavy legacy record may
+		// require target validation, projection insertion and equality lookup.
+		cost := 1
+		for _, f := range e.Fields {
+			if f.Type == "reference" && record.Values[f.ID] != nil {
+				cost += 3
+			}
+		}
+		if processed > 0 && work+cost > 256 {
+			done = false
+			break
+		}
+		work += cost
+		processed++
 		var shares [][]json.RawMessage
 		var links [][]string
 		if json.Unmarshal(v.shares, &shares) != nil || len(shares) > 256 || json.Unmarshal(v.links, &links) != nil || len(links) > 32 {
 			return Dataset{}, ErrBudget
 		}
+		present := map[string]bool{}
 		for _, link := range links {
 			if len(link) != 3 {
 				return Dataset{}, ErrUnavailable
@@ -319,7 +335,9 @@ func (DatasetStore) VerifyAdoption(ctx context.Context, q postgres.Executor, a t
 			if !ok || f.Type != "reference" || f.ReferenceTo != link[1] || record.Values[f.ID] != link[2] {
 				return Dataset{}, ErrUnavailable
 			}
+			present[f.ID] = true
 		}
+		complete := [][]string{}
 		for _, f := range e.Fields {
 			if f.Type != "reference" || record.Values[f.ID] == nil {
 				continue
@@ -331,6 +349,27 @@ func (DatasetStore) VerifyAdoption(ctx context.Context, q postgres.Executor, a t
 			if !exists {
 				return Dataset{}, ErrUnavailable
 			}
+			target := record.Values[f.ID].(string)
+			if !present[f.ID] {
+				// V2/v8 retained records may predate derived link projections. Add
+				// only missing equal facts; never overwrite an unequal destination.
+				_, err = q.ExecContext(ctx, `INSERT INTO runtime.record_links(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,field_id,target_entity,target_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, a.TenantID(), app, revision, anchorHash, e.ID, record.ID, f.ID, f.ReferenceTo, target)
+				if err != nil {
+					return Dataset{}, err
+				}
+				var actualEntity, actualID string
+				if err = q.QueryRowContext(ctx, `SELECT target_entity,target_id::text FROM runtime.record_links WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4 AND entity_id=$5 AND id=$6 AND field_id=$7`, a.TenantID(), app, revision, anchorHash, e.ID, record.ID, f.ID).Scan(&actualEntity, &actualID); err != nil {
+					return Dataset{}, err
+				}
+				if actualEntity != f.ReferenceTo || actualID != target {
+					return Dataset{}, ErrUnavailable
+				}
+			}
+			complete = append(complete, []string{f.ID, f.ReferenceTo, target})
+		}
+		v.links, err = json.Marshal(complete)
+		if err != nil {
+			return Dataset{}, err
 		}
 		manifest, _ := json.Marshal(struct {
 			Entity                   string

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -537,5 +538,147 @@ func TestM9RDatasetAuditFailureRollsBackVerification(t *testing.T) {
 	}
 	if w = m3Call(h, "GET", path+"/"+d.ID, f.token(t, f.viewerSubject, nil), 0, nil); w.Code != 403 {
 		t.Fatal("viewer learned administrative verification counts", w.Code)
+	}
+}
+
+func TestM9RDatasetReconcilesLegacyReferenceProjectionAtomically(t *testing.T) {
+	m8Database(t)
+	f, h, base, token, app := m5Fixture(t)
+	parent := m5Create(t, h, base, token, "Parent")
+	v := m5Values("Legacy child")
+	v["field.contact.parent"] = parent.ID
+	w := m5Call(h, base+"/commands", token, data.Command{Operation: "create", Values: v})
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var child data.Record
+	_ = json.Unmarshal(w.Body.Bytes(), &child)
+	// Only this owned fixture's derived link is removed to reproduce retained v8
+	// data. The customer record/reference/row version are preserved throughout.
+	if _, err := f.operator.Exec(`DELETE FROM runtime.record_links WHERE tenant_id=$1 AND app_id=$2 AND id=$3`, f.tenantA, app, child.ID); err != nil {
+		t.Fatal(err)
+	}
+	witness := m9rDatasetWitness(t, h, strings.Split(base, "/entities/")[0], token)
+	path := "/v1/tenants/" + f.tenantA + "/preview/" + app + "/datasets"
+	d := m9rDatasetCreate(t, h, path, token, "ADOPT", witness)
+	fault := m5Handler(t, f, policy.Native{}, m8AfterAuditFailure{}, true)
+	if w = m5Call(fault, path+"/"+d.ID+"/verify", token, struct{}{}); w.Code != 503 {
+		t.Fatal("audit failure accepted")
+	}
+	var n int
+	if err := f.operator.QueryRow(`SELECT count(*) FROM runtime.record_links WHERE tenant_id=$1 AND app_id=$2 AND id=$3`, f.tenantA, app, child.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatal("failed checkpoint committed derived projection", err)
+	}
+	if w = m5Call(h, path+"/"+d.ID+"/verify", token, struct{}{}); w.Code != 200 {
+		t.Fatal("legacy reconciliation", w.Code, w.Body.String())
+	}
+	if err := f.operator.QueryRow(`SELECT count(*) FROM runtime.record_links WHERE tenant_id=$1 AND app_id=$2 AND id=$3 AND field_id='field.contact.parent' AND target_id=$4`, f.tenantA, app, child.ID, parent.ID).Scan(&n); err != nil || n != 1 {
+		t.Fatal("reference projection missing or duplicated", err)
+	}
+	if w = m5Call(h, path+"/"+d.ID+"/verify", token, struct{}{}); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	var version int64
+	var ref string
+	if err := f.operator.QueryRow(`SELECT row_version,custom_data->>'field.contact.parent' FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND id=$3`, f.tenantA, app, child.ID).Scan(&version, &ref); err != nil || version != 1 || ref != parent.ID {
+		t.Fatal("reconciliation altered customer record", err)
+	}
+}
+
+func TestM9RDatasetBindingTruncateDeniedToOwnerAndRuntime(t *testing.T) {
+	m8Database(t)
+	f, h, base, token, app := m5Fixture(t)
+	m5Create(t, h, base, token, "Retained")
+	witness := m9rDatasetWitness(t, h, strings.Split(base, "/entities/")[0], token)
+	path := "/v1/tenants/" + f.tenantA + "/preview/" + app + "/datasets"
+	d := m9rDatasetCreate(t, h, path, token, "ADOPT", witness)
+	for _, db := range []*sql.DB{f.operator, f.db} {
+		tx, err := db.BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = tx.Exec(`TRUNCATE runtime.datasets,runtime.dataset_bindings`)
+		_ = tx.Rollback()
+		if err == nil {
+			t.Fatal("immutable dataset evidence could be truncated")
+		}
+	}
+	if w := m3Call(h, "GET", path+"/"+d.ID, token, 0, nil); w.Code != 200 {
+		t.Fatal("failed truncation lost dataset", w.Code)
+	}
+}
+
+func TestM9RDatasetReferenceHeavyAdoptionHasBoundedProgress(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	h := m5Handler(t, f, policy.Native{}, audit.Postgres{}, true)
+	token := f.token(t, f.aliceSubject, nil)
+	app := "app.references_" + strings.ReplaceAll(uuid(t), "-", "")
+	doc := metadata.Document{SchemaVersion: metadata.SchemaVersion, AppID: app, Namespace: "example.references", Definitions: []metadata.Definition{}}
+	common := func(id, kind string) metadata.Definition {
+		return metadata.Definition{ID: id, Kind: kind, Label: "Reference fixture", SchemaVersion: metadata.SchemaVersion, Namespace: doc.Namespace}
+	}
+	e := common("entity.item", "entity")
+	e.Entity = &metadata.Entity{Fields: []string{"field.item.id", "field.item.name"}}
+	id := common("field.item.id", "field")
+	id.Field = &metadata.Field{EntityRef: "entity.item", Type: "string", Required: true}
+	name := common("field.item.name", "field")
+	name.Field = &metadata.Field{EntityRef: "entity.item", Type: "string", Required: true}
+	doc.Definitions = append(doc.Definitions, id, name)
+	for i := 0; i < 30; i++ {
+		key := fmt.Sprintf("field.item.ref_%02d", i)
+		f := common(key, "field")
+		f.Field = &metadata.Field{EntityRef: "entity.item", Type: "reference", ReferenceTo: "entity.item"}
+		e.Entity.Fields = append(e.Entity.Fields, key)
+		doc.Definitions = append(doc.Definitions, f)
+	}
+	doc.Definitions = append(doc.Definitions, e)
+	raw, _ := json.Marshal(doc)
+	if w := m3Call(h, "POST", "/v1/tenants/"+f.tenantA+"/metadata/"+app+"/versions", token, 0, raw); w.Code != 201 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	descriptor := "/v1/tenants/" + f.tenantA + "/preview/" + app + "/versions/1"
+	witness := m9rDatasetWitness(t, h, descriptor, token)
+	parent := "10000000-0000-4000-8000-000000000001"
+	if _, err := f.operator.Exec(`INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,1,$3)`, f.tenantA, app, witness["ir_hash"]); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		values := map[string]any{"field.item.name": "Retained"}
+		if i > 0 {
+			for j := 0; j < 30; j++ {
+				values[fmt.Sprintf("field.item.ref_%02d", j)] = parent
+			}
+		}
+		body, _ := json.Marshal(values)
+		recordID := fmt.Sprintf("10000000-0000-4000-8000-%012d", i+1)
+		if _, err := f.operator.Exec(`INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,created_by,owner_user_id,updated_by) VALUES($1,$2,1,$3,'entity.item',$4,$5,$6,$6,$6)`, f.tenantA, app, witness["ir_hash"], recordID, string(body), f.alice); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/v1/tenants/" + f.tenantA + "/preview/" + app + "/datasets"
+	d := m9rDatasetCreate(t, h, path, token, "ADOPT", witness)
+	steps := 0
+	for d.State != "OPEN" {
+		steps++
+		if steps > 10 {
+			t.Fatal("verification made no bounded progress")
+		}
+		previous := d.VerifiedRows
+		w := m5Call(h, path+"/"+d.ID+"/verify", token, struct{}{})
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &d)
+		if d.VerifiedRows <= previous || d.VerifiedRows-previous > 3 {
+			t.Fatal("reference work was not bounded", d.VerifiedRows, previous)
+		}
+	}
+	if d.VerifiedRows != 10 || steps < 2 {
+		t.Fatal("reference-heavy source did not resume", d)
+	}
+	var n int
+	if err := f.operator.QueryRow(`SELECT count(*) FROM runtime.record_links WHERE tenant_id=$1 AND app_id=$2`, f.tenantA, app).Scan(&n); err != nil || n != 270 {
+		t.Fatal("reference-heavy projection reconciliation", n, err)
 	}
 }

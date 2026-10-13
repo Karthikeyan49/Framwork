@@ -100,3 +100,28 @@ Do not roll an old binary back into adopted writes or restore broad worker grant
 A failed cutover transaction rolls back its pointer/audit; a committed equal-schema
 pointer change can be reversed only through a new authorized CAS binding, retaining
 intervening record mutations and events. No destructive cleanup is authorized.
+
+## Independent R2b corrections
+
+At 8d54977, independent raw operator testing found that `TRUNCATE` could erase
+dataset/binding history despite row mutation guards (MEDIUM). The test rolled it
+back in its own disposable database. Migration 29 adds statement guards to both
+tables; migration 28 remains unchanged. Runtime readiness checks all five guards.
+These prevent accidental operator truncation, not a malicious owner disabling
+triggers or dropping tables. Runtime/worker principals have no such privileges.
+
+The reviewer also reproduced an incomplete link reconciliation case: retained
+V2 records can have valid JSON references without derived projections. This was
+not demonstrated unsafe deletion under the current counter/JSON scan. Verification
+now reconstructs only missing matching links, rejects unequal existing links and
+hashes the complete derived references. Projection writes, checkpoint and audit
+share the transaction; a later validation/audit failure rolls them all back.
+Record JSON, IDs and versions remain unchanged. A 256-work-unit budget makes
+reference-heavy batches smaller than 100 rows so progress remains bounded.
+
+| Correction command executed | Result |
+|---|---|
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RDataset' -v ./tests/integration` | PASS: nine roots 25.652 s, then ten roots 21.173 s with reference work budget; includes permanent legacy-link/audit rollback, owner/runtime TRUNCATE denial and 30-reference-field resume tests |
+| Independent pre-fix projection/TRUNCATE overlay | FAIL as expected at 8d54977; full evidence in the forthcoming review report |
+| Independent populated grant-drift and corruption/budget probes | PASS at 8d54977: column SELECT drift fails worker readiness and leaks no rows; unequal links, undeclared properties and excessive shares leave zero verification progress |
+| Independent correction re-verification | Pending at this checkpoint |

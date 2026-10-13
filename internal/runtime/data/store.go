@@ -23,7 +23,7 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
-	err = db.QueryRowContext(ctx, `SELECT count(*)=3 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger WHERE (tgrelid='runtime.records'::regclass AND tgname='dataset_record_fence') OR (tgrelid='runtime.datasets'::regclass AND tgname='dataset_update_guard') OR (tgrelid='runtime.dataset_bindings'::regclass AND tgname='immutable_dataset_binding')`).Scan(&valid)
+	err = db.QueryRowContext(ctx, `SELECT count(*)=5 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger WHERE (tgrelid='runtime.records'::regclass AND tgname='dataset_record_fence') OR (tgrelid='runtime.datasets'::regclass AND tgname IN('dataset_update_guard','immutable_dataset_truncate')) OR (tgrelid='runtime.dataset_bindings'::regclass AND tgname IN('immutable_dataset_binding','immutable_binding_truncate'))`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
