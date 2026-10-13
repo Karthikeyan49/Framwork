@@ -135,8 +135,8 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 		})
 		return elapsed, err
 	}
-	prefix := `SELECT id::text FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=1 AND ir_hash=$3 AND entity_id='entity.contact'`
-	numeric := prefix + ` ORDER BY (custom_data->'field.contact.balance'->>'amount')::numeric,id LIMIT 101`
+	prefix := `SELECT r.id::text FROM runtime.records r WHERE r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=1 AND r.ir_hash=$3 AND r.entity_id='entity.contact'`
+	numeric := prefix + ` ORDER BY (r.custom_data->'field.contact.balance'->>'amount')::numeric,r.id LIMIT 101`
 	// Reproduce the original policy under the same pinned hardware and data. This
 	// fixture-only policy change never disables RLS and is restored before gates.
 	old := `ALTER POLICY tenant_scope ON runtime.records USING(tenant_id=iam.current_tenant_id() AND iam.tenant_matches_scope(tenant_id)) WITH CHECK(tenant_id=iam.current_tenant_id() AND iam.tenant_matches_scope(tenant_id))`
@@ -159,7 +159,7 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 	for _, c := range []struct {
 		name, sql string
 		budget    float64
-	}{{"key_sql", prefix + ` ORDER BY id LIMIT 101`, 100}, {"numeric_sql", numeric, 500}, {"selective_sql", prefix + ` AND custom_data->>'field.contact.status'='inactive' ORDER BY (custom_data->'field.contact.balance'->>'amount')::numeric,id LIMIT 101`, 500}} {
+	}{{"key_sql", prefix + ` ORDER BY r.id LIMIT 101`, 100}, {"numeric_sql", numeric, 500}, {"selective_sql", prefix + ` AND r.custom_data->>'field.contact.status'='inactive' ORDER BY (r.custom_data->'field.contact.balance'->>'amount')::numeric,r.id LIMIT 101`, 500}} {
 		for range 3 {
 			if _, err = run(c.sql); err != nil {
 				t.Fatal(err)
