@@ -124,4 +124,11 @@ reference-heavy batches smaller than 100 rows so progress remains bounded.
 | `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RDataset' -v ./tests/integration` | PASS: nine roots 25.652 s, then ten roots 21.173 s with reference work budget; includes permanent legacy-link/audit rollback, owner/runtime TRUNCATE denial and 30-reference-field resume tests |
 | Independent pre-fix projection/TRUNCATE overlay | FAIL as expected at 8d54977; full evidence in the forthcoming review report |
 | Independent populated grant-drift and corruption/budget probes | PASS at 8d54977: column SELECT drift fails worker readiness and leaks no rows; unequal links, undeclared properties and excessive shares leave zero verification progress |
-| Independent correction re-verification | Pending at this checkpoint |
+| Independent correction re-verification at abd2192 | PASS: 14 selected dataset/worker/generic roots 43.711 s and five own adversarial overlay roots 13.312 s; final defensive guard inspection pending |
+
+`make migrate` applied forward migration 29 locally.
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RReadinessWithGenericPreparedPlans$\|^TestM9RGenericGrantDriftFailsReadinessAndStillDeniesRawData$' -v ./tests/integration`
+PASSED 3.669 s. The independent review confirmed that restore's 32-field limit
+already bounds a single record below 256 work units; an additional explicit
+over-budget denial protects future reader changes. This is defensive, not a
+reproduced current acceptance failure.

@@ -315,6 +315,9 @@ func (DatasetStore) VerifyAdoption(ctx context.Context, q postgres.Executor, a t
 				cost += 3
 			}
 		}
+		if cost > 256 {
+			return Dataset{}, ErrBudget
+		}
 		if processed > 0 && work+cost > 256 {
 			done = false
 			break
