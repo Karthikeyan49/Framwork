@@ -86,8 +86,28 @@ func m8Database(t *testing.T) {
 			t.Fatal("dedicated binding missing")
 		}
 		u.Path = "/" + name
+		query := u.Query()
+		query.Del("dbname")
+		query.Del("database")
+		query.Del("user")
+		u.RawQuery = query.Encode()
+		binding, err := pgx.ParseConfig(u.String())
+		if err != nil || binding.Database != name {
+			t.Fatal("effective disposable binding mismatch")
+		}
+		probe, err := postgres.Open(u.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actual, role string
+		err = probe.QueryRowContext(ctx, `SELECT current_database(),session_user`).Scan(&actual, &role)
+		probe.Close()
+		if err != nil || actual != name || role != binding.User {
+			t.Fatal("connected disposable binding mismatch")
+		}
 		t.Setenv(key, u.String())
 	}
+	t.Setenv("M9R_DISPOSABLE_WORKER_BINDING", "true")
 	m, e := postgres.Open(os.Getenv("MIGRATION_DATABASE_URL"))
 	if e != nil {
 		t.Fatal(e)
@@ -339,7 +359,7 @@ func TestM8ConcurrentClaimsConsumersAndWorkerIsolation(t *testing.T) {
 		t.Fatal(e)
 	}
 	unique := map[string]bool{}
-	var chosen events.Pointer
+	var chosen, scopePointer events.Pointer
 	for p := range pointers {
 		if unique[p.EventID] {
 			t.Fatal("double fenced claim")
@@ -348,6 +368,7 @@ func TestM8ConcurrentClaimsConsumersAndWorkerIsolation(t *testing.T) {
 		if e := dispatch.Finish(context.Background(), p, true); e != nil {
 			t.Fatal(e)
 		}
+		scopePointer = chosen
 		chosen = p
 	}
 	if len(unique) != 4 {
@@ -364,7 +385,7 @@ func TestM8ConcurrentClaimsConsumersAndWorkerIsolation(t *testing.T) {
 		t.Fatal(e)
 	}
 	m8AssertCounts(t, f.operator, f.tenantA, 1)
-	ticket, _, _, _, e := jobs.EventTicket(context.Background(), w, chosen.TenantID, chosen.EventID, chosen.BodyHash, chosen.ConsumerID, chosen.Generation, chosen.LeaseToken)
+	ticket, _, _, _, e := jobs.EventTicket(context.Background(), w, scopePointer.TenantID, scopePointer.EventID, scopePointer.BodyHash, scopePointer.ConsumerID, scopePointer.Generation, scopePointer.LeaseToken)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -652,7 +673,7 @@ func (m8AfterAuditFailure) Append(ctx context.Context, q postgres.Executor, e au
 	}
 	return errors.New("injected after audit append")
 }
-func TestM8ConsumerMutationAuditDerivedOutboxAndInboxAtomic(t *testing.T) {
+func TestM9RConsumerCannotUseGenericBusinessMutationPort(t *testing.T) {
 	m8Database(t)
 	f, h, base, token, app := m5Fixture(t)
 	record := m5Create(t, h, base, token, "before consumer")
@@ -733,18 +754,20 @@ func TestM8ConsumerMutationAuditDerivedOutboxAndInboxAtomic(t *testing.T) {
 	}
 	check(1, 1)
 	consumer.Audit = audit.Postgres{}
-	if e := consumer.Consume(context.Background(), p); e != nil {
-		t.Fatal(e)
+	if err := consumer.Consume(context.Background(), p); err == nil {
+		t.Fatal("generic business mutation admitted")
+	} else {
+		requireM9RPrivilegeDenial(t, err)
 	}
-	if e := consumer.Consume(context.Background(), p); e != nil {
-		t.Fatal(e)
+	check(1, 1)
+	m8AssertCounts(t, f.operator, f.tenantA, 0)
+	// A receipt-only consumer still commits; the rejected business change and
+	// its derived event were never written.
+	if err := m8Consumer(w).Consume(context.Background(), p); err != nil {
+		t.Fatal(err)
 	}
-	check(2, 2)
+	check(1, 1)
 	m8AssertCounts(t, f.operator, f.tenantA, 1)
-	derived := m8Claim(t, dispatch)
-	if derived.EventID == p.EventID {
-		t.Fatal("derived event lost")
-	}
 }
 
 func TestM8DeadPendingMessagesDoNotStarveAnotherTenant(t *testing.T) {
@@ -800,6 +823,7 @@ func TestM8DeadPendingMessagesDoNotStarveAnotherTenant(t *testing.T) {
 	}
 	baseB := strings.Replace(base, f.tenantA, f.tenantB, 1)
 	m5Create(t, h, baseB, bob, "fresh tenant B")
+	dbB := m9RSecondPrincipal(t, &m9Fixture{f: f})
 	fresh := m8Claim(t, dispatch)
 	if fresh.TenantID != f.tenantB {
 		t.Fatal("fresh route tenant")
@@ -807,12 +831,14 @@ func TestM8DeadPendingMessagesDoNotStarveAnotherTenant(t *testing.T) {
 	if sender.Publish(ctx, fresh) != nil || dispatch.Finish(ctx, fresh, true) != nil {
 		t.Fatal("fresh publication")
 	}
-	peer, e := events.OpenRedis(os.Getenv("EVENT_RECEIVER_REDIS_URL"))
-	if e != nil {
-		t.Fatal(e)
+	if err := m8Consumer(w).Consume(ctx, fresh); !errors.Is(err, events.ErrUnroutable) {
+		t.Fatal("foreign event audience admitted", err)
 	}
-	defer peer.Close()
-	consumer := m8Consumer(w)
+	if err := m8Redis(t, "EVENT_RECEIVER_REDIS_URL").XGroupCreateMkStream(ctx, events.StreamPrefix+fresh.Audience, events.Group, "0").Err(); err == nil {
+		t.Fatal("receiver accessed another audience stream")
+	}
+	peer := m9RBroker(t, dbB)
+	consumer := m8Consumer(dbB)
 	found := false
 	for i := 0; i < 3; i++ {
 		m, e := peer.Read(ctx)

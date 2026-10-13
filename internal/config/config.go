@@ -179,6 +179,14 @@ func (c Config) EventBinding(service string) error {
 		expected = "event_dispatcher"
 	} else if service != "framework-worker" {
 		return fmt.Errorf("unknown event process")
+	} else if c.WorkerDatabaseURL != "" {
+		binding, err := pgx.ParseConfig(c.WorkerDatabaseURL)
+		if err != nil {
+			return fmt.Errorf("worker audience binding required")
+		}
+		if binding.User != "framework_worker" {
+			expected = "event_" + binding.User
+		}
 	}
 	if err != nil || u.User == nil || u.User.Username() != expected {
 		return fmt.Errorf("dedicated event process binding required")

@@ -26,7 +26,7 @@ func (Store) ResolveWorker(ctx context.Context, q postgres.Executor, u identity.
 		return Access{}, ErrDenied
 	}
 	var valid bool
-	if e := q.QueryRowContext(ctx, `SELECT session_user='framework_worker' AND iam.worker_tenant_scope($1::uuid) AND iam.authenticated_actor()=$2::uuid`, selected, u.ID()).Scan(&valid); e != nil {
+	if e := q.QueryRowContext(ctx, `SELECT control.worker_principal() AND iam.worker_tenant_scope($1::uuid) AND iam.authenticated_actor()=$2::uuid`, selected, u.ID()).Scan(&valid); e != nil {
 		return Access{}, e
 	}
 	if !valid {

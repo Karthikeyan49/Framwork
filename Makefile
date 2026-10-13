@@ -48,6 +48,7 @@ build:
 	$(GO) build -o bin/event-replay ./cmd/event-replay
 	$(GO) build -o bin/migrate ./cmd/migrate
 	$(GO) build -o bin/iam ./cmd/iam
+	$(GO) build -o bin/worker-admin ./cmd/worker-admin
 	$(GO) build -o bin/release-check ./cmd/release-check
 	$(NPM) run build
 fmt:

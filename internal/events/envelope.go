@@ -22,6 +22,7 @@ var ErrNotReady = errors.New("event publication is unconfirmed or paused")
 var ErrDead = errors.New("event has durable dead-letter evidence")
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var hashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var audiencePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
 func validUUID(s string) bool { return uuidPattern.MatchString(s) }
 func validHash(s string) bool { return hashPattern.MatchString(s) }
@@ -46,10 +47,12 @@ type Pointer struct {
 	ConsumerID    string `json:"consumer_id"`
 	Generation    int64  `json:"generation"`
 	LeaseToken    string `json:"lease_token"`
+	Audience      string `json:"audience,omitempty"`
 }
 
 func (p Pointer) Valid() bool {
-	return p.SchemaVersion == "1.0.0" && validUUID(p.TenantID) && validUUID(p.EventID) && validHash(p.BodyHash) && p.ConsumerID == ConsumerID && p.Generation > 0 && validUUID(p.LeaseToken)
+	version := (p.SchemaVersion == "1.1.0" && audiencePattern.MatchString(p.Audience)) || (p.SchemaVersion == "1.0.0" && p.Audience == "")
+	return version && validUUID(p.TenantID) && validUUID(p.EventID) && validHash(p.BodyHash) && p.ConsumerID == ConsumerID && p.Generation > 0 && validUUID(p.LeaseToken)
 }
 func (p Pointer) Bytes() ([]byte, error) {
 	if !p.Valid() {

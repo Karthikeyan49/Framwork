@@ -88,7 +88,9 @@ func TestM8ExactTenantJobRoutesAndPoolRebinding(t *testing.T) {
 		if e != nil || ticket.ReleaseHash() != route.hash {
 			t.Fatal("tenant-inclusive route lookup failed")
 		}
+		ran := false
 		if e = jobs.WithJob(ctx, w, ticket, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
+			ran = true
 			if a.TenantID() != route.tenant || a.ActorID() != route.actor {
 				t.Fatal("job identity switched across tenant-inclusive routing key")
 			}
@@ -100,12 +102,12 @@ func TestM8ExactTenantJobRoutesAndPoolRebinding(t *testing.T) {
 				t.Fatal("foreign memberships visible")
 			}
 			return nil
-		}); e != nil {
-			t.Fatal(e)
+		}); e == nil || ran {
+			t.Fatal("routing reference without execution capability was admitted")
 		}
 	}
 	var tenantContext string
-	if e := w.QueryRow(`SELECT current_setting('app.tenant_id',true)`).Scan(&tenantContext); e != nil || tenantContext != "" {
+	if e := w.QueryRow(`SELECT coalesce(current_setting('app.tenant_id',true),'')`).Scan(&tenantContext); e != nil || tenantContext != "" {
 		t.Fatal("pooled worker tenant context retained")
 	}
 }

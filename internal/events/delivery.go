@@ -52,7 +52,7 @@ func (d Dispatcher) Claim(ctx context.Context) (Pointer, bool, error) {
 	return Pointer{}, false, ErrDelivery
 }
 func (d Dispatcher) claim(ctx context.Context) (Pointer, bool, error) {
-	p := Pointer{SchemaVersion: "1.0.0"}
+	p := Pointer{SchemaVersion: "1.1.0"}
 	token, err := NewID()
 	if err != nil {
 		return p, false, ErrDelivery
@@ -64,6 +64,9 @@ func (d Dispatcher) claim(ctx context.Context) (Pointer, bool, error) {
 			return nil
 		}
 		found = e == nil
+		if found {
+			e = q.QueryRowContext(ctx, `SELECT control.event_audience($1::uuid,$2::uuid,$3,$4::uuid)`, p.TenantID, p.EventID, p.Generation, p.LeaseToken).Scan(&p.Audience)
+		}
 		return e
 	})
 	if err != nil {

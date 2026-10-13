@@ -101,7 +101,15 @@ func newIAM(t *testing.T) *iamFixture {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("M9R_DISPOSABLE_WORKER_BINDING") == "true" {
+		if _, err = operator.Exec(`SELECT control.assign_worker('framework_worker',$1::uuid,true)`, f.tenantA); err != nil {
+			t.Fatal("disposable worker assignment", err)
+		}
+	}
 	t.Cleanup(func() {
+		if os.Getenv("M9R_DISPOSABLE_WORKER_BINDING") == "true" {
+			_, _ = operator.Exec(`DELETE FROM control.worker_principals WHERE tenant_id IN($1,$2)`, f.tenantA, f.tenantB)
+		}
 		_, _ = operator.Exec(`DELETE FROM iam.memberships WHERE tenant_id IN ($1,$2)`, f.tenantA, f.tenantB)
 		_, _ = operator.Exec(`DELETE FROM iam.tenants WHERE id IN ($1,$2)`, f.tenantA, f.tenantB)
 		_, _ = operator.Exec(`DELETE FROM iam.users WHERE id IN ($1,$2,$3)`, f.alice, f.bob, f.viewer)

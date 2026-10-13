@@ -32,7 +32,7 @@ import (
 type m9Fixture struct {
 	f                                  *iamFixture
 	handler                            http.Handler
-	worker                             workflow.Worker
+	worker                             m9TestWorker
 	db                                 *sql.DB
 	token, approver, base, entity, app string
 	record                             data.Record
@@ -66,8 +66,8 @@ func m9Setup(t *testing.T, change func(*metadata.Workflow)) *m9Fixture {
 		t.Fatal("schema1.2 registry", r.Code, r.Body.String())
 	}
 	rec := m5Create(t, h, root+"/entities/entity.contact", token, "Workflow snapshot")
-	_, db := m8Roles(t)
-	store := access.WorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
+	dispatcher, db := m8Roles(t)
+	store := access.WorkerWorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
 		var job string
 		if e := q.QueryRowContext(ctx, `SELECT current_setting('app.job_id',true)`).Scan(&job); e != nil {
 			return identity.User{}, e
@@ -93,7 +93,28 @@ func m9Setup(t *testing.T, change func(*metadata.Workflow)) *m9Fixture {
 		}
 		return workflow.Noop(ctx, q, a, r)
 	}
-	return &m9Fixture{f: f, handler: h, worker: workflow.Worker{DB: db, Store: store}, db: db, token: token, approver: f.token(t, f.bobSubject, nil), base: root + "/workflows/workflow.contact.review", entity: root + "/entities/entity.contact", record: rec, app: doc.AppID, raw: raw}
+	return &m9Fixture{f: f, handler: h, worker: m9TestWorker{Worker: workflow.Worker{DB: db, Store: store}, dispatcher: dispatcher}, db: db, token: token, approver: f.token(t, f.bobSubject, nil), base: root + "/workflows/workflow.contact.review", entity: root + "/entities/entity.contact", record: rec, app: doc.AppID, raw: raw}
+}
+
+// Fixture composition explicitly runs the separate dispatcher. Production Worker
+// contains no dispatcher DB or operator credentials.
+type m9TestWorker struct {
+	workflow.Worker
+	dispatcher *sql.DB
+}
+
+func (w m9TestWorker) Claim(ctx context.Context) (jobs.WorkflowLease, bool, error) {
+	if _, err := jobs.DispatchWorkflow(ctx, w.dispatcher); err != nil {
+		return jobs.WorkflowLease{}, false, err
+	}
+	return w.Worker.Claim(ctx)
+}
+func (w m9TestWorker) Once(ctx context.Context) (bool, error) {
+	l, found, err := w.Claim(ctx)
+	if err != nil || !found {
+		return false, err
+	}
+	return true, w.Step(ctx, l)
 }
 func (m *m9Fixture) start(t *testing.T, key string) workflow.Instance {
 	t.Helper()

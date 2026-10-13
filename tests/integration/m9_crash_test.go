@@ -10,6 +10,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
+	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
@@ -55,6 +56,9 @@ func TestM9ActualProcessKillBeforeAndAfterLocalCommit(t *testing.T) {
 			m := m9Setup(t, nil)
 			x := m.start(t, "process-crash")
 			m.step(t)
+			if _, err := jobs.DispatchWorkflow(context.Background(), m.worker.dispatcher); err != nil {
+				t.Fatal(err)
+			}
 			exe, e := os.Executable()
 			if e != nil {
 				t.Fatal(e)
@@ -111,6 +115,9 @@ func TestM9ActualProcessKillBeforeAndAfterLocalCommit(t *testing.T) {
 			if point == "before_commit" {
 				var n int
 				if e = m.f.operator.QueryRow(`SELECT count(*) FROM control.workflow_attempts WHERE tenant_id=$1 AND id=$2 AND phase='EXPIRED'`, m.f.tenantA, x.ID).Scan(&n); e != nil || n != 1 {
+					var phases string
+					_ = m.f.operator.QueryRow(`SELECT string_agg(generation::text||':'||phase,', ' ORDER BY generation,phase) FROM control.workflow_attempts WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, x.ID).Scan(&phases)
+					t.Log("routing evidence", phases)
 					t.Fatal("missing lease expiry evidence", n, e)
 				}
 			}
@@ -133,7 +140,7 @@ func TestM9ProcessChild(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	store := access.WorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
+	store := access.WorkerWorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
 		var id string
 		if e := q.QueryRowContext(ctx, `SELECT current_setting('app.job_id',true)`).Scan(&id); e != nil {
 			return identity.User{}, e

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/Karthikeyan49/Framwork/internal/audit"
-	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
@@ -41,11 +40,7 @@ func (f activityFailure) Error() string { return "workflow local activity aborte
 func (f activityFailure) Unwrap() error { return f.err }
 
 func (w Worker) Claim(ctx context.Context) (jobs.WorkflowLease, bool, error) {
-	token, e := events.NewID()
-	if e != nil {
-		return jobs.WorkflowLease{}, false, e
-	}
-	return jobs.ClaimWorkflow(ctx, w.DB, token)
+	return jobs.AssignedWorkflow(ctx, w.DB)
 }
 func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 	if !w.Store.configured() || w.Store.Activity == nil || lease.Generation < 1 || !tenant.ValidID(lease.Token) {
@@ -67,6 +62,9 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 		defer span.End()
 		entry, e := w.Store.Authorize(ctx, q, a, "workflows.execute", x.Pin, x.inputs.Fields)
 		if e != nil {
+			if (errors.Is(e, ErrDenied) || errors.Is(e, ErrNotFound)) && errors.Is(checkLease(ctx, q, a, x, lease), ErrLease) {
+				return ErrLease
+			}
 			return e
 		}
 		var now time.Time
@@ -169,6 +167,9 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 	var failed activityFailure
 	if errors.As(err, &failed) {
 		return w.recordFailure(ctx, lease, failed)
+	}
+	if errors.Is(err, jobs.ErrJob) {
+		return ErrLease
 	}
 	return err
 }

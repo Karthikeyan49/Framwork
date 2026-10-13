@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-type Store struct{ legacy bool }
+type Store struct{ legacy, workerSource bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool

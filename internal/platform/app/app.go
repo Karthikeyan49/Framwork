@@ -68,7 +68,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		if err != nil {
 			return errors.New("event role unavailable")
 		}
-		if !c.EventsEnabled && (!c.WorkflowsEnabled || service == "framework-dispatcher") {
+		if !c.EventsEnabled && !c.WorkflowsEnabled {
 			logger.Info("event delivery disabled", "service", service)
 			<-ctx.Done()
 			return nil
@@ -76,6 +76,13 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		var wg sync.WaitGroup
 		jobCtx, stopJobs := context.WithCancel(ctx)
 		defer func() { stopJobs(); wg.Wait() }()
+		if service == "framework-dispatcher" && c.WorkflowsEnabled {
+			var valid bool
+			if e := db.QueryRowContext(ctx, `SELECT has_function_privilege('control.claim_workflow(uuid)','EXECUTE') AND NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='runtime' AND c.relname='records' AND has_table_privilege(c.oid,'SELECT'))`).Scan(&valid); e != nil || !valid {
+				return errors.New("workflow dispatch contract unavailable")
+			}
+			wg.Go(func() { jobs.RunWorkflowDispatcher(jobCtx, db, logger) })
+		}
 		if service == "framework-worker" && c.WorkflowsEnabled {
 			probe, cancel = context.WithTimeout(ctx, c.DependencyTimeout)
 			err = workflow.Ready(probe, db, "framework_worker")
@@ -86,7 +93,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 			if err != nil {
 				return errors.New("workflow storage contract unavailable")
 			}
-			store := access.WorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
+			store := access.WorkerWorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
 				var id string
 				if e := q.QueryRowContext(ctx, `SELECT current_setting('app.job_id',true)`).Scan(&id); e != nil {
 					return identity.User{}, e
@@ -116,7 +123,11 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		if err != nil {
 			return errors.New("event storage contract unavailable")
 		}
-		broker, err := events.OpenRedis(c.EventRedisURL)
+		var principal string
+		if err = db.QueryRowContext(ctx, `SELECT session_user`).Scan(&principal); err != nil {
+			return errors.New("event audience unavailable")
+		}
+		broker, err := events.OpenRedis(c.EventRedisURL, principal)
 		if err != nil {
 			return err
 		}

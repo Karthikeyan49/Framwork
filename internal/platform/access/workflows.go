@@ -30,6 +30,16 @@ type WorkflowUser func(context.Context, postgres.Executor, tenant.Access) (ident
 // WorkflowStore is platform composition: workflow depends on authorization and
 // snapshot ports, not the data runtime/compiler's implementation or private tables.
 func WorkflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.LifecycleWriter, user WorkflowUser) workflow.Store {
+	return workflowStore(engine, writer, lifecycle, user, false)
+}
+
+// WorkerWorkflowStore uses the database's confined source port, without generic
+// record privileges. API capture continues through WorkflowStore.
+func WorkerWorkflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.LifecycleWriter, user WorkflowUser) workflow.Store {
+	return workflowStore(engine, writer, lifecycle, user, true)
+}
+
+func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.LifecycleWriter, user WorkflowUser, worker bool) workflow.Store {
 	restore := func(raw []byte, hash, id string) (workflow.Program, error) {
 		p, e := compiler.Restore(raw, hash, compiler.SupportedIRVersions())
 		if e != nil {
@@ -122,7 +132,13 @@ func WorkflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 			}
 			return scope, nil
 		}
-		page, e := (data.Store{}).Query(ctx, q, scope, a, entity, data.Query{RecordID: pin.RecordID, Projection: fields, Limit: 1}, guard, resolve)
+		query := data.Query{RecordID: pin.RecordID, Projection: fields, Limit: 1}
+		var page data.Page
+		if worker {
+			page, e = (data.WorkerSourceAdapter{}).Query(ctx, q, scope, a, entity, query, guard, resolve)
+		} else {
+			page, e = (data.Store{}).Query(ctx, q, scope, a, entity, query, guard, resolve)
+		}
 		if errors.Is(e, data.ErrDenied) {
 			return data.Record{}, workflow.ErrDenied
 		}

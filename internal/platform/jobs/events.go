@@ -20,5 +20,5 @@ func EventTicket(ctx context.Context, db *sql.DB, tenant, event, hash, consumer 
 	if err != nil {
 		return Ticket{}, false, false, false, err
 	}
-	return Ticket{job: event, tenant: tenant, release: release}, completed, ready, dead, nil
+	return Ticket{job: event, tenant: tenant, release: release, kind: "event", generation: generation, token: token}, completed, ready, dead, nil
 }

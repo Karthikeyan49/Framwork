@@ -9,6 +9,13 @@ forms/tables/details are implemented. M6R adds V3 storage/authorization/release
 foundations; M7 adds pure typed Rule Engine V2, M8 adds transactional delivery,
 and M9 adds durable Workflow Runtime V2. Production activation and AI remain later work.
 
+**M9R remediation is in progress.** The [review validation](docs/verification/M0_M9_REVIEW_VALIDATION.md)
+reproduced worker-authority, data-namespace, query-cost and write-contention gaps.
+Follow the [remediation plan](docs/migration/M9R_REMEDIATION_PLAN.md) before M10.
+The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
+qualify historical PASS reports and distinguish previews from contract-only and
+deferred production services.
+
 AI will propose structured drafts; the compiler, sandbox, verification, approval
 and promotion pipeline will produce immutable versions for deterministic runtime
 execution. V3 is authoritative: read the [V3 kit](docs/v3/README.md), [master playbook](docs/v3/00_MASTER_PLAYBOOK_V3.md), and [V3 roadmap](docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md). Retained [V2 documents](docs/README.md) supplement unchanged specifications. Read the [compatibility audit](docs/migration/M0_M6_AUDIT_REPORT.md), [M6R decision](docs/adr/020-v3-m6r-architecture-remediation.md),
@@ -33,6 +40,11 @@ development passwords, starts the local stack, applies migrations, builds the
 programs, and runs API/worker/dispatcher/Vite. V3 assigns separate API/worker credentials;
 operator and dispatcher secrets are excluded from application children. Ctrl-C stops those application processes;
 `make infra-down` stops local containers and retains PostgreSQL data.
+
+M9R requires an explicit tenant assignment for the worker. On a fresh database,
+`make dev` starts API/web/dispatcher and reports the worker as paused. Create the
+local owner below, assign the worker, then run `make worker` or restart `make dev`.
+An unassigned worker cannot claim or execute another tenant's work.
 
 The coordinator prints its PID. Some cloud runners close a command connection
 without propagating Ctrl-C to child processes. In that case, send SIGINT or SIGTERM
@@ -184,6 +196,19 @@ node scripts/with-env.mjs ./bin/iam \
   --role owner --user-status active --membership-status active \
   --operator local-setup
 ```
+
+Assign the local worker after creating that tenant:
+
+```sh
+node scripts/with-env.mjs ./bin/worker-admin \
+  --principal framework_worker \
+  --tenant 11111111-1111-4111-8111-111111111111 --operator local-worker-setup
+```
+
+This records assignment and operator audit together. `--disable` revokes future
+bindings. Further tenants require distinct LOGIN principals inheriting only the
+worker privilege group, unique credentials and audience-specific Redis receiver
+ACLs. See [the M9R worker runbook](docs/migration/M9R_WORKER_RUNBOOK.md).
 
 Generate a 15-minute local access token in your terminal:
 

@@ -157,50 +157,13 @@ func TestIndependentM6RWorkerRoutingAndPool(t *testing.T) {
 	}
 	defer worker.Close()
 	worker.SetMaxOpenConns(1)
-	e = jobs.WithJob(ctx, worker, ticket, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		if a.TenantID() != f.tenantA || a.ActorID() != f.alice {
-			t.Fatal("delegation mismatch")
-		}
-		var na, nb int
-		if er := q.QueryRowContext(ctx, "SELECT count(*) FROM runtime.records WHERE tenant_id=$1", f.tenantA).Scan(&na); er != nil {
-			return er
-		}
-		if er := q.QueryRowContext(ctx, "SELECT count(*) FROM runtime.records WHERE tenant_id=$1", f.tenantB).Scan(&nb); er != nil {
-			return er
-		}
-		var foreignIAM int
-		if er := q.QueryRowContext(ctx, "SELECT count(*) FROM iam.memberships WHERE tenant_id=$1", f.tenantB).Scan(&foreignIAM); er != nil {
-			return er
-		}
-		if foreignIAM != 0 {
-			t.Fatal("worker IAM cross-tenant read")
-		}
-		if na < 1 || nb != 0 {
-			t.Fatal("worker tenant boundary")
-		}
-		if _, er := q.ExecContext(ctx, "SELECT set_config('app.tenant_id',$1,true)", f.tenantB); er != nil {
-			return er
-		}
-		if er := q.QueryRowContext(ctx, "SELECT count(*) FROM runtime.records WHERE tenant_id=$1", f.tenantB).Scan(&nb); er != nil {
-			return er
-		}
-		if er := q.QueryRowContext(ctx, "SELECT count(*) FROM iam.memberships WHERE tenant_id=$1", f.tenantB).Scan(&foreignIAM); er != nil {
-			return er
-		}
-		if foreignIAM != 0 {
-			t.Fatal("worker IAM tenant switch bypass")
-		}
-		if nb != 0 {
-			t.Fatal("job scope tenant switch bypass")
-		}
-		_, er := q.ExecContext(ctx, "SELECT set_config('app.job_id','synthetic-persistent-marker',false)")
-		return er
-	})
-	if e != nil {
-		t.Fatal("valid scoped worker execution failed")
+	ranOldRoute := false
+	e = jobs.WithJob(ctx, worker, ticket, func(context.Context, postgres.Executor, tenant.Access) error { ranOldRoute = true; return nil })
+	if e == nil || ranOldRoute {
+		t.Fatal("legacy route granted execution without exact capability")
 	}
 	var leftover string
-	if e = worker.QueryRowContext(ctx, "SELECT current_setting('app.job_id',true)").Scan(&leftover); e != nil || leftover != "" {
+	if e = worker.QueryRowContext(ctx, "SELECT coalesce(current_setting('app.job_id',true),'')").Scan(&leftover); e != nil || leftover != "" {
 		t.Fatal("worker context leaked through pool")
 	}
 	if _, e = f.operator.ExecContext(ctx, "UPDATE control.job_routes SET release_hash=$3 WHERE tenant_id=$1 AND id=$2", f.tenantA, job, strings.Repeat("b", 64)); e != nil {
@@ -210,7 +173,7 @@ func TestIndependentM6RWorkerRoutingAndPool(t *testing.T) {
 	if e = jobs.WithJob(ctx, worker, ticket, func(context.Context, postgres.Executor, tenant.Access) error { ran = true; return nil }); e == nil || ran {
 		t.Fatal("stale ticket executed")
 	}
-	t.Log("worker A visibility, tenant switch fail-closed, persistent job cleanup, stale release ticket, dispatcher payload denial all verified")
+	t.Log("legacy unleased routes denied; pool unchanged, stale route denied, dispatcher payload denied; populated capability tests are in M9R")
 }
 
 type independentM6RNullableScope struct{}

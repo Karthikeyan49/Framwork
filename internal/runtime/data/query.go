@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -389,7 +390,16 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		if err = rows.Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &r.OwnerID, &r.TeamID, &jid, &version, &owner, &created, &updated, &joinedRaw); err != nil {
 			return Page{}, err
 		}
-		if err = readValues(e, &r, raw); err != nil {
+		readEntity := e
+		if st.workerSource {
+			readEntity.Fields = nil
+			for _, f := range e.Fields {
+				if f.CoreID || slices.Contains(query.Projection, f.ID) {
+					readEntity.Fields = append(readEntity.Fields, f)
+				}
+			}
+		}
+		if err = readValues(readEntity, &r, raw); err != nil {
 			return Page{}, err
 		}
 		if query.Join != nil {

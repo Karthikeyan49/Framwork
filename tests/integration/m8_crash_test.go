@@ -238,8 +238,14 @@ func TestM8CrashRecovery(t *testing.T) {
 			if e := dispatch.Finish(context.Background(), again, true); e != nil {
 				t.Fatal(e)
 			}
+			if e := m8Consumer(w).Consume(context.Background(), old); e != events.ErrNotReady {
+				t.Fatal("old attempt became a new payload capability", e)
+			}
+			if e := m8Consumer(w).Consume(context.Background(), again); e != nil {
+				t.Fatal("current reissued capability did not converge", e)
+			}
 			if e := m8Consumer(w).Consume(context.Background(), old); e != nil {
-				t.Fatal("lost publish result did not converge", e)
+				t.Fatal("terminal old pointer did not resolve", e)
 			}
 			m8AssertCounts(t, f.operator, f.tenantA, 1)
 		})

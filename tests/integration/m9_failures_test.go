@@ -179,7 +179,7 @@ func TestM9DataScopeAndFieldDenialApplyToSnapshotsAndResume(t *testing.T) {
 	m.step(t)
 	x = m.get(t, x.ID)
 	originalActivity := m.worker.Store.Activity
-	m.worker.Store = access.WorkflowStore(m9ScopePolicy{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
+	m.worker.Store = access.WorkerWorkflowStore(m9ScopePolicy{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
 		var id string
 		if e := q.QueryRowContext(ctx, `SELECT current_setting('app.job_id',true)`).Scan(&id); e != nil {
 			return identity.User{}, e
@@ -246,7 +246,7 @@ func TestM9TimerTimeoutAndFailurePinCannotSwitch(t *testing.T) {
 		t.Fatal(e)
 	}
 	// An old ticket after a route pin changes must fail WithJob, not silently adopt it.
-	if e := m.worker.Step(context.Background(), oldLease); !errors.Is(e, jobs.ErrJob) {
+	if e := m.worker.Step(context.Background(), oldLease); !errors.Is(e, jobs.ErrJob) && !errors.Is(e, workflow.ErrLease) {
 		t.Fatal("old genuinely minted pin accepted", e)
 	}
 }
@@ -312,7 +312,7 @@ func TestM9FieldScopeDeniesStartSnapshotAndWorkerResume(t *testing.T) {
 		t.Fatal("denied snapshot persisted", n, e)
 	}
 	activity := m.worker.Store.Activity
-	m.worker.Store = access.WorkflowStore(m9ScopePolicy{hideField: true}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
+	m.worker.Store = access.WorkerWorkflowStore(m9ScopePolicy{hideField: true}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
 		var id string
 		if e := q.QueryRowContext(ctx, `SELECT current_setting('app.job_id',true)`).Scan(&id); e != nil {
 			return identity.User{}, e
@@ -359,7 +359,7 @@ func TestM9AppliedReconciliationPreservesFactAndCompensatesConditionFailure(t *t
 }
 func TestM9WorkflowOnlyStartupRequiresAuditAndRunsWithoutEventBroker(t *testing.T) {
 	m := m9Setup(t, nil)
-	c := config.Config{Environment: "test", DatabaseURL: os.Getenv("DATABASE_URL"), WorkerDatabaseURL: os.Getenv("WORKER_DATABASE_URL"), WorkflowsEnabled: true, DependencyTimeout: 2 * time.Second}
+	c := config.Config{Environment: "test", DatabaseURL: os.Getenv("DATABASE_URL"), DispatcherDatabaseURL: os.Getenv("DISPATCHER_DATABASE_URL"), WorkerDatabaseURL: os.Getenv("WORKER_DATABASE_URL"), WorkflowsEnabled: true, DependencyTimeout: 2 * time.Second}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	if _, e := m.f.operator.Exec(`REVOKE INSERT(state) ON audit.entries FROM framework_worker`); e != nil {
 		t.Fatal(e)
@@ -377,6 +377,8 @@ func TestM9WorkflowOnlyStartupRequiresAuditAndRunsWithoutEventBroker(t *testing.
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
+	dispatchDone := make(chan error, 1)
+	go func() { dispatchDone <- app.Run(ctx, "framework-dispatcher", c, logger) }()
 	go func() { done <- app.Run(ctx, "framework-worker", c, logger) }()
 	deadline := time.Now().Add(12 * time.Second)
 	ready := false
@@ -394,6 +396,16 @@ func TestM9WorkflowOnlyStartupRequiresAuditAndRunsWithoutEventBroker(t *testing.
 		time.Sleep(50 * time.Millisecond)
 	}
 	if !ready {
+		var state string
+		var generation, failures int64
+		var begun bool
+		_ = m.f.operator.QueryRow(`SELECT state,generation,lease_failures,begun FROM control.workflow_jobs WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, x.ID).Scan(&state, &generation, &failures, &begun)
+		t.Log("routing state", state, "generation", generation, "failures", failures, "picked up", begun, "instance", x.Status)
+		select {
+		case e := <-dispatchDone:
+			t.Log("dispatcher exited", e)
+		default:
+		}
 		t.Fatal("workflow-only process did not execute")
 	}
 	cancel()
@@ -404,6 +416,14 @@ func TestM9WorkflowOnlyStartupRequiresAuditAndRunsWithoutEventBroker(t *testing.
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("workflow shutdown stalled")
+	}
+	select {
+	case e := <-dispatchDone:
+		if e != nil {
+			t.Fatal("dispatcher shutdown", e)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("dispatcher shutdown stalled")
 	}
 	m.counts(t, x, 0)
 }

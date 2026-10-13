@@ -12,7 +12,7 @@ func Ready(ctx context.Context, db *sql.DB, expected string) error {
 	}
 	var role string
 	var safe bool
-	if e := db.QueryRowContext(ctx, `SELECT session_user,NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname=session_user`).Scan(&role, &safe); e != nil || role != expected || !safe {
+	if e := db.QueryRowContext(ctx, `SELECT session_user,NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname=session_user`).Scan(&role, &safe); e != nil || (expected == "framework_app" && role != expected) || !safe {
 		return ErrDenied
 	}
 	var valid bool
@@ -38,7 +38,7 @@ func Ready(ctx context.Context, db *sql.DB, expected string) error {
 		return errors.New("workflow storage contract unavailable")
 	}
 	if expected == "framework_worker" {
-		if e = db.QueryRowContext(ctx, `SELECT has_function_privilege('control.claim_workflow(uuid)','EXECUTE') AND has_function_privilege('control.check_workflow_lease(uuid,uuid,text,bigint,uuid)','EXECUTE')`).Scan(&valid); e != nil || !valid {
+		if e = db.QueryRowContext(ctx, `SELECT control.worker_principal() AND NOT has_function_privilege('control.claim_workflow(uuid)','EXECUTE') AND has_function_privilege('control.assigned_workflow()','EXECUTE') AND has_function_privilege('control.bind_worker_job(uuid,uuid,text,bigint,uuid,text)','EXECUTE') AND has_function_privilege('runtime.worker_source_record()','EXECUTE') AND NOT has_table_privilege('runtime.records','SELECT,INSERT,UPDATE,DELETE') AND NOT has_any_column_privilege('runtime.records','SELECT,INSERT,UPDATE') AND NOT has_table_privilege('control.worker_context','SELECT,INSERT,UPDATE,DELETE') AND has_function_privilege('control.check_workflow_lease(uuid,uuid,text,bigint,uuid)','EXECUTE')`).Scan(&valid); e != nil || !valid {
 			return ErrDenied
 		}
 	}

@@ -13,7 +13,10 @@ import (
 
 var ErrJob = errors.New("worker job denied")
 
-type Ticket struct{ job, tenant, release string }
+type Ticket struct {
+	job, tenant, release, kind, token string
+	generation                        int64
+}
 
 // FindRoute avoids assuming that a bounded routing page contains a particular
 // job. It remains dispatcher-only and returns no business payload.
@@ -35,7 +38,15 @@ func CheckRole(ctx context.Context, db *sql.DB, expected string) error {
 		return ErrJob
 	}
 	var role string
-	if e := db.QueryRowContext(ctx, `SELECT session_user`).Scan(&role); e != nil || role != expected {
+	if e := db.QueryRowContext(ctx, `SELECT session_user`).Scan(&role); e != nil {
+		return ErrJob
+	}
+	if expected == "framework_worker" {
+		var valid bool
+		if e := db.QueryRowContext(ctx, `SELECT control.worker_principal()`).Scan(&valid); e != nil || !valid {
+			return ErrJob
+		}
+	} else if role != expected {
 		return ErrJob
 	}
 	return postgres.Ping(ctx, db)
@@ -65,10 +76,16 @@ func Routes(ctx context.Context, db *sql.DB) ([]Ticket, error) {
 	return out, e
 }
 func WithJob(ctx context.Context, db *sql.DB, t Ticket, run func(context.Context, postgres.Executor, tenant.Access) error) error {
-	if t.job == "" || t.tenant == "" || t.release == "" || run == nil || CheckRole(ctx, db, "framework_worker") != nil {
+	if t.job == "" || t.tenant == "" || t.release == "" || t.kind == "" || t.generation < 1 || !tenant.ValidID(t.token) || run == nil || CheckRole(ctx, db, "framework_worker") != nil {
 		return ErrJob
 	}
 	return postgres.WithRuntime(ctx, db, func(ctx context.Context, q postgres.Executor) error {
+		var bound bool
+		if e := q.QueryRowContext(ctx, `SELECT control.bind_worker_job($1::uuid,$2::uuid,$3,$4,$5::uuid,$6)`, t.tenant, t.job, t.kind, t.generation, t.token, t.release).Scan(&bound); e != nil {
+			return e
+		} else if !bound {
+			return ErrJob
+		}
 		if _, e := q.ExecContext(ctx, `SELECT set_config('app.job_id',$1,true),set_config('app.tenant_id',$2,true)`, t.job, t.tenant); e != nil {
 			return e
 		}
