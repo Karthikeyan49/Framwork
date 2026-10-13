@@ -12,10 +12,24 @@ func Ready(ctx context.Context, db *sql.DB, role string) error {
 		return ErrDelivery
 	}
 	var ok bool
+	// PostgreSQL may inline/check SQL functions in unused CASE branches when a
+	// prepared statement adopts a generic plan. Only a worker session may even
+	// plan the worker-only authority query; do not grant these ports to the API.
+	if role == "framework_worker" {
+		if err := db.QueryRowContext(ctx, `SELECT control.worker_principal() AND control.worker_grants_safe()`).Scan(&ok); err != nil || !ok {
+			return ErrDelivery
+		}
+	} else if role == "framework_app" || role == "framework_dispatcher" {
+		if err := db.QueryRowContext(ctx, `SELECT session_user::text=$1::text`, role).Scan(&ok); err != nil || !ok {
+			return ErrDelivery
+		}
+	} else {
+		return ErrDelivery
+	}
 	err := db.QueryRowContext(ctx, `WITH event_tables AS(
  SELECT c.oid,c.relrowsecurity,c.relforcerowsecurity,c.relowner,n.nspname||'.'||c.relname AS name FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
  WHERE n.nspname||'.'||c.relname IN('runtime.event_sequences','runtime.event_envelopes','runtime.event_inbox','control.event_deliveries','control.event_attempts','control.event_replays','control.event_quarantine','runtime.outbox_intents'))
- SELECT (CASE WHEN $1='framework_worker' THEN control.worker_principal() AND control.worker_grants_safe() ELSE session_user=$1 END)
+ SELECT true
  AND (SELECT count(*)=8 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole)
  FROM event_tables)
  AND (SELECT count(*)=5 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger JOIN event_tables t ON t.oid=tgrelid WHERE NOT tgisinternal AND

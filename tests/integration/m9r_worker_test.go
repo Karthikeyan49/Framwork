@@ -617,3 +617,30 @@ func requireM9RPrivilegeDenial(t *testing.T, err error) {
 		t.Fatal("unrelated SQL failure cannot establish authorization denial")
 	}
 }
+
+func TestM9RReadinessWithGenericPreparedPlans(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	dispatcher, worker := m8Roles(t)
+	for role, db := range map[string]*sql.DB{"framework_app": f.db, "framework_worker": worker, "framework_dispatcher": dispatcher} {
+		t.Run(role, func(t *testing.T) {
+			db.SetMaxOpenConns(1)
+			if _, err := db.Exec(`SET plan_cache_mode=force_generic_plan`); err != nil {
+				t.Fatal(err)
+			}
+			defer db.Exec(`RESET plan_cache_mode`)
+			for range 8 {
+				if err := events.Ready(context.Background(), db, role); err != nil {
+					t.Fatal("generic plan denied legitimate readiness", err)
+				}
+			}
+			wrong := "framework_app"
+			if role == wrong {
+				wrong = "framework_worker"
+			}
+			if events.Ready(context.Background(), db, wrong) == nil {
+				t.Fatal("foreign role accepted")
+			}
+		})
+	}
+}
