@@ -1,0 +1,279 @@
+//go:build integration && performance
+
+package integration
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
+	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+func percentile(v []float64, p float64) float64 {
+	x := append([]float64(nil), v...)
+	sort.Float64s(x)
+	i := int(float64(len(x))*p+0.999999) - 1
+	if i < 0 {
+		i = 0
+	}
+	return x[i]
+}
+func reportLatency(t *testing.T, name string, times []float64, elapsed time.Duration) float64 {
+	t.Helper()
+	p95 := percentile(times, .95)
+	t.Logf("%s n=%d p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f throughput_per_s=%.2f errors=0", name, len(times), percentile(times, .5), p95, percentile(times, .99), float64(len(times))/elapsed.Seconds())
+	return p95
+}
+
+// Run explicitly on the ADR025 reference tier. This is an executed capacity gate,
+// not a unit-test benchmark with invented service-level guarantees.
+func TestM9RMembershipPerformanceFloor(t *testing.T) {
+	m8Database(t)
+	f, h, base, token, application := m5Fixture(t)
+	ctx := context.Background()
+	descriptor := m3Call(h, "GET", strings.Split(base, "/entities/")[0], token, 0, nil)
+	var release struct {
+		Hash string `json:"ir_hash"`
+	}
+	if descriptor.Code != 200 || json.Unmarshal(descriptor.Body.Bytes(), &release) != nil || release.Hash == "" {
+		t.Fatal("descriptor")
+	}
+	tenants := []string{f.tenantA, f.tenantB}
+	tx, err := f.operator.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		id := uuid(t)
+		if err = (tenant.Store{}).Provision(ctx, tx, id, "Benchmark tenant", f.bob, "owner", true); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		tenants = append(tenants, id)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	team := uuid(t)
+	if _, err = f.operator.Exec(`INSERT INTO iam.teams(tenant_id,id,name) VALUES($1,$2,'Benchmark team')`, f.tenantA, team); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range tenants {
+		count := 10000
+		owner := f.bob
+		if i == 0 {
+			count = 100000
+			owner = f.alice
+		}
+		if _, err = f.operator.Exec(`INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,1,$3)`, id, application, release.Hash); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.operator.Exec(`INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,created_by,updated_by,owner_user_id,owner_team_id)
+   SELECT $1,$2,1,$3,'entity.contact',gen_random_uuid(),jsonb_build_object('field.contact.name',lpad(i::text,8,'0')||repeat(' representative customer text',10),'field.contact.balance',jsonb_build_object('amount',(i%100003)::text,'currency','USD'),'field.contact.status',CASE WHEN i%997=0 THEN 'inactive' ELSE 'active' END,'field.contact.joined','2026-10-13'),$4::uuid,$4::uuid,CASE WHEN i%2=0 THEN $4::uuid ELSE $5::uuid END,CASE WHEN $6::boolean AND i%3=0 THEN $7::uuid ELSE NULL END FROM generate_series(1,$8::int) i`, id, application, release.Hash, owner, f.viewer, i == 0, team, count); err != nil {
+			t.Fatal("seed", err)
+		}
+	}
+	if _, err = f.operator.Exec(`INSERT INTO runtime.record_shares(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,user_id) SELECT tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,$2::uuid FROM runtime.records WHERE tenant_id=$1 AND mod((custom_data->'field.contact.balance'->>'amount')::int,4)=0`, f.tenantA, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.operator.Exec(`ANALYZE runtime.records;ANALYZE runtime.record_shares`); err != nil {
+		t.Fatal(err)
+	}
+	var width int
+	var version, buffers, workMem string
+	if err = f.operator.QueryRow(`SELECT current_setting('server_version'),current_setting('shared_buffers'),current_setting('work_mem'),(SELECT avg(pg_column_size(r))::int FROM runtime.records r WHERE tenant_id=$1)`, f.tenantA).Scan(&version, &buffers, &workMem, &width); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("PostgreSQL=%s shared_buffers=%s work_mem=%s hot_rows=100000 tenants=10 other_rows_each=10000 avg_record_bytes=%d warmup=3", version, buffers, workMem, width)
+	principal, _ := f.verifier.Verify(token)
+	run := func(sql string) (float64, error) {
+		var elapsed float64
+		err := postgres.WithRuntime(ctx, f.db, func(ctx context.Context, q postgres.Executor) error {
+			if _, e := m3Scope(f, ctx, q, principal, f.tenantA); e != nil {
+				return e
+			}
+			start := time.Now()
+			rows, e := q.QueryContext(ctx, sql, f.tenantA, application, release.Hash)
+			if e != nil {
+				return e
+			}
+			defer rows.Close()
+			n := 0
+			for rows.Next() {
+				var id string
+				if e = rows.Scan(&id); e != nil {
+					return e
+				}
+				n++
+			}
+			if e = rows.Err(); e != nil {
+				return e
+			}
+			if n < 1 || n > 101 {
+				return errors.New("benchmark page count")
+			}
+			elapsed = float64(time.Since(start).Microseconds()) / 1000
+			return nil
+		})
+		return elapsed, err
+	}
+	prefix := `SELECT id::text FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=1 AND ir_hash=$3 AND entity_id='entity.contact'`
+	numeric := prefix + ` ORDER BY (custom_data->'field.contact.balance'->>'amount')::numeric,id LIMIT 101`
+	// Reproduce the original policy under the same pinned hardware and data. This
+	// fixture-only policy change never disables RLS and is restored before gates.
+	old := `ALTER POLICY tenant_scope ON runtime.records USING(tenant_id=iam.current_tenant_id() AND iam.tenant_matches_scope(tenant_id)) WITH CHECK(tenant_id=iam.current_tenant_id() AND iam.tenant_matches_scope(tenant_id))`
+	fixed := `ALTER POLICY tenant_scope ON runtime.records USING(tenant_id=(SELECT iam.current_tenant_id()) AND (SELECT iam.tenant_matches_scope(iam.current_tenant_id()))) WITH CHECK(tenant_id=(SELECT iam.current_tenant_id()) AND (SELECT iam.tenant_matches_scope(iam.current_tenant_id())))`
+	if _, err = f.operator.Exec(old); err != nil {
+		t.Fatal(err)
+	}
+	_, baselineErr := run(numeric)
+	if _, err = f.operator.Exec(fixed); err != nil {
+		t.Fatal(err)
+	}
+	var pg *pgconn.PgError
+	if !errors.As(baselineErr, &pg) || pg.Code != "57014" {
+		t.Fatal("expected original membership policy to exceed unchanged2s budget")
+	}
+	t.Log("baseline original policy: EXPECTED FAIL SQLSTATE57014 under2s budget")
+	for _, c := range []struct {
+		name, sql string
+		budget    float64
+	}{{"key_sql", prefix + ` ORDER BY id LIMIT 101`, 100}, {"numeric_sql", numeric, 500}, {"selective_sql", prefix + ` AND custom_data->>'field.contact.status'='inactive' ORDER BY (custom_data->'field.contact.balance'->>'amount')::numeric,id LIMIT 101`, 500}} {
+		for range 3 {
+			if _, err = run(c.sql); err != nil {
+				t.Fatal(err)
+			}
+		}
+		times := []float64{}
+		start := time.Now()
+		for range 100 {
+			elapsed, e := run(c.sql)
+			if e != nil {
+				t.Fatal(c.name, e)
+			}
+			times = append(times, elapsed)
+		}
+		if reportLatency(t, c.name, times, time.Since(start)) > c.budget {
+			t.Fatal(c.name, "p95 budget")
+		}
+	}
+	if err = postgres.WithRuntime(ctx, f.db, func(ctx context.Context, q postgres.Executor) error {
+		if _, e := m3Scope(f, ctx, q, principal, f.tenantA); e != nil {
+			return e
+		}
+		var raw []byte
+		if e := q.QueryRowContext(ctx, `EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) `+numeric, f.tenantA, application, release.Hash).Scan(&raw); e != nil {
+			return e
+		}
+		t.Logf("numeric_plan=%s", raw)
+		var root []map[string]any
+		if json.Unmarshal(raw, &root) != nil {
+			return errors.New("explain parse")
+		}
+		found := false
+		var visit func(any)
+		visit = func(n any) {
+			switch x := n.(type) {
+			case map[string]any:
+				if name, ok := x["Subplan Name"].(string); ok && strings.Contains(name, "InitPlan") {
+					if x["Actual Loops"] != float64(1) {
+						t.Error("InitPlan executed repeatedly")
+					}
+					found = true
+				}
+				for _, v := range x {
+					visit(v)
+				}
+			case []any:
+				for _, v := range x {
+					visit(v)
+				}
+			}
+		}
+		visit(root[0])
+		if !found {
+			return errors.New("membership InitPlan absent")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(h)
+	defer server.Close()
+	query := m5Query()
+	query.Limit = 100
+	query.Sort = &data.Sort{Field: "field.contact.balance"}
+	payload, _ := json.Marshal(query)
+	call := func() (float64, error) {
+		start := time.Now()
+		request, e := http.NewRequest("POST", server.URL+base+"/query", bytes.NewReader(payload))
+		if e != nil {
+			return 0, e
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("Content-Type", "application/json")
+		response, e := server.Client().Do(request)
+		if e != nil {
+			return 0, e
+		}
+		defer response.Body.Close()
+		_, e = io.Copy(io.Discard, response.Body)
+		if e != nil || response.StatusCode != 200 {
+			return 0, fmt.Errorf("HTTP status%d", response.StatusCode)
+		}
+		return float64(time.Since(start).Microseconds()) / 1000, nil
+	}
+	for range 3 {
+		if _, err = call(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	samples := make(chan float64, 100)
+	failures := make(chan error, 100)
+	var wg sync.WaitGroup
+	start := time.Now()
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 10 {
+				elapsed, e := call()
+				if e != nil {
+					failures <- e
+				} else {
+					samples <- elapsed
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(samples)
+	close(failures)
+	for e := range failures {
+		t.Error("API", e)
+	}
+	times := []float64{}
+	for elapsed := range samples {
+		times = append(times, elapsed)
+	}
+	if len(times) != 100 {
+		t.Fatal("HTTP sample count")
+	}
+	if reportLatency(t, "numeric_http_10clients", times, time.Since(start)) > 750 {
+		t.Fatal("API p95 budget")
+	}
+}
