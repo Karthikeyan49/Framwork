@@ -11,6 +11,7 @@ import (
 
 const StorageContractVersion = "dynamic-jsonb-schema-v1"
 const EvolutionVersion = "dynamic-jsonb-evolution-v1"
+const MaxEvolutionBytes = 2 << 20
 
 var ErrEvolution = errors.New("unsupported or invalid storage evolution")
 
@@ -246,7 +247,7 @@ func PlanEvolution(base, target Program, intent EvolutionIntent) (EvolutionPlan,
 		return EvolutionPlan{}, ErrEvolution
 	}
 	raw, err := json.Marshal(a)
-	if err != nil {
+	if err != nil || len(raw) > MaxEvolutionBytes {
 		return EvolutionPlan{}, ErrEvolution
 	}
 	return EvolutionPlan{raw, digest(raw)}, nil
@@ -267,7 +268,7 @@ func equalStrings(a, b []string) bool {
 // RestoreEvolution validates stored canonical bytes against their original base
 // and target programs. It never recompiles, approves, or changes either program.
 func RestoreEvolution(base, target Program, raw []byte, expectedHash string) (EvolutionPlan, error) {
-	if len(raw) > 2<<20 || digest(raw) != expectedHash {
+	if len(raw) > MaxEvolutionBytes || digest(raw) != expectedHash {
 		return EvolutionPlan{}, ErrEvolution
 	}
 	var a EvolutionArtifact

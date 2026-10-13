@@ -3,6 +3,8 @@ package compiler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
@@ -138,5 +140,59 @@ func TestEvolutionBackfillAndIncompatibleContracts(t *testing.T) {
 	}
 	if _, err := PlanEvolution(Program{}, base, EvolutionIntent{}); err == nil {
 		t.Fatal("untrusted empty base accepted")
+	}
+}
+
+func TestEvolutionArtifactBudgetIsSharedWithRestore(t *testing.T) {
+	base := metadata.Document{SchemaVersion: metadata.SchemaVersion, AppID: "app.budget", Namespace: "example.budget", Definitions: []metadata.Definition{}}
+	next := base
+	next.Definitions = []metadata.Definition{}
+	intent := EvolutionIntent{}
+	common := func(id, kind string) metadata.Definition {
+		return metadata.Definition{ID: id, Kind: kind, Label: "Budget fixture", SchemaVersion: metadata.SchemaVersion, Namespace: base.Namespace}
+	}
+	value, _ := json.Marshal(strings.Repeat(`"`, 4000))
+	for i := 0; i < 34; i++ {
+		entityID := fmt.Sprintf("entity.e_%02d", i)
+		coreID := fmt.Sprintf("field.e_%02d.id", i)
+		entity := common(entityID, "entity")
+		entity.Entity = &metadata.Entity{Fields: []string{coreID}}
+		core := common(coreID, "field")
+		core.Field = &metadata.Field{EntityRef: entityID, Type: "string", Required: true}
+		base.Definitions = append(base.Definitions, entity, core)
+		// Separate field list: building target must not mutate the base document.
+		entity.Entity = &metadata.Entity{Fields: []string{coreID}}
+		for j := 0; j < 8; j++ {
+			id := fmt.Sprintf("field.e_%02d.f_%02d", i, j)
+			entity.Entity.Fields = append(entity.Entity.Fields, id)
+			f := common(id, "field")
+			f.Field = &metadata.Field{EntityRef: entityID, Type: "string"}
+			next.Definitions = append(next.Definitions, f)
+			intent.Backfills = append(intent.Backfills, FieldBackfill{entityID, id, "MISSING", value})
+		}
+		next.Definitions = append(next.Definitions, entity, core)
+	}
+	compile := func(d metadata.Document) Program {
+		raw, err := json.Marshal(d)
+		if err != nil || len(raw) > metadata.MaxBytes {
+			t.Fatal("invalid source budget fixture")
+		}
+		p, ds := Compile(source(t, raw), PlatformCatalog())
+		if !p.Valid() {
+			t.Fatal(ds)
+		}
+		return p
+	}
+	a, b := compile(base), compile(next)
+	if p, err := PlanEvolution(a, b, intent); err == nil || p.Valid() {
+		t.Fatal("compiler minted an artifact the stored reader cannot accept")
+	}
+	intent.Backfills = intent.Backfills[:1]
+	p, err := PlanEvolution(a, b, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = RestoreEvolution(a, b, p.JSON(), p.Hash()); err != nil {
+		t.Fatal(err)
 	}
 }
