@@ -1,8 +1,17 @@
 # Proposed M9R — Foundation remediation before M10
 
-Date: 2026-10-13. Status: **implementation authorized; not implemented or accepted as complete**.
+Date: 2026-10-13 (UTC). Status: **implementation authorized and in progress**.
 Evidence: [external review validation](../verification/M0_M9_REVIEW_VALIDATION.md).
 This is a focused follow-up to M9; historical milestone numbering is unchanged.
+
+Current checkpoint: R0 and R1 are implemented; R1 independently passed the
+database credential/resource threat model. R3a was pulled forward because it
+does not depend on storage format. Its original reference floor passed; the
+resumed host exposed HTTP misses. The page-fetch change passed independent
+correctness/security review but failed the current-host HTTP performance gate.
+[R1 evidence](M9R_R1_IMPLEMENTATION_REPORT.md) and
+[R3a evidence](M9R_R3A_IMPLEMENTATION_REPORT.md) retain failed checks and limits.
+R2 and R4 remain open; M10 remains paused. R3b–R3d and R5–R7 are not complete.
 
 ## Objective and release gate
 
@@ -314,5 +323,6 @@ final commit. Do not relabel deferred R5–R7 services as complete to pass this 
 After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
-**Checkpoint status: plan prepared and implementation authorized; no remediation
-implemented in this documentation checkpoint.**
+**Checkpoint status: R0/R1 verified; R3a correctness verified, HTTP performance
+PARTIAL; R2/R4 pending. The complete foundation
+gate and broader review findings are not accepted as resolved.**

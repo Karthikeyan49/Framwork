@@ -12,6 +12,11 @@ and M9 adds durable Workflow Runtime V2. Production activation and AI remain lat
 **M9R remediation is in progress.** The [review validation](docs/verification/M0_M9_REVIEW_VALIDATION.md)
 reproduced worker-authority, data-namespace, query-cost and write-contention gaps.
 Follow the [remediation plan](docs/migration/M9R_REMEDIATION_PLAN.md) before M10.
+The [worker boundary](docs/migration/M9R_R1_IMPLEMENTATION_REPORT.md) and
+[RLS reference floor](docs/migration/M9R_R3A_IMPLEMENTATION_REPORT.md) have
+independent evidence. Page-fetch correctness passed independent review; the
+current-host HTTP performance gate failed. Dataset continuity and concurrent
+writes remain open.
 The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
 qualify historical PASS reports and distinguish previews from contract-only and
 deferred production services.

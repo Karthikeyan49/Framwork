@@ -33,6 +33,9 @@ test-unit:
 	$(NPM) test
 test-integration:
 	node scripts/with-env.mjs $(GO) test -race -tags=integration -count=1 ./tests/integration
+.PHONY: test-performance
+test-performance:
+	node scripts/with-env.mjs $(GO) test -tags=integration,performance -count=1 -run '^TestM9RMembershipPerformanceFloor$$' -v ./tests/integration
 test: test-unit test-integration
 check: docs-verify
 	./scripts/check-format.sh
