@@ -15,8 +15,9 @@ Follow the [remediation plan](docs/migration/M9R_REMEDIATION_PLAN.md) before M10
 The [worker boundary](docs/migration/M9R_R1_IMPLEMENTATION_REPORT.md) and
 [RLS reference floor](docs/migration/M9R_R3A_IMPLEMENTATION_REPORT.md) have
 independent evidence. Page-fetch correctness passed independent review; the
-current-host HTTP performance gate failed. Dataset continuity and concurrent
-writes remain open.
+current-host HTTP performance gate failed. Dataset schema plans passed review;
+equal-schema preview binding verification is in progress. Full schema evolution
+and concurrent writes remain open.
 The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
 qualify historical PASS reports and distinguish previews from contract-only and
 deferred production services.
@@ -338,6 +339,31 @@ See [ADR-016](docs/adr/016-m3-metadata-source-registry.md),
 [independent review](docs/M3_INDEPENDENT_REVIEW.md). Stop before M4 — Compiler V1.
 
 ## Compiled application previews (M4–M6)
+
+M9R adds explicit **preview** dataset bindings through the API, while retaining
+the existing scratch-preview UI. See [R2 progress](docs/migration/M9R_R2_IMPLEMENTATION_REPORT.md).
+Owner/admin requests can `POST /v1/tenants/{tenant}/preview/{app}/datasets`
+with `workspace_id`, `mode` (`ADOPT` or `EMPTY`), `metadata_revision`, `ir_hash`
+and exact canonical `compiled_ir` from the matching compiled descriptor. No
+frontend tenant claim grants access. The existing metadata JSON request budget
+applies; excessive artifacts are rejected. Keep the workspace UUID to reconcile
+an unknown create result by retrying the exact request.
+
+ADOPT requires the exact existing namespace witness; it enters ADOPTING and
+seals legacy writes. `POST .../datasets/{dataset}/verify` with `{}` verifies up to
+100 records and commits cursor/count/manifest plus audit together. Repeat until
+state OPEN; `GET .../datasets/{dataset}` is owner/admin status inspection. No
+record is copied or deleted. Failed verification leaves the source sealed and
+retained for a reviewed forward repair; never delete it to make verification pass.
+
+`POST .../datasets/{dataset}/bindings` takes the target witness plus
+`expected_binding`. Only identical storage hashes can bind in this tranche.
+`GET .../bindings/{binding}` restores stored IR without recompilation; its
+`entities/{entity}/query` and `commands` paths use the existing typed contracts.
+Old bindings read, only the active binding writes, and cursors bind the dataset
+and binding. Audit/outbox keep execution IR while ordering retains the data
+origin. Incompatible schema evolution, new workflow/data-pin combinations,
+production activation and a dataset-management UI are still pending.
 
 Development/test only: append a structurally validated source using the existing
 metadata API (see contracts/examples/contacts-draft-v1.json), then compile it with

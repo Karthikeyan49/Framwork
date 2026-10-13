@@ -1,6 +1,29 @@
 # ADR026: Durable datasets and explicit JSONB schema evolution
 
-Status: design for independent review; implementation pending.
+Status: staged implementation. R2a schema plans/transforms independently verified;
+R2b preview equal-schema bindings implemented, independent review pending. Full
+schema evolution remains pending.
+
+## Implemented tranche boundary
+
+R2b supports generation 1 and identical storage-schema hashes only. Labels and
+catalog/release hashes can change without copying records. Existing records,
+owners, teams, shares and links remain the single current physical source used
+by both old and new readers. New incompatible generations/canonical identity
+tables, optional-addition reader projection, shadow migration and new workflow
+data pins are not implemented. Their design below is not an implementation claim.
+
+New EMPTY/binding admission runs the trusted server compiler/catalog once and
+requires its exact artifact hash. Restore alone cannot attest caller-supplied
+compiler provenance. Historical ADOPT instead requires exact bytes matching the
+established legacy namespace and immutable registry source; missing provenance
+through that namespace/witness blocks adoption. Binding execution never compiles.
+
+An ADOPT request seals the explicit witnessed namespace, then checks at most
+100 records per durable verification transaction. EMPTY allocates an independent
+anchor. The caller retains a workspace UUID for create reconciliation. Bindings
+restore exact stored IR; only the active binding writes. Known incompatible
+schemas and unimplemented new workflow/data-pin combinations fail closed.
 
 ## Problem and decision
 

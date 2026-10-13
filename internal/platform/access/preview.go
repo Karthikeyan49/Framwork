@@ -78,7 +78,7 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	if err != nil {
 		return reply{}, err
 	}
-	program, diagnostics := compiler.Compile(source, compiler.PlatformCatalog())
+	program, diagnostics := compiler.Compile(source, a.catalog())
 	if !program.Valid() {
 		return reply{status: 422, body: struct {
 			Diagnostics []compiler.Diagnostic `json:"diagnostics"`
@@ -91,6 +91,15 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	metadataEvidence(ctx, evidence, version)
 	evidence.State.IRHash = program.Hash()
 	trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", program.IR().CompilerVersion), attribute.String("ir_hash", program.Hash()), attribute.String("data_mode", "preview"))
+	return a.executePreview(ctx, q, r, u, access, evidence, scope)
+}
+
+func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, scope data.Scope) (reply, error) {
+	app, program, revision := scope.AppID(), scope.Program(), scope.Revision()
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", program.IR().CompilerVersion), attribute.String("ir_hash", scope.Hash()), attribute.String("data_mode", "preview"))
+	if scope.DatasetID() != "" {
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String("dataset_id", scope.DatasetID()), attribute.Int64("dataset_binding", scope.BindingVersion()), attribute.Int64("data_schema_generation", 1))
+	}
 	guard := func(ctx context.Context, action string, resource data.Resource) error {
 		decision := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, action, policy.Resource{TenantID: access.TenantID(), Type: strings.Split(action, ".")[1], OwnerID: resource.OwnerID, AppID: app, EntityID: resource.EntityID, FieldID: resource.FieldID, RecordID: resource.RecordID}, policy.Context{RequestID: evidence.RequestID, TraceID: evidence.TraceID}))
 		event := *evidence
@@ -116,13 +125,20 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	if r.Method == http.MethodGet {
 		// Capability hints improve UX; each command/query still enforces live policy.
 		canWrite := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, "preview.write", policy.Resource{TenantID: access.TenantID(), Type: "preview", AppID: app}, policy.Context{})).Allow
+		writable, err := (data.DatasetStore{}).Writable(ctx, q, scope, access)
+		if err != nil {
+			return reply{}, err
+		}
+		canWrite = canWrite && writable
 		return reply{status: 200, body: struct {
-			Mode     string      `json:"mode"`
-			Revision int64       `json:"revision"`
-			Hash     string      `json:"ir_hash"`
-			IR       compiler.IR `json:"ir"`
-			CanWrite bool        `json:"can_write"`
-		}{"preview", revision, program.Hash(), program.IR(), canWrite}}, nil
+			Mode           string      `json:"mode"`
+			Revision       int64       `json:"revision"`
+			Hash           string      `json:"ir_hash"`
+			IR             compiler.IR `json:"ir"`
+			CanWrite       bool        `json:"can_write"`
+			DatasetID      string      `json:"dataset_id,omitempty"`
+			BindingVersion int64       `json:"binding_version,omitempty"`
+		}{"preview", revision, program.Hash(), program.IR(), canWrite, scope.DatasetID(), scope.BindingVersion()}}, nil
 	}
 	entity := r.PathValue("entity")
 	teams, err := (tenant.Store{}).Teams(ctx, q, access)
@@ -198,7 +214,11 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 				if writer == nil {
 					writer = events.Postgres{}
 				}
-				if e = events.Append(ctx, q, a.Audit, writer, entry, events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version, RequestID: entry.RequestID}); e != nil {
+				intent := events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version, RequestID: entry.RequestID}
+				if scope.DatasetID() != "" {
+					intent.DataRevision, intent.DataHash = scope.DataRevision(), scope.DataHash()
+				}
+				if e = events.Append(ctx, q, a.Audit, writer, entry, intent); e != nil {
 					return reply{}, e
 				}
 				if e = a.workflowTriggers(ctx, q, u, access, program, events.Intent{ID: id, TenantID: access.TenantID(), AppID: app, IRHash: program.Hash(), EntityID: entity, RecordID: record.ID, Type: eventType, MetadataRevision: revision, RecordVersion: record.Version, RequestID: entry.RequestID}); e != nil {
@@ -214,6 +234,8 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 		return denied(400, "invalid_query_or_command", "Data request violates the typed contract or budget"), nil
 	case errors.Is(err, data.ErrDenied):
 		return denied(403, "forbidden", "Data access is denied"), nil
+	case errors.Is(err, data.ErrBinding):
+		return denied(409, "dataset_conflict", "Select the active dataset binding before retrying"), nil
 	case errors.Is(err, data.ErrConflict):
 		return denied(409, "record_conflict", "Reload the record before retrying"), nil
 	case errors.Is(err, data.ErrNotFound):

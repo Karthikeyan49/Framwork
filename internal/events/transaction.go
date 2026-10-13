@@ -15,6 +15,8 @@ type Intent struct {
 	ID, TenantID, AppID, IRHash, EntityID, RecordID, Type string
 	MetadataRevision, RecordVersion                       int64
 	RequestID, TraceParent                                string
+	DataRevision                                          int64
+	DataHash                                              string
 }
 type Writer interface {
 	Append(context.Context, postgres.Executor, Intent) error
@@ -33,7 +35,14 @@ func (Postgres) Append(ctx context.Context, q postgres.Executor, e Intent) error
 	if !validTrace(e.TraceParent) {
 		return errors.New("invalid event correlation")
 	}
-	_, err := q.ExecContext(ctx, `INSERT INTO runtime.outbox_intents(tenant_id,id,app_id,metadata_revision,ir_hash,entity_id,record_id,record_version,event_type,request_id,traceparent) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, e.TenantID, e.ID, e.AppID, e.MetadataRevision, e.IRHash, e.EntityID, e.RecordID, e.RecordVersion, e.Type, e.RequestID, e.TraceParent)
+	var dataRevision, dataHash any
+	if e.DataRevision != 0 || e.DataHash != "" {
+		if e.DataRevision < 1 || e.DataRevision > 1e9 || !validHash(e.DataHash) {
+			return errors.New("invalid event data anchor")
+		}
+		dataRevision, dataHash = e.DataRevision, e.DataHash
+	}
+	_, err := q.ExecContext(ctx, `INSERT INTO runtime.outbox_intents(tenant_id,id,app_id,metadata_revision,ir_hash,entity_id,record_id,record_version,event_type,request_id,traceparent,data_revision,data_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, e.TenantID, e.ID, e.AppID, e.MetadataRevision, e.IRHash, e.EntityID, e.RecordID, e.RecordVersion, e.Type, e.RequestID, e.TraceParent, dataRevision, dataHash)
 	return err
 }
 

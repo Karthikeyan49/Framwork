@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
@@ -30,10 +31,26 @@ type API struct {
 	Registry         *metadata.Registry
 	PreviewEnabled   bool
 	WorkflowsEnabled bool
+	// Trusted platform configuration, never selected by a request or metadata.
+	CompilerCatalog *compiler.Catalog
+}
+
+func (a API) catalog() compiler.Catalog {
+	if a.CompilerCatalog != nil {
+		return *a.CompilerCatalog
+	}
+	return compiler.PlatformCatalog()
 }
 
 func (a API) Register(mux *http.ServeMux) {
 	if a.PreviewEnabled && a.Registry != nil {
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets", a.serve)
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/verify", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings", a.serve)
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}/entities/{entity}/query", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}/entities/{entity}/commands", a.serve)
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/query", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/commands", a.serve)
@@ -227,6 +244,12 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		if strings.HasSuffix(r.URL.Path, "/commands") {
 			action = "preview.write"
 		}
+		if r.Method == http.MethodPost && datasetManagementPOST.MatchString(r.URL.Path) {
+			action = "datasets.manage"
+		}
+		if r.Method == http.MethodGet && r.PathValue("dataset") != "" && r.PathValue("binding") == "" {
+			action = "datasets.manage"
+		}
 	}
 	appID := ""
 	if resource == "preview" || resource == "metadata" {
@@ -245,7 +268,13 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		return forbidden, evidence, nil
 	}
 	if resource == "preview" {
-		result, err := a.preview(ctx, tx, r, u, access, &evidence)
+		var result reply
+		var err error
+		if strings.Contains(r.URL.Path, "/datasets") {
+			result, err = a.dataset(ctx, tx, r, u, access, &evidence)
+		} else {
+			result, err = a.preview(ctx, tx, r, u, access, &evidence)
+		}
 		if result.status >= 400 {
 			evidence.Action += ".rejected"
 			evidence.Allow = false

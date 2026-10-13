@@ -11,8 +11,10 @@ resumed host exposed HTTP misses. The page-fetch change passed independent
 correctness/security review but failed the current-host HTTP performance gate.
 [R1 evidence](M9R_R1_IMPLEMENTATION_REPORT.md) and
 [R3a evidence](M9R_R3A_IMPLEMENTATION_REPORT.md) retain failed checks and limits.
-R2's first pure schema-plan/transform tranche passed independent review; database
-binding/evolution and R4 remain open. M10 remains paused. R3b–R3d and R5–R7 are
+R2's first pure schema-plan/transform tranche passed independent review. Its
+equal-schema preview binding/adoption tranche passed root fault/regression and
+browser tests, with independent review pending. Full evolution and R4 remain
+open. M10 remains paused. R3b–R3d and R5–R7 are
 not complete. [R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md).
 
 ## Objective and release gate

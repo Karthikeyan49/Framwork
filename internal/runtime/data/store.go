@@ -19,7 +19,11 @@ type Store struct{ legacy, workerSource bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool
-	err := db.QueryRowContext(ctx, `SELECT count(*)=2 AND bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass)`).Scan(&valid)
+	err := db.QueryRowContext(ctx, `SELECT count(*)=4 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass,'runtime.datasets'::regclass,'runtime.dataset_bindings'::regclass)`).Scan(&valid)
+	if err != nil || !valid {
+		return ErrUnavailable
+	}
+	err = db.QueryRowContext(ctx, `SELECT count(*)=3 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger WHERE (tgrelid='runtime.records'::regclass AND tgname='dataset_record_fence') OR (tgrelid='runtime.datasets'::regclass AND tgname='dataset_update_guard') OR (tgrelid='runtime.dataset_bindings'::regclass AND tgname='immutable_dataset_binding')`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
@@ -27,7 +31,7 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	return err
 }
 func base(s Scope, a tenant.Access, entity string) []any {
-	return []any{a.TenantID(), s.AppID(), s.Revision(), s.Hash(), entity}
+	return []any{a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash(), entity}
 }
 
 const recordWhere = `tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4 AND entity_id=$5`
@@ -95,7 +99,10 @@ func current(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 // A dataset counter write serializes all preview commands and rejects stale
 // repeatable-read snapshots. Reference checks/deletes cannot race each other.
 func lockDataset(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access) error {
-	_, err := q.ExecContext(ctx, `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,app_id,metadata_revision,ir_hash) DO UPDATE SET write_version=runtime.record_sets.write_version+1`, a.TenantID(), s.AppID(), s.Revision(), s.Hash())
+	if err := lockBinding(ctx, q, s, a); err != nil {
+		return err
+	}
+	_, err := q.ExecContext(ctx, `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,app_id,metadata_revision,ir_hash) DO UPDATE SET write_version=runtime.record_sets.write_version+1`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash())
 	return err
 }
 func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, c Command, g Guard, resolve ...ScopeResolver) (Record, error) {
@@ -255,7 +262,7 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 	if er != nil {
 		return Record{}, er
 	}
-	cb := builder{args: []any{a.TenantID(), s.AppID(), s.Revision(), s.Hash(), entity, c.ID, owner, string(raw), existing.TeamID}}
+	cb := builder{args: []any{a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash(), entity, c.ID, owner, string(raw), existing.TeamID}}
 	n := 0
 	wp, er := scopeSQL(ctx, e, writeScope, a, "r", &cb, 0, &n)
 	if er != nil {

@@ -146,7 +146,11 @@ type cursor struct {
 func fingerprint(s Scope, a tenant.Access, e string, q Query) string {
 	q.After = ""
 	raw, _ := json.Marshal(q)
-	h := sha256.Sum256([]byte(a.TenantID() + s.AppID() + fmt.Sprint(s.Revision()) + s.Hash() + e + string(raw)))
+	identity := a.TenantID() + s.AppID() + fmt.Sprint(s.Revision()) + s.Hash() + e + string(raw)
+	if s.DatasetID() != "" {
+		identity += "/dataset/" + s.DatasetID() + "/binding/" + fmt.Sprint(s.BindingVersion())
+	}
+	h := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(h[:])
 }
 func project(r Record, ids []string) Record {

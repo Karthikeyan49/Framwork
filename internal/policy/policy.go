@@ -58,6 +58,10 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			continue
 		}
 		switch action {
+		case "datasets.manage":
+			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
+				return true
+			}
 		case "workflows.read", "workflows.start", "workflows.execute", "workflows.activity", "workflows.cancel", "workflows.approve", "workflows.reject", "workflows.recover", "workflows.reconcile":
 			if resource.Type == "workflow" && resource.AppID != "" && resource.EntityID != "" && resource.RecordID != "" && resource.WorkflowID != "" {
 				if action == "workflows.read" || (role != "viewer" && action != "workflows.recover" && action != "workflows.reconcile") || (role == "owner" || role == "admin") {

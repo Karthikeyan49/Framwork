@@ -14,6 +14,7 @@ import (
 var ErrInvalid = errors.New("invalid data request")
 var ErrDenied = errors.New("data access denied")
 var ErrConflict = errors.New("record version conflict")
+var ErrBinding = errors.New("dataset binding is stale or sealed")
 var ErrNotFound = errors.New("record not found")
 var ErrBudget = errors.New("query budget exceeded")
 var ErrUnavailable = errors.New("data contract unavailable")
@@ -23,19 +24,28 @@ const MaxPage = 100
 
 // Scope pins both immutable source revision and actual compiled content.
 type Scope struct {
-	program  compiler.Program
-	revision int64
+	program        compiler.Program
+	revision       int64
+	anchorRevision int64
+	anchorHash     string
+	datasetID      string
+	binding        int64
 }
 
 func NewScope(p compiler.Program, revision int64) (Scope, error) {
 	if !p.Valid() || revision < 1 || revision > 1e9 || p.IR().SchemaSnapshot != compiler.SchemaSnapshot {
 		return Scope{}, ErrInvalid
 	}
-	return Scope{p, revision}, nil
+	return Scope{program: p, revision: revision, anchorRevision: revision, anchorHash: p.Hash()}, nil
 }
-func (s Scope) AppID() string   { return s.program.IR().Application.AppID }
-func (s Scope) Hash() string    { return s.program.Hash() }
-func (s Scope) Revision() int64 { return s.revision }
+func (s Scope) AppID() string             { return s.program.IR().Application.AppID }
+func (s Scope) Hash() string              { return s.program.Hash() }
+func (s Scope) Revision() int64           { return s.revision }
+func (s Scope) DataRevision() int64       { return s.anchorRevision }
+func (s Scope) DataHash() string          { return s.anchorHash }
+func (s Scope) DatasetID() string         { return s.datasetID }
+func (s Scope) BindingVersion() int64     { return s.binding }
+func (s Scope) Program() compiler.Program { return s.program }
 
 type Resource struct{ EntityID, FieldID, RecordID, OwnerID string }
 type Guard func(context.Context, string, Resource) error
