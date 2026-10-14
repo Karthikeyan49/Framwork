@@ -178,8 +178,8 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 		// leaving the original transaction aborted. Recheck only the exact ticket
 		// in a fresh transaction after rollback; never replay business effects or
 		// relax RLS. A still-valid capability retains its actual security error.
-		validation := jobs.WithJob(ctx, w.DB, lease.Ticket, func(context.Context, postgres.Executor, tenant.Access) error { return nil })
-		if errors.Is(validation, jobs.ErrJob) {
+		valid, validation := jobs.TicketAuthority(ctx, w.DB, lease.Ticket)
+		if validation == nil && !valid {
 			return ErrLease
 		}
 	}

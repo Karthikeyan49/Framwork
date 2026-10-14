@@ -83,3 +83,27 @@ Numeric indexing is explicit owner/admin management, with eight fields/entity an
 The root's pre-fix deadlock, full verification timeout, per-row lookup timeout, unapplied migration33 syntax failure and fixture mistakes remain in its implementation report. This reviewer did not execute those historical failures and does not relabel them as independent findings.
 
 All independent workloads stopped and CPU/database ownership was returned to the implementer after the final join probe. **R3b numeric checks PASS; overall regression acceptance remains PARTIAL pending the findings above.**
+
+## Correction review at0d08d0a
+
+Independently inspected correction checkpoint `0d08d0a1ce5376a84a286f1f0f9b48211766d65c` after the implementer released testing. Numeric code, SQL planner and migrations31–34 are unchanged; the earlier isolated performance observation is retained without repeating the workload.
+
+Executed:
+
+```sh
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -overlay /tmp/r3b-correction-review/overlay.json -run '^TestIndependentR3BRecheckCancellation|^TestM1FreshDatabaseMigrations$|^TestM9ExpiredLeaseOnEarlySaveAndConcurrentSignals$|^TestM9RejectedMutationsRollbackBeforeHTTPResponse$|^TestM9RWorkerSecurityErrorClassification$' -v ./tests/integration > /tmp/r3b-correction-review/results-0d08d0a.txt 2>&1
+```
+
+Combined result: **FAIL,21.506s**, solely the independently authored cancellation control described below. The four repository roots independently passed: fresh migrations0.95s; expired-lease/concurrent signals6.30s; rejected-mutation/denial evidence7.26s; worker security-error classification5.28s. Classification subtests executed real42501 and P0001 with a valid ticket and actual protected audit access after expiry. Existing zero-effect assertions and exact `workflows.rejected` expectations were retained.
+
+The MEDIUM workflow provenance finding and LOW migration fixture finding are **CLOSED** at0d08d0a. Workflow evidence now retains bounded trusted workflow resource/ID; independent policy denial evidence remains preserved. The CASCADE probe remains confined to a uniquely owned empty disposable database. Native policy version `m9r-native-v2` identifies new index-management decisions without rewriting historical evidence.
+
+### New LOW: cancellation is incorrectly classified as lease expiry
+
+`internal/runtime/workflow/execution.go` rechecks42501/P0001 after rollback through `jobs.WithJob`; however, `jobs.WithJob` returns `ErrJob` for `CheckRole` query failures, including a cancelled caller context. That result does not establish persisted ticket revocation.
+
+The independent control began with a valid claimed lease, executed an actual forbidden `SELECT custom_data FROM runtime.records` returning42501, and cancelled the caller context before revalidation. Worker Step returned `workflow.ErrLease` instead of the original permission error: **FAIL1.64s**. This is error/provenance masking, not an authority expansion or observed business mutation. Valid-ticket, uncancelled42501/P0001 controls passed. The failed assertion occurred before its subsequent business-count assertion; this particular probe therefore does not independently claim that count assertion ran.
+
+Recommended correction: a narrow post-rollback authority-validation contract must preserve cancellation/query/role-drift validation errors and map lease loss only from a successfully evaluated exact-ticket false result. It must not replay business effects or broaden RLS. The implementer plans this correction; its execution is **NOT RUN** in this supplement.
+
+The implementer separately reported resumed full `make check test build` PASS, integration254.958s and migration status1–34. These are attributed results. Independent numeric acceptance remains PASS; the cancellation-classification LOW remains open. All reviewer tests stopped and CPU/database/source ownership was returned before the implementer began its next correction.

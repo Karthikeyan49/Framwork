@@ -108,3 +108,31 @@ func WithJob(ctx context.Context, db *sql.DB, t Ticket, run func(context.Context
 		return run(ctx, q, a)
 	})
 }
+
+// TicketAuthority distinguishes a successful, negative database authority check
+// from cancellation, unavailable credentials/catalogs and failed queries. It
+// binds only the original ticket and performs no business callback. A successful
+// binding retains the ordinary begun/private-context bookkeeping.
+func TicketAuthority(ctx context.Context, db *sql.DB, t Ticket) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if db == nil {
+		return false, postgres.ErrUnavailable
+	}
+	if !tenant.ValidID(t.job) || !tenant.ValidID(t.tenant) || t.release == "" || t.kind == "" || t.generation < 1 || !tenant.ValidID(t.token) {
+		return false, ErrJob
+	}
+	valid := false
+	err := postgres.WithRuntime(ctx, db, func(ctx context.Context, q postgres.Executor) error {
+		var safe bool
+		if err := q.QueryRowContext(ctx, `SELECT control.worker_principal() AND control.worker_grants_safe()`).Scan(&safe); err != nil {
+			return err
+		}
+		if !safe {
+			return postgres.ErrUnavailable
+		}
+		return q.QueryRowContext(ctx, `SELECT control.bind_worker_job($1::uuid,$2::uuid,$3,$4,$5::uuid,$6)`, t.tenant, t.job, t.kind, t.generation, t.token, t.release).Scan(&valid)
+	})
+	return valid, err
+}

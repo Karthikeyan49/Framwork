@@ -1,7 +1,8 @@
 # R3b governed numeric indexing
 
-14 October 2026 (IST). Status: implementation under verification; independent
-acceptance pending. This is a numeric-index subset, not full R3 or foundation PASS.
+14 October 2026 (IST). Governed numeric feature/performance independently PASS
+at `58c58ae`. Regression corrections are being closed below. This is a numeric
+index subset, not full R3 or foundation PASS.
 
 ## Implemented boundary
 
@@ -117,9 +118,34 @@ version is `m9r-native-v2` to identify the added index-management semantics;
 historical evidence retains its original policy version.
 
 `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM1FreshDatabaseMigrations$|^TestM9ExpiredLeaseOnEarlySaveAndConcurrentSignals$|^TestM9RejectedMutationsRollbackBeforeHTTPResponse$|^TestM9RWorkerSecurityErrorClassification$' -v ./tests/integration`
-PASSED17.637 s, then19.439 s after adding the real P0001 control. The complete
-corrected check/test/build run and independent correction re-verification are
-pending; do not declare full foundation acceptance from these focused passes.
+PASSED17.637 s, then19.439 s after adding the real P0001 control.
+
+The environment interruption removed the temporary log of the then-running
+complete corrected command. Its outcome is unconfirmed, not retroactively PASS.
+After resumption, `make migration-status` confirmed applied migrations1–34.
+`make check test build > /tmp/m9r-r3b-resumed-full-checks.log 2>&1` PASSED at
+`0d08d0a`: source-kit checksums84+43, format/vet/dependency verification, Go race
+units/import boundaries, 5 Node tests, 29 frontend tests, complete integration
+suite254.958 s, backend/frontend builds. The current commits through `0d08d0a`
+were pushed and exact remote equality was verified before further correction.
+
+Independent correction testing at `0d08d0a` closed MEDIUM workflow provenance and
+the migration fixture. It also reproduced LOW error masking: a valid-ticket
+42501 followed by caller cancellation was converted to ErrLease because
+WithJob.ErrJob also represents failed role/context queries. The old phrasing
+that every such ErrJob conclusively proves invalid persisted authority was too
+strong. No capability was expanded, but the original failure classification
+was lost. Independent combined run FAIL21.506 s solely in this own probe;
+all four permanent focused roots passed.
+
+The correction uses `jobs.TicketAuthority`, which preserves cancellation,
+catalog/credential and query errors separately from a successfully returned
+negative exact-ticket database check. Only success plus false becomes ErrLease.
+An unavailable recheck retains the original security error. Valid binding can
+retain ordinary begun/private-context bookkeeping; no business callback runs.
+The permanent real42501-then-cancellation control now asserts the original
+error and zero effects. The same focused four-root command PASSED20.940 s after
+this change. Final independent closure and checks are recorded below when run.
 
 Earlier current-host R3 HTTP FAIL898.985ms remains historical evidence.
 No threshold, client count, dataset width, pool size or resource limit was raised.

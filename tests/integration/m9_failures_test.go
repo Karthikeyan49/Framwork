@@ -300,6 +300,27 @@ func TestM9RejectedMutationsRollbackBeforeHTTPResponse(t *testing.T) {
 }
 
 func TestM9RWorkerSecurityErrorClassification(t *testing.T) {
+	t.Run("cancelled recheck retains actual permission error", func(t *testing.T) {
+		m := m9Setup(t, nil)
+		x := m.start(t, "cancelled-recheck")
+		lease, found, e := m.worker.Claim(context.Background())
+		if e != nil || !found {
+			t.Fatal(e)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		m.worker.Store.Authorize = func(ctx context.Context, q postgres.Executor, a tenant.Access, action string, pin workflow.Pin, fields []string) (audit.Entry, error) {
+			_, e := q.ExecContext(ctx, `SELECT custom_data FROM runtime.records LIMIT 1`)
+			cancel()
+			return audit.Entry{}, e
+		}
+		e = m.worker.Step(ctx, lease)
+		var pg *pgconn.PgError
+		if !errors.As(e, &pg) || pg.Code != "42501" || errors.Is(e, workflow.ErrLease) {
+			t.Fatal("cancelled validation masked real error", e)
+		}
+		m.counts(t, x, 0)
+	})
 	t.Run("valid ticket retains real permission error", func(t *testing.T) {
 		m := m9Setup(t, nil)
 		x := m.start(t, "permission-classification")
