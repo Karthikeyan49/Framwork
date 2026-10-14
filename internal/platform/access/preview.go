@@ -155,7 +155,7 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 		evidence.State.FieldID = r.PathValue("index")
 		return indexRequest(ctx, q, r, scope, access, guard)
 	}
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet && r.PathValue("record") == "" {
 		// Capability hints improve UX; each command/query still enforces live policy.
 		canWrite := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, "preview.write", policy.Resource{TenantID: access.TenantID(), Type: "preview", AppID: app}, policy.Context{})).Allow
 		writable, err := (data.DatasetStore{}).Writable(ctx, q, scope, access)
@@ -210,6 +210,9 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 		}
 		scopes[key] = scope
 		return scope, nil
+	}
+	if r.PathValue("record") != "" {
+		return recordAccessRequest(ctx, q, r, scope, access, evidence, guard, resolve)
 	}
 	if r.PathValue("rule") != "" {
 		return a.evaluateRule(ctx, q, r, u, access, evidence, program, scope, guard, resolve)

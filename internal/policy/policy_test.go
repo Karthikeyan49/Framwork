@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"strings"
 
 	"testing"
 )
@@ -64,5 +65,33 @@ func TestSelfSessionAttributes(t *testing.T) {
 	}
 	if permitsSelf("", "identity.session.read", good) || permitsSelf("alice", "unknown", good) {
 		t.Fatal("unknown session authority accepted")
+	}
+}
+
+func TestRecordAccessAdministrationCapabilities(t *testing.T) {
+	row := Resource{TenantID: "tenant-a", Type: "row", AppID: "app.contacts", EntityID: "entity.contact", RecordID: "record"}
+	for _, role := range []string{"owner", "admin", "member", "viewer", "unknown"} {
+		for _, action := range []string{"data.row.share", "data.row.assign"} {
+			want := role == "owner" || role == "admin"
+			if got := permits("alice", "tenant-a", []string{role}, action, row); got != want {
+				t.Fatalf("%s/%s allow=%v", role, action, got)
+			}
+			collection := row
+			collection.RecordID = ""
+			if permits("alice", "tenant-a", []string{role}, action, collection) {
+				t.Fatal("collection-level record administration")
+			}
+		}
+	}
+	grant := `{"schema_version":"tenant-capabilities-v1","name":"%s","grants":[{"effect":"ALLOW","actions":["data.row.share","data.row.assign"],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "steward", 1)), ""); err != nil {
+		t.Fatal("custom record administration rejected", err)
+	}
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "viewer", 1)), ""); err == nil {
+		t.Fatal("viewer granted record administration")
+	}
+	scoped := strings.Replace(strings.Replace(grant, "%s", "steward", 1), `"field_id":"*"}`, `"field_id":"*"},"scope":{"kind":"ALL"}`, 1)
+	if _, err := CompileDefinition([]byte(scoped), ""); err == nil {
+		t.Fatal("unused scope accepted on row administration gate")
 	}
 }

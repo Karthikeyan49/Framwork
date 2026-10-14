@@ -32,6 +32,10 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
+	err = db.QueryRowContext(ctx, `SELECT p.prosecdef AND p.proowner='framework_schema_owner'::regrole AND p.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'] AND has_function_privilege(p.oid,'EXECUTE') FROM pg_catalog.pg_proc p WHERE p.oid='runtime.administer_record_access(uuid,text,bigint,text,text,uuid,bigint,text,uuid,uuid,boolean)'::regprocedure`).Scan(&valid)
+	if err != nil || !valid {
+		return ErrUnavailable
+	}
 	_, err = db.ExecContext(ctx, `SELECT d.mode,d.write_version,r.custom_data,r.row_version,r.created_by FROM runtime.record_sets d JOIN runtime.records r USING(tenant_id,app_id,metadata_revision,ir_hash) LIMIT 0`)
 	if err != nil {
 		return err

@@ -79,6 +79,8 @@ func (a API) Register(mux *http.ServeMux) {
 			"/v1/tenants/{tenant}/preview/{app}/versions/{revision}",
 			"/v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}",
 		} {
+			mux.HandleFunc("GET "+prefix+"/entities/{entity}/records/{record}/access", a.serve)
+			mux.HandleFunc("POST "+prefix+"/entities/{entity}/records/{record}/access", a.serve)
 			path := prefix + "/entities/{entity}/indexes/{index}"
 			mux.HandleFunc("GET "+path, a.serve)
 			mux.HandleFunc("POST "+path+"/register", a.serve)
@@ -352,7 +354,7 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	if strings.Contains(r.URL.Path, "/preview/") {
 		action = "preview.read"
 		resource = "preview"
-		if strings.HasSuffix(r.URL.Path, "/commands") {
+		if strings.HasSuffix(r.URL.Path, "/commands") || r.Method == http.MethodPost && r.PathValue("record") != "" {
 			action = "preview.write"
 		}
 		if r.PathValue("command") != "" {

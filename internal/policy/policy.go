@@ -9,9 +9,10 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-// R5a adds explicit owner-only role administration to the bootstrap adapter.
+// R5a adds explicit owner-only role administration to the bootstrap adapter;
+// R5c adds owner/admin record access administration.
 // Retained evidence keeps its original version.
-const Version = "m9r-native-v4"
+const Version = "m9r-native-v5"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -118,6 +119,12 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			if role != "viewer" && dataResource(action, resource) {
 				return true
 			}
+		case "data.row.share", "data.row.assign":
+			// Bootstrap roles keep record access administration with tenant
+			// administrators; custom roles may delegate it explicitly.
+			if (role == "owner" || role == "admin") && dataResource(action, resource) {
+				return true
+			}
 		case "metadata.write":
 			if resource.Type == "metadata" && (role == "owner" || role == "admin") {
 				return true
@@ -146,5 +153,8 @@ func dataResource(action string, r Resource) bool {
 	}
 	// Read action permission may be checked once for a collection. SQL DataScope
 	// supplies its mandatory row predicate; action permission alone exposes no rows.
+	if action == "data.row.share" || action == "data.row.assign" {
+		return r.Type == "row" && r.RecordID != ""
+	}
 	return r.Type == "row" && (r.RecordID != "" || action == "data.row.read" && r.OwnerID == "")
 }

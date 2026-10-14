@@ -45,7 +45,7 @@ type Defined struct {
 }
 
 // Action names are capabilities, never executable code or privilege wildcards.
-const actionCatalog = `tenant.access profile.read memberships.read metadata.read metadata.compile metadata.write preview.read preview.write commands.reconcile datasets.manage datasets.evolve indexes.manage rules.evaluate events.consume workflows.read workflows.start workflows.execute workflows.activity workflows.cancel workflows.approve workflows.reject workflows.recover workflows.reconcile data.entity.read data.field.read data.row.read data.aggregate.read data.entity.write data.field.write data.row.write roles.read roles.write roles.assign`
+const actionCatalog = `tenant.access profile.read memberships.read metadata.read metadata.compile metadata.write preview.read preview.write commands.reconcile datasets.manage datasets.evolve indexes.manage rules.evaluate events.consume workflows.read workflows.start workflows.execute workflows.activity workflows.cancel workflows.approve workflows.reject workflows.recover workflows.reconcile data.entity.read data.field.read data.row.read data.aggregate.read data.entity.write data.field.write data.row.write data.row.share data.row.assign roles.read roles.write roles.assign`
 
 func knownAction(action string) bool { return slices.Contains(strings.Fields(actionCatalog), action) }
 
@@ -128,7 +128,7 @@ func supportedRoleAction(role, action string) bool {
 		return role == "owner" || role == "admin"
 	}
 	if role == "viewer" {
-		return action != "preview.write" && !(strings.HasPrefix(action, "data.") && strings.HasSuffix(action, ".write")) && action != "workflows.start" && action != "workflows.execute" && action != "workflows.activity" && action != "events.consume"
+		return action != "preview.write" && action != "data.row.share" && action != "data.row.assign" && !(strings.HasPrefix(action, "data.") && strings.HasSuffix(action, ".write")) && action != "workflows.start" && action != "workflows.execute" && action != "workflows.activity" && action != "events.consume"
 	}
 	return true
 }

@@ -46,6 +46,8 @@ type State struct {
 	FieldID              string `json:"field_id,omitempty"`
 	RecordID             string `json:"record_id,omitempty"`
 	RecordVersion        int64  `json:"record_version,omitempty"`
+	AccessOperation      string `json:"access_operation,omitempty"`
+	AccessTeamID         string `json:"access_team_id,omitempty"`
 	MetadataApp          string `json:"metadata_app,omitempty"`
 	MetadataRevision     int64  `json:"metadata_revision,omitempty"`
 	MetadataHash         string `json:"metadata_hash,omitempty"`
@@ -94,6 +96,9 @@ const insertEntry = `INSERT INTO audit.entries(actor_id,tenant_id,action,resourc
 func encodeEntry(e Entry) ([]any, error) {
 	if e.State.PolicyRevision < 0 || e.State.PolicyRevision > 1e9 || len(e.State.PolicyOperation) > 36 || len(e.State.PolicySubject) > 36 {
 		return nil, errors.New("invalid policy evidence")
+	}
+	if (e.State.AccessOperation != "" && e.State.AccessOperation != "owner" && e.State.AccessOperation != "share" && e.State.AccessOperation != "unshare") || len(e.State.AccessTeamID) > 36 {
+		return nil, errors.New("invalid record access evidence")
 	}
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")
