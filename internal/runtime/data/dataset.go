@@ -68,9 +68,7 @@ func (DatasetStore) Create(ctx context.Context, q postgres.Executor, a tenant.Ac
 	}
 	anchorRevision, anchorHash, state := revision, p.Hash(), "ADOPTING"
 	if mode == "EMPTY" {
-		if len(p.IR().Workflows) > 0 {
-			return d, ErrInvalid
-		} // Explicit data pins are a later binding tranche.
+
 		sum := sha256.Sum256([]byte("dataset-v1/" + id + "/" + p.Hash()))
 		anchorRevision, anchorHash, state = 1, hex.EncodeToString(sum[:]), "OPEN"
 		if _, err = q.ExecContext(ctx, `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,$3,$4)`, a.TenantID(), p.IR().Application.AppID, anchorRevision, anchorHash); err != nil {
@@ -107,8 +105,12 @@ func (DatasetStore) Create(ctx context.Context, q postgres.Executor, a tenant.Ac
 	return (DatasetStore{}).Get(ctx, q, a, p.IR().Application.AppID, id)
 }
 
-func insertBinding(ctx context.Context, q postgres.Executor, a tenant.Access, p compiler.Program, revision int64, id string, version int64, schema string) error {
-	_, err := q.ExecContext(ctx, `INSERT INTO runtime.dataset_bindings(tenant_id,app_id,dataset_id,version,metadata_revision,ir_hash,ir_body,schema_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, a.TenantID(), p.IR().Application.AppID, id, version, revision, p.Hash(), []byte(p.JSON()), schema)
+func insertBinding(ctx context.Context, q postgres.Executor, a tenant.Access, p compiler.Program, revision int64, id string, version int64, schema string, generation ...int64) error {
+	gen := int64(1)
+	if len(generation) == 1 {
+		gen = generation[0]
+	}
+	_, err := q.ExecContext(ctx, `INSERT INTO runtime.dataset_bindings(tenant_id,app_id,dataset_id,version,metadata_revision,ir_hash,ir_body,schema_hash,generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, a.TenantID(), p.IR().Application.AppID, id, version, revision, p.Hash(), []byte(p.JSON()), schema, gen)
 	return err
 }
 
@@ -128,12 +130,13 @@ func (DatasetStore) Get(ctx context.Context, q postgres.Executor, a tenant.Acces
 // windows and transformed generations require the next independently reviewed
 // tranche; a COMPATIBLE label alone does not bypass this stronger gate.
 func (DatasetStore) Bind(ctx context.Context, q postgres.Executor, a tenant.Access, app, id string, expected int64, p compiler.Program, revision int64) (Dataset, error) {
-	if !tenant.ValidID(id) || expected < 1 || expected >= 1e9 || !p.Valid() || p.IR().Application.AppID != app || revision < 1 || revision > 1e9 || len(p.IR().Workflows) > 0 {
+	if !tenant.ValidID(id) || expected < 1 || expected >= 1e9 || !p.Valid() || p.IR().Application.AppID != app || revision < 1 || revision > 1e9 {
 		return Dataset{}, ErrInvalid
 	}
 	var current int64
+	var generation int64
 	var schema, state string
-	err := q.QueryRowContext(ctx, `SELECT active_binding,schema_hash,state FROM runtime.datasets WHERE tenant_id=$1 AND app_id=$2 AND id=$3 FOR UPDATE`, a.TenantID(), app, id).Scan(&current, &schema, &state)
+	err := q.QueryRowContext(ctx, `SELECT active_binding,schema_hash,state,schema_generation FROM runtime.datasets WHERE tenant_id=$1 AND app_id=$2 AND id=$3 FOR UPDATE`, a.TenantID(), app, id).Scan(&current, &schema, &state, &generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Dataset{}, ErrNotFound
 	}
@@ -150,7 +153,7 @@ func (DatasetStore) Bind(ctx context.Context, q postgres.Executor, a tenant.Acce
 	if newSchema != schema {
 		return Dataset{}, ErrInvalid
 	}
-	if err = insertBinding(ctx, q, a, p, revision, id, current+1, schema); err != nil {
+	if err = insertBinding(ctx, q, a, p, revision, id, current+1, schema, generation); err != nil {
 		return Dataset{}, err
 	}
 	if _, err = q.ExecContext(ctx, `UPDATE runtime.datasets SET active_binding=active_binding+1,epoch=epoch+1 WHERE tenant_id=$1 AND app_id=$2 AND id=$3`, a.TenantID(), app, id); err != nil {
@@ -167,14 +170,15 @@ func (DatasetStore) Scope(ctx context.Context, q postgres.Executor, a tenant.Acc
 	var hash, schema, state string
 	var revision, anchorRevision int64
 	var anchorHash string
-	err := q.QueryRowContext(ctx, `SELECT b.ir_body,b.ir_hash,b.metadata_revision,b.schema_hash,d.state,d.anchor_revision,d.anchor_hash FROM runtime.dataset_bindings b JOIN runtime.datasets d ON d.tenant_id=b.tenant_id AND d.app_id=b.app_id AND d.id=b.dataset_id AND d.schema_hash=b.schema_hash WHERE b.tenant_id=$1 AND b.app_id=$2 AND b.dataset_id=$3 AND b.version=$4`, a.TenantID(), app, id, version).Scan(&raw, &hash, &revision, &schema, &state, &anchorRevision, &anchorHash)
+	var generation int64
+	err := q.QueryRowContext(ctx, `SELECT b.ir_body,b.ir_hash,b.metadata_revision,b.schema_hash,d.state,g.anchor_revision,g.anchor_hash,b.generation FROM runtime.dataset_bindings b JOIN runtime.datasets d ON d.tenant_id=b.tenant_id AND d.app_id=b.app_id AND d.id=b.dataset_id JOIN runtime.dataset_generations g ON g.tenant_id=b.tenant_id AND g.app_id=b.app_id AND g.dataset_id=b.dataset_id AND g.generation=b.generation WHERE b.tenant_id=$1 AND b.app_id=$2 AND b.dataset_id=$3 AND b.version=$4`, a.TenantID(), app, id, version).Scan(&raw, &hash, &revision, &schema, &state, &anchorRevision, &anchorHash, &generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Scope{}, ErrNotFound
 	}
 	if err != nil {
 		return Scope{}, err
 	}
-	if state != "OPEN" {
+	if state == "ADOPTING" {
 		return Scope{}, ErrBinding
 	}
 	p, err := compiler.Restore(raw, hash, compiler.SupportedIRVersions())
@@ -190,13 +194,15 @@ func (DatasetStore) Scope(ctx context.Context, q postgres.Executor, a tenant.Acc
 		return Scope{}, err
 	}
 	s.anchorRevision, s.anchorHash, s.datasetID, s.binding = anchorRevision, anchorHash, id, version
+	s.generation = generation
 	return s, nil
 }
 
 func lockBinding(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access) error {
 	var id, state string
 	var version int64
-	err := q.QueryRowContext(ctx, `SELECT id::text,state,active_binding FROM runtime.datasets WHERE tenant_id=$1 AND app_id=$2 AND anchor_revision=$3 AND anchor_hash=$4 FOR SHARE`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash()).Scan(&id, &state, &version)
+	var generation, mappedGeneration int64
+	err := q.QueryRowContext(ctx, `SELECT d.id::text,d.state,d.active_binding,d.schema_generation,g.generation FROM runtime.dataset_generations g JOIN runtime.datasets d ON d.tenant_id=g.tenant_id AND d.app_id=g.app_id AND d.id=g.dataset_id WHERE g.tenant_id=$1 AND g.app_id=$2 AND g.anchor_revision=$3 AND g.anchor_hash=$4 FOR SHARE OF d`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash()).Scan(&id, &state, &version, &generation, &mappedGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
 		if s.DatasetID() != "" {
 			return ErrBinding
@@ -206,7 +212,7 @@ func lockBinding(ctx context.Context, q postgres.Executor, s Scope, a tenant.Acc
 	if err != nil {
 		return err
 	}
-	if state != "OPEN" || id != s.DatasetID() || version != s.BindingVersion() {
+	if state != "OPEN" || id != s.DatasetID() || version != s.BindingVersion() || generation != s.Generation() || mappedGeneration != generation {
 		return ErrBinding
 	}
 	_, err = q.ExecContext(ctx, `SELECT pg_catalog.set_config('app.dataset_id',$1,true),pg_catalog.set_config('app.dataset_binding',$2,true),pg_catalog.set_config('app.execution_ir_hash',$3,true)`, id, strconv.FormatInt(version, 10), s.Hash())
@@ -216,14 +222,15 @@ func lockBinding(ctx context.Context, q postgres.Executor, s Scope, a tenant.Acc
 func (DatasetStore) Writable(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access) (bool, error) {
 	var id, state string
 	var binding int64
-	err := q.QueryRowContext(ctx, `SELECT id::text,state,active_binding FROM runtime.datasets WHERE tenant_id=$1 AND app_id=$2 AND anchor_revision=$3 AND anchor_hash=$4`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash()).Scan(&id, &state, &binding)
+	var generation, currentGeneration int64
+	err := q.QueryRowContext(ctx, `SELECT d.id::text,d.state,d.active_binding,g.generation,d.schema_generation FROM runtime.dataset_generations g JOIN runtime.datasets d ON d.tenant_id=g.tenant_id AND d.app_id=g.app_id AND d.id=g.dataset_id WHERE g.tenant_id=$1 AND g.app_id=$2 AND g.anchor_revision=$3 AND g.anchor_hash=$4`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash()).Scan(&id, &state, &binding, &generation, &currentGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s.DatasetID() == "", nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return id == s.DatasetID() && state == "OPEN" && binding == s.BindingVersion(), nil
+	return id == s.DatasetID() && state == "OPEN" && binding == s.BindingVersion() && generation == currentGeneration && generation == s.Generation(), nil
 }
 
 // VerifyAdoption commits progress with its bounded verification transaction. A
@@ -246,6 +253,9 @@ func (DatasetStore) VerifyAdoption(ctx context.Context, q postgres.Executor, a t
 	}
 	if state == "OPEN" {
 		return (DatasetStore{}).Get(ctx, q, a, app, id)
+	}
+	if state != "ADOPTING" {
+		return Dataset{}, ErrBinding
 	}
 	var raw []byte
 	var witnessHash string

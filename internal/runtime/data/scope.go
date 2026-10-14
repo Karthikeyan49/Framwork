@@ -62,7 +62,11 @@ func scopeSQL(ctx context.Context, e compiler.Entity, s policy.DataScope, a tena
 		if s.WriteShare {
 			condition = " AND sh.can_write"
 		}
-		return `EXISTS(SELECT 1 FROM runtime.record_shares sh WHERE sh.tenant_id=` + alias + `.tenant_id AND sh.app_id=` + alias + `.app_id AND sh.metadata_revision=` + alias + `.metadata_revision AND sh.ir_hash=` + alias + `.ir_hash AND sh.entity_id=` + alias + `.entity_id AND sh.id=` + alias + `.id AND sh.user_id=` + b.bind(a.ActorID()) + `::uuid` + condition + `)`, nil
+		table := "runtime.read_shares"
+		if worker, _ := ctx.Value(workerReadKey{}).(bool); worker {
+			table = "runtime.worker_source_shares()"
+		}
+		return `EXISTS(SELECT 1 FROM ` + table + ` sh WHERE sh.tenant_id=` + alias + `.tenant_id AND sh.app_id=` + alias + `.app_id AND sh.metadata_revision=` + alias + `.metadata_revision AND sh.ir_hash=` + alias + `.ir_hash AND sh.entity_id=` + alias + `.entity_id AND sh.id=` + alias + `.id AND sh.user_id=` + b.bind(a.ActorID()) + `::uuid` + condition + `)`, nil
 	case "CONDITION":
 		if s.Condition == nil || (alias != "r" && alias != "j") {
 			return "", ErrInvalid
@@ -139,7 +143,7 @@ func authorizeExistingWrite(ctx context.Context, q postgres.Executor, s Scope, a
 		return er
 	}
 	var allowed bool
-	er = q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM runtime.records r WHERE "+recordWhere+" AND id=$6 AND ("+pred+"))", b.args...).Scan(&allowed)
+	er = q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM runtime.read_records r WHERE "+recordWhere+" AND id=$6 AND ("+pred+"))", b.args...).Scan(&allowed)
 	if er != nil {
 		return er
 	}

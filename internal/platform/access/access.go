@@ -62,6 +62,11 @@ func (a API) Register(mux *http.ServeMux) {
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/verify", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions", a.serve)
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}", a.serve)
+		for _, op := range []string{"advance", "activate", "abort", "reverify"} {
+			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}/"+op, a.serve)
+		}
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}/entities/{entity}/query", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}/entities/{entity}/commands", a.serve)
@@ -80,6 +85,9 @@ func (a API) Register(mux *http.ServeMux) {
 		}
 		if a.WorkflowsEnabled {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/start", a.serve)
+			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}/workflows/{workflow}/start", a.serve)
+			mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}/workflows/{workflow}/instances/{instance}", a.serve)
+			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}/workflows/{workflow}/instances/{instance}/signals", a.serve)
 			mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/instances/{instance}", a.serve)
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/instances/{instance}/signals", a.serve)
 		}
@@ -333,6 +341,9 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		if r.PathValue("index") != "" {
 			action = "indexes.manage"
 		}
+		if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {
+			action = "datasets.evolve"
+		}
 	}
 	appID := ""
 	if resource == "preview" || resource == "metadata" {
@@ -361,6 +372,8 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			evidence.State.CommandKey = r.PathValue("command")
 			receipt, err = data.CommandReceipt(ctx, tx, access, appID, r.PathValue("command"))
 			result = reply{status: 200, body: receipt}
+		} else if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {
+			result, err = a.evolution(ctx, tx, r, access, &evidence)
 		} else if strings.Contains(r.URL.Path, "/datasets") {
 			result, err = a.dataset(ctx, tx, r, u, access, &evidence)
 		} else {

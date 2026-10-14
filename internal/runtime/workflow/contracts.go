@@ -11,7 +11,15 @@ import (
 	"time"
 )
 
+type DataPin struct {
+	DatasetID      string `json:"dataset_id,omitempty"`
+	BindingVersion int64  `json:"binding_version,omitempty"`
+	DataGeneration int64  `json:"data_generation,omitempty"`
+	DataRevision   int64  `json:"data_revision,omitempty"`
+	DataHash       string `json:"data_hash,omitempty"`
+}
 type Pin struct {
+	DataPin
 	AppID           string          `json:"app_id"`
 	Revision        int64           `json:"metadata_revision"`
 	IRHash          string          `json:"ir_hash"`
@@ -107,6 +115,7 @@ type History struct {
 	ResultHash string    `json:"result_hash,omitempty"`
 }
 type Start struct {
+	DataPin
 	IR                                                         []byte
 	IRHash                                                     string
 	Revision                                                   int64

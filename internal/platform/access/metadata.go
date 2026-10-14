@@ -25,7 +25,7 @@ var metadataPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/metadata/app\.
 var metadataAppID = regexp.MustCompile(`^app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 
 func (a API) AcceptsPOST(path string) bool {
-	return a.Registry != nil && (metadataPOST.MatchString(path) || a.PreviewEnabled && (previewPOST.MatchString(path) || rulesPOST.MatchString(path) || workflowsPOST.MatchString(path) || datasetManagementPOST.MatchString(path) || datasetDataPOST.MatchString(path) || indexesPOST.MatchString(path)))
+	return a.Registry != nil && (metadataPOST.MatchString(path) || a.PreviewEnabled && (previewPOST.MatchString(path) || rulesPOST.MatchString(path) || workflowsPOST.MatchString(path) || datasetManagementPOST.MatchString(path) || datasetDataPOST.MatchString(path) || indexesPOST.MatchString(path) || evolutionPOST.MatchString(path)))
 }
 func (a API) metadata(ctx context.Context, q postgres.Executor, r *http.Request, scope tenant.Access, evidence *audit.Entry) (reply, error) {
 	if a.Registry == nil {

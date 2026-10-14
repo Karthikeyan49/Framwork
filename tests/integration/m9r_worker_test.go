@@ -446,8 +446,11 @@ func TestM9RShareResourceIncludesEntity(t *testing.T) {
 		t.Fatal(err)
 	}
 	var own, foreign int
-	if err = tx.QueryRow(`SELECT count(*) FILTER(WHERE entity_id='entity.contact'),count(*) FILTER(WHERE entity_id='entity.other') FROM runtime.record_shares`).Scan(&own, &foreign); err != nil || own != 1 || foreign != 0 {
+	if err = tx.QueryRow(`SELECT count(*) FILTER(WHERE entity_id='entity.contact'),count(*) FILTER(WHERE entity_id='entity.other') FROM runtime.worker_source_shares()`).Scan(&own, &foreign); err != nil || own != 1 || foreign != 0 {
 		t.Fatal("share resource escaped exact entity", own, foreign, err)
+	}
+	if _, err = tx.Exec(`SELECT * FROM runtime.record_shares LIMIT 1`); err == nil {
+		t.Fatal("worker retained generic share access")
 	}
 }
 

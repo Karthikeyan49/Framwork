@@ -11,6 +11,10 @@ import (
 )
 
 type State struct {
+	EvolutionID          string `json:"evolution_id,omitempty"`
+	EvolutionState       string `json:"evolution_state,omitempty"`
+	EvolutionCheckpoint  int64  `json:"evolution_checkpoint,omitempty"`
+	EvolutionPlanHash    string `json:"evolution_plan_hash,omitempty"`
 	CommandKey           string `json:"command_key,omitempty"`
 	CommandReplayed      bool   `json:"command_replayed,omitempty"`
 	DatasetID            string `json:"dataset_id,omitempty"`
@@ -88,7 +92,10 @@ func encodeEntry(e Entry) ([]any, error) {
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")
 	}
-	if len(e.State.DatasetID) > 36 || len(e.State.DataSchemaHash) > 64 || e.State.DataSchemaGeneration < 0 || e.State.DatasetBinding < 0 || e.State.DatasetBinding > 1e9 || e.State.VerifiedRows < 0 || len(e.State.ManifestHash) > 64 || (e.State.DatasetState != "" && e.State.DatasetState != "OPEN" && e.State.DatasetState != "ADOPTING") {
+	if len(e.State.EvolutionID) > 36 || len(e.State.EvolutionState) > 16 || e.State.EvolutionCheckpoint < 0 || len(e.State.EvolutionPlanHash) > 64 {
+		return nil, errors.New("invalid evolution evidence")
+	}
+	if len(e.State.DatasetID) > 36 || len(e.State.DataSchemaHash) > 64 || e.State.DataSchemaGeneration < 0 || e.State.DatasetBinding < 0 || e.State.DatasetBinding > 1e9 || e.State.VerifiedRows < 0 || len(e.State.ManifestHash) > 64 || (e.State.DatasetState != "" && e.State.DatasetState != "OPEN" && e.State.DatasetState != "ADOPTING" && e.State.DatasetState != "FROZEN") {
 		return nil, errors.New("invalid dataset evidence")
 	}
 	if len(e.State.WorkflowInstanceID) > 36 || len(e.State.WorkflowID) > 160 || len(e.State.WorkflowVersion) > 20 || len(e.State.WorkflowPlanHash) > 64 || e.State.WorkflowSequence < 0 || len(e.State.WorkflowStep) > 200 {

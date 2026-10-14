@@ -16,18 +16,19 @@ func (st Store) recordsTable() string {
 		return "runtime.worker_source_record()"
 	}
 	if st.legacy {
-		return "(SELECT p.*,p.created_by AS owner_user_id,NULL::uuid AS owner_team_id FROM runtime.preview_records p)"
+		return "runtime.read_preview_records"
 	}
-	return "runtime.records"
+	return "runtime.read_records"
 }
 
 // WorkerSourceAdapter reads the exact masked source admitted by a bound job.
 // It exposes no mutation port and retains normal policy/DataScope validation.
 type WorkerSourceAdapter struct{}
+type workerReadKey struct{}
 
 func (WorkerSourceAdapter) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e string, v Query, g Guard, resolve ...ScopeResolver) (Page, error) {
 	if v.RecordID == "" || v.Limit != 1 || v.Filter != nil || v.Sort != nil || v.Join != nil || v.Aggregate != nil || v.After != "" {
 		return Page{}, ErrDenied
 	}
-	return (Store{workerSource: true}).Query(ctx, q, s, a, e, v, g, resolve...)
+	return (Store{workerSource: true}).Query(context.WithValue(ctx, workerReadKey{}, true), q, s, a, e, v, g, resolve...)
 }

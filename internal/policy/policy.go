@@ -11,7 +11,7 @@ import (
 
 // R3b adds governed index management to the native decision contract. Retained
 // evidence keeps its original version; new decisions identify these semantics.
-const Version = "m9r-native-v2"
+const Version = "m9r-native-v3"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -64,7 +64,7 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			if resource.Type == "preview" && resource.AppID != "" && role != "viewer" {
 				return true
 			}
-		case "datasets.manage", "indexes.manage":
+		case "datasets.manage", "datasets.evolve", "indexes.manage":
 			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
 				return true
 			}

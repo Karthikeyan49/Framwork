@@ -13,13 +13,18 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"strings"
 )
 
 type Store struct{ legacy, workerSource bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool
-	err := db.QueryRowContext(ctx, `SELECT count(*)=7 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass,'runtime.datasets'::regclass,'runtime.dataset_bindings'::regclass,'runtime.command_receipts'::regclass,'runtime.numeric_indexes'::regclass,'runtime.numeric_projections'::regclass)`).Scan(&valid)
+	err := db.QueryRowContext(ctx, `SELECT count(*)=13 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass,'runtime.datasets'::regclass,'runtime.dataset_bindings'::regclass,'runtime.command_receipts'::regclass,'runtime.numeric_indexes'::regclass,'runtime.numeric_projections'::regclass,'runtime.dataset_generations'::regclass,'runtime.record_identity'::regclass,'runtime.identity_shares'::regclass,'runtime.dataset_evolutions'::regclass,'runtime.event_data_sources'::regclass,'control.evolution_context'::regclass)`).Scan(&valid)
+	if err != nil || !valid {
+		return ErrUnavailable
+	}
+	err = db.QueryRowContext(ctx, `SELECT (SELECT count(*)=3 AND bool_and(relowner='framework_schema_owner'::regrole AND reloptions @> ARRAY['security_invoker=true']) FROM pg_class WHERE oid IN('runtime.read_records'::regclass,'runtime.read_shares'::regclass,'runtime.read_preview_records'::regclass)) AND (SELECT count(*)=8 AND bool_and(tgenabled='O') FROM pg_trigger WHERE (tgrelid,tgname) IN(('runtime.datasets'::regclass,'dataset_initial_generation'),('runtime.records'::regclass,'record_identity_mirror'),('runtime.record_shares'::regclass,'share_identity_mirror'),('runtime.dataset_generations'::regclass,'immutable_generation'),('runtime.record_identity'::regclass,'retain_record_identity'),('runtime.dataset_evolutions'::regclass,'retain_evolution'),('runtime.event_data_sources'::regclass,'immutable_event_source'),('runtime.workflow_bindings'::regclass,'workflow_data_pin')))`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
@@ -89,7 +94,7 @@ func current(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 	if err != nil {
 		return r, err
 	}
-	err = q.QueryRowContext(ctx, `SELECT id::text,row_version,created_by::text,created_at,updated_at,custom_data,owner_user_id::text,COALESCE(owner_team_id::text,'') FROM runtime.records r WHERE `+recordWhere+` AND id=$6 AND (`+predicate+`)`, b.args...).Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &r.OwnerID, &r.TeamID)
+	err = q.QueryRowContext(ctx, `SELECT id::text,row_version,created_by::text,created_at,updated_at,custom_data,owner_user_id::text,COALESCE(owner_team_id::text,'') FROM runtime.read_records r WHERE `+recordWhere+` AND id=$6 AND (`+predicate+`)`, b.args...).Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &r.OwnerID, &r.TeamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -211,7 +216,7 @@ func command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 				}
 				args := append(base(s, a, target.ID), f.ID, c.ID)
 				var used bool
-				if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runtime.records WHERE `+recordWhere+` AND custom_data->>$6=$7)`, args...).Scan(&used); err != nil {
+				if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runtime.read_records WHERE `+recordWhere+` AND custom_data->>$6=$7)`, args...).Scan(&used); err != nil {
 					return Record{}, err
 				}
 				if used {
@@ -230,7 +235,7 @@ func command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 		if er != nil {
 			return Record{}, er
 		}
-		result, err := q.ExecContext(ctx, `DELETE FROM runtime.records r WHERE `+recordWhere+` AND id=$6 AND row_version=$7 AND (`+pred+`)`, b.args...)
+		result, err := q.ExecContext(ctx, `DELETE FROM runtime.records r WHERE `+recordWhere+` AND id=$6 AND row_version=$7 AND EXISTS(SELECT 1 FROM runtime.read_records live WHERE live.tenant_id=r.tenant_id AND live.app_id=r.app_id AND live.metadata_revision=r.metadata_revision AND live.ir_hash=r.ir_hash AND live.entity_id=r.entity_id AND live.id=r.id AND (`+strings.ReplaceAll(pred, "r.", "live.")+`))`, b.args...)
 		if err != nil {
 			return Record{}, err
 		}
@@ -313,7 +318,7 @@ func command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 			return Record{}, er
 		}
 		var result sql.Result
-		result, err = q.ExecContext(ctx, `UPDATE runtime.records r SET custom_data=$7::jsonb,row_version=row_version+1,updated_at=clock_timestamp(),updated_by=iam.authenticated_actor() WHERE `+recordWhere+` AND id=$6 AND row_version=$8 AND (`+pred+`)`, b.args...)
+		result, err = q.ExecContext(ctx, `UPDATE runtime.records r SET custom_data=$7::jsonb,row_version=row_version+1,updated_at=clock_timestamp(),updated_by=iam.authenticated_actor() WHERE `+recordWhere+` AND id=$6 AND row_version=$8 AND EXISTS(SELECT 1 FROM runtime.read_records live WHERE live.tenant_id=r.tenant_id AND live.app_id=r.app_id AND live.metadata_revision=r.metadata_revision AND live.ir_hash=r.ir_hash AND live.entity_id=r.entity_id AND live.id=r.id AND (`+strings.ReplaceAll(pred, "r.", "live.")+`))`, b.args...)
 		if err == nil {
 			n, _ := result.RowsAffected()
 			if n != 1 {

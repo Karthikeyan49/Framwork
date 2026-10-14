@@ -189,7 +189,7 @@ func (a API) dataset(ctx context.Context, q postgres.Executor, r *http.Request, 
 	metadataEvidence(ctx, evidence, v)
 	evidence.State.IRHash = scope.Hash()
 	evidence.State.DatasetID = scope.DatasetID()
-	evidence.State.DataSchemaGeneration = 1
+	evidence.State.DataSchemaGeneration = scope.Generation()
 	evidence.State.DatasetBinding = scope.BindingVersion()
 	return a.executePreview(ctx, q, r, u, access, evidence, scope)
 }

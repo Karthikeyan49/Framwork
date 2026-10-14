@@ -24,6 +24,7 @@ const MaxPage = 100
 
 // Scope pins both immutable source revision and actual compiled content.
 type Scope struct {
+	generation     int64
 	program        compiler.Program
 	revision       int64
 	anchorRevision int64
@@ -32,6 +33,7 @@ type Scope struct {
 	binding        int64
 }
 
+func ScopeForRevision(revision int64) Scope { return Scope{revision: revision} }
 func NewScope(p compiler.Program, revision int64) (Scope, error) {
 	if !p.Valid() || revision < 1 || revision > 1e9 || p.IR().SchemaSnapshot != compiler.SchemaSnapshot {
 		return Scope{}, ErrInvalid
@@ -46,6 +48,33 @@ func (s Scope) DataHash() string          { return s.anchorHash }
 func (s Scope) DatasetID() string         { return s.datasetID }
 func (s Scope) BindingVersion() int64     { return s.binding }
 func (s Scope) Program() compiler.Program { return s.program }
+func (s Scope) Generation() int64         { return s.generation }
+
+// PinnedScope restores an immutable data pin supplied by trusted workflow
+// composition. The SQL source capability/binding remains the authority.
+func PinnedScope(p compiler.Program, revision int64, dataset string, binding, generation, dataRevision int64, dataHash string) (Scope, error) {
+	s, err := NewScope(p, revision)
+	if err != nil {
+		return s, err
+	}
+	if dataset == "" {
+		if binding != 0 || generation != 0 || dataRevision != 0 || dataHash != "" {
+			return Scope{}, ErrInvalid
+		}
+		return s, nil
+	}
+	if !tenant.ValidID(dataset) || binding < 1 || generation < 1 || dataRevision < 1 || len(dataHash) != 64 {
+		return Scope{}, ErrInvalid
+	}
+	s.datasetID, s.binding, s.generation, s.anchorRevision, s.anchorHash = dataset, binding, generation, dataRevision, dataHash
+	return s, nil
+}
+
+// AdmitStart acquires the shared write gate before snapshot capture. Reading an
+// old pin does not acquire this gate; it remains a retained read-only generation.
+func AdmitStart(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access) error {
+	return lockDataset(ctx, q, s, a)
+}
 
 type Resource struct{ EntityID, FieldID, RecordID, OwnerID string }
 type Guard func(context.Context, string, Resource) error

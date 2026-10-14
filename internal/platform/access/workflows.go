@@ -23,7 +23,7 @@ import (
 	"strings"
 )
 
-var workflowsPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/versions/[0-9]+/workflows/workflow\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(start|instances/[0-9a-f-]{36}/signals)$`)
+var workflowsPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(versions/[0-9]+|datasets/[0-9a-f-]{36}/bindings/[0-9]+)/workflows/workflow\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(start|instances/[0-9a-f-]{36}/signals)$`)
 
 type WorkflowUser func(context.Context, postgres.Executor, tenant.Access) (identity.User, error)
 
@@ -63,7 +63,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		if e != nil || w.Hash() != pin.PlanHash || w.Plan().Version != pin.WorkflowVersion {
 			return data.Record{}, workflow.ErrInvalid
 		}
-		scope, e := data.NewScope(p, pin.Revision)
+		scope, e := data.PinnedScope(p, pin.Revision, pin.DatasetID, pin.BindingVersion, pin.DataGeneration, pin.DataRevision, pin.DataHash)
 		if e != nil {
 			return data.Record{}, e
 		}
@@ -151,6 +151,20 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		return page.Records[0], nil
 	}
 	capture := func(ctx context.Context, q postgres.Executor, a tenant.Access, pin workflow.Pin, fields []string) (workflow.Snapshot, error) {
+		p, err := compiler.Restore(pin.IR, pin.IRHash, compiler.SupportedIRVersions())
+		if err != nil {
+			return workflow.Snapshot{}, err
+		}
+		scope, err := data.PinnedScope(p, pin.Revision, pin.DatasetID, pin.BindingVersion, pin.DataGeneration, pin.DataRevision, pin.DataHash)
+		if err != nil {
+			return workflow.Snapshot{}, err
+		}
+		if worker {
+			return workflow.Snapshot{}, workflow.ErrDenied
+		}
+		if err = data.AdmitStart(ctx, q, scope, a); err != nil {
+			return workflow.Snapshot{}, workflow.ErrConflict
+		}
 		r, e := record(ctx, q, a, pin, fields)
 		if e != nil {
 			return workflow.Snapshot{}, e
@@ -199,7 +213,8 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 	return workflow.Store{Restore: restore, Capture: capture, Authorize: authorize, Audit: writer, Events: lifecycle, Activity: workflow.Noop}
 }
 
-func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, p compiler.Program, revision int64) (reply, error) {
+func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, scope data.Scope) (reply, error) {
+	p, revision := scope.Program(), scope.Revision()
 	id := r.PathValue("workflow")
 	// Typed lifecycle failures can precede a returned workflow authorization
 	// entry. Preserve the actual component for the fresh rollback-denial audit.
@@ -229,10 +244,10 @@ func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.R
 		if readDataCommand(r, &body) != nil {
 			return denied(400, "invalid_workflow_input", "A record and idempotency key are required"), nil
 		}
-		x, err = store.Start(ctx, q, access, workflow.Start{IR: p.JSON(), IRHash: p.Hash(), Revision: revision, WorkflowID: id, RecordID: body.RecordID, Key: body.Key, RequestID: httpserver.RequestID(ctx)})
+		x, err = store.Start(ctx, q, access, workflow.Start{DataPin: workflow.DataPin{DatasetID: scope.DatasetID(), BindingVersion: scope.BindingVersion(), DataGeneration: scope.Generation(), DataRevision: boundRevision(scope), DataHash: boundHash(scope)}, IR: p.JSON(), IRHash: p.Hash(), Revision: revision, WorkflowID: id, RecordID: body.RecordID, Key: body.Key, RequestID: httpserver.RequestID(ctx)})
 	} else {
 		x, err = store.Get(ctx, q, access, instance)
-		if err == nil && (x.Pin.AppID != r.PathValue("app") || x.Pin.Revision != revision || x.Pin.WorkflowID != id) {
+		if err == nil && (x.Pin.AppID != r.PathValue("app") || x.Pin.Revision != revision || x.Pin.WorkflowID != id || x.Pin.DatasetID != scope.DatasetID() || x.Pin.BindingVersion != scope.BindingVersion()) {
 			return denied(404, "not_found", "Workflow not found in this selection"), nil
 		}
 		if err == nil && r.Method != http.MethodGet {
