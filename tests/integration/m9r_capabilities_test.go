@@ -476,3 +476,83 @@ func TestM9RRoleNameGrantDriftRejectsAPIAndWorkerTransactions(t *testing.T) {
 		})
 	}
 }
+
+func TestM9RStoredRoleEngineBindsTenantAndActor(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	h := r5Handler(t, f, audit.Postgres{})
+	selector := policy.Selector{AppID: "*", EntityID: "*", FieldID: "*"}
+	allowed := policy.Definition{SchemaVersion: policy.DefinitionVersion, Name: "finance_manager", Grants: []policy.Grant{{Effect: "ALLOW", Actions: []string{"memberships.read"}, Resource: selector}}}
+	denied := policy.Definition{SchemaVersion: policy.DefinitionVersion, Name: "finance_manager", Grants: []policy.Grant{}}
+	alice, bob, viewer := f.token(t, f.aliceSubject, nil), f.token(t, f.bobSubject, nil), f.token(t, f.viewerSubject, nil)
+	r5Publish(t, h, "/v1/tenants/"+f.tenantA+"/roles", alice, 0, allowed, true, uuid(t))
+	r5Publish(t, h, "/v1/tenants/"+f.tenantB+"/roles", bob, 0, denied, true, uuid(t))
+	r5Assign(t, h, "/v1/tenants/"+f.tenantA, alice, f.viewer, "finance_manager", 200)
+	if e := (tenant.Store{}).Provision(context.Background(), f.operator, f.tenantB, "Engine binding", f.viewer, "finance_manager", true); e != nil {
+		t.Fatal(e)
+	}
+	if e := (tenant.Store{}).Provision(context.Background(), f.operator, f.tenantA, "Engine binding", f.bob, "finance_manager", true); e != nil {
+		t.Fatal(e)
+	}
+	if w := m3Call(h, "GET", "/v1/tenants/"+f.tenantA+"/members", viewer, 0, nil); w.Code != 200 {
+		t.Fatal("A allow control", w.Code)
+	}
+	if w := m3Call(h, "GET", "/v1/tenants/"+f.tenantB+"/members", viewer, 0, nil); w.Code != 403 {
+		t.Fatal("B deny control", w.Code)
+	}
+	p, e := f.verifier.Verify(viewer)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var engine policy.Engine
+	if e = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+		a, e := m3Scope(f, ctx, q, p, f.tenantA)
+		if e != nil {
+			return e
+		}
+		engine, e = (policy.RoleStore{}).Load(ctx, q, a)
+		return e
+	}); e != nil {
+		t.Fatal(e)
+	}
+	for _, tc := range []struct{ token, tenantID string }{{viewer, f.tenantB}, {bob, f.tenantA}} {
+		principal, e := f.verifier.Verify(tc.token)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+			a, e := m3Scope(f, ctx, q, principal, tc.tenantID)
+			if e != nil {
+				return e
+			}
+			user, e := (identity.Store{}).Resolve(ctx, q, principal)
+			if e != nil {
+				return e
+			}
+			resource := policy.Resource{TenantID: tc.tenantID, Type: "membership"}
+			if d := engine.Decide(ctx, policy.Subject{User: user, Access: a}, "memberships.read", resource, policy.Context{}); d.Allow {
+				t.Fatal("stored engine reused across tenant/actor")
+			}
+			return nil
+		}); e != nil {
+			t.Fatal(e)
+		}
+	}
+}
+
+func TestM9RReservedCapabilitiesRejectUnexecutableGrants(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	h := r5Handler(t, f, audit.Postgres{})
+	owner := f.token(t, f.aliceSubject, nil)
+	root := "/v1/tenants/" + f.tenantA + "/roles"
+	for _, tc := range []struct {
+		role, action string
+		base         int64
+	}{{"viewer", "workflows.start", 1}, {"viewer", "events.consume", 1}, {"finance_manager", "indexes.manage", 0}, {"finance_manager", "datasets.evolve", 0}, {"finance_manager", "roles.assign", 0}} {
+		d := policy.Definition{SchemaVersion: policy.DefinitionVersion, Name: tc.role, Grants: []policy.Grant{{Effect: "ALLOW", Actions: []string{tc.action}, Resource: policy.Selector{AppID: "*", EntityID: "*", FieldID: "*"}}}}
+		if w := m5Call(h, root, owner, map[string]any{"operation_id": uuid(t), "expected_version": tc.base, "active": true, "definition": d}); w.Code != 400 {
+			t.Fatal("unsupported executor capability accepted", tc.role, tc.action, w.Code)
+		}
+	}
+}

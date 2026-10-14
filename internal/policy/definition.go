@@ -40,6 +40,8 @@ type Defined struct {
 	definition Definition
 	hash       string
 	legacy     bool
+	tenantID   string
+	actorID    string
 }
 
 // Action names are capabilities, never executable code or privilege wildcards.
@@ -71,7 +73,7 @@ func CompileDefinition(raw []byte, expected string) (Defined, error) {
 			return Defined{}, ErrDefinition
 		}
 		for _, a := range g.Actions {
-			if !knownAction(a) {
+			if !knownAction(a) || g.Effect == "ALLOW" && !supportedRoleAction(d.Name, a) {
 				return Defined{}, ErrDefinition
 			}
 		}
@@ -113,6 +115,22 @@ func CompileDefinition(raw []byte, expected string) (Defined, error) {
 		return Defined{}, ErrDefinition
 	}
 	return Defined{definition: d, hash: digest}, nil
+}
+
+// Some infrastructure operations retain explicit SQL role reservations until
+// their adapters consume capability definitions. Never accept a grant that the
+// shipped executor will silently reject after a successful API admission.
+func supportedRoleAction(role, action string) bool {
+	if action == "roles.write" || action == "roles.assign" {
+		return role == "owner"
+	}
+	if action == "datasets.manage" || action == "datasets.evolve" || action == "indexes.manage" {
+		return role == "owner" || role == "admin"
+	}
+	if role == "viewer" {
+		return action != "preview.write" && !(strings.HasPrefix(action, "data.") && strings.HasSuffix(action, ".write")) && action != "workflows.start" && action != "workflows.execute" && action != "workflows.activity" && action != "events.consume"
+	}
+	return true
 }
 
 // Contract keys have one spelling. encoding/json alone also accepts differently
@@ -180,7 +198,7 @@ func selectorMatches(s Selector, r Resource) bool {
 	return (s.AppID == "*" || s.AppID == r.AppID) && (s.EntityID == "*" || s.EntityID == r.EntityID) && (s.FieldID == "*" || s.FieldID == r.FieldID)
 }
 func (d Defined) validSubject(s Subject, r Resource) bool {
-	return d.hash != "" && s.User.ID() != "" && s.User.ID() == s.Access.ActorID() && s.Access.TenantID() == r.TenantID && slices.Contains(s.Access.Roles(), d.Name())
+	return d.hash != "" && d.tenantID != "" && d.actorID != "" && s.User.ID() == d.actorID && s.Access.TenantID() == d.tenantID && s.User.ID() == s.Access.ActorID() && s.Access.TenantID() == r.TenantID && slices.Contains(s.Access.Roles(), d.Name())
 }
 
 func validResource(action string, r Resource, actor string) bool {

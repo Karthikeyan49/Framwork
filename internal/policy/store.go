@@ -110,6 +110,7 @@ func (s RoleStore) Load(ctx context.Context, q postgres.Executor, a tenant.Acces
 	if err != nil {
 		return nil, RoleDenied{Name: v.Name, Hash: v.Hash, Version: v.Version, Bootstrap: v.Bootstrap}
 	}
+	d.tenantID, d.actorID = a.TenantID(), a.ActorID()
 	return d, nil
 }
 func (s RoleStore) LoadWorker(ctx context.Context, q postgres.Executor, a tenant.Access) (Engine, error) {
@@ -129,6 +130,7 @@ func (s RoleStore) LoadWorker(ctx context.Context, q postgres.Executor, a tenant
 	if err != nil {
 		return nil, RoleDenied{Name: v.Name, Hash: v.Hash, Version: v.Version, Bootstrap: v.Bootstrap}
 	}
+	d.tenantID, d.actorID = tenantID, actorID
 	return d, nil
 }
 func (s RoleStore) Publish(ctx context.Context, q postgres.Executor, a tenant.Access, id string, expected int64, raw []byte, active bool) (RoleVersion, error) {

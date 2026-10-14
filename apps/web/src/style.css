@@ -6,3 +6,5 @@ input, select { font: inherit; padding: .75rem; border: 1px solid #b8c5cd; borde
 @media(max-width:720px){nav{flex-wrap:wrap}}
 
 .preview {min-width:0;overflow-wrap:anywhere}.preview section,.preview form,.preview label,.preview .badge {min-width:0;max-width:100%;overflow-wrap:anywhere}.preview button{max-width:100%;overflow-wrap:anywhere}.preview dl{grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr))}
+
+.access-summary { overflow-wrap: anywhere; }

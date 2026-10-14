@@ -126,6 +126,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		if e != nil {
 			return data.Record{}, e
 		}
+		effectiveScopes := []policy.DataScope{}
 		resolve := func(ctx context.Context, action string, r data.Resource) (policy.DataScope, error) {
 			scoped, ok := currentEngine.(policy.ScopeEngine)
 			if !ok {
@@ -157,6 +158,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 			if e != nil {
 				return policy.DataScope{}, &workflow.AuthorizationDenied{Evidence: entry}
 			}
+			effectiveScopes = append(effectiveScopes, scope)
 			return scope, nil
 		}
 		query := data.Query{RecordID: pin.RecordID, Projection: fields, Limit: 1}
@@ -178,6 +180,9 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 			entry.Action, entry.Resource = "workflows.data_scope", "row"
 			entry.DecisionID, entry.PolicyVersion = d.ID, d.Version
 			entry.State.EntityID, entry.State.RecordID = entity, pin.RecordID
+			raw, _ := json.Marshal(effectiveScopes)
+			hash := sha256.Sum256(raw)
+			entry.State.ScopeHash = hex.EncodeToString(hash[:])
 			return data.Record{}, &workflow.AuthorizationDenied{Evidence: entry}
 		}
 		return page.Records[0], nil
