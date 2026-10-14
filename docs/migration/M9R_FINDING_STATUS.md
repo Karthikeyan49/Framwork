@@ -1,7 +1,7 @@
 # External review finding status
 
 Updated 14 October 2026 (IST). Baseline review: `81b88d2`; source corrections
-through `5fdb7f1` are published on `remediation/m9r-foundation`. Rollback/recovery
+through `4958df9` include R2c preview evolution on `remediation/m9r-foundation`. Rollback/recovery
 and FIFO evidence are in the R4 report; governed numeric indexes and corrected
 regressions are in the [R3b report](M9R_R3B_IMPLEMENTATION_REPORT.md).
 This is a progress ledger,
@@ -17,7 +17,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Compromised worker credential can discover another tenant and mutate unrelated records | Fixed within the independently tested database credential/resource threat model; R1 PASS | Preserve exact lease, record, field and tenant confinement in every later adapter; process/OS secret isolation still requires deployment verification |
 | Normal roles own tables / broad worker grants | NOLOGIN ownership retained; worker grants and drift admission hardened | Regression required for each new table and function |
 | Tenant-controlled shared DDL | Generic JSONB runtime has no such path; existing ALTER denial retained | Future indexes/migrations must remain governed platform operations |
-| Records disappear across compatible compiler/release changes | R2a plans/transforms and R2b explicit equal-schema dataset bindings independently PASS | Full R2 schema generations, transformation executor, canonical live access facts and workflow data pins remain open |
+| Records disappear across compatible compiler/release changes | R2a/R2b and [R2c preview schema evolution](M9R_R2C_IMPLEMENTATION_REPORT.md) independently PASS: immutable generation maps, checkpointed transforms, current access/tombstones and workflow data pins; actual 100k migration and post-cutover queries verified | Production active-release execution remains M12/M13; dataset-management UI, automatic index inheritance and denser/larger migration capacity remain separate work |
 | RLS membership checked once per row | Replaced by statement-level membership evaluation; populated isolation and SQL plans verified | Preserve live authorization and fail-closed RLS; HTTP latency gate remains below |
 | End-to-end query performance | Governed numeric R3b independently PASS: 100k-row/ten-client HTTP p95 96.713 ms, zero errors, unchanged 750 ms target; earlier failures retained | Register/build a supported numeric index; general/unindexed/selective workloads remain bounded and require their own evidence |
 | Shared dataset writer counter | Bounded R4 independently PASS at `94932e3`: overlapping writers/CAS/reference/fault checks and FIFO workload p95 340.575 ms, zero errors | Preserve regressions during indexing/evolution; previous failed runs retained |
@@ -49,7 +49,8 @@ Historical timing measurements and audit percentages are not current guarantees.
 ## Execution order and stop gate
 
 Bounded R4 and the configured numeric R3b HTTP gate are independently verified.
-Complete full R2 dataset evolution and preserve those regressions. Remaining
+R2c preview dataset evolution now passes independent fault/capacity tests, the
+full root suite/build and browser regressions. Preserve those regressions. Remaining
 index types, uniqueness and aggregates stay explicit R3b–R3d work rather than
 being claimed from the membership/numeric fix. R5–R7 remain separate
 product/security/operations deliverables.

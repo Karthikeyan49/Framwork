@@ -23,8 +23,10 @@ Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
 the 32-client write gate passed in root and independent runs (independent p95
-340.575 ms). Earlier failures are retained. Full schema evolution
-and the foundation acceptance gate remain open.
+340.575 ms). Earlier failures are retained. [Checkpointed preview schema evolution](docs/migration/M9R_R2C_IMPLEMENTATION_REPORT.md)
+now passes the full root suite/build, browser regressions and independent
+fault/capacity review, including a real 100k migration and post-cutover query gate.
+The foundation acceptance gate remains open.
 The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
 qualify historical PASS reports and distinguish previews from contract-only and
 deferred production services.
@@ -371,8 +373,15 @@ retained for a reviewed forward repair; never delete it to make verification pas
 `entities/{entity}/query` and `commands` paths use the existing typed contracts.
 Old bindings read, only the active binding writes, and cursors bind the dataset
 and binding. Audit/outbox keep execution IR while ordering retains the data
-origin. Incompatible schema evolution, new workflow/data-pin combinations,
-production activation and a dataset-management UI are still pending.
+origin. Schema evolution uses a separate, sealed shadow-generation protocol:
+`POST .../datasets/{dataset}/evolutions` with an operation UUID, expected base
+binding, exact target witness and typed `intent`. GET its operation status;
+POST `/advance` with `expected_checkpoint` until READY, then `/activate`.
+See [the recovery/API report](docs/migration/M9R_R2C_IMPLEMENTATION_REPORT.md).
+Old bindings retain their schema as read-only snapshots and apply current
+ownership/sharing/tombstones. Workflow routes also exist under bindings and pin
+their physical generation. Production activation, the dataset-management UI and
+larger/denser migration capacity are still pending.
 
 Development/test only: append a structurally validated source using the existing
 metadata API (see contracts/examples/contacts-draft-v1.json), then compile it with

@@ -136,5 +136,8 @@ reproduced current acceptance failure.
 
 The [independent review](../verification/M9R_R2B_INDEPENDENT_REVIEW.md) retains
 the initial failures and fault commands. R2b's equal-schema boundary is verified;
-full R2 and the R1–R4 foundation gate remain PARTIAL. R4 concurrent writes and
-command reconciliation are next; no production or M10 acceptance is inferred.
+full R2 and the R1–R4 foundation gate were PARTIAL at that historical checkpoint.
+R4 is now independently verified, and [R2c](M9R_R2C_IMPLEMENTATION_REPORT.md)
+executes preview shadow evolution/current access/workflow data pins with real
+100k migration and workload evidence. Production and the full remaining
+remediation gate remain open; no M10 acceptance is inferred.

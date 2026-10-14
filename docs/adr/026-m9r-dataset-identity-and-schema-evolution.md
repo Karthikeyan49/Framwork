@@ -1,17 +1,24 @@
 # ADR026: Durable datasets and explicit JSONB schema evolution
 
 Status: staged implementation. R2a schema plans/transforms independently verified;
-R2b preview equal-schema bindings independently verified at `145eaa4`. Full
-schema evolution remains pending.
+R2b preview equal-schema bindings independently verified at `145eaa4`. R2c adds
+shadow generations, canonical access and workflow data pins at `4958df9`; root
+suite/build/browser and independent execution/100k-capacity review passed.
+Production and broader capacity gates remain separate work.
 
 ## Implemented tranche boundary
 
-R2b supports generation 1 and identical storage-schema hashes only. Labels and
+The historical R2b boundary supports generation 1 and identical storage-schema hashes only. Labels and
 catalog/release hashes can change without copying records. Existing records,
 owners, teams, shares and links remain the single current physical source used
 by both old and new readers. New incompatible generations/canonical identity
 tables, optional-addition reader projection, shadow migration and new workflow
-data pins are not implemented. Their design below is not an implementation claim.
+data pins were not implemented in R2b. R2c implements shadows and current access
+facts; every unequal schema uses a shadow, so in-place optional reader projection
+is still absent. See [ADR031](031-m9r-shadow-generations-and-live-access.md) and
+the [R2c report](../migration/M9R_R2C_IMPLEMENTATION_REPORT.md) for the implemented
+boundary, recovery and current evidence. The remaining design below is not a
+blanket implementation claim.
 
 New EMPTY/binding admission runs the trusted server compiler/catalog once and
 requires its exact artifact hash. Restore alone cannot attest caller-supplied

@@ -1,6 +1,8 @@
 # ADR031: Checkpointed shadow generations and live record access
 
-Status: implementation candidate; independent execution and capacity review pending.
+Status: accepted for the verified preview boundary at `4958df9`; independent
+faults, 100k migration, mapped read/index and established read/write gates passed.
+Production release activation and broader capacity remain separate gates.
 
 ADR026 remains the durable identity decision. This tranche executes its schema
 plans in the existing preview dataset API, with no production release activation.

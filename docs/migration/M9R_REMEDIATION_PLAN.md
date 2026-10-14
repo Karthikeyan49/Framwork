@@ -17,13 +17,17 @@ browser tests and independent review at `145eaa4`. R4 local command changes pass
 root correctness/fault/browser checks; its original write gate failed with one
 503 and later p95 misses. After rollback/recovery fixes and measured FIFO admission,
 the root 32-client gate passed at p95 297.404 ms with no errors; independent
-R4 review/workload passed at `94932e3` (p95 340.575 ms, zero errors). Full evolution
-remains open. Governed numeric R3b now passes the unchanged HTTP floor in root
+R4 review/workload passed at `94932e3` (p95 340.575 ms, zero errors). R2c preview
+evolution now passes root/full/browser and independent fault/capacity review at
+`4958df9`: actual 100k migration, mapped-generation query p95 270.905ms,
+and preserved 32-client write p95 209.973ms with zero errors. Production authority
+and broader migration capacity remain separate. Governed numeric R3b passes the unchanged HTTP floor in root
 and independent runs (independent p95 96.713 ms, zero errors). See
 [R3b evidence](M9R_R3B_IMPLEMENTATION_REPORT.md) and
 [R4 progress](M9R_R4_IMPLEMENTATION_REPORT.md). M10 remains paused. Additional
 index types, R3c/R3d and R5–R7 are not complete.
-[R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md).
+[R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md) and
+[R2c closure/evidence](M9R_R2C_IMPLEMENTATION_REPORT.md).
 
 ## Objective and release gate
 
