@@ -25,7 +25,10 @@ and broader migration capacity remain separate. Governed numeric R3b passes the 
 and independent runs (independent p95 96.713 ms, zero errors). See
 [R3b evidence](M9R_R3B_IMPLEMENTATION_REPORT.md) and
 [R4 progress](M9R_R4_IMPLEMENTATION_REPORT.md). M10 remains paused. Additional
-index types, R3c/R3d and R5–R7 are not complete.
+index types, R3c/R3d and full R5–R7 are not complete. Bounded R5a and
+[R5b SQL worker authority](M9R_R5B_IMPLEMENTATION_REPORT.md) now pass documented
+review/full/browser gates at a5bba7b; remaining product policy and capacity work
+are explicit.
 [R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md) and
 [R2c closure/evidence](M9R_R2C_IMPLEMENTATION_REPORT.md).
 
@@ -236,11 +239,21 @@ Owners: identity/policy, data and frontend engineers.
 R5a at caa9d84 passes independent API, trusted-Go, fault and workload checks.
 See [implementation](M9R_R5A_IMPLEMENTATION_REPORT.md) and
 [review](../verification/M9R_R5A_INDEPENDENT_REVIEW.md). It does not close full R5.
-R5b is urgent: raw worker SQL must deny live role-body, scope and inactive-head
-revocation for its leased resource. Preserve exact tenant/job/field confinement,
-immutable evidence and durable denial reporting; do not infer credential safety
-from Worker.Step tests. Then deliver sanctioned record administration and the
-remaining field/workflow/identity semantics below.
+[R5b](M9R_R5B_IMPLEMENTATION_REPORT.md) at a5bba7b now passes its bounded SQL
+worker authority gate, full regressions and browser checks. Live role/field/record
+scopes and inactive heads deny at private SQL ports; identity remains available
+for exact-ticket denial evidence. Independent review found and the forward40
+fixes corrected typed UUID and repeated-evaluation issues. Its final existing
+regression suite passed; new final probes were not run after a platform content
+interruption. The synthetic receipt workload passed with a narrow margin, not
+a wider capacity certification. Preserve the exact confinement and lease gates.
+
+Next R5 product slices: R5c sanctioned owner/team/share administration with
+authorized audited changes and per-record conflict witnesses; R5d field
+masking/partial writes and inference controls; R5e configurable workflow approval
+role contracts and their immutable-reader compatibility. Provider/login UX stays
+a separate R5 identity deliverable. Implement and review these separately before
+promising product policy completeness. R3c/R3d, R6 and R7 remain in this plan.
 
 Replace fixed-role branching with versioned tenant role/capability definitions
 and central RBAC/ABAC policy. Support `finance_manager` without trusting token

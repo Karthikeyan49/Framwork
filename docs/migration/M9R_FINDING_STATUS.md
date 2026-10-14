@@ -1,7 +1,8 @@
 # External review finding status
 
 Updated 15 October 2026 (IST). Baseline review: `81b88d2`; source corrections
-through `caa9d84` include R2c preview evolution and bounded R5a capabilities on `remediation/m9r-foundation`. Rollback/recovery
+through `a5bba7b` include R2c preview evolution, bounded R5a capabilities and
+[R5b worker SQL authority](M9R_R5B_IMPLEMENTATION_REPORT.md) on `remediation/m9r-foundation`. Rollback/recovery
 and FIFO evidence are in the R4 report; governed numeric indexes and corrected
 regressions are in the [R3b report](M9R_R3B_IMPLEMENTATION_REPORT.md).
 This is a progress ledger,
@@ -28,7 +29,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Aggregates and bounded join planner | Existing explicit budgets retained; broad SQL aggregation not implemented | R3d planner/aggregation correctness and workload gates |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
 | Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
-| DataScope returns ALL for permitted built-in roles | [R5a](M9R_R5A_IMPLEMENTATION_REPORT.md) independently PASS: tenant role versions/CAS, live API scopes, exact operation reconciliation, bound engines and trusted worker revocation; bootstrap roles remain broad | HIGH: raw worker SQL lacks role-body/head revocation; R5b next. Record/team/share administration and field semantics also pending |
+| DataScope returns ALL for permitted built-in roles | [R5a](M9R_R5A_IMPLEMENTATION_REPORT.md) independently PASS: tenant role versions/CAS, live API scopes, exact operation reconciliation, bound engines and trusted worker revocation; bootstrap roles remain broad | R5b bounded PASS: raw leased source/business ports enforce current head/actions/fields/record scopes, with per-row lease fences; initial UUID/cost findings corrected and limitations recorded. Record/team/share administration and field semantics remain pending |
 | finance_manager / fixed four roles | Custom tenant membership/capability roles now supported through owner-authorized API | Workflow approval contract still limits role names; R5 must expand it safely |
 | JWT skew and token-paste development login | Still limited | R5 provider configuration and production identity UX, with explicit token verification bounds |
 | M8 short outage window / dead predecessor / one consumer | Still limited to documented preview delivery | R7 outage/replay controls; future tool/subscriber contracts must preserve ordering and idempotency |
@@ -53,7 +54,10 @@ R2c preview dataset evolution now passes independent fault/capacity tests, the
 full root suite/build and browser regressions. Preserve those regressions. Remaining
 index types, uniqueness and aggregates stay explicit R3b–R3d work rather than
 being claimed from the membership/numeric fix. R5–R7 remain separate
-product/security/operations deliverables.
+product/security/operations deliverables. R5b closes the bounded raw-worker
+capability gap; its synthetic receipt test has a narrow timeout margin and is
+not a wider capacity guarantee. The independent report records which final
+checks used existing tests and which new probes were not run.
 Production, AI and external ERP actions are not enabled by a foundation PASS.
 
 M10 stays paused until the foundation gate and final backend/frontend/integration/

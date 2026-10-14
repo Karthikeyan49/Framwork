@@ -27,8 +27,10 @@ the 32-client write gate passed in root and independent runs (independent p95
 now passes the full root suite/build, browser regressions and independent
 fault/capacity review, including a real 100k migration and post-cutover query gate.
 [Versioned tenant capabilities](docs/migration/M9R_R5A_IMPLEMENTATION_REPORT.md)
-now pass independent API/trusted-Go and workload checks. Raw worker SQL still
-needs live capability revocation enforcement; R5b is the next correction.
+now pass independent API/trusted-Go and workload checks. [Worker SQL authority](docs/migration/M9R_R5B_IMPLEMENTATION_REPORT.md)
+also passes bounded review and full regressions: live role/field/record scopes,
+per-row lease fencing and statement policy evaluation. Wider capacity and the
+remaining record/field/verification/operations work remain open in the ledger.
 The foundation acceptance gate remains open.
 The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
 qualify historical PASS reports and distinguish previews from contract-only and

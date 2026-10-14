@@ -2,6 +2,10 @@
 
 Status: R5a independently PASS for trusted Go composition; full R5 PARTIAL.
 
+Follow-up: [ADR033](033-m9r-worker-sql-capability-enforcement.md) applies live SQL
+worker authority and forward40 typed/statement fixes. The original R5a review
+gap below is closed within R5b's documented scope; full product R5 stays open.
+
 R5a uses immutable, tenant-scoped role definitions and a CAS head. Trusted
 identity and live membership select the role; token claims and HTTP capability
 payloads cannot grant authority. Definitions contain a closed action catalog,

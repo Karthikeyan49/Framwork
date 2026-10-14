@@ -1,6 +1,7 @@
 # ADR033: Live capabilities at the worker SQL boundary
 
-Status: implementation in progress; executed acceptance pending.
+Status: bounded R5b independently PASS at a5bba7b; full R5/M9R PARTIAL.
+See the implementation/review reports for executed scope and remaining limits.
 
 R5a's independent review proved that trusted Go denial left raw SQL able to read
 its exact leased record after role/head/field revocation. Keep the authenticated
@@ -53,4 +54,7 @@ applied 39, aligns UUID/reference constants with the existing lowercase contract
 and puts expensive policy evaluation in statement InitPlans. Per-row identity
 and lease-clock checks remain in USING and WITH CHECK; this is not transaction
 caching or a longer timeout. Separate SECURITY DEFINER business ports continue
-to validate live policy directly. Executed re-verification remains the gate.
+to validate live policy directly. Full checks/browser tests and reviewer-run
+existing regressions passed. Independent final new probes were not run after
+a platform interruption; the review preserves that limit. The synthetic receipt
+scan passed with a narrow margin and does not certify wider capacity.

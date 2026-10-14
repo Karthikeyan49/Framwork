@@ -5,6 +5,11 @@ composition, API management and SQL-scoped API execution. Full R5/M9R: PARTIAL.
 Independent review confirmed a HIGH raw-worker capability-body enforcement gap;
 R5b must close that database boundary. No M10 or production deployment follows.
 
+
+Follow-up: [R5b](M9R_R5B_IMPLEMENTATION_REPORT.md) at a5bba7b closes the
+bounded raw-worker SQL capability gap with documented review limits. The findings
+below describe the R5a checkpoint; full R5/M9R remain PARTIAL.
+
 Baseline `45335e3`; implemented source commits `1ae1f27` and `caa9d84` on
 `remediation/m9r-foundation`. Compatible records and immutable evidence remain.
 No archives, source kits or customer data were deleted. No new dependency added.
