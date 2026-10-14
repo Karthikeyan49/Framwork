@@ -9,6 +9,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
@@ -170,6 +171,17 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 	}
 	if errors.Is(err, jobs.ErrJob) {
 		return ErrLease
+	}
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) && (databaseError.Code == "42501" || databaseError.Code == "P0001") {
+		// Expiry/revocation can reject an audit/read before the next lease check,
+		// leaving the original transaction aborted. Recheck only the exact ticket
+		// in a fresh transaction after rollback; never replay business effects or
+		// relax RLS. A still-valid capability retains its actual security error.
+		validation := jobs.WithJob(ctx, w.DB, lease.Ticket, func(context.Context, postgres.Executor, tenant.Access) error { return nil })
+		if errors.Is(validation, jobs.ErrJob) {
+			return ErrLease
+		}
 	}
 	return err
 }

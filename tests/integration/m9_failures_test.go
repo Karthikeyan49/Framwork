@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/config"
 	"github.com/Karthikeyan49/Framwork/internal/events"
@@ -20,6 +21,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/jackc/pgx/v5/pgconn"
 	"io"
 	"log/slog"
 	"os"
@@ -295,6 +297,77 @@ func TestM9RejectedMutationsRollbackBeforeHTTPResponse(t *testing.T) {
 	if before.Version != after.Version || before.StateID != after.StateID || before.Status != after.Status || len(before.History) != len(after.History) {
 		t.Fatal("budget rejection mutated instance")
 	}
+}
+
+func TestM9RWorkerSecurityErrorClassification(t *testing.T) {
+	t.Run("valid ticket retains real permission error", func(t *testing.T) {
+		m := m9Setup(t, nil)
+		x := m.start(t, "permission-classification")
+		lease, found, e := m.worker.Claim(context.Background())
+		if e != nil || !found {
+			t.Fatal(e)
+		}
+		m.worker.Store.Authorize = func(ctx context.Context, q postgres.Executor, a tenant.Access, action string, pin workflow.Pin, fields []string) (audit.Entry, error) {
+			_, e := q.ExecContext(ctx, `SELECT custom_data FROM runtime.records LIMIT 1`)
+			return audit.Entry{}, e
+		}
+		e = m.worker.Step(context.Background(), lease)
+		var pg *pgconn.PgError
+		if !errors.As(e, &pg) || pg.Code != "42501" || errors.Is(e, workflow.ErrLease) {
+			t.Fatal("valid ticket masked permission failure", e)
+		}
+		m.counts(t, x, 0)
+	})
+	t.Run("valid ticket retains database exception", func(t *testing.T) {
+		m := m9Setup(t, nil)
+		x := m.start(t, "exception-classification")
+		lease, found, e := m.worker.Claim(context.Background())
+		if e != nil || !found {
+			t.Fatal(e)
+		}
+		m.worker.Store.Authorize = func(ctx context.Context, q postgres.Executor, a tenant.Access, action string, pin workflow.Pin, fields []string) (audit.Entry, error) {
+			_, e := q.ExecContext(ctx, `DO $$ BEGIN RAISE EXCEPTION 'owned regression exception'; END $$`)
+			return audit.Entry{}, e
+		}
+		e = m.worker.Step(context.Background(), lease)
+		var pg *pgconn.PgError
+		if !errors.As(e, &pg) || pg.Code != "P0001" || errors.Is(e, workflow.ErrLease) {
+			t.Fatal("valid exception masked as expiry", e)
+		}
+		m.counts(t, x, 0)
+	})
+	t.Run("expiry during audit rolls back and becomes lease error", func(t *testing.T) {
+		m := m9Setup(t, nil)
+		x := m.start(t, "expired-audit-classification")
+		lease, found, e := m.worker.Claim(context.Background())
+		if e != nil || !found {
+			t.Fatal(e)
+		}
+		if _, e = m.f.operator.Exec(`UPDATE control.workflow_jobs SET lease_until=clock_timestamp()+interval '500 milliseconds' WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, x.ID); e != nil {
+			t.Fatal(e)
+		}
+		attempted := false
+		m.worker.Store.Authorize = func(ctx context.Context, q postgres.Executor, a tenant.Access, action string, pin workflow.Pin, fields []string) (audit.Entry, error) {
+			var valid bool
+			if e := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM control.worker_authority())`).Scan(&valid); e != nil {
+				return audit.Entry{}, e
+			}
+			if !valid {
+				return audit.Entry{}, fmt.Errorf("fixture missing initial authority")
+			}
+			if _, e := q.ExecContext(ctx, `SELECT pg_sleep(0.6)`); e != nil {
+				return audit.Entry{}, e
+			}
+			attempted = true
+			entry := audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: "workflows.execute", Resource: "workflow", Allow: true, DecisionID: "owned-expired-audit", PolicyVersion: policy.Version, RequestID: pin.RequestID}
+			return entry, (audit.Postgres{}).Append(ctx, q, entry)
+		}
+		e = m.worker.Step(context.Background(), lease)
+		if !attempted || !errors.Is(e, workflow.ErrLease) {
+			t.Fatal("expired audit did not retain lease contract", attempted, e)
+		}
+		m.counts(t, x, 0)
+	})
 }
 func TestM9FieldScopeDeniesStartSnapshotAndWorkerResume(t *testing.T) {
 	m := m9Setup(t, nil)

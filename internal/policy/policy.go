@@ -9,7 +9,9 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-const Version = "m9-native-v1"
+// R3b adds governed index management to the native decision contract. Retained
+// evidence keeps its original version; new decisions identify these semantics.
+const Version = "m9r-native-v2"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {

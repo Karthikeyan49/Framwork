@@ -714,7 +714,10 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 	for _, statement := range []string{
 		`UPDATE control.metadata_versions SET source_hash=source_hash WHERE false`,
 		`DELETE FROM control.metadata_versions WHERE false`,
-		`TRUNCATE control.metadata_heads,control.metadata_versions`,
+		// This explicitly owned empty database now has further source-version
+		// FKs. Include the dependency closure so the immutable statement trigger,
+		// rather than PostgreSQL's earlier FK rejection, is the tested backstop.
+		`TRUNCATE control.metadata_heads,control.metadata_versions CASCADE`,
 	} {
 		if _, mutationErr := migrate.ExecContext(ctx, statement); mutationErr == nil || !strings.Contains(mutationErr.Error(), "metadata source revisions are immutable") {
 			t.Fatal("metadata owner mutation did not hit immutable trigger")

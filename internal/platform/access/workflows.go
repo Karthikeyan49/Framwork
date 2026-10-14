@@ -201,9 +201,13 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 
 func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, p compiler.Program, revision int64) (reply, error) {
 	id := r.PathValue("workflow")
+	// Typed lifecycle failures can precede a returned workflow authorization
+	// entry. Preserve the actual component for the fresh rollback-denial audit.
+	evidence.Resource = "workflow"
 	if len(id) > 160 {
 		return denied(400, "invalid_workflow", "Invalid workflow selection"), nil
 	}
+	evidence.State.WorkflowID = id
 	if r.PathValue("instance") == "" {
 		if executable, e := p.Workflow(id); e != nil || executable.Plan().Trigger != "manual" {
 			return denied(422, "workflow_unavailable", "A compiled Workflow V2 definition is required"), nil

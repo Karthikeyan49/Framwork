@@ -61,7 +61,7 @@ operator repair. There is no automatic destructive down migration.
 The migration34 correction passed all eight numeric race-test roots18.848s,
 including update/delete subcases, derived-table drift and audit rollback.
 `make test-performance > /tmp/m9r-r3b-performance-joined.log 2>&1` PASSED34.066s:
-100k rows copied and independently scanned for coverage in203 checkpoints,
+100k rows copied and checked in a separate verification pass in203 checkpoints,
 10.492s build time. Unindexed SQL p95 key0.424ms/numeric83.874ms/selective58.776ms
 passed. Numeric HTTP ten-client p50/p95/p99 was56.898/104.506/116.930ms,
 154.00requests/s and zero errors; the unchanged750ms p95 gate passed. The actual
@@ -70,8 +70,57 @@ of101 source primary-key probes. All100 response samples validate exact expected
 IDs, values, ordering and cursor. PostgreSQL18.6/4CPU/8GiB/swap-off image digest
 `29754c7520f4b9654cf8ff98e19ac73b88e255c3a53f6236ebe9d52249bb6df3` was verified.
 
-Full checks/write workload/browser and independent review are still pending;
-root workload success alone is not independent acceptance.
+`make check test build > /tmp/m9r-r3b-full-checks.log 2>&1` FAILED at the full
+integration step (220.100 s): `TestM1FreshDatabaseMigrations`,
+`TestM9ExpiredLeaseOnEarlySaveAndConcurrentSignals`, and
+`TestM9RejectedMutationsRollbackBeforeHTTPResponse`. Earlier format/static/schema
+checks, Go race units, 5 Node tests and 29 frontend tests passed. Build was NOT RUN
+by that failed sequence. The failures were retained and independently reproduced/
+classified rather than bypassed.
+
+The separate sequence `make build > /tmp/m9r-r3b-build.log 2>&1`,
+`make test-write-performance > /tmp/m9r-r3b-write-performance.log 2>&1`, and
+`make test-e2e > /tmp/m9r-r3b-e2e.log 2>&1` PASSED. Write load (61.302 s) completed
+14,141 distinct successful writes over60 s with32 clients, zero errors and exact
+receipt/business-audit/outbox facts. p50/p95/p99 was133.103/168.610/196.903 ms,
+235.28 writes/s, pool wait0. All five browser tests passed7.3 s; backend/frontend
+builds passed. No increased pool, timeout or write threshold.
+
+Independent numeric review at `58c58ae` PASSED: own populated/fault probes plus
+eight repository roots25.975 s, further scoped/join probes, and one isolated
+ordinary `make test-performance` PASS32.771 s. HTTP p95/p99 was96.713/116.989 ms,
+171.33 requests/s, zero errors. See the
+[independent report](../verification/M9R_R3B_INDEPENDENT_REVIEW.md). Its broader
+regression status remains PARTIAL until the corrections below are reverified.
+
+## Full-regression corrections
+
+The new source-version FK exposes an old two-table TRUNCATE fixture assumption.
+An explicitly owned empty disposable-database dependency closure now reaches the
+immutable statement trigger, instead of an earlier FK rejection. Customer data
+is not part of that probe. Independent temporary correction PASS0.89 s.
+
+The reviewer confirmed MEDIUM workflow rejection provenance: typed lifecycle
+failures rolled business artifacts back but inherited outer `preview` audit
+classification. The workflow handler now retains its actual component/ID before
+fresh denial evidence is written. The original zero-effects and exact denial
+assertions are retained. Live policy checks and grants are unchanged.
+
+An expired capability can fail protected audit/read SQL before the next lease
+check. Worker Step now revalidates only its exact ticket, in a fresh transaction
+after rollback, for42501/P0001. Only a confirmed invalid capability maps to
+ErrLease; valid-ticket permission/database exceptions retain their actual error.
+No business operation is replayed and no audit/RLS authority is extended.
+Deterministic tests execute actual denied SQL after expiry and unrelated actual
+42501/P0001 while the ticket remains valid, with zero effects. Native decision
+version is `m9r-native-v2` to identify the added index-management semantics;
+historical evidence retains its original policy version.
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM1FreshDatabaseMigrations$|^TestM9ExpiredLeaseOnEarlySaveAndConcurrentSignals$|^TestM9RejectedMutationsRollbackBeforeHTTPResponse$|^TestM9RWorkerSecurityErrorClassification$' -v ./tests/integration`
+PASSED17.637 s, then19.439 s after adding the real P0001 control. The complete
+corrected check/test/build run and independent correction re-verification are
+pending; do not declare full foundation acceptance from these focused passes.
+
 Earlier current-host R3 HTTP FAIL898.985ms remains historical evidence.
 No threshold, client count, dataset width, pool size or resource limit was raised.
 The load fixture explicitly builds through the authenticated API, preserves the
