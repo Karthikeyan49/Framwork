@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -76,8 +77,9 @@ func TestM9RRecordAccessAdministrationLegacyPath(t *testing.T) {
 	}
 	// Malformed and non-member recipients reject before any effect.
 	r5cChange(t, h, path, alice, data.AccessCommand{Operation: "share", ExpectedVersion: 1, UserID: f.viewer}, 400)
-	r5cChange(t, h, path, alice, data.AccessCommand{Operation: "share", ExpectedVersion: 1, UserID: f.bob, CanWrite: &no}, 409)
-	r5cChange(t, h, path, alice, data.AccessCommand{Operation: "owner", ExpectedVersion: 1, UserID: f.viewer, TeamID: foreignTeam}, 409)
+	r5cChange(t, h, path, alice, data.AccessCommand{Operation: "share", ExpectedVersion: 1, UserID: f.bob, CanWrite: &no}, 400)
+	r5cChange(t, h, path, alice, data.AccessCommand{Operation: "owner", ExpectedVersion: 1, UserID: f.viewer, TeamID: foreignTeam}, 400)
+	r5cChange(t, h, path, alice, data.AccessCommand{Operation: "owner", ExpectedVersion: 1, UserID: f.alice}, 400)
 	r5cChange(t, h, path, alice, data.AccessCommand{Operation: "share", ExpectedVersion: 7, UserID: f.viewer, CanWrite: &no}, 409)
 	if v = r5cAccess(t, h, path, alice, 200); v.Version != 1 || len(v.Shares) != 0 {
 		t.Fatal("rejected change left effects", v)
@@ -123,6 +125,15 @@ func TestM9RRecordAccessAdministrationLegacyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	r5cChange(t, h, base+"/records/"+hidden.ID+"/access", alice, data.AccessCommand{Operation: "share", ExpectedVersion: 1, UserID: f.viewer, CanWrite: &no}, 400)
+	// Excess legacy shares remain listable (bounded) so they can be revoked.
+	if _, err := f.operator.Exec(`INSERT INTO runtime.record_shares(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,user_id) SELECT tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,gen_random_uuid() FROM runtime.records,generate_series(1,200) WHERE tenant_id=$1 AND id=$2`, f.tenantA, hidden.ID); err != nil {
+		t.Fatal(err)
+	}
+	if listed := r5cAccess(t, h, base+"/records/"+hidden.ID+"/access", alice, 200); len(listed.Shares) != 256 || !listed.Truncated {
+		t.Fatal("bounded share listing", len(listed.Shares), listed.Truncated)
+	}
+	excess := r5cAccess(t, h, base+"/records/"+hidden.ID+"/access", alice, 200).Shares[0].UserID
+	r5cChange(t, h, base+"/records/"+hidden.ID+"/access", alice, data.AccessCommand{Operation: "unshare", ExpectedVersion: 1, UserID: excess}, 200)
 
 	var changed, rejected int
 	if err := f.operator.QueryRow(`SELECT count(*) FILTER(WHERE action='records.access.changed' AND allowed AND state->>'record_id'=$2),count(*) FILTER(WHERE NOT allowed AND state->>'access_operation' IS NOT NULL) FROM audit.entries WHERE tenant_id=$1`, f.tenantA, record.ID).Scan(&changed, &rejected); err != nil || changed != 4 || rejected < 5 {
@@ -151,6 +162,21 @@ func TestM9RRecordAccessSQLPortBoundary(t *testing.T) {
 	defer worker.Close()
 	if _, err = worker.Exec(call, f.tenantA, app, hash, record.ID, f.viewer); !errors.As(err, &pe) || pe.Code != "42501" {
 		t.Fatal("worker reached record access port", err)
+	}
+	// Even with a trusted live tenant context, a viewer actor cannot use the port.
+	viewer, err := f.verifier.Verify(f.token(t, f.viewerSubject, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+		if _, e := m3Scope(f, ctx, q, viewer, f.tenantA); e != nil {
+			return e
+		}
+		_, e := q.ExecContext(ctx, call, f.tenantA, app, hash, record.ID, f.viewer)
+		return e
+	})
+	if !errors.As(err, &pe) || pe.Code != "42501" {
+		t.Fatal("viewer actor reached record access port", err)
 	}
 	var shares int
 	if err = f.operator.QueryRow(`SELECT count(*) FROM runtime.record_shares WHERE tenant_id=$1 AND id=$2`, f.tenantA, record.ID).Scan(&shares); err != nil || shares != 0 {

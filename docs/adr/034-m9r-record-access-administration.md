@@ -22,7 +22,12 @@ only by `framework_app` and owned by the NOLOGIN schema owner. It performs one o
 `unshare`. It accepts typed identifiers only; it never accepts SQL, values or
 policy output. It rejects calls without the session's trusted tenant scope,
 non-current recipients (inactive user/membership/tenant), teams outside the
-tenant, absent shares, a changed record version and more than 64 shares.
+tenant, absent shares, a changed record version, more than 64 shares and a
+no-op ownership transfer. Recipient/team/no-op rejections are invalid requests
+(400), not retryable conflicts; only version, absent-share and fence failures
+are 409. As defense in depth (migration 42, after independent review) the port
+also requires the authenticated actor to be an active non-viewer member; the
+full capability/DataScope decision remains the trusted Go caller's.
 
 The record `row_version` is the conflict witness. Every accepted change locks the
 exact row at the expected version and advances it. Business edits from the
@@ -37,7 +42,11 @@ Go authorization precedes the port in the same transaction: the actor needs
 `data.entity.read/write`, live read and write DataScope over the exact record,
 `data.row.read/write`, and the new administrative row capability:
 `data.row.assign` for ownership and `data.row.share` for shares (also required
-to list share recipients). Bootstrap `owner`/`admin` receive both; custom roles
+to list share recipients; a delegate holding only `data.row.assign` reads the
+current owner through the ordinary record query). Listing returns at most 256
+recipients (the evolution copy budget) with `shares_truncated` so excess legacy
+shares stay revocable. The owner team only has to belong to the tenant; it need
+not contain the new owner, matching TEAM scope semantics. Bootstrap `owner`/`admin` receive both; custom roles
 may delegate them; the `viewer` role name cannot be granted them. Granting a
 write share requires the granter's own live write scope on the record; the
 recipient still only benefits through their own role's SHARE scope.

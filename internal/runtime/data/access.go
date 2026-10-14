@@ -10,8 +10,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// MaxRecordShares bounds explicit SHARE scope evaluation per record.
+// MaxRecordShares bounds new explicit shares per record. Listing returns up to
+// the evolution copy budget so administrators can see and revoke legacy excess.
 const MaxRecordShares = 64
+const maxListedShares = 256
 
 // AccessCommand changes record ownership or one explicit share. It never
 // carries business values; ExpectedVersion is the record conflict witness.
@@ -32,6 +34,8 @@ type Access struct {
 	OwnerID  string  `json:"owner_user_id"`
 	TeamID   string  `json:"owner_team_id,omitempty"`
 	Shares   []Share `json:"shares,omitempty"`
+	// Truncated reports more than maxListedShares recipients; revoke and reload.
+	Truncated bool `json:"shares_truncated,omitempty"`
 }
 
 func accessAction(op string) string {
@@ -104,7 +108,7 @@ func (Store) RecordAccess(ctx context.Context, q postgres.Executor, s Scope, a t
 		return Access{}, err
 	}
 	out := Access{RecordID: existing.ID, Version: existing.Version, OwnerID: existing.OwnerID, TeamID: existing.TeamID, Shares: []Share{}}
-	rows, err := q.QueryContext(ctx, `SELECT user_id::text,can_write FROM runtime.read_shares WHERE `+recordWhere+` AND id=$6 ORDER BY user_id LIMIT 65`, append(base(s, a, entity), id)...)
+	rows, err := q.QueryContext(ctx, `SELECT user_id::text,can_write FROM runtime.read_shares WHERE `+recordWhere+` AND id=$6 ORDER BY user_id LIMIT 257`, append(base(s, a, entity), id)...)
 	if err != nil {
 		return Access{}, err
 	}
@@ -119,8 +123,8 @@ func (Store) RecordAccess(ctx context.Context, q postgres.Executor, s Scope, a t
 	if err = rows.Err(); err != nil {
 		return Access{}, err
 	}
-	if len(out.Shares) > MaxRecordShares {
-		return Access{}, ErrBudget
+	if len(out.Shares) > maxListedShares {
+		out.Shares, out.Truncated = out.Shares[:maxListedShares], true
 	}
 	return out, nil
 }
