@@ -150,6 +150,11 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 	if r.PathValue("workflow") != "" {
 		return a.previewWorkflow(ctx, q, r, u, access, evidence, program, revision)
 	}
+	if r.PathValue("index") != "" {
+		evidence.State.EntityID = r.PathValue("entity")
+		evidence.State.FieldID = r.PathValue("index")
+		return indexRequest(ctx, q, r, scope, access, guard)
+	}
 	if r.Method == http.MethodGet {
 		// Capability hints improve UX; each command/query still enforces live policy.
 		canWrite := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, "preview.write", policy.Resource{TenantID: access.TenantID(), Type: "preview", AppID: app}, policy.Context{})).Allow

@@ -240,6 +240,18 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 	if err != nil {
 		t.Fatal("benchmark scope")
 	}
+	// R3b configuration is explicit: preserve the unindexed SQL baseline above,
+	// then build the governed index through the same authenticated non-test API.
+	// Dataset, HTTP clients/samples, budgets and expected page are unchanged.
+	indexStart := time.Now()
+	index := m9rIndexReady(t, h, base+"/indexes/field.contact.balance", token)
+	if index.ScannedRows != 100000 || index.VerifiedRows != 100000 {
+		t.Fatal("numeric index coverage count")
+	}
+	t.Logf("governed_numeric_index state=%s checkpoints=%d scanned_rows=%d build_ms=%.3f", index.State, index.Checkpoint, index.ScannedRows, float64(time.Since(indexStart).Microseconds())/1000)
+	if _, err = f.operator.Exec(`ANALYZE runtime.numeric_indexes; ANALYZE runtime.numeric_projections`); err != nil {
+		t.Fatal("projection statistics", err)
+	}
 	if err = postgres.WithRuntime(ctx, f.db, func(ctx context.Context, q postgres.Executor) error {
 		access, e := m3Scope(f, ctx, q, principal, f.tenantA)
 		if e != nil {
@@ -263,6 +275,34 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 			return e
 		}
 		t.Logf("runtime_page_plan=%s", raw)
+		var root []map[string]any
+		if json.Unmarshal(raw, &root) != nil {
+			return errors.New("indexed explain parse")
+		}
+		indexed := false
+		var visit func(any)
+		visit = func(node any) {
+			switch x := node.(type) {
+			case map[string]any:
+				if x["Relation Name"] == "numeric_projections" {
+					indexed = x["Index Name"] == "numeric_projection_asc" && x["Actual Rows"] == float64(101) && x["Actual Loops"] == float64(1)
+				}
+				if x["Relation Name"] == "records" && x["Actual Rows"].(float64)*x["Actual Loops"].(float64) > 202 {
+					t.Error("indexed page scanned records outside its authorized page")
+				}
+				for _, v := range x {
+					visit(v)
+				}
+			case []any:
+				for _, v := range x {
+					visit(v)
+				}
+			}
+		}
+		visit(root[0])
+		if !indexed {
+			return errors.New("authorized 101-row numeric index scan absent")
+		}
 		return nil
 	}); err != nil {
 		t.Fatal("runtime page plan", err)

@@ -230,6 +230,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	}
 	sf := compiler.Field{Type: "string", CoreID: true}
 	sortExpr, sortType := "r.id", "uuid"
+	indexJoin := ""
 	desc := false
 	if query.Sort != nil {
 		var ok bool
@@ -240,9 +241,25 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: sf.ID}); err != nil {
 			return Page{}, err
 		}
-		sortExpr, sortType = physical(sf, "r", &b)
 		desc = query.Sort.Desc
 		seen[sf.ID] = true
+		if !st.workerSource && !st.legacy && (sf.Type == "integer" || sf.Type == "decimal" || sf.Type == "money") {
+			index, indexErr := numericIndex(ctx, q, s, a, entity, sf.ID)
+			if indexErr != nil && indexErr != ErrNotFound {
+				return Page{}, indexErr
+			}
+			if indexErr == nil && index.State == "READY" {
+				// Same tenant/physical namespace, source row version and snapshot.
+				// All authorization/filter/cursor predicates remain before LIMIT.
+				indexJoin = ` JOIN runtime.numeric_projections ni ON ni.tenant_id=$1 AND ni.app_id=$2 AND ni.metadata_revision=$3 AND ni.ir_hash=$4 AND ni.entity_id=$5 AND ni.field_id=` + b.bind(sf.ID) + ` AND ni.id=r.id AND ni.source_version=r.row_version`
+				sortExpr = "ni.value_number"
+				sortType = "numeric"
+				span.SetAttributes(attribute.String("query_index", "numeric-v1"))
+			}
+		}
+		if indexJoin == "" {
+			sortExpr, sortType = physical(sf, "r", &b)
+		}
 	}
 	fp := fingerprint(s, a, entity, query)
 	span.SetAttributes(attribute.String("query_fingerprint", fp))
@@ -376,14 +393,14 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if desc {
 		order = "DESC"
 	}
-	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + indexJoin + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
 	if query.Sort != nil && !sf.CoreID && !st.workerSource {
 		// Bound the sort tuple to ID/key before fetching wide JSONB records. Both
 		// stages share one statement/snapshot and forced RLS; entity/field/row
 		// DataScope and cursor predicates select the page before LIMIT. The outer
 		// fetch is constrained to the same namespace and those selected IDs.
 		limit := fmt.Sprintf("$%d", len(b.args))
-		statement = `WITH selected_page AS MATERIALIZED (SELECT r.id,` + sortExpr + ` AS sort_value FROM ` + st.recordsTable() + ` r WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + limit + `)
+		statement = `WITH selected_page AS MATERIALIZED (SELECT r.id,` + sortExpr + ` AS sort_value FROM ` + st.recordsTable() + ` r` + indexJoin + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + limit + `)
  SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN ` + st.recordsTable() + ` r ON r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
 	}
 	rows, err := q.QueryContext(ctx, statement, b.args...)

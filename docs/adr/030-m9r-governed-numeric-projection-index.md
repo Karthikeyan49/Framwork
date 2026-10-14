@@ -1,6 +1,7 @@
 # ADR030: Governed numeric projections for dynamic query ordering
 
-Status: design pending implementation/review. Scope: R3b; not an implemented index.
+Status: implemented; acceptance and independent review pending. Scope: numeric
+R3b subset. See the R3b implementation report for executed outcomes.
 
 ## Trigger and boundary
 
@@ -37,11 +38,23 @@ atomically with record insert/update/delete, including compatible older binaries
 Projection values, currency, null placement and source row version must agree with
 the record. Application roles cannot independently forge projection rows.
 
-Backfill uses bounded, idempotent checkpoints and does not overwrite a newer row
-version. A concurrent deletion cannot recreate a projection after its record is
-gone. Batch/audit/checkpoint commit together; unknown COMMIT is reconciled through
-the stored checkpoint. Only complete validated coverage can become READY. Retain
-records and build evidence; no destructive cleanup belongs to this change.
+Backfill and verification each use at most 1000 source rows per checkpoint. The
+state is BUILDING → VERIFYING → READY. A repeated expected checkpoint observes
+already-committed progress without advancing again. Record SHARE locks and the
+source-version comparison prevent copying over a newer write or resurrecting a
+deleted row; older repeatable-read snapshots abort. Registry NO KEY UPDATE locks
+allow projection foreign-key checks by concurrent writers. A bounded MATERIALIZED
+source batch joins projections once, avoiding a cached sequential scan per row
+before auto-analysis of a new table.
+
+Batch/audit/checkpoint commit together; unknown COMMIT is reconciled through the
+authenticated checkpoint GET. Only complete validated coverage becomes READY.
+After a verified row unlocks, the database-owned record trigger/FK maintains its
+value, version and coverage on later writes/deletes, including inserts behind the
+cursor. Runtime credentials cannot mutate projections or skip verification.
+Operator corruption after verification is outside that invariant: the schema
+owner can already change records/triggers. Retain records and build evidence;
+no destructive cleanup belongs to this change.
 
 ## Query and acceptance
 
@@ -57,6 +70,17 @@ cross-tenant/field-scope/worker negatives and ASC/DESC/null/tie/cursor equivalen
 Repeat migration installation and the unchanged 100k/ten-client HTTP gate. Verify
 an indexed plan stops at the authorized page rather than scanning all records;
 measure selective-policy cases separately. Independent review is required.
+
+The management API accepts field identity and expected checkpoint, never SQL,
+types, currency or a caller-declared READY flag. Central owner/admin and field
+permission checks precede execution; PostgreSQL independently verifies live
+owner/admin membership, source-field types and active dataset binding. Maximum
+registered fields are eight per entity and 32 per physical namespace.
+
+Migrations31–34 are retained as forward corrections: initial platform structures,
+compatible registry locking, bounded verification, and bounded batch joins. The
+failed earlier workloads and test-fixture defects remain in the report. No new
+dependency or increased timeout/pool/latency threshold is required.
 
 This does not complete schema evolution, canonical access across generations,
 unique-field metadata, production activation or full query planning. Update the

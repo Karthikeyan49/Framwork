@@ -62,7 +62,7 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			if resource.Type == "preview" && resource.AppID != "" && role != "viewer" {
 				return true
 			}
-		case "datasets.manage":
+		case "datasets.manage", "indexes.manage":
 			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
 				return true
 			}

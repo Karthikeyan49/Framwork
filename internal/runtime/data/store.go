@@ -19,15 +19,19 @@ type Store struct{ legacy, workerSource bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool
-	err := db.QueryRowContext(ctx, `SELECT count(*)=5 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass,'runtime.datasets'::regclass,'runtime.dataset_bindings'::regclass,'runtime.command_receipts'::regclass)`).Scan(&valid)
+	err := db.QueryRowContext(ctx, `SELECT count(*)=7 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass,'runtime.datasets'::regclass,'runtime.dataset_bindings'::regclass,'runtime.command_receipts'::regclass,'runtime.numeric_indexes'::regclass,'runtime.numeric_projections'::regclass)`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
-	err = db.QueryRowContext(ctx, `SELECT count(*)=7 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger WHERE (tgrelid='runtime.records'::regclass AND tgname='dataset_record_fence') OR (tgrelid='runtime.datasets'::regclass AND tgname IN('dataset_update_guard','immutable_dataset_truncate')) OR (tgrelid='runtime.dataset_bindings'::regclass AND tgname IN('immutable_dataset_binding','immutable_binding_truncate')) OR (tgrelid='runtime.command_receipts'::regclass AND tgname IN('immutable_command_receipt','immutable_command_receipt_truncate'))`).Scan(&valid)
+	err = db.QueryRowContext(ctx, `SELECT count(*)=10 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger WHERE (tgrelid='runtime.records'::regclass AND tgname IN('dataset_record_fence','record_numeric_projection')) OR (tgrelid='runtime.numeric_indexes'::regclass AND tgname='retain_numeric_indexes') OR (tgrelid='runtime.numeric_projections'::regclass AND tgname='retain_numeric_projections') OR (tgrelid='runtime.datasets'::regclass AND tgname IN('dataset_update_guard','immutable_dataset_truncate')) OR (tgrelid='runtime.dataset_bindings'::regclass AND tgname IN('immutable_dataset_binding','immutable_binding_truncate')) OR (tgrelid='runtime.command_receipts'::regclass AND tgname IN('immutable_command_receipt','immutable_command_receipt_truncate'))`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
 	_, err = db.ExecContext(ctx, `SELECT d.mode,d.write_version,r.custom_data,r.row_version,r.created_by FROM runtime.record_sets d JOIN runtime.records r USING(tenant_id,app_id,metadata_revision,ir_hash) LIMIT 0`)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `SELECT i.schema_hash,i.state,i.checkpoint,i.verified_rows,p.value_number,p.source_version FROM runtime.numeric_indexes i JOIN runtime.numeric_projections p USING(tenant_id,app_id,metadata_revision,ir_hash,entity_id,field_id) LIMIT 0`)
 	return err
 }
 func base(s Scope, a tenant.Access, entity string) []any {

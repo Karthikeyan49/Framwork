@@ -69,6 +69,15 @@ func (a API) Register(mux *http.ServeMux) {
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/query", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/entities/{entity}/commands", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/rules/{rule}/evaluate", a.serve)
+		for _, prefix := range []string{
+			"/v1/tenants/{tenant}/preview/{app}/versions/{revision}",
+			"/v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings/{binding}",
+		} {
+			path := prefix + "/entities/{entity}/indexes/{index}"
+			mux.HandleFunc("GET "+path, a.serve)
+			mux.HandleFunc("POST "+path+"/register", a.serve)
+			mux.HandleFunc("POST "+path+"/build", a.serve)
+		}
 		if a.WorkflowsEnabled {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/start", a.serve)
 			mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/instances/{instance}", a.serve)
@@ -320,6 +329,9 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		}
 		if r.Method == http.MethodGet && r.PathValue("dataset") != "" && r.PathValue("binding") == "" {
 			action = "datasets.manage"
+		}
+		if r.PathValue("index") != "" {
+			action = "indexes.manage"
 		}
 	}
 	appID := ""
