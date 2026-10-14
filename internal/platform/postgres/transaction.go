@@ -102,6 +102,11 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
 		return ErrUnavailable
 	}
 	if err = tx.Commit(); err != nil {
+		// PostgreSQL's serialization/deadlock reply proves that COMMIT aborted.
+		// A lost reply, connection error or cancellation proves no such outcome.
+		if KnownAbort(err) {
+			return err
+		}
 		return ErrCommitUnknown
 	}
 	return nil

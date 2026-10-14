@@ -58,6 +58,10 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			continue
 		}
 		switch action {
+		case "commands.reconcile":
+			if resource.Type == "preview" && resource.AppID != "" && role != "viewer" {
+				return true
+			}
 		case "datasets.manage":
 			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
 				return true

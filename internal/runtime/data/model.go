@@ -58,6 +58,7 @@ func (g Guard) check(ctx context.Context, action string, r Resource) error {
 }
 
 type Record struct {
+	Replayed  bool               `json:"replayed,omitempty"`
 	ID        string             `json:"id"`
 	Version   int64              `json:"version"`
 	CreatedBy string             `json:"created_by"`
@@ -106,6 +107,7 @@ type AggregateResult struct {
 	Sum   string `json:"sum,omitempty"`
 }
 type Command struct {
+	Key             string         `json:"command_key,omitempty"`
 	Operation       string         `json:"operation"`
 	ID              string         `json:"id,omitempty"`
 	ExpectedVersion int64          `json:"expected_version,omitempty"`

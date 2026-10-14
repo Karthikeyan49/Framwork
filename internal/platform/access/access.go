@@ -2,11 +2,14 @@
 package access
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
@@ -16,6 +19,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -44,6 +48,7 @@ func (a API) catalog() compiler.Catalog {
 
 func (a API) Register(mux *http.ServeMux) {
 	if a.PreviewEnabled && a.Registry != nil {
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/commands/{command}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets", a.serve)
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/verify", a.serve)
@@ -99,32 +104,64 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	headers := r.Header.Values("Authorization")
 	var p identity.Principal
 	authErr := identity.ErrUnauthenticated
-	if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
-		p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
-	}
 	var response reply
 	var rejectedEvidence audit.Entry
-	err := postgres.WithRuntime(r.Context(), a.DB, func(ctx context.Context, tx postgres.Executor) error {
-		result, evidence, err := a.perform(ctx, tx, r, p, authErr)
-		if err != nil {
-			var rejected *requestRejection
-			if errors.As(err, &rejected) {
-				rejectedEvidence = evidence
-				if rejected.evidence != nil {
-					rejectedEvidence = *rejected.evidence
+	localCommand := r.Method == http.MethodPost && r.PathValue("entity") != "" && strings.HasSuffix(r.URL.Path, "/commands")
+	var body []byte
+	if localCommand {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, data.MaxRecordBytes+1))
+		if err != nil || len(body) > data.MaxRecordBytes {
+			httpserver.Error(w, r, 400, "invalid_query_or_command", "Data request exceeds the typed request budget")
+			return
+		}
+	}
+	parentContext := r.Context()
+	if localCommand {
+		var cancel context.CancelFunc
+		parentContext, cancel = context.WithTimeout(parentContext, 4*time.Second)
+		defer cancel()
+	}
+	run := func(parent context.Context) error {
+		response, rejectedEvidence = reply{}, audit.Entry{}
+		p, authErr = identity.Principal{}, identity.ErrUnauthenticated
+		if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
+			p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
+		}
+		if localCommand {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		return postgres.WithRuntime(parent, a.DB, func(ctx context.Context, tx postgres.Executor) error {
+			result, evidence, err := a.perform(ctx, tx, r, p, authErr)
+			rejectedEvidence = evidence
+			if err != nil {
+				var rejected *requestRejection
+				if errors.As(err, &rejected) {
+					if rejected.evidence != nil {
+						rejectedEvidence = *rejected.evidence
+					}
 				}
+				return err
 			}
-			return err
+			if err = a.Audit.Append(ctx, tx, evidence); err != nil {
+				return err
+			}
+			response = result
+			return nil
+		})
+	}
+	var err error
+	if localCommand {
+		err = postgres.RetryLocal(parentContext, run)
+		if postgres.KnownAbort(err) {
+			err = &requestRejection{response: denied(409, "concurrent_conflict", "Concurrent changes prevented this command; reconcile its key and reload before retrying")}
 		}
-		if err = a.Audit.Append(ctx, tx, evidence); err != nil {
-			return err
-		}
-		response = result
-		return nil
-	})
+	} else {
+		err = run(parentContext)
+	}
 	var rejected *requestRejection
 	if errors.As(err, &rejected) {
-		err = postgres.WithRuntime(r.Context(), a.DB, func(ctx context.Context, q postgres.Executor) error {
+		err = postgres.WithRuntime(parentContext, a.DB, func(ctx context.Context, q postgres.Executor) error {
 			u, e := (identity.Store{}).Resolve(ctx, q, p)
 			if e != nil {
 				return e
@@ -139,8 +176,11 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 			if u.ID() != rejectedEvidence.ActorID || access.TenantID() != rejectedEvidence.TenantID {
 				return tenant.ErrDenied
 			}
-			rejectedEvidence.Action = "workflows.rejected"
-			rejectedEvidence.Resource = "workflow"
+			if rejectedEvidence.Resource == "workflow" {
+				rejectedEvidence.Action = "workflows.rejected"
+			} else {
+				rejectedEvidence.Action += ".rejected"
+			}
 			rejectedEvidence.Allow = false
 			return a.Audit.Append(ctx, q, rejectedEvidence)
 		})
@@ -244,6 +284,9 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		if strings.HasSuffix(r.URL.Path, "/commands") {
 			action = "preview.write"
 		}
+		if r.PathValue("command") != "" {
+			action = "commands.reconcile"
+		}
 		if r.Method == http.MethodPost && datasetManagementPOST.MatchString(r.URL.Path) {
 			action = "datasets.manage"
 		}
@@ -270,7 +313,15 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	if resource == "preview" {
 		var result reply
 		var err error
-		if strings.Contains(r.URL.Path, "/datasets") {
+		if r.PathValue("command") != "" {
+			if !tenant.ValidID(r.PathValue("command")) {
+				return denied(400, "invalid_command_key", "Invalid command key"), evidence, nil
+			}
+			var receipt data.Receipt
+			evidence.State.CommandKey = r.PathValue("command")
+			receipt, err = data.CommandReceipt(ctx, tx, access, appID, r.PathValue("command"))
+			result = reply{status: 200, body: receipt}
+		} else if strings.Contains(r.URL.Path, "/datasets") {
 			result, err = a.dataset(ctx, tx, r, u, access, &evidence)
 		} else {
 			result, err = a.preview(ctx, tx, r, u, access, &evidence)

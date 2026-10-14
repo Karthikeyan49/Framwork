@@ -19,11 +19,11 @@ type Store struct{ legacy, workerSource bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool
-	err := db.QueryRowContext(ctx, `SELECT count(*)=4 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass,'runtime.datasets'::regclass,'runtime.dataset_bindings'::regclass)`).Scan(&valid)
+	err := db.QueryRowContext(ctx, `SELECT count(*)=5 AND bool_and(relrowsecurity AND relforcerowsecurity AND relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class WHERE oid IN ('runtime.record_sets'::regclass,'runtime.records'::regclass,'runtime.datasets'::regclass,'runtime.dataset_bindings'::regclass,'runtime.command_receipts'::regclass)`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
-	err = db.QueryRowContext(ctx, `SELECT count(*)=5 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger WHERE (tgrelid='runtime.records'::regclass AND tgname='dataset_record_fence') OR (tgrelid='runtime.datasets'::regclass AND tgname IN('dataset_update_guard','immutable_dataset_truncate')) OR (tgrelid='runtime.dataset_bindings'::regclass AND tgname IN('immutable_dataset_binding','immutable_binding_truncate'))`).Scan(&valid)
+	err = db.QueryRowContext(ctx, `SELECT count(*)=7 AND bool_and(tgenabled='O') FROM pg_catalog.pg_trigger WHERE (tgrelid='runtime.records'::regclass AND tgname='dataset_record_fence') OR (tgrelid='runtime.datasets'::regclass AND tgname IN('dataset_update_guard','immutable_dataset_truncate')) OR (tgrelid='runtime.dataset_bindings'::regclass AND tgname IN('immutable_dataset_binding','immutable_binding_truncate')) OR (tgrelid='runtime.command_receipts'::regclass AND tgname IN('immutable_command_receipt','immutable_command_receipt_truncate'))`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable
 	}
@@ -96,16 +96,29 @@ func current(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 	return r, err
 }
 
-// A dataset counter write serializes all preview commands and rejects stale
-// repeatable-read snapshots. Reference checks/deletes cannot race each other.
+// Shared anchor/binding gates fence adoption without serializing independent
+// writers. Record CAS and tenant-inclusive reference FKs protect mutations.
 func lockDataset(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access) error {
 	if err := lockBinding(ctx, q, s, a); err != nil {
 		return err
 	}
-	_, err := q.ExecContext(ctx, `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,app_id,metadata_revision,ir_hash) DO UPDATE SET write_version=runtime.record_sets.write_version+1`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash())
+	if _, err := q.ExecContext(ctx, `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,app_id,metadata_revision,ir_hash) DO NOTHING`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash()); err != nil {
+		return err
+	}
+	var epoch int64
+	err := q.QueryRowContext(ctx, `SELECT write_version FROM runtime.record_sets WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4 FOR SHARE`, a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash()).Scan(&epoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return postgres.ErrSnapshotAborted
+	}
 	return err
 }
 func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, c Command, g Guard, resolve ...ScopeResolver) (Record, error) {
+	if c.Key == "" {
+		return command(ctx, q, s, a, entity, c, g, resolve...)
+	}
+	return receiptedCommand(ctx, q, s, a, entity, c, g, resolve...)
+}
+func command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, c Command, g Guard, resolve ...ScopeResolver) (Record, error) {
 	e, err := plan(s, a, entity)
 	if err != nil {
 		return Record{}, err

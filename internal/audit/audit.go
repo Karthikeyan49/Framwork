@@ -11,6 +11,8 @@ import (
 )
 
 type State struct {
+	CommandKey           string `json:"command_key,omitempty"`
+	CommandReplayed      bool   `json:"command_replayed,omitempty"`
 	DatasetID            string `json:"dataset_id,omitempty"`
 	DataSchemaHash       string `json:"data_schema_hash,omitempty"`
 	DataSchemaGeneration int64  `json:"data_schema_generation,omitempty"`
@@ -72,6 +74,9 @@ func (Postgres) Ready(ctx context.Context, db *sql.DB) error {
 }
 
 func (Postgres) Append(ctx context.Context, tx postgres.Executor, e Entry) error {
+	if len(e.State.CommandKey) > 36 {
+		return errors.New("invalid command evidence")
+	}
 	if len(e.State.DatasetID) > 36 || len(e.State.DataSchemaHash) > 64 || e.State.DataSchemaGeneration < 0 || e.State.DatasetBinding < 0 || e.State.DatasetBinding > 1e9 || e.State.VerifiedRows < 0 || len(e.State.ManifestHash) > 64 || (e.State.DatasetState != "" && e.State.DatasetState != "OPEN" && e.State.DatasetState != "ADOPTING") {
 		return errors.New("invalid dataset evidence")
 	}

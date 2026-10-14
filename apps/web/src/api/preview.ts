@@ -7,6 +7,20 @@ import {
   uuid,
 } from "../preview/contracts";
 
+export class CommandOutcomeUnknown extends Error {
+  constructor(readonly commandKey: string) {
+    super("Command outcome requires reconciliation");
+    this.name = "CommandOutcomeUnknown";
+  }
+}
+
+export type CommandReceipt = {
+  state: "UNKNOWN" | "COMMITTED";
+  command_key: string;
+  record_id?: string;
+  record_version?: number;
+};
+
 export function previewClient(
   base: string,
   token: string,
@@ -29,8 +43,9 @@ export function previewClient(
     suffix: string,
     body: unknown,
     signal?: AbortSignal,
+    prefix = path,
   ): Promise<unknown> {
-    const response = await transport(path + suffix, {
+    const response = await transport(prefix + suffix, {
       method: body === undefined ? "GET" : "POST",
       headers: {
         Accept: "application/json",
@@ -74,23 +89,47 @@ export function previewClient(
           signal,
         ),
       ),
+    receipt: async (key: string, signal?: AbortSignal): Promise<CommandReceipt> => {
+      if (!uuid(key)) throw new Error("Invalid command key");
+      const value = await request(
+        `/commands/${key}`,
+        undefined,
+        signal,
+        `${base}/v1/tenants/${tenant}/preview/${app}`,
+      );
+      if (!value || typeof value !== "object") throw new Error("Invalid receipt");
+      const r = value as CommandReceipt;
+      if (r.command_key !== key ||
+        (r.state !== "UNKNOWN" && r.state !== "COMMITTED") ||
+        (r.state === "COMMITTED" && (!uuid(r.record_id) ||
+          !Number.isSafeInteger(r.record_version) || r.record_version! < 1)))
+        throw new Error("Invalid receipt");
+      return r;
+    },
     command: async (
       entity: string,
       operation: "create" | "update" | "delete",
       values: Record<string, unknown>,
       row?: Row,
       signal?: AbortSignal,
-    ) =>
-      decodeRow(
-        await request(
+    ) => {
+      const key = crypto.randomUUID();
+      try {
+        return decodeRow(await request(
           entityPath(entity) + "/commands",
           {
+            command_key: key,
             operation,
             ...(row ? { id: row.id, expected_version: row.version } : {}),
             ...(operation !== "delete" ? { values } : {}),
           },
           signal,
-        ),
-      ),
+        ));
+      } catch (e) {
+        if (!(e instanceof APIError) || e.status >= 500)
+          throw new CommandOutcomeUnknown(key);
+        throw e;
+      }
+    },
   };
 }

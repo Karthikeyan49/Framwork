@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { APIError } from "../api/client";
+import { CommandOutcomeUnknown } from "../api/preview";
 import { previewClient } from "../api/preview";
 import { config } from "../config";
 import {
@@ -96,6 +97,7 @@ export function ApplicationWorkspace({
   const [blockedWrites, setBlockedWrites] = useState<Record<string, boolean>>(
     {},
   );
+  const [pendingCommands, setPendingCommands] = useState<Record<string, string>>({});
   const scopeKey = loaded
     ? tenant +
       ":" +
@@ -109,6 +111,9 @@ export function ApplicationWorkspace({
     scopeKey + ":" + (selectedEntity(loaded?.preview, page) ?? "");
   function blockWrite(blocked: boolean) {
     setBlockedWrites((old) => ({ ...old, [writeKey]: blocked }));
+  }
+  function setPendingCommand(key: string) {
+    setPendingCommands((old) => ({ ...old, [writeKey]: key }));
   }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -225,6 +230,8 @@ export function ApplicationWorkspace({
               onWritePending={setWritePending}
               writeBlocked={!!blockedWrites[writeKey]}
               blockWrite={blockWrite}
+              pendingCommand={pendingCommands[writeKey] ?? ""}
+              setPendingCommand={setPendingCommand}
             />
           ) : (
             <p>This application has no pages.</p>
@@ -320,6 +327,8 @@ function RelationPicker({
   );
 }
 function EntityPage({
+  pendingCommand,
+  setPendingCommand,
   writeBlocked,
   blockWrite,
   onWritePending,
@@ -327,6 +336,8 @@ function EntityPage({
   preview,
   client,
 }: {
+  pendingCommand: string;
+  setPendingCommand: (key: string) => void;
   onWritePending: (pending: boolean) => void;
   writeBlocked: boolean;
   blockWrite: (blocked: boolean) => void;
@@ -396,7 +407,7 @@ function EntityPage({
       if (!controller.signal.aborted) {
         setRows(result.records);
         setNext(result.next);
-        setNeedsReload(false);
+        setNeedsReload(Boolean(pendingCommand));
         setSelected(undefined);
         setInputs({});
         setConfirmDelete(false);
@@ -451,14 +462,18 @@ function EntityPage({
       }
     } catch (e) {
       if (!controller.signal.aborted) {
-        if (!(e instanceof APIError) || e.status >= 500) {
+        if (e instanceof CommandOutcomeUnknown) {
+          setPendingCommand(e.commandKey);
           setNeedsReload(true);
           setError(
-            "The write outcome is uncertain and may have committed. Reload records and inspect them before trying again.",
+            "The write outcome is uncertain. Check the command receipt before another write. An unknown receipt does not prove the command failed.",
           );
-        } else {
+        } else if (e instanceof APIError) {
           if (e.status === 409) setNeedsReload(true);
           if (e.status !== 409) setNeedsReload(false);
+          setError(message(e));
+        } else {
+          setNeedsReload(true);
           setError(message(e));
         }
       }
@@ -473,6 +488,28 @@ function EntityPage({
     setConfirmDelete(false);
     if (!needsReload) setError("");
     setNotice("");
+  }
+  async function reconcile() {
+    if (!pendingCommand || saving || busy) return;
+    setSaving(true);
+    setError("");
+    try {
+      const receipt = await client.receipt(pendingCommand);
+      if (receipt.state === "COMMITTED") {
+        setPendingCommand("");
+        const reloaded = await load();
+        // load captured the old pending key; release the gate only after both
+        // a committed owned receipt and the fresh read have been confirmed.
+        setNeedsReload(!reloaded);
+        setNotice(`Command committed · version ${receipt.record_version}.`);
+      } else {
+        setError("The receipt is still unknown. Keep this command key and check again; do not repeat the write.");
+      }
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setSaving(false);
+    }
   }
   function render(c: Component, key: string): React.ReactNode {
     const children = c.children?.map((child, i) =>
@@ -715,6 +752,14 @@ function EntityPage({
       {busy && <p role="status">Loading records…</p>}
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
+      {pendingCommand && (
+        <div>
+          <p>Pending command: <code>{pendingCommand}</code></p>
+          <button type="button" disabled={busy || saving} onClick={() => void reconcile()}>
+            Check command receipt
+          </button>
+        </div>
+      )}
       {needsReload && !saving && (
         <p role="status">
           A write requires review. Reload records and inspect them before

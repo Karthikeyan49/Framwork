@@ -283,7 +283,7 @@ func TestM5ReferencesAndConcurrentVersions(t *testing.T) {
 	for status := range statuses {
 		if status == 200 {
 			success++
-		} else if status != 409 && status != 503 {
+		} else if status != 409 {
 			t.Fatal("unexpected concurrent status", status)
 		}
 	}
@@ -332,10 +332,10 @@ func TestM5DeclaredJoinAndReferenceDeleteRace(t *testing.T) {
 	if createStatus == 200 && deleteStatus == 200 {
 		t.Fatal("reference/delete race broke referential integrity")
 	}
-	if createStatus != 200 && createStatus != 400 && createStatus != 503 {
+	if createStatus != 200 && createStatus != 400 && createStatus != 409 {
 		t.Fatal("unexpected reference race status", createStatus)
 	}
-	if deleteStatus != 200 && deleteStatus != 409 && deleteStatus != 503 {
+	if deleteStatus != 200 && deleteStatus != 409 {
 		t.Fatal("unexpected delete race status", deleteStatus)
 	}
 	query = m5Query()

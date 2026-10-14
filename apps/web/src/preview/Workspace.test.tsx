@@ -189,6 +189,7 @@ it("sends a scoped typed create command and reports safe errors without exposing
     String(url).endsWith("/commands"),
   )!;
   expect(JSON.parse(String(call[1]?.body))).toEqual({
+    command_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
     operation: "create",
     values: {
       "field.contact.name": "Alice",
@@ -252,14 +253,20 @@ it("requires explicit reload after a stale update and carries the selected row v
     expected_version: 7,
   });
 });
-it("blocks uncertain writes until a successful explicit reload and redacts transport messages", async () => {
+it("keeps uncertain writes blocked until an owned committed receipt and fresh reload, and redacts transport messages", async () => {
   let commands = 0;
   let queryFailure = false;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+  let commandKey = "";
+  let committed = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     if (String(url).endsWith("/commands")) {
       commands++;
+      commandKey = JSON.parse(String(options?.body)).command_key;
       throw new TypeError("private network details");
     }
+    if (String(url).endsWith(`/commands/${commandKey}`))
+      return response({ command_key: commandKey, state: committed ? "COMMITTED" : "UNKNOWN",
+        ...(committed ? { record_id: tenant, record_version: 1 } : {}) });
     if (String(url).endsWith("/query")) {
       if (queryFailure) throw new TypeError("private network details");
       return response({ records: [], next: "" });
@@ -271,12 +278,19 @@ it("blocks uncertain writes until a successful explicit reload and redacts trans
   await userEvent.type(screen.getByLabelText("Name"), "Possibly committed");
   await userEvent.click(screen.getByRole("button", { name: "Create record" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "may have committed",
+    "outcome is uncertain",
   );
   expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled();
   expect(screen.queryByText("private network details")).not.toBeInTheDocument();
   queryFailure = true;
   await userEvent.click(screen.getByRole("button", { name: "Reload records" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Reload records" })).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Check command receipt" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("still unknown");
+  expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled();
+  committed = true;
+  await userEvent.click(screen.getByRole("button", { name: "Check command receipt" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Reload records" }),
@@ -434,8 +448,9 @@ describe("M6R preview recovery", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Create record" }),
-      ).toBeEnabled(),
+      ).toBeDisabled(),
     );
+    expect(screen.getByRole("button", { name: "Check command receipt" })).toBeEnabled();
   });
 });
 

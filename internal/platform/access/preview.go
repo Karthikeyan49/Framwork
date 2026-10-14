@@ -16,6 +16,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"io"
@@ -195,12 +196,16 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 	} else {
 		var command data.Command
 		if err = readDataCommand(r, &command); err == nil {
+			if tenant.ValidID(command.Key) {
+				evidence.State.CommandKey = command.Key
+			}
 			var record data.Record
 			record, err = (data.Store{}).Command(ctx, q, scope, access, entity, command, guard, resolve)
 			result = record
 			evidence.State.RecordID = record.ID
 			evidence.State.RecordVersion = record.Version
-			if err == nil {
+			evidence.State.CommandReplayed = record.Replayed
+			if err == nil && !record.Replayed {
 				id, e := events.NewID()
 				if e != nil {
 					return reply{}, e
@@ -227,6 +232,17 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 			}
 		}
 	}
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) {
+		switch databaseError.Code {
+		case "23503", "55P03":
+			// These SQL failures abort the transaction. Roll back the mutation,
+			// receipt, audit and outbox before auditing the defined rejection.
+			return reply{}, &requestRejection{response: denied(409, "record_conflict", "A concurrent change or reference prevents this command; reconcile and reload before retrying")}
+		case "55000":
+			return reply{}, &requestRejection{response: denied(409, "dataset_conflict", "Select the active dataset binding before retrying")}
+		}
+	}
 	switch {
 	case err == nil:
 		return reply{status: 200, body: result}, nil
@@ -238,6 +254,8 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 		return denied(409, "dataset_conflict", "Select the active dataset binding before retrying"), nil
 	case errors.Is(err, data.ErrConflict):
 		return denied(409, "record_conflict", "Reload the record before retrying"), nil
+	case errors.Is(err, data.ErrCommandConflict):
+		return denied(409, "command_conflict", "This command key already identifies a different request"), nil
 	case errors.Is(err, data.ErrNotFound):
 		return denied(404, "not_found", "Record not found"), nil
 	default:
