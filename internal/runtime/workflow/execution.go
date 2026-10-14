@@ -48,6 +48,11 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 		return ErrInvalid
 	}
 	err := jobs.WithJob(ctx, w.DB, lease.Ticket, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
+		// The database decision precedes every snapshot read. Identity/routing
+		// admission does not imply business access for a revoked capability.
+		if e := workerSQLAuthorization(ctx, q, a, lease.Ticket.JobID()); e != nil {
+			return e
+		}
 		x, e := w.Store.load(ctx, q, a, lease.Ticket.JobID(), true)
 		if e != nil {
 			return e
@@ -200,6 +205,31 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 		}
 	}
 	return err
+}
+
+func workerSQLAuthorization(ctx context.Context, q postgres.Executor, a tenant.Access, job string) error {
+	entry := audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID()}
+	var revision int64
+	err := q.QueryRowContext(ctx, `SELECT allowed,action,resource,policy_version,policy_revision,app_id,metadata_revision,ir_hash,workflow_id,workflow_version,plan_hash,entity_id,field_id,record_id::text,request_id FROM control.worker_policy_decision()`).Scan(
+		&entry.Allow, &entry.Action, &entry.Resource, &entry.PolicyVersion, &revision,
+		&entry.State.MetadataApp, &entry.State.MetadataRevision, &entry.State.IRHash,
+		&entry.State.WorkflowID, &entry.State.WorkflowVersion, &entry.State.WorkflowPlanHash,
+		&entry.State.EntityID, &entry.State.FieldID, &entry.State.RecordID, &entry.RequestID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrLease
+	}
+	if err != nil {
+		return err
+	}
+	if entry.Allow {
+		return nil
+	}
+	entry.State.PolicyRevision = revision
+	entry.State.WorkflowInstanceID = job
+	// The SQL definition/evaluator rejection has its own bounded evidence.
+	// It never labels a database failure as a central Go action decision.
+	entry.DecisionID = Hash([]byte(job + "/sql-live-policy/" + entry.PolicyVersion + "/" + entry.Action))
+	return &AuthorizationDenied{Evidence: entry}
 }
 func checkLease(ctx context.Context, q postgres.Executor, a tenant.Access, x stored, lease jobs.WorkflowLease) error {
 	var ok bool
