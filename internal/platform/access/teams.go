@@ -26,6 +26,8 @@ func teamReply(value any, err error) (reply, error) {
 	switch {
 	case errors.Is(err, tenant.ErrTeamInvalid):
 		status, code = 400, "invalid_team"
+	case errors.Is(err, tenant.ErrTeamBudget):
+		status, code = 409, "team_budget"
 	case errors.As(err, &pg):
 		switch pg.Code {
 		case "22023", "22P02", "23514":
@@ -101,7 +103,7 @@ func (a API) team(ctx context.Context, q postgres.Executor, r *http.Request, acc
 	saved, err := store.SaveTeam(ctx, q, access, tenant.Team{ID: body.ID, ParentID: body.ParentID, Name: body.Name}, *body.ExpectedVersion)
 	if err == nil {
 		evidence.Action = "teams.changed"
-		evidence.State.PolicyRevision = saved.Version
+		evidence.State.TeamVersion = saved.Version
 	}
 	return teamReply(saved, err)
 }

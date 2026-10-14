@@ -10,9 +10,10 @@ import (
 )
 
 // R5a adds explicit owner-only role administration to the bootstrap adapter;
-// R5c adds owner/admin record access and team administration.
+// R5c-a (v5) adds owner/admin record access administration; R5c-b (v6) adds
+// owner/admin team administration.
 // Retained evidence keeps its original version.
-const Version = "m9r-native-v5"
+const Version = "m9r-native-v6"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {

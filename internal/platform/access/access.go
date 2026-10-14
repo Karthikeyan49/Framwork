@@ -388,7 +388,9 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		resource = "role"
 		action = "roles.assign"
 	}
-	if r.PathValue("team") != "" || strings.HasSuffix(r.URL.Path, "/teams") {
+	// Exact registered patterns only: a suffix would capture other routes whose
+	// last variable segment is literally "teams" (for example a role name).
+	if teamPatterns[r.Pattern] {
 		resource, action = "team", "teams.read"
 		if r.Method == http.MethodPost {
 			action = "teams.manage"
@@ -468,6 +470,14 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	}
 	return reply{status: 200, body: result}, evidence, nil
 }
+
+var teamPatterns = map[string]bool{
+	"GET /v1/tenants/{tenant}/teams":                               true,
+	"POST /v1/tenants/{tenant}/teams":                              true,
+	"GET /v1/tenants/{tenant}/teams/{team}":                        true,
+	"POST /v1/tenants/{tenant}/teams/{team}/members/{team_member}": true,
+}
+
 func enforce(d policy.Decision) policy.Decision {
 	// Audit is mandatory even if omitted by an adapter. Unknown obligations deny.
 	for _, obligation := range d.Obligations {

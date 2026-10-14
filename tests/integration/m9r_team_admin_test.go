@@ -191,3 +191,68 @@ func TestM9RTeamAdministrationConcurrentReparentAndPortBoundary(t *testing.T) {
 		t.Fatal("raw team write leaked", err, teams)
 	}
 }
+
+func TestM9RTeamAdministrationBudgetsCustomRolesAndRouteIsolation(t *testing.T) {
+	m8Database(t)
+	f, _, _, alice, app := m5Fixture(t)
+	h := r5Handler(t, f, audit.Postgres{})
+	root := "/v1/tenants/" + f.tenantA
+	if err := (tenant.Store{}).Provision(context.Background(), f.operator, f.tenantA, "Teams", f.bob, "member", true); err != nil {
+		t.Fatal(err)
+	}
+	bob := f.token(t, f.bobSubject, nil)
+	team := uuid(t)
+	r5cSaveTeam(t, h, root, bob, tenant.Team{ID: team, Name: "Ops"}, 0, 403)
+	r5cSaveTeam(t, h, root, alice, tenant.Team{ID: team, Name: "Ops"}, 0, 200)
+
+	// A role literally named "teams" stays addressable through the role route.
+	named := policy.Definition{SchemaVersion: policy.DefinitionVersion, Name: "teams", Grants: []policy.Grant{{Effect: "ALLOW", Actions: []string{"tenant.access"}, Resource: policy.Selector{AppID: app, EntityID: "*", FieldID: "*"}}}}
+	r5Publish(t, h, root+"/roles", alice, 0, named, true, uuid(t))
+	w := m3Call(h, "GET", root+"/roles/teams", alice, 0, nil)
+	var role policy.RoleVersion
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &role) != nil || role.Name != "teams" {
+		t.Fatal("role route captured by team mapping", w.Code, w.Body.String())
+	}
+
+	// Delegated custom roles: read-only reader and a manager.
+	grant := func(name string, actions ...string) policy.Definition {
+		return policy.Definition{SchemaVersion: policy.DefinitionVersion, Name: name, Grants: []policy.Grant{{Effect: "ALLOW", Actions: actions, Resource: policy.Selector{AppID: "*", EntityID: "*", FieldID: "*"}}}}
+	}
+	r5Publish(t, h, root+"/roles", alice, 0, grant("team_reader", "teams.read"), true, uuid(t))
+	r5Assign(t, h, root, alice, f.bob, "team_reader", 200)
+	if w = m3Call(h, "GET", root+"/teams/"+team, bob, 0, nil); w.Code != 200 {
+		t.Fatal("custom team reader", w.Code)
+	}
+	r5cSaveTeam(t, h, root, bob, tenant.Team{ID: uuid(t), Name: "Denied"}, 0, 403)
+	r5Publish(t, h, root+"/roles", alice, 0, grant("people_ops", "teams.read", "teams.manage"), true, uuid(t))
+	r5Assign(t, h, root, alice, f.bob, "people_ops", 200)
+	r5cMember(t, h, root, bob, team, f.viewer, true, nil, 200)
+
+	// 64-team closure: a member may resolve exactly 64 teams, not 65.
+	for i := 1; i < 64; i++ {
+		r5cSaveTeam(t, h, root, bob, tenant.Team{ID: uuid(t), Name: "Child", ParentID: team}, 0, 200)
+	}
+	r5cSaveTeam(t, h, root, bob, tenant.Team{ID: uuid(t), Name: "Overflow", ParentID: team}, 0, 400)
+	other := uuid(t)
+	r5cSaveTeam(t, h, root, bob, tenant.Team{ID: other, Name: "Other"}, 0, 200)
+	r5cMember(t, h, root, bob, other, f.viewer, true, nil, 400)
+
+	// Retained membership rows are bounded so the team stays listable.
+	if _, err := f.operator.Exec(`INSERT INTO iam.team_memberships(tenant_id,team_id,user_id,active) SELECT $1,$2,gen_random_uuid(),false FROM generate_series(1,1000)`, f.tenantA, other); err != nil {
+		t.Fatal(err)
+	}
+	r5cMember(t, h, root, bob, other, f.alice, true, nil, 400)
+	if w = m3Call(h, "GET", root+"/teams/"+other, bob, 0, nil); w.Code != 200 {
+		t.Fatal("bounded team listing", w.Code)
+	}
+	if _, err := f.operator.Exec(`INSERT INTO iam.team_memberships(tenant_id,team_id,user_id,active) VALUES($1,$2,gen_random_uuid(),false)`, f.tenantA, other); err != nil {
+		t.Fatal(err)
+	}
+	if w = m3Call(h, "GET", root+"/teams/"+other, bob, 0, nil); w.Code != 409 {
+		t.Fatal("operator over-budget team not typed", w.Code)
+	}
+	var version int64
+	if err := f.operator.QueryRow(`SELECT (state->>'team_version')::bigint FROM audit.entries WHERE tenant_id=$1 AND action='teams.changed' AND state->>'access_team_id'=$2`, f.tenantA, other).Scan(&version); err != nil || version != 1 {
+		t.Fatal("team version evidence", err, version)
+	}
+}

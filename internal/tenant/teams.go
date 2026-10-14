@@ -38,6 +38,12 @@ func (Store) Teams(ctx context.Context, q postgres.Executor, a Access) ([]string
 
 var ErrTeamInvalid = errors.New("invalid team request")
 
+// ErrTeamBudget reports operator-created state beyond the administered budgets.
+var ErrTeamBudget = errors.New("team budget exceeded")
+
+// MaxTeamMemberships bounds one team's retained (active and inactive) rows.
+const MaxTeamMemberships = 1000
+
 const MaxTeams = 256
 
 type Team struct {
@@ -70,7 +76,7 @@ func (Store) ListTeams(ctx context.Context, q postgres.Executor, a Access) ([]Te
 		out = append(out, t)
 	}
 	if len(out) > MaxTeams {
-		return nil, errors.New("team budget exceeded")
+		return nil, ErrTeamBudget
 	}
 	return out, rows.Err()
 }
@@ -96,8 +102,8 @@ func (Store) TeamMembers(ctx context.Context, q postgres.Executor, a Access, tea
 		}
 		out = append(out, m)
 	}
-	if len(out) > 1000 {
-		return nil, errors.New("team membership budget exceeded")
+	if len(out) > MaxTeamMemberships {
+		return nil, ErrTeamBudget
 	}
 	return out, rows.Err()
 }

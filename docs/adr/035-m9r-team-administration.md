@@ -29,7 +29,13 @@ every team reachable from a root within depth 8 and no member resolving more
 than 64 teams. Budget: 256 teams; names 1–120 characters without control
 characters or surrounding whitespace. Activation requires a current tenant
 member; deactivation works for departed users. No-op changes are rejected.
-Teams are not deleted (records, identities and history reference them).
+Teams are not deleted (records, identities and history reference them). After
+independent review, migration 44 bounds one team's retained membership rows
+(active and inactive) at 1000, the listing budget; operator-created excess
+returns a typed 409 `team_budget` rather than 503. Routing maps exact registered
+team patterns only, so other routes whose last segment is `teams` (for example a
+role named `teams`) keep their own action. Audit uses a dedicated
+`team_version` field; the Native policy version is `m9r-native-v6`.
 
 Routes: `GET|POST /v1/tenants/{tenant}/teams`, `GET .../teams/{team}`,
 `POST .../teams/{team}/members/{user}`. Rejections roll back and are audited
