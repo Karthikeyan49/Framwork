@@ -403,3 +403,32 @@ func TestM9RReceiptMutationAuditAndOutboxRollbackTogether(t *testing.T) {
 	}
 	m9rCommandCounts(t, f, app, 1, 1, 1)
 }
+
+// A restrictive SELECT policy in the owned database makes only the final
+// persisted-row read fail. The synthetic candidate's policy check succeeds and
+// INSERT runs under the real application role before current() returns not found.
+// An HTTP error must still roll back the entire command, including keyless legacy
+// callers; representing a typed error as HTTP must never authorize COMMIT.
+func TestM9RFinalReadRejectionRollsBackEveryCommandFact(t *testing.T) {
+	for _, keyed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy", true: "receipted"}[keyed], func(t *testing.T) {
+			m8Database(t)
+			f, h, base, token, app := m5Fixture(t)
+			if _, err := f.operator.Exec(`CREATE POLICY test_final_visibility ON runtime.records AS RESTRICTIVE FOR SELECT TO framework_app USING(custom_data->>'field.contact.name'<>'Final visibility denied')`); err != nil {
+				t.Fatal(err)
+			}
+			command := data.Command{Operation: "create", Values: m5Values("Final visibility denied")}
+			if keyed {
+				command.Key = uuid(t)
+			}
+			if result := m5Call(h, base+"/commands", token, command); result.Code != 404 {
+				t.Fatal("late read rejection", result.Code)
+			}
+			m9rCommandCounts(t, f, app, 0, 0, 0)
+			var denials int
+			if err := f.operator.QueryRow(`SELECT count(*) FROM audit.entries WHERE tenant_id=$1 AND state->>'metadata_app'=$2 AND action='preview.write.rejected' AND NOT allowed`, f.tenantA, app).Scan(&denials); err != nil || denials != 1 {
+				t.Fatal("fresh rejection evidence", denials, err)
+			}
+		})
+	}
+}

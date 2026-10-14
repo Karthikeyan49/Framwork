@@ -112,8 +112,9 @@ export function previewClient(
       values: Record<string, unknown>,
       row?: Row,
       signal?: AbortSignal,
+      key = crypto.randomUUID(),
     ) => {
-      const key = crypto.randomUUID();
+      if (!uuid(key)) throw new Error("Invalid command key");
       try {
         return decodeRow(await request(
           entityPath(entity) + "/commands",

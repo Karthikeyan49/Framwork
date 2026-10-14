@@ -85,9 +85,15 @@ function inputsFor(row?: Row): Record<string, string> {
 export function ApplicationWorkspace({
   token,
   tenant,
+  pendingCommands: retainedCommands,
+  onPendingCommand,
+  onCommandBusy,
 }: {
   token: string;
   tenant: string;
+  pendingCommands?: Record<string, string>;
+  onPendingCommand?: (scope: string, key: string) => void;
+  onCommandBusy?: (key: string, busy: boolean) => void;
 }) {
   const [app, setApp] = useState("app.contacts");
   const [revision, setRevision] = useState("1");
@@ -97,7 +103,8 @@ export function ApplicationWorkspace({
   const [blockedWrites, setBlockedWrites] = useState<Record<string, boolean>>(
     {},
   );
-  const [pendingCommands, setPendingCommands] = useState<Record<string, string>>({});
+  const [localPendingCommands, setPendingCommands] = useState<Record<string, string>>({});
+  const pendingCommands = retainedCommands ?? localPendingCommands;
   const scopeKey = loaded
     ? tenant +
       ":" +
@@ -113,7 +120,8 @@ export function ApplicationWorkspace({
     setBlockedWrites((old) => ({ ...old, [writeKey]: blocked }));
   }
   function setPendingCommand(key: string) {
-    setPendingCommands((old) => ({ ...old, [writeKey]: key }));
+    if (onPendingCommand) onPendingCommand(writeKey, key);
+    else setPendingCommands((old) => ({ ...old, [writeKey]: key }));
   }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -232,6 +240,7 @@ export function ApplicationWorkspace({
               blockWrite={blockWrite}
               pendingCommand={pendingCommands[writeKey] ?? ""}
               setPendingCommand={setPendingCommand}
+              onCommandBusy={onCommandBusy}
             />
           ) : (
             <p>This application has no pages.</p>
@@ -327,6 +336,7 @@ function RelationPicker({
   );
 }
 function EntityPage({
+  onCommandBusy,
   pendingCommand,
   setPendingCommand,
   writeBlocked,
@@ -336,6 +346,7 @@ function EntityPage({
   preview,
   client,
 }: {
+  onCommandBusy?: (key: string, busy: boolean) => void;
   pendingCommand: string;
   setPendingCommand: (key: string) => void;
   onWritePending: (pending: boolean) => void;
@@ -348,7 +359,7 @@ function EntityPage({
   const entity = preview.ir.entities.find(
     (e) => e.id === page.page.entity_ref,
   )!;
-  const needsReload = writeBlocked;
+  const needsReload = writeBlocked || Boolean(pendingCommand);
   const setNeedsReload = blockWrite;
   const [reloadEpoch, setReloadEpoch] = useState(0);
   const [rows, setRows] = useState<Row[]>([]);
@@ -442,6 +453,11 @@ function EntityPage({
     onWritePending(true);
     setError("");
     setNotice("");
+    // Retain the key before dispatch, above the workspace's unmount boundary.
+    // Cancellation/disconnect cannot establish that the server rolled back.
+    const key = crypto.randomUUID();
+    setPendingCommand(key);
+    onCommandBusy?.(key, true);
     try {
       const row = await client.command(
         entity.id,
@@ -449,9 +465,12 @@ function EntityPage({
         values,
         selected,
         controller.signal,
+        key,
       );
+      setPendingCommand("");
       if (!controller.signal.aborted) {
         const reloaded = await load();
+        setNeedsReload(!reloaded);
         setNotice(
           !reloaded
             ? "The change was saved, but records could not be reloaded. Reload and inspect records before another write."
@@ -461,6 +480,8 @@ function EntityPage({
         );
       }
     } catch (e) {
+      // The parent owns recovery facts even after this page is unmounted.
+      if (e instanceof APIError && e.status < 500) setPendingCommand("");
       if (!controller.signal.aborted) {
         if (e instanceof CommandOutcomeUnknown) {
           setPendingCommand(e.commandKey);
@@ -478,6 +499,7 @@ function EntityPage({
         }
       }
     } finally {
+      onCommandBusy?.(key, false);
       onWritePending(false);
       if (!controller.signal.aborted) setSaving(false);
     }

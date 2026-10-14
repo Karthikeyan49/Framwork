@@ -112,6 +112,11 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 		event.State.EntityID = resource.EntityID
 		event.State.FieldID = resource.FieldID
 		event.State.RecordID = resource.RecordID
+		if !decision.Allow {
+			// Retain the actual denied field/row decision for the fresh denial
+			// audit after the failed command's transaction rolls back.
+			*evidence = event
+		}
 		if err := a.Audit.Append(ctx, q, event); err != nil {
 			return err
 		}

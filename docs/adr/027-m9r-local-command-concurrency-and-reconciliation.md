@@ -51,12 +51,18 @@ than automatically submitting a new intent. Update/delete/TRUNCATE are denied;
 operator deletion is not a recovery mechanism. Worker drift checks include the
 new table and worker principals retain no generic data/receipt access.
 
-React generates a fresh UUID once for each attempted intent, retains unknown keys
-across pages of that entity and provides explicit receipt lookup. UNKNOWN keeps
+React generates a fresh UUID once for each attempted intent and records it before
+dispatch in an in-memory journal above the workspace component. The journal is
+keyed by the authenticated actor and execution scope; other signed-in actors
+cannot see or clear prior actors' recovery keys. In-flight workspace selection is
+disabled. Disconnect still clears credentials and aborts transport while retaining
+the key for the same actor's subsequent connection. Explicit receipt lookup is
+provided in the original application/revision. UNKNOWN keeps
 writes blocked, including after reload. COMMITTED plus successful fresh read
-releases the gate. Keys are displayed for recovery; current retention is in-memory
-within the workspace session, not cross-browser durable recovery. Copy an unknown
-key before ending a session. Legacy callers omitting keys remain compatible but
+releases the gate. Keys are displayed before dispatch and after account/workspace
+switches for their owner; current retention lasts within the console/tab, not
+across browser reloads or restarts. Copy an unknown key before closing the tab.
+Legacy callers omitting keys remain compatible but
 cannot claim durable reconciliation; the supplied frontend always sends keys.
 
 ## Verification and limits

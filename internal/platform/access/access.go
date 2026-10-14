@@ -143,6 +143,12 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 				}
 				return err
 			}
+			// A typed rejection is still a failed command. The repository may
+			// already have written before a final read/validation failed; never
+			// commit those effects merely because HTTP can represent the error.
+			if localCommand && result.status >= 400 && evidence.ActorID != "" && evidence.TenantID != "" {
+				return &requestRejection{response: result, evidence: &evidence}
+			}
 			if err = a.Audit.Append(ctx, tx, evidence); err != nil {
 				return err
 			}
@@ -179,7 +185,7 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 			if rejectedEvidence.Resource == "workflow" {
 				rejectedEvidence.Action = "workflows.rejected"
 			} else {
-				rejectedEvidence.Action += ".rejected"
+				rejectedEvidence.Action = strings.TrimSuffix(rejectedEvidence.Action, ".rejected") + ".rejected"
 			}
 			rejectedEvidence.Allow = false
 			return a.Audit.Append(ctx, q, rejectedEvidence)
