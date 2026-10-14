@@ -19,7 +19,28 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+type m9rWritePhases struct {
+	mu    sync.Mutex
+	times map[string][]float64
+}
+
+func (*m9rWritePhases) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+func (*m9rWritePhases) Shutdown(context.Context) error                  { return nil }
+func (*m9rWritePhases) ForceFlush(context.Context) error                { return nil }
+func (p *m9rWritePhases) OnEnd(s sdktrace.ReadOnlySpan) {
+	switch s.Name() {
+	case "postgres.request.admission", "postgres.connection.acquire", "postgres.role.admission", "postgres.transaction.body", "postgres.transaction.commit":
+		p.mu.Lock()
+		if len(p.times[s.Name()]) < 100000 {
+			p.times[s.Name()] = append(p.times[s.Name()], float64(s.EndTime().Sub(s.StartTime()).Microseconds())/1000)
+		}
+		p.mu.Unlock()
+	}
+}
 
 // Classify failures without exposing SQL, parameters or raw driver error text.
 type m9rWriteAuditDiagnostics struct {
@@ -28,7 +49,12 @@ type m9rWriteAuditDiagnostics struct {
 }
 
 func (w *m9rWriteAuditDiagnostics) Append(ctx context.Context, q postgres.Executor, e audit.Entry) error {
-	err := (audit.Postgres{}).Append(ctx, q, e)
+	return w.recordError((audit.Postgres{}).Append(ctx, q, e))
+}
+func (w *m9rWriteAuditDiagnostics) AppendBatch(ctx context.Context, q postgres.Executor, entries []audit.Entry) error {
+	return w.recordError((audit.Postgres{}).AppendBatch(ctx, q, entries))
+}
+func (w *m9rWriteAuditDiagnostics) recordError(err error) error {
 	if err != nil {
 		category := "other"
 		var pg *pgconn.PgError
@@ -58,6 +84,11 @@ func TestM9RIndependentWritePerformanceFloor(t *testing.T) {
 	}
 	server := httptest.NewServer(h)
 	defer server.Close()
+	phases := &m9rWritePhases{times: map[string][]float64{}}
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(phases))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	defer func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) }()
 	client := &http.Client{Timeout: 5 * time.Second}
 	defer client.CloseIdleConnections()
 	start := make(chan struct{})
@@ -134,6 +165,11 @@ func TestM9RIndependentWritePerformanceFloor(t *testing.T) {
 	t.Logf("clients=32 duration=%s visible_errors=%v", elapsed, failures)
 	stats := f.db.Stats()
 	t.Logf("pool_wait_count=%d pool_wait_duration=%s failed_receipt_states=%v audit_error_categories=%v", stats.WaitCount, stats.WaitDuration, failedReceipts, diagnostics.errors)
+	for _, name := range []string{"postgres.request.admission", "postgres.connection.acquire", "postgres.role.admission", "postgres.transaction.body", "postgres.transaction.commit"} {
+		if samples := phases.times[name]; len(samples) > 0 {
+			t.Logf("phase=%s n=%d p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f", name, len(samples), percentile(samples, .5), percentile(samples, .95), percentile(samples, .99))
+		}
+	}
 	if elapsed < 60*time.Second || len(failures) != 0 {
 		t.Error("write workload failed", failures)
 	}

@@ -95,8 +95,30 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	return a.executePreview(ctx, q, r, u, access, evidence, scope)
 }
 
-func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, scope data.Scope) (reply, error) {
+func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, scope data.Scope) (response reply, resultErr error) {
 	app, program, revision := scope.AppID(), scope.Program(), scope.Revision()
+	checks := make([]audit.Entry, 0, 32)
+	appendCheck := func(entry audit.Entry) error {
+		if len(checks) >= audit.MaxBatchEntries {
+			return data.ErrBudget
+		}
+		checks = append(checks, entry)
+		return nil
+	}
+	defer func() {
+		if value := recover(); value != nil {
+			// Panic unwinding must not issue more SQL; WithRuntime owns rollback.
+			panic(value)
+		}
+		// Decisions still govern operations immediately. Persist every decision
+		// before COMMIT/HTTP; any failure rolls all local effects back. Never mask
+		// an existing SQL abort by trying to flush into the aborted transaction.
+		if resultErr == nil {
+			if err := audit.AppendMany(ctx, q, a.Audit, checks); err != nil {
+				response, resultErr = reply{}, err
+			}
+		}
+	}()
 	trace.SpanFromContext(ctx).SetAttributes(attribute.String("compiler_version", program.IR().CompilerVersion), attribute.String("ir_hash", scope.Hash()), attribute.String("data_mode", "preview"))
 	if scope.DatasetID() != "" {
 		trace.SpanFromContext(ctx).SetAttributes(attribute.String("dataset_id", scope.DatasetID()), attribute.Int64("dataset_binding", scope.BindingVersion()), attribute.Int64("data_schema_generation", 1))
@@ -117,7 +139,7 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 			// audit after the failed command's transaction rolls back.
 			*evidence = event
 		}
-		if err := a.Audit.Append(ctx, q, event); err != nil {
+		if err := appendCheck(event); err != nil {
 			return err
 		}
 		if !decision.Allow {
@@ -175,7 +197,7 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 		raw, _ := json.Marshal(scope)
 		hash := sha256.Sum256(raw)
 		entry.State.ScopeHash = hex.EncodeToString(hash[:])
-		if er := a.Audit.Append(ctx, q, entry); er != nil {
+		if er := appendCheck(entry); er != nil {
 			return policy.DataScope{}, er
 		}
 		if e != nil {

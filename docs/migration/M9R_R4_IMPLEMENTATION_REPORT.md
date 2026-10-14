@@ -2,7 +2,7 @@
 
 Report date: 14 October 2026 (IST); captures 13–14 October 2026 (UTC).
 
-**R4 STATUS: PARTIAL — the write performance gate failed; independent review is pending.**
+**R4 STATUS: PARTIAL — the corrected write gate passed in the root run; independent review is pending.**
 The local preview command boundary is implemented and root correctness/fault/
 browser checks passed. This does not accept the full foundation, production,
 metadata uniqueness, full schema evolution or the failed R3 HTTP floor.
@@ -109,6 +109,41 @@ from this change. R1 forbids generic worker writes, so the worker/user regressio
 verifies confinement rather than inventing a broad writer port. Full schema
 evolution, production activation and R5–R7 product/verification/operations remain
 open. A focused test selection is not the final complete foundation suite.
+
+## Measured capacity correction
+
+Bounded authorization audit batches preserve every entry and propagate validation,
+RLS and chunk failures to the enclosing transaction. No evidence is sampled or
+discarded, no external effects are wrapped, and business audit/outbox coordination
+stays unchanged. [ADR028](../adr/028-m9r-bounded-transactional-audit-batching.md)
+records this contract. Batching alone did not close the latency gate.
+
+Phase tracing found request queueing dominated the tail. The API now owns a bounded
+FIFO admission gate sized to the unchanged ten-connection pool, with 128 waiting
+slots, cancellable waiters and idempotent releases. Each retry joins afresh; token
+verification and live membership resolve after admission. Cleanup/panic/rollback
+must finish before releasing a permit. Workers keep separate pools and authority.
+This is a capacity bulkhead, not R7's per-user rate limiter. See
+[ADR029](../adr/029-m9r-fifo-runtime-admission.md).
+
+| Command actually executed | Result |
+|---|---|
+| `./scripts/go.sh test -race -count=1 ./internal/audit ./internal/platform/access ./internal/runtime/data ./internal/platform/postgres` | PASS; audit 1.034 s, data 1.695 s, postgres 1.157 s; access has no unit tests |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RAudit\|^TestM9RFinalRead\|^TestM9R(Command\|IndependentWriters\|KnownSerialization\|UnknownCommand\|ReceiptMutation\|ConcurrentSameKey\|ActualDeadlock\|ConcurrentReference)' -v ./tests/integration` | PASS 26.731 s: exact 257 decision identities, cross-tenant final chunk rollback, batch failure after mutation, and prior command/fault roots |
+| `make test-write-performance` after batching only | FAIL 62.235 s; 6,095 successes, zero errors, p95 788.839 / p99 1,180.470 ms; fact counts passed |
+| `make test-write-performance` with transaction-phase diagnostics | FAIL 61.646 s; 5,731 successes, zero errors, p95 839.408 ms. Phase p95: pool acquire 717.820, role admission 20.666, body 184.554, commit 21.535 ms. These are separate distributions, not additive request percentiles |
+| `./scripts/go.sh test -race -count=1 -run '^TestAdmission' ./internal/platform/postgres` | PASS 1.079 s: FIFO order, queue bound, canceled waiter removal, double release and 50 simultaneous grant/cancellation recoveries |
+| `make test-write-performance` after FIFO admission | PASS 61.879 s; 32 clients ran 60.196 s, 8,500 writes, zero errors, p50 217.754 / p95 297.404 / p99 337.961 ms, 141.20 writes/s; exact versions/receipts/business-audit/outbox counts passed. Pool waiting zero; admission p95 205.799 ms. Same 4-CPU/8-GiB tier and unchanged 500 ms target |
+| `make test-performance` on the same candidate | FAIL 41.143 s: key SQL p95 1.088, numeric 197.161, selective 139.253 ms passed; 10-client numeric HTTP p95 898.985 / p99 1,104.990 ms exceeded 750 ms. Zero errors, correct responses and statement-level membership preserved; R3 remains open |
+| `make check test-unit build` after batching/FIFO and panic tracing cleanup | PASS: format/vet/modules, 84+43 kit checksums, race units/import boundaries, Node 5/frontend 29 tests, lint/typecheck and backend/frontend builds |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM5\|^TestM6R\|^TestM9RAudit\|^TestM9RFinalRead\|^TestM9R(Command\|IndependentWriters\|KnownSerialization\|UnknownCommand\|ReceiptMutation\|ConcurrentSameKey\|ActualDeadlock\|ConcurrentReference\|Dataset\|GenericGrantDrift\|ExactCapability\|ReadinessWithGeneric)' -v ./tests/integration` | PASS 95.215 s: retained data/release/DataScope, batching/commands, all dataset roots and exact worker/grant drift/prepared-plan readiness |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RQueuedCommandRechecksLiveMembershipBeforeMutation$' -v ./tests/integration` | PASS 2.569 s: revoke membership while the command waits; result 403, zero business/receipt/outbox facts and no leaked permit |
+| `make test-e2e` | PASS five real browser tests, 15.8 s, including successful-server-response loss and owned receipt recovery without another write |
+
+No new dependency, database migration or role privilege was needed for the capacity
+correction. The original 503 cause remains unconfirmed; the failure is retained.
+Independent replay/fault/role review and its workload must pass before R4 acceptance.
+The 100k-row custom-sort HTTP floor is still failed; managed indexing remains R3 work.
 
 ## Recovery and publication
 

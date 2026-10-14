@@ -21,12 +21,14 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type API struct {
 	DB               *sql.DB
+	Admission        *postgres.Admission
 	Auth             identity.Authenticator
 	Policy           policy.Engine
 	Audit            audit.Writer
@@ -47,6 +49,13 @@ func (a API) catalog() compiler.Catalog {
 }
 
 func (a API) Register(mux *http.ServeMux) {
+	if a.Admission == nil && a.DB != nil {
+		limit := a.DB.Stats().MaxOpenConnections
+		if limit < 1 {
+			limit = 10
+		}
+		a.Admission, _ = postgres.NewAdmission(limit, 128)
+	}
 	if a.PreviewEnabled && a.Registry != nil {
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/commands/{command}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets", a.serve)
@@ -96,6 +105,19 @@ func (e *requestRejection) Error() string { return "request rejected" }
 func denied(status int, code, message string) reply {
 	return reply{status: status, code: code, message: message}
 }
+
+func (a API) transaction(ctx context.Context, run func(context.Context, postgres.Executor) error) error {
+	if a.Admission != nil {
+		queueCtx, span := otel.Tracer("framework/postgres").Start(ctx, "postgres.request.admission")
+		release, err := a.Admission.Acquire(queueCtx)
+		span.End()
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return postgres.WithRuntime(ctx, a.DB, run)
+}
 func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	if a.Auth == nil || a.Policy == nil || a.Audit == nil {
 		httpserver.Error(w, r, 503, "identity_unavailable", "Identity service is not configured")
@@ -125,13 +147,13 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	run := func(parent context.Context) error {
 		response, rejectedEvidence = reply{}, audit.Entry{}
 		p, authErr = identity.Principal{}, identity.ErrUnauthenticated
-		if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
-			p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
-		}
 		if localCommand {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		return postgres.WithRuntime(parent, a.DB, func(ctx context.Context, tx postgres.Executor) error {
+		return a.transaction(parent, func(ctx context.Context, tx postgres.Executor) error {
+			if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
+				p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
+			}
 			result, evidence, err := a.perform(ctx, tx, r, p, authErr)
 			rejectedEvidence = evidence
 			if err != nil {
@@ -167,7 +189,7 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	var rejected *requestRejection
 	if errors.As(err, &rejected) {
-		err = postgres.WithRuntime(parentContext, a.DB, func(ctx context.Context, q postgres.Executor) error {
+		err = a.transaction(parentContext, func(ctx context.Context, q postgres.Executor) error {
 			u, e := (identity.Store{}).Resolve(ctx, q, p)
 			if e != nil {
 				return e

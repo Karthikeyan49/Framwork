@@ -74,31 +74,41 @@ func (Postgres) Ready(ctx context.Context, db *sql.DB) error {
 }
 
 func (Postgres) Append(ctx context.Context, tx postgres.Executor, e Entry) error {
-	if len(e.State.CommandKey) > 36 {
-		return errors.New("invalid command evidence")
-	}
-	if len(e.State.DatasetID) > 36 || len(e.State.DataSchemaHash) > 64 || e.State.DataSchemaGeneration < 0 || e.State.DatasetBinding < 0 || e.State.DatasetBinding > 1e9 || e.State.VerifiedRows < 0 || len(e.State.ManifestHash) > 64 || (e.State.DatasetState != "" && e.State.DatasetState != "OPEN" && e.State.DatasetState != "ADOPTING") {
-		return errors.New("invalid dataset evidence")
-	}
-	if len(e.State.WorkflowInstanceID) > 36 || len(e.State.WorkflowID) > 160 || len(e.State.WorkflowVersion) > 20 || len(e.State.WorkflowPlanHash) > 64 || e.State.WorkflowSequence < 0 || len(e.State.WorkflowStep) > 200 {
-		return errors.New("invalid workflow evidence")
-	}
-	if len(e.State.EventID) > 36 || len(e.State.ConsumerID) > 80 || e.State.AggregateSequence < 0 {
-		return errors.New("invalid event evidence")
-	}
-	if len(e.State.RuleID) > 160 || len(e.State.RuleHash) > 64 || len(e.State.RuleVersion) > 20 {
-		return errors.New("invalid rule evidence")
-	}
-	if e.Action == "" || len(e.Action) > 80 || len(e.Resource) > 80 || len(e.DecisionID) > 64 || len(e.RequestID) > 64 || len(e.TraceID) > 32 || len(e.PolicyVersion) > 80 {
-		return errors.New("invalid audit evidence")
-	}
-	if len(e.State.ArtifactHash) > 64 || len(e.State.ScopeHash) > 64 || len(e.State.IRHash) > 64 || len(e.State.EntityID) > 160 || len(e.State.FieldID) > 160 || len(e.State.RecordID) > 36 || e.State.RecordVersion < 0 || e.State.RecordVersion > 9007199254740991 || len(e.State.MetadataApp) > 160 || len(e.State.MetadataHash) > 64 || e.State.MetadataRevision < 0 || e.State.MetadataRevision > 1000000000 || len(e.State.OperatorRef) > 64 || len(e.State.Role) > 20 {
-		return errors.New("invalid audit state")
-	}
-	state, err := json.Marshal(e.State)
+	args, err := encodeEntry(e)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO audit.entries(actor_id,tenant_id,action,resource,allowed,decision_id,policy_version,request_id,trace_id,state) VALUES(NULLIF($1,'')::uuid,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$8,$9,$10)`, e.ActorID, e.TenantID, e.Action, e.Resource, e.Allow, e.DecisionID, e.PolicyVersion, e.RequestID, e.TraceID, state)
+	_, err = tx.ExecContext(ctx, insertEntry+`(NULLIF($1,'')::uuid,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$8,$9,$10)`, args...)
 	return err
+}
+
+const insertEntry = `INSERT INTO audit.entries(actor_id,tenant_id,action,resource,allowed,decision_id,policy_version,request_id,trace_id,state) VALUES`
+
+func encodeEntry(e Entry) ([]any, error) {
+	if len(e.State.CommandKey) > 36 {
+		return nil, errors.New("invalid command evidence")
+	}
+	if len(e.State.DatasetID) > 36 || len(e.State.DataSchemaHash) > 64 || e.State.DataSchemaGeneration < 0 || e.State.DatasetBinding < 0 || e.State.DatasetBinding > 1e9 || e.State.VerifiedRows < 0 || len(e.State.ManifestHash) > 64 || (e.State.DatasetState != "" && e.State.DatasetState != "OPEN" && e.State.DatasetState != "ADOPTING") {
+		return nil, errors.New("invalid dataset evidence")
+	}
+	if len(e.State.WorkflowInstanceID) > 36 || len(e.State.WorkflowID) > 160 || len(e.State.WorkflowVersion) > 20 || len(e.State.WorkflowPlanHash) > 64 || e.State.WorkflowSequence < 0 || len(e.State.WorkflowStep) > 200 {
+		return nil, errors.New("invalid workflow evidence")
+	}
+	if len(e.State.EventID) > 36 || len(e.State.ConsumerID) > 80 || e.State.AggregateSequence < 0 {
+		return nil, errors.New("invalid event evidence")
+	}
+	if len(e.State.RuleID) > 160 || len(e.State.RuleHash) > 64 || len(e.State.RuleVersion) > 20 {
+		return nil, errors.New("invalid rule evidence")
+	}
+	if e.Action == "" || len(e.Action) > 80 || len(e.Resource) > 80 || len(e.DecisionID) > 64 || len(e.RequestID) > 64 || len(e.TraceID) > 32 || len(e.PolicyVersion) > 80 {
+		return nil, errors.New("invalid audit evidence")
+	}
+	if len(e.State.ArtifactHash) > 64 || len(e.State.ScopeHash) > 64 || len(e.State.IRHash) > 64 || len(e.State.EntityID) > 160 || len(e.State.FieldID) > 160 || len(e.State.RecordID) > 36 || e.State.RecordVersion < 0 || e.State.RecordVersion > 9007199254740991 || len(e.State.MetadataApp) > 160 || len(e.State.MetadataHash) > 64 || e.State.MetadataRevision < 0 || e.State.MetadataRevision > 1000000000 || len(e.State.OperatorRef) > 64 || len(e.State.Role) > 20 {
+		return nil, errors.New("invalid audit state")
+	}
+	state, err := json.Marshal(e.State)
+	if err != nil {
+		return nil, err
+	}
+	return []any{e.ActorID, e.TenantID, e.Action, e.Resource, e.Allow, e.DecisionID, e.PolicyVersion, e.RequestID, e.TraceID, state}, nil
 }

@@ -1,7 +1,9 @@
 # External review finding status
 
 Updated 14 October 2026 (IST). Baseline review: `81b88d2`; latest published
-implementation checkpoint at this update: `a5cbafd`. This is a progress ledger,
+published checkpoint at the start of this remediation: `a5cbafd`. Subsequent
+rollback/recovery fixes and FIFO capacity correction are detailed in the R4 report.
+This is a progress ledger,
 not a claim that the review's complete scope has passed.
 
 The original [validation](../verification/M0_M9_REVIEW_VALIDATION.md) records
@@ -17,8 +19,10 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Records disappear across compatible compiler/release changes | R2a plans/transforms and R2b explicit equal-schema dataset bindings independently PASS | Full R2 schema generations, transformation executor, canonical live access facts and workflow data pins remain open |
 | RLS membership checked once per row | Replaced by statement-level membership evaluation; populated isolation and SQL plans verified | Preserve live authorization and fail-closed RLS; HTTP latency gate remains below |
 | End-to-end query performance | R3a PARTIAL: current-host HTTP p95 gate failed despite passing SQL/correctness checks | Profile and fix the measured bottleneck; keep the 750 ms reference target |
-| Shared dataset writer counter | R4 removes ordinary counter updates; overlapping writers/CAS/reference/fault checks pass | Independent review and 32-client/60-second capacity gate remain open |
-| Write retries / duplicate effects / unknown COMMIT | R4 adds narrowly classified bounded retries and immutable owned receipts; lost-COMMIT reply and browser reconciliation executed | R4 PARTIAL: write gate observed one 503; diagnose rather than relabel as PASS |
+| Shared dataset writer counter | R4 removes ordinary counter updates; overlapping writers/CAS/reference/fault checks pass; FIFO root capacity run p95 297.404 ms with zero errors | Independent corrected-code review/workload remains open; previous failed runs retained |
+| Write retries / duplicate effects / unknown COMMIT | R4 adds narrowly classified bounded retries and immutable owned receipts; lost-COMMIT reply and browser reconciliation executed | R4 remains PARTIAL until independent acceptance; first 503 cause unconfirmed |
+| Late command rejection can commit a record without receipt/outbox | Independently reproduced fault; rollback fix and real RLS-policy regression pass in root tests | Independent correction re-verification pending |
+| Same-login navigation loses an in-flight command key | Independently reproduced; pre-dispatch actor-owned console journal and navigation guard pass root disconnect/account/workspace recovery tests | Independent correction re-verification pending; browser-restart persistence intentionally absent |
 | Custom field indexes / unique projections | Not implemented | R3b/R3c governed projections, explicit metadata semantics and concurrent uniqueness proof |
 | Aggregates and bounded join planner | Existing explicit budgets retained; broad SQL aggregation not implemented | R3d planner/aggregation correctness and workload gates |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
