@@ -15,9 +15,9 @@ type DataScope struct {
 	Children   []DataScope     `json:"children,omitempty"`
 }
 type ScopeCondition struct {
-	Field string
-	Op    string
-	Value json.RawMessage
+	Field string          `json:"field"`
+	Op    string          `json:"op"`
+	Value json.RawMessage `json:"value,omitempty"`
 }
 type ScopeContext struct {
 	Teams              []string

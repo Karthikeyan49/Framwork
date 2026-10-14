@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,6 +195,30 @@ func TestAPIWithoutCollectorAndDependencyOutages(t *testing.T) {
 	}
 }
 
+type workerStartupLog struct {
+	slog.Handler
+	ready chan struct{}
+	once  *sync.Once
+}
+
+func (h workerStartupLog) Handle(ctx context.Context, r slog.Record) error {
+	if err := h.Handler.Handle(ctx, r); err != nil {
+		return err
+	}
+	if r.Message == "event delivery started" || r.Message == "event delivery disabled" {
+		h.once.Do(func() { close(h.ready) })
+	}
+	return nil
+}
+func (h workerStartupLog) WithAttrs(a []slog.Attr) slog.Handler {
+	h.Handler = h.Handler.WithAttrs(a)
+	return h
+}
+func (h workerStartupLog) WithGroup(g string) slog.Handler {
+	h.Handler = h.Handler.WithGroup(g)
+	return h
+}
+
 func TestWorkerLifecycle(t *testing.T) {
 	m8Database(t)
 	newIAM(t) // Explicit tenant assignment in the owned disposable database.
@@ -204,9 +229,20 @@ func TestWorkerLifecycle(t *testing.T) {
 	c.OTelEndpoint = ""
 	c.EventRedisURL = os.Getenv("EVENT_RECEIVER_REDIS_URL")
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- app.Run(ctx, "framework-worker", c, slog.New(slog.NewJSONHandler(io.Discard, nil))) }()
-	time.Sleep(100 * time.Millisecond)
+	ready := make(chan struct{})
+	logger := slog.New(workerStartupLog{Handler: slog.NewJSONHandler(io.Discard, nil), ready: ready, once: &sync.Once{}})
+	go func() { done <- app.Run(ctx, "framework-worker", c, logger) }()
+	// Synchronize with successful storage/transport startup, rather than cancel
+	// an in-flight readiness probe after an assumed 100 ms on a loaded machine.
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatal("worker exited before startup", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not confirm startup")
+	}
 	cancel()
 	select {
 	case err := <-done:

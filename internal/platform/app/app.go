@@ -87,13 +87,16 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 			probe, cancel = context.WithTimeout(ctx, c.DependencyTimeout)
 			err = workflow.Ready(probe, db, "framework_worker")
 			if err == nil {
+				err = (policy.RoleStore{}).Ready(probe, db, true)
+			}
+			if err == nil {
 				err = (audit.Postgres{}).Ready(probe, db)
 			}
 			cancel()
 			if err != nil {
 				return errors.New("workflow storage contract unavailable")
 			}
-			store := access.WorkerWorkflowStore(policy.Native{}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
+			store := access.WorkerWorkflowStore(policy.Runtime{Worker: true}, audit.Postgres{}, events.Postgres{}, func(ctx context.Context, q postgres.Executor, a tenant.Access) (identity.User, error) {
 				var id string
 				if e := q.QueryRowContext(ctx, `SELECT current_setting('app.job_id',true)`).Scan(&id); e != nil {
 					return identity.User{}, e
@@ -116,6 +119,9 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		}
 		probe, cancel = context.WithTimeout(ctx, c.DependencyTimeout)
 		err = events.Ready(probe, db, role)
+		if err == nil && service == "framework-worker" {
+			err = (policy.RoleStore{}).Ready(probe, db, true)
+		}
 		if err == nil && service == "framework-worker" {
 			err = (audit.Postgres{}).Ready(probe, db)
 		}
@@ -142,7 +148,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		if service == "framework-dispatcher" {
 			events.RunDispatcher(ctx, events.Dispatcher{DB: db, Transport: broker}, logger)
 		} else {
-			events.RunConsumer(ctx, events.Consumer{DB: db, Policy: policy.Native{}, Audit: audit.Postgres{}}, broker, logger)
+			events.RunConsumer(ctx, events.Consumer{DB: db, Policy: policy.Runtime{Worker: true}, Audit: audit.Postgres{}}, broker, logger)
 		}
 		logger.Info("event delivery stopped", "service", service)
 		wg.Wait()
@@ -170,7 +176,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if err != nil {
 		return errors.New("metadata schema initialization failed")
 	}
-	accessAPI := access.API{DB: db, Auth: auth, Policy: policy.Native{}, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
+	accessAPI := access.API{DB: db, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
 	identityProbe := func(ctx context.Context) error {
 		return (identity.Store{}).Ready(ctx, db)
 	}
@@ -179,7 +185,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 			return nil
 		}
 		return workflow.Ready(ctx, db, "framework_app")
-	}, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
+	}, "policy": func(ctx context.Context) error { return (policy.RoleStore{}).Ready(ctx, db, false) }, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
 	server := httpserver.New(c.HTTPAddr, handler)
 	listener, err := net.Listen("tcp", c.HTTPAddr)
 	if err != nil {

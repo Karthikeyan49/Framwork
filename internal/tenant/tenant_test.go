@@ -17,7 +17,7 @@ func TestAccessAndValidation(t *testing.T) {
 	if !ValidID("11111111-1111-1111-1111-111111111111") {
 		t.Fatal("UUID rejected")
 	}
-	if ValidRole("superuser") || ValidRole("") {
-		t.Fatal("unknown role accepted")
+	if !ValidRole("finance_manager") || ValidRole("") || ValidRole("Finance Manager") || ValidRole("*") || ValidRole("0owner") {
+		t.Fatal("role identifier validation violated")
 	}
 }

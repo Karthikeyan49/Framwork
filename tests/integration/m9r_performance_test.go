@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
@@ -51,6 +52,7 @@ func TestM9RMembershipPerformanceFloor(t *testing.T) {
 	m8Database(t)
 	requireM9RReferencePostgres(t)
 	f, h, base, token, application := m5Fixture(t)
+	h = r5Handler(t, f, audit.Postgres{})
 	ctx := context.Background()
 	descriptor := m3Call(h, "GET", strings.Split(base, "/entities/")[0], token, 0, nil)
 	var release struct {

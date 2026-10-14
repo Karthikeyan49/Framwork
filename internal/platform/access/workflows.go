@@ -27,6 +27,19 @@ var workflowsPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.
 
 type WorkflowUser func(context.Context, postgres.Executor, tenant.Access) (identity.User, error)
 
+func workflowRoleDenial(ctx context.Context, a tenant.Access, pin workflow.Pin, err error) error {
+	var role policy.RoleDenied
+	if !errors.As(err, &role) {
+		if errors.Is(err, policy.ErrScope) {
+			return workflow.ErrDenied
+		}
+		return err
+	}
+	d := (policy.Native{}).Decide(ctx, policy.Subject{}, "tenant.access", policy.Resource{}, policy.Context{})
+	entry := audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: "policy.unavailable", Resource: "workflow", DecisionID: d.ID, PolicyVersion: role.PolicyVersion(), RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String(), State: audit.State{Role: role.Name, PolicyRevision: role.Version, ArtifactHash: role.Hash, RecordID: pin.RecordID, WorkflowID: pin.WorkflowID, MetadataApp: pin.AppID, MetadataRevision: pin.Revision, IRHash: pin.IRHash}}
+	return &workflow.AuthorizationDenied{Evidence: entry}
+}
+
 // WorkflowStore is platform composition: workflow depends on authorization and
 // snapshot ports, not the data runtime/compiler's implementation or private tables.
 func WorkflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.LifecycleWriter, user WorkflowUser) workflow.Store {
@@ -50,6 +63,14 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 	record := func(ctx context.Context, q postgres.Executor, a tenant.Access, pin workflow.Pin, fields []string) (data.Record, error) {
 		if engine == nil || writer == nil || user == nil {
 			return data.Record{}, workflow.ErrDenied
+		}
+		currentEngine := engine
+		if loaded, ok := engine.(policy.Transactional); ok {
+			var err error
+			currentEngine, err = loaded.Resolve(ctx, q, a)
+			if err != nil {
+				return data.Record{}, workflowRoleDenial(ctx, a, pin, err)
+			}
 		}
 		u, e := user(ctx, q, a)
 		if e != nil || u.ID() != a.ActorID() {
@@ -83,7 +104,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		}
 		evidence := audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String(), State: audit.State{MetadataApp: pin.AppID, MetadataRevision: pin.Revision, IRHash: pin.IRHash, WorkflowID: pin.WorkflowID, WorkflowVersion: pin.WorkflowVersion, WorkflowPlanHash: pin.PlanHash}}
 		guard := func(ctx context.Context, action string, r data.Resource) error {
-			d := enforce(engine.Decide(ctx, policy.Subject{User: u, Access: a}, action, policy.Resource{TenantID: a.TenantID(), Type: strings.Split(action, ".")[1], OwnerID: r.OwnerID, AppID: pin.AppID, EntityID: r.EntityID, FieldID: r.FieldID, RecordID: r.RecordID}, policy.Context{RequestID: pin.RequestID, TraceID: evidence.TraceID}))
+			d := enforce(currentEngine.Decide(ctx, policy.Subject{User: u, Access: a}, action, policy.Resource{TenantID: a.TenantID(), Type: strings.Split(action, ".")[1], OwnerID: r.OwnerID, AppID: pin.AppID, EntityID: r.EntityID, FieldID: r.FieldID, RecordID: r.RecordID}, policy.Context{RequestID: pin.RequestID, TraceID: evidence.TraceID}))
 			ev := evidence
 			ev.Action = action
 			ev.Resource = strings.Split(action, ".")[1]
@@ -97,7 +118,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 				return e
 			}
 			if !d.Allow {
-				return workflow.ErrDenied
+				return &workflow.AuthorizationDenied{Evidence: ev}
 			}
 			return nil
 		}
@@ -106,7 +127,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 			return data.Record{}, e
 		}
 		resolve := func(ctx context.Context, action string, r data.Resource) (policy.DataScope, error) {
-			scoped, ok := engine.(policy.ScopeEngine)
+			scoped, ok := currentEngine.(policy.ScopeEngine)
 			if !ok {
 				return policy.DataScope{}, workflow.ErrDenied
 			}
@@ -121,6 +142,12 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 			entry.Allow = e == nil
 			entry.State.EntityID = r.EntityID
 			entry.State.FieldID = r.FieldID
+			capability := "data.entity.read"
+			if r.FieldID != "" {
+				capability = "data.field.read"
+			}
+			d := currentEngine.Decide(ctx, policy.Subject{User: u, Access: a}, capability, policy.Resource{TenantID: a.TenantID(), Type: kind, AppID: pin.AppID, EntityID: r.EntityID, FieldID: r.FieldID}, policy.Context{})
+			entry.DecisionID, entry.PolicyVersion = d.ID, d.Version
 			raw, _ := json.Marshal(scope)
 			hash := sha256.Sum256(raw)
 			entry.State.ScopeHash = hex.EncodeToString(hash[:])
@@ -128,7 +155,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 				return policy.DataScope{}, er
 			}
 			if e != nil {
-				return policy.DataScope{}, workflow.ErrDenied
+				return policy.DataScope{}, &workflow.AuthorizationDenied{Evidence: entry}
 			}
 			return scope, nil
 		}
@@ -146,7 +173,12 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 			return data.Record{}, e
 		}
 		if len(page.Records) != 1 {
-			return data.Record{}, workflow.ErrNotFound
+			d := currentEngine.Decide(ctx, policy.Subject{User: u, Access: a}, "data.row.read", policy.Resource{TenantID: a.TenantID(), Type: "row", AppID: pin.AppID, EntityID: entity, RecordID: pin.RecordID}, policy.Context{})
+			entry := evidence
+			entry.Action, entry.Resource = "workflows.data_scope", "row"
+			entry.DecisionID, entry.PolicyVersion = d.ID, d.Version
+			entry.State.EntityID, entry.State.RecordID = entity, pin.RecordID
+			return data.Record{}, &workflow.AuthorizationDenied{Evidence: entry}
 		}
 		return page.Records[0], nil
 	}
@@ -183,6 +215,14 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		return workflow.Snapshot{Fields: ids, Values: values, RecordVersion: r.Version}, nil
 	}
 	authorize := func(ctx context.Context, q postgres.Executor, a tenant.Access, action string, pin workflow.Pin, fields []string) (audit.Entry, error) {
+		currentEngine := engine
+		if loaded, ok := engine.(policy.Transactional); ok {
+			var err error
+			currentEngine, err = loaded.Resolve(ctx, q, a)
+			if err != nil {
+				return audit.Entry{}, workflowRoleDenial(ctx, a, pin, err)
+			}
+		}
 		if user == nil || engine == nil {
 			return audit.Entry{}, workflow.ErrDenied
 		}
@@ -198,7 +238,7 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		if e != nil {
 			return audit.Entry{}, e
 		}
-		d := enforce(engine.Decide(ctx, policy.Subject{User: u, Access: a}, action, policy.Resource{TenantID: a.TenantID(), Type: "workflow", OwnerID: source.OwnerID, AppID: pin.AppID, EntityID: p.Plan().EntityID, RecordID: pin.RecordID, WorkflowID: pin.WorkflowID}, policy.Context{RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String()}))
+		d := enforce(currentEngine.Decide(ctx, policy.Subject{User: u, Access: a}, action, policy.Resource{TenantID: a.TenantID(), Type: "workflow", OwnerID: source.OwnerID, AppID: pin.AppID, EntityID: p.Plan().EntityID, RecordID: pin.RecordID, WorkflowID: pin.WorkflowID}, policy.Context{RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String()}))
 		entry := audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: action, Resource: "workflow", Allow: d.Allow, DecisionID: d.ID, PolicyVersion: d.Version, RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String(), State: audit.State{EntityID: p.Plan().EntityID}}
 		if !d.Allow {
 			if writer != nil {

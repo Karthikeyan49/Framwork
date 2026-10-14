@@ -11,6 +11,9 @@ import (
 )
 
 type State struct {
+	PolicyRevision       int64  `json:"policy_revision,omitempty"`
+	PolicyOperation      string `json:"policy_operation,omitempty"`
+	PolicySubject        string `json:"policy_subject,omitempty"`
 	EvolutionID          string `json:"evolution_id,omitempty"`
 	EvolutionState       string `json:"evolution_state,omitempty"`
 	EvolutionCheckpoint  int64  `json:"evolution_checkpoint,omitempty"`
@@ -89,6 +92,9 @@ func (Postgres) Append(ctx context.Context, tx postgres.Executor, e Entry) error
 const insertEntry = `INSERT INTO audit.entries(actor_id,tenant_id,action,resource,allowed,decision_id,policy_version,request_id,trace_id,state) VALUES`
 
 func encodeEntry(e Entry) ([]any, error) {
+	if e.State.PolicyRevision < 0 || e.State.PolicyRevision > 1e9 || len(e.State.PolicyOperation) > 36 || len(e.State.PolicySubject) > 36 {
+		return nil, errors.New("invalid policy evidence")
+	}
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")
 	}
@@ -110,7 +116,7 @@ func encodeEntry(e Entry) ([]any, error) {
 	if e.Action == "" || len(e.Action) > 80 || len(e.Resource) > 80 || len(e.DecisionID) > 64 || len(e.RequestID) > 64 || len(e.TraceID) > 32 || len(e.PolicyVersion) > 80 {
 		return nil, errors.New("invalid audit evidence")
 	}
-	if len(e.State.ArtifactHash) > 64 || len(e.State.ScopeHash) > 64 || len(e.State.IRHash) > 64 || len(e.State.EntityID) > 160 || len(e.State.FieldID) > 160 || len(e.State.RecordID) > 36 || e.State.RecordVersion < 0 || e.State.RecordVersion > 9007199254740991 || len(e.State.MetadataApp) > 160 || len(e.State.MetadataHash) > 64 || e.State.MetadataRevision < 0 || e.State.MetadataRevision > 1000000000 || len(e.State.OperatorRef) > 64 || len(e.State.Role) > 20 {
+	if len(e.State.ArtifactHash) > 64 || len(e.State.ScopeHash) > 64 || len(e.State.IRHash) > 64 || len(e.State.EntityID) > 160 || len(e.State.FieldID) > 160 || len(e.State.RecordID) > 36 || e.State.RecordVersion < 0 || e.State.RecordVersion > 9007199254740991 || len(e.State.MetadataApp) > 160 || len(e.State.MetadataHash) > 64 || e.State.MetadataRevision < 0 || e.State.MetadataRevision > 1000000000 || len(e.State.OperatorRef) > 64 || len(e.State.Role) > 64 {
 		return nil, errors.New("invalid audit state")
 	}
 	state, err := json.Marshal(e.State)

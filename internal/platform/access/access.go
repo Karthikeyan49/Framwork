@@ -31,6 +31,7 @@ type API struct {
 	Admission        *postgres.Admission
 	Auth             identity.Authenticator
 	Policy           policy.Engine
+	PolicyLoader     policy.Loader
 	Audit            audit.Writer
 	Events           events.Writer
 	WorkflowEvents   events.LifecycleWriter
@@ -92,6 +93,10 @@ func (a API) Register(mux *http.ServeMux) {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/instances/{instance}/signals", a.serve)
 		}
 	}
+	mux.HandleFunc("GET /v1/tenants/{tenant}/roles/{role}", a.serve)
+	mux.HandleFunc("GET /v1/tenants/{tenant}/roles/operations/{policy_operation}", a.serve)
+	mux.HandleFunc("POST /v1/tenants/{tenant}/roles", a.serve)
+	mux.HandleFunc("POST /v1/tenants/{tenant}/members/{member}/role", a.serve)
 	mux.HandleFunc("GET /v1/session", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/access", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/members", a.serve)
@@ -310,6 +315,27 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		return reply{}, evidence, err
 	}
 	span.SetAttributes(attribute.String("tenant_id", access.TenantID()))
+	if a.PolicyLoader != nil {
+		engine, err := a.PolicyLoader(ctx, tx, access)
+		if errors.Is(err, policy.ErrScope) {
+			evidence.Action = "policy.unavailable"
+			evidence.TenantID = access.TenantID()
+			var deniedRole policy.RoleDenied
+			if errors.As(err, &deniedRole) {
+				decision := (policy.Native{}).Decide(ctx, policy.Subject{}, "tenant.access", policy.Resource{}, policyContext)
+				decision.Version = deniedRole.PolicyVersion()
+				recordDecision(decision)
+				evidence.State.Role = deniedRole.Name
+				evidence.State.PolicyRevision = deniedRole.Version
+				evidence.State.ArtifactHash = deniedRole.Hash
+			}
+			return forbidden, evidence, nil
+		}
+		if err != nil {
+			return reply{}, evidence, err
+		}
+		a.Policy = engine
+	}
 	action, resource := "tenant.access", "tenant"
 	if strings.HasSuffix(r.URL.Path, "/members") {
 		action, resource = "memberships.read", "membership"
@@ -345,6 +371,17 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			action = "datasets.evolve"
 		}
 	}
+	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") {
+		resource = "role"
+		action = "roles.read"
+		if r.Method == http.MethodPost {
+			action = "roles.write"
+		}
+	}
+	if r.PathValue("member") != "" {
+		resource = "role"
+		action = "roles.assign"
+	}
 	appID := ""
 	if resource == "preview" || resource == "metadata" {
 		appID = r.PathValue("app")
@@ -360,6 +397,10 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	recordDecision(d)
 	if !d.Allow {
 		return forbidden, evidence, nil
+	}
+	if resource == "role" {
+		result, err := a.role(ctx, tx, r, access, &evidence)
+		return result, evidence, err
 	}
 	if resource == "preview" {
 		var result reply

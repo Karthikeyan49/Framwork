@@ -9,9 +9,9 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-// R3b adds governed index management to the native decision contract. Retained
-// evidence keeps its original version; new decisions identify these semantics.
-const Version = "m9r-native-v3"
+// R5a adds explicit owner-only role administration to the bootstrap adapter.
+// Retained evidence keeps its original version.
+const Version = "m9r-native-v4"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -56,10 +56,18 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 		return false
 	}
 	for _, role := range roles {
-		if !tenant.ValidRole(role) {
+		if !tenant.ValidRole(role) || (role != "owner" && role != "admin" && role != "member" && role != "viewer") {
 			continue
 		}
 		switch action {
+		case "roles.read":
+			if resource.Type == "role" && (role == "owner" || role == "admin") {
+				return true
+			}
+		case "roles.write", "roles.assign":
+			if resource.Type == "role" && role == "owner" {
+				return true
+			}
 		case "commands.reconcile":
 			if resource.Type == "preview" && resource.AppID != "" && role != "viewer" {
 				return true

@@ -163,7 +163,14 @@ func (c Consumer) Consume(ctx context.Context, p Pointer) error {
 		if err != nil {
 			return ErrDelivery
 		}
-		decision := c.Policy.Decide(ctx, policy.Subject{User: u, Access: a}, "events.consume", policy.Resource{TenantID: e.TenantID, Type: "event", AppID: e.AppID, EntityID: e.AggregateType, RecordID: e.AggregateID}, policy.Context{RequestID: e.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String()})
+		engine := c.Policy
+		if loaded, ok := engine.(policy.Transactional); ok {
+			engine, err = loaded.Resolve(ctx, q, a)
+			if err != nil {
+				return ErrDelivery
+			}
+		}
+		decision := engine.Decide(ctx, policy.Subject{User: u, Access: a}, "events.consume", policy.Resource{TenantID: e.TenantID, Type: "event", AppID: e.AppID, EntityID: e.AggregateType, RecordID: e.AggregateID}, policy.Context{RequestID: e.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String()})
 		if !decision.Allow || decision.ID == "" || len(decision.ID) > 64 || decision.Version == "" || len(decision.Version) > 80 || len(decision.Obligations) != 1 || decision.Obligations[0] != "audit" {
 			return ErrDelivery
 		}

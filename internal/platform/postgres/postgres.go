@@ -63,6 +63,7 @@ func checkRuntime(ctx context.Context, db queryer) error {
     OR (n.nspname='audit' AND (pg_catalog.has_table_privilege(c.oid,'UPDATE,DELETE,TRUNCATE') OR pg_catalog.has_any_column_privilege(c.oid,'UPDATE')))
     OR (n.nspname IN ('control','runtime') AND (pg_catalog.has_table_privilege(c.oid,'SELECT,INSERT,UPDATE,DELETE') OR pg_catalog.has_any_column_privilege(c.oid,'SELECT,INSERT,UPDATE')) AND NOT(c.relrowsecurity AND c.relforcerowsecurity))
     OR (n.nspname IN ('iam','audit') AND c.relname<>'roles' AND NOT(c.relrowsecurity AND c.relforcerowsecurity))
+    OR (n.nspname='iam' AND c.relname='roles' AND to_regclass('control.role_heads') IS NOT NULL AND pg_catalog.has_any_column_privilege(c.oid,'SELECT'))
     OR (n.nspname IN ('control','runtime') AND (pg_catalog.has_table_privilege(c.oid,'TRUNCATE,REFERENCES,TRIGGER') OR pg_catalog.has_any_column_privilege(c.oid,'REFERENCES')))))
 
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace

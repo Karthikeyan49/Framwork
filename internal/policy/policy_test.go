@@ -2,20 +2,21 @@ package policy
 
 import (
 	"context"
-	"github.com/Karthikeyan49/Framwork/internal/tenant"
+
 	"testing"
 )
 
 func TestPolicyMatrix(t *testing.T) {
 	for _, role := range []string{"owner", "admin", "member", "viewer", "unknown", ""} {
+		builtin := role == "owner" || role == "admin" || role == "member" || role == "viewer"
 		for _, tc := range []struct {
 			action, kind, owner string
 			permitted           bool
 		}{
-			{"tenant.access", "tenant", "", tenant.ValidRole(role)},
+			{"tenant.access", "tenant", "", builtin},
 			{"memberships.read", "membership", "", role == "owner" || role == "admin"},
-			{"profile.read", "user", "alice", tenant.ValidRole(role)},
-			{"metadata.read", "metadata", "", tenant.ValidRole(role)},
+			{"profile.read", "user", "alice", builtin},
+			{"metadata.read", "metadata", "", builtin},
 			{"metadata.write", "metadata", "", role == "owner" || role == "admin"},
 			{"metadata.write", "tool", "", false},
 			{"profile.read", "user", "bob", false},

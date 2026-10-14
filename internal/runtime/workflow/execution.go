@@ -169,6 +169,22 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 	if errors.As(err, &failed) {
 		return w.recordFailure(ctx, lease, failed)
 	}
+	var denied *AuthorizationDenied
+	if errors.As(err, &denied) {
+		// The failed business transaction also rolled back its denial evidence.
+		// Bind the exact ticket again and append only that bounded denial; never
+		// replay the state transition or activity while recording the rejection.
+		if evidenceErr := jobs.WithJob(ctx, w.DB, lease.Ticket, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
+			entry := denied.Evidence
+			if entry.Allow || entry.ActorID != a.ActorID() || entry.TenantID != a.TenantID() {
+				return ErrDenied
+			}
+			entry.State.WorkflowInstanceID = lease.Ticket.JobID()
+			return w.Store.Audit.Append(ctx, q, entry)
+		}); evidenceErr != nil {
+			return evidenceErr
+		}
+	}
 	if errors.Is(err, jobs.ErrJob) {
 		return ErrLease
 	}

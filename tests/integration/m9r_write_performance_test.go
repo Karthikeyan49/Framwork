@@ -16,7 +16,6 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
-	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel"
@@ -77,7 +76,7 @@ func TestM9RIndependentWritePerformanceFloor(t *testing.T) {
 	requireM9RReferencePostgres(t)
 	f, h, base, token, app := m5Fixture(t)
 	diagnostics := &m9rWriteAuditDiagnostics{errors: map[string]int{}}
-	h = m5Handler(t, f, policy.Native{}, diagnostics, true)
+	h = r5Handler(t, f, diagnostics)
 	rows := make([]data.Record, 32)
 	for i := range rows {
 		rows[i] = m5Create(t, h, base, token, "Write floor")
