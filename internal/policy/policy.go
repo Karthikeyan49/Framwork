@@ -10,7 +10,7 @@ import (
 )
 
 // R5a adds explicit owner-only role administration to the bootstrap adapter;
-// R5c adds owner/admin record access administration.
+// R5c adds owner/admin record access and team administration.
 // Retained evidence keeps its original version.
 const Version = "m9r-native-v5"
 
@@ -67,6 +67,10 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			}
 		case "roles.write", "roles.assign":
 			if resource.Type == "role" && role == "owner" {
+				return true
+			}
+		case "teams.read", "teams.manage":
+			if resource.Type == "team" && (role == "owner" || role == "admin") {
 				return true
 			}
 		case "commands.reconcile":

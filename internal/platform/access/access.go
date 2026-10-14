@@ -99,6 +99,10 @@ func (a API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/tenants/{tenant}/roles/operations/{policy_operation}", a.serve)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/roles", a.serve)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/members/{member}/role", a.serve)
+	mux.HandleFunc("GET /v1/tenants/{tenant}/teams", a.serve)
+	mux.HandleFunc("POST /v1/tenants/{tenant}/teams", a.serve)
+	mux.HandleFunc("GET /v1/tenants/{tenant}/teams/{team}", a.serve)
+	mux.HandleFunc("POST /v1/tenants/{tenant}/teams/{team}/members/{team_member}", a.serve)
 	mux.HandleFunc("GET /v1/session", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/access", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/members", a.serve)
@@ -384,6 +388,12 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		resource = "role"
 		action = "roles.assign"
 	}
+	if r.PathValue("team") != "" || strings.HasSuffix(r.URL.Path, "/teams") {
+		resource, action = "team", "teams.read"
+		if r.Method == http.MethodPost {
+			action = "teams.manage"
+		}
+	}
 	appID := ""
 	if resource == "preview" || resource == "metadata" {
 		appID = r.PathValue("app")
@@ -402,6 +412,10 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	}
 	if resource == "role" {
 		result, err := a.role(ctx, tx, r, access, &evidence)
+		return result, evidence, err
+	}
+	if resource == "team" {
+		result, err := a.team(ctx, tx, r, access, &evidence)
 		return result, evidence, err
 	}
 	if resource == "preview" {

@@ -34,6 +34,11 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	// Team administration ports must exist with their reviewed definer contract.
+	var teamPorts bool
+	if err = db.QueryRowContext(ctx, `SELECT count(*)=3 AND bool_and(p.prosecdef AND p.proowner='framework_schema_owner'::regrole AND p.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'] AND has_function_privilege(p.oid,'EXECUTE')) FROM pg_catalog.pg_proc p WHERE p.oid IN('control.save_team(uuid,uuid,bigint,text,uuid)'::regprocedure,'control.set_team_member(uuid,uuid,uuid,boolean,boolean)'::regprocedure,'control.team_members(uuid,uuid)'::regprocedure)`).Scan(&teamPorts); err != nil || !teamPorts {
+		return errors.New("team administration contract unavailable")
+	}
 	var actor, tenantID any
 	var matches bool
 	return db.QueryRowContext(ctx, `SELECT iam.authenticated_actor(),iam.current_tenant_id(),iam.tenant_matches_scope(NULL)`).Scan(&actor, &tenantID, &matches)

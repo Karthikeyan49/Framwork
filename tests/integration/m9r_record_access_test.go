@@ -227,3 +227,10 @@ func TestM9RRecordAccessCanonicalDatasetGeneration(t *testing.T) {
 		t.Fatal("policy version")
 	}
 }
+
+func recordOwner(user, team string) data.AccessCommand {
+	return recordOwnerAt(user, team, 1)
+}
+func recordOwnerAt(user, team string, version int64) data.AccessCommand {
+	return data.AccessCommand{Operation: "owner", ExpectedVersion: version, UserID: user, TeamID: team}
+}

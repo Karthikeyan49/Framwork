@@ -95,3 +95,24 @@ func TestRecordAccessAdministrationCapabilities(t *testing.T) {
 		t.Fatal("unused scope accepted on row administration gate")
 	}
 }
+
+func TestTeamAdministrationCapabilities(t *testing.T) {
+	team := Resource{TenantID: "tenant-a", Type: "team"}
+	for _, role := range []string{"owner", "admin", "member", "viewer"} {
+		for _, action := range []string{"teams.read", "teams.manage"} {
+			if got := permits("alice", "tenant-a", []string{role}, action, team); got != (role == "owner" || role == "admin") {
+				t.Fatalf("%s/%s allow=%v", role, action, got)
+			}
+		}
+	}
+	if permits("alice", "tenant-a", []string{"owner"}, "teams.manage", Resource{TenantID: "tenant-a", Type: "role"}) {
+		t.Fatal("team action accepted another resource type")
+	}
+	grant := `{"schema_version":"tenant-capabilities-v1","name":"%s","grants":[{"effect":"ALLOW","actions":["teams.read","teams.manage"],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "people_ops", 1)), ""); err != nil {
+		t.Fatal("custom team administration rejected", err)
+	}
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "viewer", 1)), ""); err == nil {
+		t.Fatal("viewer granted team administration")
+	}
+}
