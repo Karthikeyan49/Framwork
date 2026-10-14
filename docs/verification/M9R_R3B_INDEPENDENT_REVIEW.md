@@ -2,7 +2,7 @@
 
 Reviewed stable commit `58c58ae630b368bfd185e297e928331acbe06dc9`, against parent `03fbfbd`, ADR030 and the remediation plan. This review covers governed numeric projection indexing, not full R2, R3c/R3d, production acceptance or general query performance.
 
-**Bounded R3b verdict: PASS. Repository regression gate: PARTIAL.** No unresolved BLOCKER/HIGH was found in the numeric feature. A reproduced MEDIUM workflow denial-provenance defect and a fresh-migration fixture regression remain at the reviewed commit; the implementer's timing-dependent expired-lease failure is also retained below. These are not erased by successful numeric or performance tests.
+**Final bounded R3b verdict at5fdb7f1: PASS; all findings from this review are closed.** Full R2/R3c/R3d and production acceptance remain outside this verdict. At initial checkpoint58c58ae the repository regression gate was PARTIAL: a reproduced MEDIUM workflow denial-provenance defect, fresh-migration fixture regression and implementer timing-dependent expired-lease failure were retained. Their original observations and subsequent executed closures appear below.
 
 ## Independence and safety
 
@@ -107,3 +107,20 @@ The independent control began with a valid claimed lease, executed an actual for
 Recommended correction: a narrow post-rollback authority-validation contract must preserve cancellation/query/role-drift validation errors and map lease loss only from a successfully evaluated exact-ticket false result. It must not replay business effects or broaden RLS. The implementer plans this correction; its execution is **NOT RUN** in this supplement.
 
 The implementer separately reported resumed full `make check test build` PASS, integration254.958s and migration status1–34. These are attributed results. Independent numeric acceptance remains PASS; the cancellation-classification LOW remains open. All reviewer tests stopped and CPU/database/source ownership was returned before the implementer began its next correction.
+
+## Final closure at5fdb7f1
+
+Independently reviewed stable `5fdb7f1e78e547d3b6e5fcd5340fd41110ced437` after testing was released. `jobs.TicketAuthority` now returns `(bool,error)` and retains cancellation/database/catalog/unsafe-principal/grant failures as errors. It checks the exact persisted ticket through the protected SQL binding function. Worker Step maps lease loss only when this validation completes successfully and returns false; it otherwise retains the original42501/P0001. The fresh transaction follows rollback and runs no business callback. Successful binding retains existing begun/private-context bookkeeping, rather than claiming a completely side-effect-free SQL operation. Numeric query code and migrations remain unchanged.
+
+Executed:
+
+```sh
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -overlay /tmp/r3b-correction-review/overlay.json -run '^TestIndependentR3BRecheckCancellation|^TestM1FreshDatabaseMigrations$|^TestM9ExpiredLeaseOnEarlySaveAndConcurrentSignals$|^TestM9RejectedMutationsRollbackBeforeHTTPResponse$|^TestM9RWorkerSecurityErrorClassification$' -v ./tests/integration > /tmp/r3b-correction-review/results-5fdb7f1.txt 2>&1
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -overlay /tmp/r3b-correction-review/overlay.json -run '^TestIndependentR3BTicketAuthority' -v ./tests/integration > /tmp/r3b-correction-review/authority-controls-5fdb7f1.txt 2>&1
+```
+
+Both commands **PASS**:22.835s and2.416s respectively. The former independent failure now passes1.39s and reaches its zero-business-effects assertion. All four permanent roots pass, including the added real42501-then-cancellation regression, valid uncancelled42501/P0001 controls, expired protected-audit access, exact workflow denial evidence and fresh migration immutability probe.
+
+The separately authored direct-authority control established successful true for a valid ticket, successful false after persisted expiry, and errors for a cancelled context, absent database, closed pool, application-role database and unsafe worker column-grant drift. Grant drift was applied/revoked only in the disposable fixture; its business-count assertion passed. No authority was broadened to obtain these outcomes.
+
+**Cancellation-classification LOW: CLOSED. Workflow provenance MEDIUM and migration fixture LOW remain CLOSED. No unresolved finding from this R3b review remains.** The original failures remain above. The ordinary numeric performance PASS was not repeated because no query/migration change followed it. The implementer's prior complete check/test/build PASS254.958s and final check/unit/build PASS are attributed evidence; an independent full suite at5fdb7f1, remote CI, main merge and production deployment remain **NOT RUN**. All reviewer processes have stopped and CPU/database ownership was returned to the implementer.

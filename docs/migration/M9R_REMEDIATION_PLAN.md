@@ -18,9 +18,12 @@ root correctness/fault/browser checks; its original write gate failed with one
 503 and later p95 misses. After rollback/recovery fixes and measured FIFO admission,
 the root 32-client gate passed at p95 297.404 ms with no errors; independent
 R4 review/workload passed at `94932e3` (p95 340.575 ms, zero errors). Full evolution
-remains open; the R3 HTTP floor still failed. See
-[R4 progress](M9R_R4_IMPLEMENTATION_REPORT.md). M10 remains paused. R3b–R3d and R5–R7 are
-not complete. [R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md).
+remains open. Governed numeric R3b now passes the unchanged HTTP floor in root
+and independent runs (independent p95 96.713 ms, zero errors). See
+[R3b evidence](M9R_R3B_IMPLEMENTATION_REPORT.md) and
+[R4 progress](M9R_R4_IMPLEMENTATION_REPORT.md). M10 remains paused. Additional
+index types, R3c/R3d and R5–R7 are not complete.
+[R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md).
 
 ## Objective and release gate
 
@@ -332,7 +335,7 @@ final commit. Do not relabel deferred R5–R7 services as complete to pass this 
 After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
-**Checkpoint status: R0/R1 verified; R3a correctness verified, HTTP performance
-PARTIAL; R2a/R2b and bounded R4 independently verified, full R2 pending.
+**Checkpoint status: R0/R1, R2a/R2b, bounded R4 and governed numeric R3b
+independently verified. Full R2, remaining R3b types/R3c/R3d and R5–R7 are pending.
 The complete foundation
 gate and broader review findings are not accepted as resolved.**

@@ -1,7 +1,8 @@
 # ADR030: Governed numeric projections for dynamic query ordering
 
-Status: implemented; acceptance and independent review pending. Scope: numeric
-R3b subset. See the R3b implementation report for executed outcomes.
+Status: numeric feature/performance independently accepted at `58c58ae`.
+Scope: numeric R3b subset. See the R3b report for subsequent regression corrections
+and executed outcomes; full R2/R3/foundation acceptance remains open.
 
 ## Trigger and boundary
 

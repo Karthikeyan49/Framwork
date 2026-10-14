@@ -14,8 +14,12 @@ reproduced worker-authority, data-namespace, query-cost and write-contention gap
 Follow the [remediation plan](docs/migration/M9R_REMEDIATION_PLAN.md) before M10.
 The [worker boundary](docs/migration/M9R_R1_IMPLEMENTATION_REPORT.md) and
 [RLS reference floor](docs/migration/M9R_R3A_IMPLEMENTATION_REPORT.md) have
-independent evidence. Page-fetch correctness passed independent review; the
-current-host HTTP performance gate failed. Dataset schema plans and equal-schema
+independent evidence. The earlier current-host HTTP gate failed; governed
+[numeric indexing](docs/migration/M9R_R3B_IMPLEMENTATION_REPORT.md) now passes
+the unchanged 100k-row/ten-client gate in root and independent runs (independent
+p95 96.713 ms, zero errors). This requires a registered and verified numeric
+index; general query planning, uniqueness and aggregates remain separate work.
+Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
 the 32-client write gate passed in root and independent runs (independent p95

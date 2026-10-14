@@ -1,7 +1,8 @@
 # R3b governed numeric indexing
 
-14 October 2026 (IST). Governed numeric feature/performance independently PASS
-at `58c58ae`. Regression corrections are being closed below. This is a numeric
+14 October 2026 (IST). **Bounded numeric R3b STATUS: PASS.** Numeric feature/
+performance independently passed at `58c58ae`; regression corrections and
+authority/error controls independently passed at `5fdb7f1`. This is a numeric
 index subset, not full R3 or foundation PASS.
 
 ## Implemented boundary
@@ -145,7 +146,28 @@ An unavailable recheck retains the original security error. Valid binding can
 retain ordinary begun/private-context bookkeeping; no business callback runs.
 The permanent real42501-then-cancellation control now asserts the original
 error and zero effects. The same focused four-root command PASSED20.940 s after
-this change. Final independent closure and checks are recorded below when run.
+this change.
+
+`make check test-unit build > /tmp/m9r-r3b-final-static-unit-build.log 2>&1`
+PASSED at `5fdb7f1`: format/static/checksums, Go race units, Node/frontend29 tests
+and backend/frontend builds. `git push --all origin` published all local branches,
+including the correction; exact HEAD/remote equality and clean working tree were
+verified. All M0–M9 milestone branch tips are ancestors of this source checkpoint.
+Publication is not a main merge or deployment. Remote CI/deployed production
+verification remains NOT RUN.
+
+Final independent correction review at `5fdb7f1` PASSED22.835 s: its previous
+failing cancellation probe and all four permanent focused roots, now including
+zero-business-effects assertions. Direct TicketAuthority controls PASSED2.416 s:
+valid authority true; persisted expired authority success/false; cancellation,
+nil/closed database, wrong application role and unsafe worker column grants
+return errors rather than a successful false. MEDIUM provenance, the migration
+fixture and LOW error masking are independently closed. Exact commands and
+historical failures remain in the linked independent report. That reviewer did
+not execute the complete suite; the complete254.958 s suite is root evidence
+at `0d08d0a`, followed by focused root/independent and static/unit/build verification
+of the narrow correction. No repeated numeric load was needed for a change
+outside the query/migration implementation.
 
 Earlier current-host R3 HTTP FAIL898.985ms remains historical evidence.
 No threshold, client count, dataset width, pool size or resource limit was raised.

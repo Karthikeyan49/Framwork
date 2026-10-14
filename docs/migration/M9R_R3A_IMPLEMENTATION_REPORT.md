@@ -2,13 +2,19 @@
 
 Report date: 14 October 2026 (IST). Test captures: 13 October 2026 (UTC).
 
+Current update: the [R3b numeric index](M9R_R3B_IMPLEMENTATION_REPORT.md) now
+passes the unchanged 100k-row/ten-client HTTP gate independently (p95 96.713 ms).
+The R3a results below are retained historical evidence, including the failed
+unindexed path. Full R3 and full dataset schema evolution remain open.
+
 **R3a STATUS: PARTIAL at the current checkpoint.** The original AMD reference
 passed; the resumed Intel host exposed HTTP misses under the same database limits.
 The added page-fetch optimization has a passing root run, but the independent
 current-host run failed the HTTP gate. SQL membership/authorization evidence and
 the focused correctness/security regression selection remain verified.
-R2 dataset continuity and R4 concurrent writes are not implemented yet. R3b–R3d
-projection indexes, uniqueness and aggregate expansion remain separate gates.
+At this historical checkpoint R2 continuity and R4 concurrent writes had not
+been implemented. Equal-schema continuity and bounded concurrent writes now
+have separate independently verified reports. R3b–R3d remain separately scoped.
 This does not declare the system production capable or permit M10.
 
 ## Change and recovery

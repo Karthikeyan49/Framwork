@@ -1,8 +1,9 @@
 # External review finding status
 
-Updated 14 October 2026 (IST). Baseline review: `81b88d2`; latest published
-published checkpoint at the start of this remediation: `a5cbafd`. Subsequent
-rollback/recovery fixes and FIFO capacity correction are detailed in the R4 report.
+Updated 14 October 2026 (IST). Baseline review: `81b88d2`; source corrections
+through `5fdb7f1` are published on `remediation/m9r-foundation`. Rollback/recovery
+and FIFO evidence are in the R4 report; governed numeric indexes and corrected
+regressions are in the [R3b report](M9R_R3B_IMPLEMENTATION_REPORT.md).
 This is a progress ledger,
 not a claim that the review's complete scope has passed.
 
@@ -18,12 +19,12 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Tenant-controlled shared DDL | Generic JSONB runtime has no such path; existing ALTER denial retained | Future indexes/migrations must remain governed platform operations |
 | Records disappear across compatible compiler/release changes | R2a plans/transforms and R2b explicit equal-schema dataset bindings independently PASS | Full R2 schema generations, transformation executor, canonical live access facts and workflow data pins remain open |
 | RLS membership checked once per row | Replaced by statement-level membership evaluation; populated isolation and SQL plans verified | Preserve live authorization and fail-closed RLS; HTTP latency gate remains below |
-| End-to-end query performance | R3a PARTIAL: current-host HTTP p95 gate failed despite passing SQL/correctness checks | Profile and fix the measured bottleneck; keep the 750 ms reference target |
+| End-to-end query performance | Governed numeric R3b independently PASS: 100k-row/ten-client HTTP p95 96.713 ms, zero errors, unchanged 750 ms target; earlier failures retained | Register/build a supported numeric index; general/unindexed/selective workloads remain bounded and require their own evidence |
 | Shared dataset writer counter | Bounded R4 independently PASS at `94932e3`: overlapping writers/CAS/reference/fault checks and FIFO workload p95 340.575 ms, zero errors | Preserve regressions during indexing/evolution; previous failed runs retained |
 | Write retries / duplicate effects / unknown COMMIT | Bounded R4 independently PASS: known-abort retries, owned receipts and commit-response/browser reconciliation verified | External delivery is not covered; first historical 503 cause remains unconfirmed |
 | Late command rejection can commit a record without receipt/outbox | Independently reproduced fault and independently closed; real RLS-policy regression verifies zero business facts on rejection | Preserve whole-command rollback |
 | Same-login navigation loses an in-flight command key | Independently reproduced and closed; actor-owned pre-dispatch journal/navigation/account recovery verified | Browser-restart persistence intentionally absent |
-| Custom field indexes / unique projections | Not implemented | R3b/R3c governed projections, explicit metadata semantics and concurrent uniqueness proof |
+| Custom field indexes / unique projections | Integer/decimal/money projection indexes implemented and independently verified; text/date/search and uniqueness remain open | Remaining R3b types and R3c explicit uniqueness metadata/concurrent uniqueness proof |
 | Aggregates and bounded join planner | Existing explicit budgets retained; broad SQL aggregation not implemented | R3d planner/aggregation correctness and workload gates |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
 | Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
@@ -37,7 +38,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Rules have no consumer | Original statement corrected: preview and workflow conditions consume rule plans | Business tools remain later work; a rule result never grants authorization |
 | External exactly-once and AI steps | No external tool/AI implementation or universal exactly-once claim | M10 per-tool delivery/reconciliation; AI milestones preserve deterministic authority |
 | Rate limiting / invalid authentication DB amplification | Still open | R7 bounded admission before expensive DB work, with safe denial evidence and abuse tests |
-| Per-request compile / repeated validator construction / catalog checks | Present; their measured contribution is not yet established for the failed write gate | Profile before caching; preserve immutable artifacts, live membership and role drift checks |
+| Per-request compile / repeated validator construction / catalog checks | Present; read/write reference gates now pass within the stated configuration | Profile before caching; preserve immutable artifacts, live membership and role drift checks |
 | Two conflicting rulebooks / missing supersession map | R0 map and concise agent rules implemented; source kits retained verbatim | Keep clause-level authority and current capability inventory updated |
 | No numeric verification gates / migration ownership | R2–R4 ADRs and reference targets now explicit | Execution must pass those gates; design and numbers alone are insufficient |
 | Portability claim | Qualified as deferred; format and round-trip proof absent | M17 concrete export/import specification and executed portability verification |
@@ -47,10 +48,11 @@ Historical timing measurements and audit percentages are not current guarantees.
 
 ## Execution order and stop gate
 
-Close R4's actual failed workload and independent findings, complete full R2
-dataset evolution, and close R3's failed HTTP floor. Keep governed indexing,
-uniqueness and aggregates as explicit R3b–R3d work rather than claiming them from
-the membership fix. R5–R7 remain separate product/security/operations deliverables.
+Bounded R4 and the configured numeric R3b HTTP gate are independently verified.
+Complete full R2 dataset evolution and preserve those regressions. Remaining
+index types, uniqueness and aggregates stay explicit R3b–R3d work rather than
+being claimed from the membership/numeric fix. R5–R7 remain separate
+product/security/operations deliverables.
 Production, AI and external ERP actions are not enabled by a foundation PASS.
 
 M10 stays paused until the foundation gate and final backend/frontend/integration/
