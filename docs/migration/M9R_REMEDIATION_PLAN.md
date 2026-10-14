@@ -250,8 +250,8 @@ a wider capacity certification. Preserve the exact confinement and lease gates.
 
 [R5c-a](M9R_R5C_IMPLEMENTATION_REPORT.md) (record owner/team/share administration,
 ADR034) passes independent review at 8f8067a and R5c-b team administration (ADR035)
-at 6b50eb7. Remaining R5 product slices: administration UI for R5c with
-authorized audited changes and per-record conflict witnesses; R5d field
+at 6b50eb7. Remaining R5 product slices: administration UI for the R5c
+APIs; R5d field
 masking/partial writes and inference controls; R5e configurable workflow approval
 role contracts and their immutable-reader compatibility. Provider/login UX stays
 a separate R5 identity deliverable. Implement and review these separately before
