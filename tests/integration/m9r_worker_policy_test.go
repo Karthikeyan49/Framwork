@@ -4,10 +4,12 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
@@ -98,6 +100,114 @@ func r5RawWorker(t *testing.T, m *m9Fixture, lease jobs.WorkflowLease, allow boo
 	// business write. This append is rolled back with the probe transaction.
 	if _, e = tx.Exec(`INSERT INTO audit.entries(actor_id,tenant_id,action,resource,allowed,decision_id,policy_version,request_id,trace_id,state) VALUES($1::uuid,$2::uuid,'workflows.execute','workflow',false,'raw-denial',$3,'raw-probe','','{}'::jsonb)`, actor, tenantID, version); e != nil {
 		t.Fatal("denial evidence rejected", e)
+	}
+}
+
+func TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry(t *testing.T) {
+	m := m9Setup(t, nil)
+	x := m.start(t, "sql-statement-policy")
+	h := r5Handler(t, m.f, audit.Postgres{})
+	root := "/v1/tenants/" + m.f.tenantA
+	d := r5Definition("finance_manager", m.app, policy.DataScope{Kind: "ALL"})
+	condition := policy.DataScope{Kind: "CONDITION", Condition: &policy.ScopeCondition{Field: "field.contact.status", Op: "eq", Value: json.RawMessage(`"active"`)}}
+	children := make([]policy.DataScope, 8)
+	for i := range children {
+		children[i] = condition
+	}
+	scope := policy.DataScope{Kind: "OR", Children: children}
+	grant := d.Grants[1]
+	grant.Scope = &scope
+	d.Grants = append(d.Grants[:1], d.Grants[2:]...)
+	for i := 0; i < 7; i++ {
+		d.Grants = append(d.Grants, grant)
+	}
+	d.Grants = append(d.Grants, policy.Grant{Effect: "ALLOW", Actions: []string{"workflows.execute", "workflows.activity"}, Resource: policy.Selector{AppID: m.app, EntityID: "entity.contact", FieldID: "*"}})
+	r5Publish(t, h, root+"/roles", m.token, 0, d, true, uuid(t))
+	r5Assign(t, h, root, m.token, m.f.bob, "owner", 200)
+	r5Assign(t, h, root, m.approver, m.f.alice, d.Name, 200)
+	// Bounded synthetic scan, not evidence of a full 96-step business lifecycle.
+	if _, e := m.f.operator.Exec(`INSERT INTO runtime.workflow_receipts(tenant_id,instance_id,step_key,activity_ref,request_hash,output,output_hash,sequence,compensation_ref) SELECT $1,$2,'scan-'||g,'local.noop',repeat('a',64),convert_to('{}','UTF8'),encode(sha256(convert_to('{}','UTF8')),'hex'),g,'local.noop' FROM generate_series(1,96) g`, m.f.tenantA, x.ID); e != nil {
+		t.Fatal(e)
+	}
+	lease, found, e := m.worker.Claim(context.Background())
+	if e != nil || !found {
+		t.Fatal(e)
+	}
+	bind := func() *sql.Tx {
+		t.Helper()
+		tx, e := m.db.Begin()
+		if e != nil {
+			t.Fatal(e)
+		}
+		if ok, e := bindM9R(tx, lease); e != nil || !ok {
+			tx.Rollback()
+			t.Fatal("scan lease", e)
+		}
+		if _, e = tx.Exec(`SELECT set_config('app.actor_id',$1,true),set_config('app.auth_issuer','https://test-issuer.example',true),set_config('app.auth_subject',$2,true),set_config('statement_timeout','2000',true)`, m.f.alice, m.f.aliceSubject); e != nil {
+			tx.Rollback()
+			t.Fatal(e)
+		}
+		return tx
+	}
+	const query = `SELECT r.step_key FROM runtime.workflow_receipts r WHERE r.tenant_id=$1 AND r.instance_id=$2 AND r.compensation_ref<>'' AND NOT EXISTS(SELECT 1 FROM runtime.workflow_receipts c WHERE c.tenant_id=r.tenant_id AND c.instance_id=r.instance_id AND c.step_key=r.step_key||':compensate') ORDER BY r.sequence DESC,r.step_key DESC LIMIT 1`
+	tx := bind()
+	start := time.Now()
+	var step string
+	if e = tx.QueryRow(query, m.f.tenantA, x.ID).Scan(&step); e != nil || step != "scan-96" {
+		tx.Rollback()
+		t.Fatal("bounded compensation scan", e)
+	}
+	t.Logf("96 receipts, 7 scopes/63 nodes per capability: %s", time.Since(start))
+	var raw []byte
+	if e = tx.QueryRow("EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF) "+query, m.f.tenantA, x.ID).Scan(&raw); e != nil {
+		tx.Rollback()
+		t.Fatal(e)
+	}
+	var plan any
+	if json.Unmarshal(raw, &plan) != nil {
+		t.Fatal("query plan")
+	}
+	decisions := 0
+	var walk func(any)
+	walk = func(node any) {
+		switch value := node.(type) {
+		case map[string]any:
+			if value["Function Name"] == "worker_policy_decision" {
+				decisions++
+				if loops, ok := value["Actual Loops"].(float64); !ok || loops > 1 {
+					t.Error("policy definition/IR evaluation still scales with receipt rows")
+				}
+			}
+			for _, child := range value {
+				walk(child)
+			}
+		case []any:
+			for _, child := range value {
+				walk(child)
+			}
+		}
+	}
+	walk(plan)
+	if decisions == 0 {
+		t.Error("plan did not execute live authorization")
+	}
+	if e = tx.Rollback(); e != nil {
+		t.Fatal(e)
+	}
+	// A statement-wide decision must not cache lease freshness for a slow write.
+	if _, e = m.f.operator.Exec(`UPDATE control.workflow_jobs SET lease_until=clock_timestamp()+interval '500 milliseconds' WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, x.ID); e != nil {
+		t.Fatal(e)
+	}
+	tx = bind()
+	defer tx.Rollback()
+	result, e := tx.Exec(`UPDATE runtime.workflow_instances SET version=(SELECT version+1 FROM pg_sleep(0.7)) WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, x.ID)
+	if e != nil {
+		var denied *pgconn.PgError
+		if !errors.As(e, &denied) || denied.Code != "42501" {
+			t.Fatal("expected expired lease RLS denial", e)
+		}
+	} else if n, e := result.RowsAffected(); e != nil || n != 0 {
+		t.Fatal("statement decision cached an expired write lease", e, n)
 	}
 }
 
@@ -347,6 +457,8 @@ func TestM9RSQLWorkerCapabilitiesAndLiveRecordScopes(t *testing.T) {
 		{"invalid date", "joined", "gt", `"2026-02-30"`, false},
 		{"absent reference not in", "parent", "not_in", `["` + m.record.ID + `"]`, false},
 		{"core identity", "id", "eq", `"` + m.record.ID + `"`, true},
+		{"uppercase core identity denied", "id", "eq", `"` + strings.ToUpper(m.record.ID) + `"`, false},
+		{"uppercase reference denied", "parent", "eq", `"` + strings.ToUpper(m.record.ID) + `"`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setScope(policy.DataScope{Kind: "CONDITION", Condition: &policy.ScopeCondition{Field: "field.contact." + tc.field, Op: tc.op, Value: json.RawMessage(tc.value)}})

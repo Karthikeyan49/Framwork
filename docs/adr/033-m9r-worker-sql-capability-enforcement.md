@@ -45,3 +45,12 @@ restriction suspends access rather than rewriting/recompiling an in-flight job.
 An explicitly reviewed non-conditional grant can restore access to the same job.
 The private source helper is SECURITY INVOKER with no runtime EXECUTE grant;
 accidental helper grants cannot acquire schema-owner record privileges.
+
+Independent review at d093e80 found an uppercase UUID condition accepted by SQL
+and rejected by Go, plus a repeated-evaluator timeout on the bounded 96-receipt
+synthetic scan with an admitted 63-node policy. Forward migration 40 preserves
+applied 39, aligns UUID/reference constants with the existing lowercase contract,
+and puts expensive policy evaluation in statement InitPlans. Per-row identity
+and lease-clock checks remain in USING and WITH CHECK; this is not transaction
+caching or a longer timeout. Separate SECURITY DEFINER business ports continue
+to validate live policy directly. Executed re-verification remains the gate.
