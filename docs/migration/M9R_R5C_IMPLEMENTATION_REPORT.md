@@ -1,4 +1,4 @@
-# M9R R5c-a — Governed record owner/team/share administration
+# M9R R5c — Governed record access and team administration
 
 Date: 15 October 2026 (UTC). Source: `11e8097` and review fixes `8f8067a` on
 `claude/dazzling-goldberg-69wbkn` (based on `remediation/m9r-foundation` at
@@ -71,5 +71,34 @@ restore broad DML grants on access tables.
 Accepted LOW L5: `unshare` of a user without a share is a 409 (documented in ADR034); a later slice may map it to 404.
 
 R5c-a STATUS: PASS (bounded record access administration and documented verification scope)
+
+R5 / M9R STATUS: PARTIAL
+
+## R5c-b — Team hierarchy and membership administration
+
+Source: `856a4f1` and review fixes `6b50eb7`. [ADR035](../adr/035-m9r-team-administration.md).
+Migration 43 adds `iam.teams.version` and SECURITY DEFINER ports
+`control.save_team`, `control.set_team_member`, `control.team_members`; migration
+44 (preserving applied 43) bounds retained memberships per team at 1000. Writes
+take the tenant row fence and re-validate the whole hierarchy (root-reachable,
+depth ≤8, ≤64 resolved teams per member, ≤256 teams). New capabilities
+`teams.read`/`teams.manage` (bootstrap owner/admin, delegable, never `viewer`);
+native policy version `m9r-native-v6`. Routes `GET|POST /v1/tenants/{tenant}/teams`,
+`GET .../teams/{team}`, `POST .../teams/{team}/members/{user}`.
+
+| Command | Result |
+|---|---|
+| `-run '^TestM9RTeam|^TestM9RRecordAccess'` at 856a4f1 | PASS |
+| `make check test build` at 856a4f1 | PASS; integration 481.898s |
+| Independent review of 856a4f1 | 0 HIGH; MEDIUM F1 (suffix routing captured `/roles/teams` and other `.../teams` routes), MEDIUM F2 (unbounded retained memberships → listing 503), LOW F3 (policy version), LOW F4 (coverage/audit field) — reproduced |
+| `make check test build` at 6b50eb7 | PASS; integration 483.543s |
+| `make test-e2e` at 6b50eb7 | PASS, 5 tests |
+| Independent re-verification at 6b50eb7 (route sweep, 1000/1001 budget boundary, port contract, targeted 22 tests 49.5s) | PASS; F1–F4 closed, no new findings |
+
+Limits: teams are not deletable; administration UI is not implemented; a tenant
+already over budget via operator SQL rejects team writes until repaired.
+Membership changes apply to subsequent statements, not committed effects.
+
+R5c-b STATUS: PASS (bounded team administration and documented verification scope)
 
 R5 / M9R STATUS: PARTIAL

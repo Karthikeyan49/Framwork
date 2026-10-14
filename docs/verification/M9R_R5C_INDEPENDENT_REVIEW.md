@@ -40,3 +40,21 @@ no share returns 409 (documented, accepted). Commands: 5 probes PASS 10.6s;
 targeted suites plus `^TestM9RWorker` PASS 96.1s; unit tests PASS.
 
 R5c-a review STATUS: PASS (bounded scope; full R5 remains open)
+
+# R5c-b team administration review
+
+Round 1 at `856a4f1`: no authz bypass, tenant leak, definer or hierarchy
+integrity defect. MEDIUM F1: suffix-based team mapping captured GET routes whose
+last segment is `teams` (reproduced with a role named `teams`). MEDIUM F2: no
+retained-membership budget; 1001 inactive rows made team detail 503
+(reproduced). LOW F3: native policy version not bumped. LOW F4: missing closure,
+stored-role and custom-role coverage; team version stored in a role field.
+Verified validator matches Go/worker resolvers, tenant-fence serialization
+under RR, witness semantics, readiness wiring and validator cost (~155 ms at
+20k memberships).
+
+Round 2 at `6b50eb7`: F1–F4 closed; full route sweep answered by own handlers;
+budget boundary 1000/1001 and typed 409 for operator excess; port contract
+preserved by migration 44. Targeted suites PASS (22 tests, 49.5 s).
+
+R5c-b review STATUS: PASS (bounded scope; full R5 remains open)
