@@ -2,11 +2,13 @@
 
 Date: 2026-10-14 UTC. Independent Codex reviewer.
 
-**Current verdict: PARTIAL at published `a5cbafd`.** Independent probes confirmed
-a HIGH late-rejection rollback invariant failure and a MEDIUM same-login tenant
-navigation loss of an uncertain command key/gate. Corrections, re-verification
-and the write performance gate are pending. Publication is not acceptance. Full
-R2, the R3 HTTP read floor, metadata uniqueness and production remain open.
+**Verdict: PASS for bounded local-command R4 at `94932e3`.** The HIGH rollback
+and MEDIUM recovery-key findings at published `a5cbafd` are fixed and independently
+reverified. The isolated ordinary32-client/60-second write gate passed its unchanged
+500ms target with zero errors. No confirmed unresolved BLOCKER, HIGH or MEDIUM
+finding remains in this reviewed boundary. Publication of the earlier partial
+checkpoint was not acceptance. Full R2, the R3 HTTP read floor, metadata uniqueness
+and production remain open.
 
 ## Reviewed boundary
 
@@ -28,7 +30,7 @@ capability.
 
 ## Confirmed pre-fix findings
 
-### HIGH: a typed rejection after mutation can commit without required facts
+### HIGH, CLOSED: a typed rejection after mutation could commit without required facts
 
 `data.command` writes records/links before its final `current()` read.
 `receiptedCommand` inserts the receipt only after that function succeeds.
@@ -49,7 +51,14 @@ fault; it does not prove an untrusted actor can make Native policy do this.
 Every local-command rejection must roll back all attempted business facts before
 mapping its HTTP response and persisting fresh authorized denial evidence.
 
-### MEDIUM: tenant navigation loses an in-flight intent inside the same login
+The corrected outer local-command boundary forces rollback even when a typed
+HTTP rejection has no service error. Fresh live identity/membership resolution
+and denial audit occur after rollback. The corrected executor probe returned404
+with records/receipts/outbox all zero. The new repository test additionally uses a
+real restrictive SELECT policy under the normal application role, covering both
+keyless and receipted commands and exactly one fresh denial fact.
+
+### MEDIUM, CLOSED: tenant navigation lost an in-flight intent inside the same login
 
 The outer AccessConsole tenant selector remains enabled during command submission.
 Changing tenant unmounts ApplicationWorkspace/EntityPage and aborts its controller.
@@ -67,6 +76,14 @@ claim an actual duplicated PostgreSQL write.
 Retain the key above the scope-unmount boundary before dispatch or prevent unsafe
 navigation while the write/unknown outcome is unresolved. Distinguish deliberate
 cross-browser/session durability limits from this same-login navigation behavior.
+
+Corrected UI retains the key before dispatch in AccessConsole, above workspace
+unmount, indexed by trusted actor plus execution scope. In-flight tenant selection
+is disabled; disconnect still clears credentials. Unknown keys survive same-tab
+disconnect and scope changes while another actor cannot see them. Browser/tab
+restart durability is still outside this in-memory journal. Independent navigation
+re-verification and the repository's account/disconnect/UNKNOWN→COMMITTED tests
+passed without another write.
 
 ## Independently executed commands
 
@@ -99,17 +116,135 @@ test/config are `frontend.test.tsx` and `vitest.config.mts`; a temporary node_mo
 symlink supplies the repository's managed dependencies. Synthetic credentials
 only were used; no real token or authorization-header output was produced.
 
-## Performance and current limits
+## Corrected batching/admission review and executed evidence
+
+Final stable source: `94932e3108d9afea56c8dd1f95189d57e5384ff2`, following the
+two fault fixes in05aa14c. Reviewed ADR028/029, bounded audit batches and API-owned
+FIFO admission. Applied migration30 was not rewritten. All repository edits by
+this reviewer remain limited to this report; temporary copied access.go has only
+a fault-observer seam, not a production fix.
+
+Every decision still governs immediately and remains a separate evidence row.
+Postgres batching validates the complete set before SQL, bounds8192 entries and
+uses128-row parameterized chunks. Error/panic paths do not issue further flushes
+into aborted transactions; failures propagate to outer rollback. Legacy writer
+fallback preserves errors. FIFO is per registered API/pool, keeps the existing
+ten-connection limit and128 queued-request bound, and releases after transaction/
+connection cleanup. Retries rejoin; authentication and live membership resolve
+after admission. It is not distributed capacity coordination or an abuse limiter.
+
+```sh
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -overlay /tmp/r4-review/overlay.json -run '^TestIndependentR4Typed|^TestM9RFinalReadRejection|^TestM9RQueued' -v ./tests/integration
+```
+
+**PASS6.991s at94932e3:** independent late-read fault; real restrictive-RLS legacy
+and receipted rollback/fresh denial; queued membership revoked before admission,
+then403 with no facts and no leaked capacity. Earlier independent correction at
+05aa14c passed4.727s, and its own navigation probe passed2.38s.
+
+The same temporary frontend command listed above, updated to require retention
+before dispatch, disabled in-flight tenant selection, then unknown transport
+settlement and A→B→A under the same login: **PASS2.53s at94932e3**.
+
+```sh
+./scripts/go.sh test -race -count=1 ./internal/audit ./internal/platform/postgres
+npm --prefix apps/web test -- --reporter=dot
+```
+
+**PASS:** audit1.022s and postgres1.235s; FIFO order/overflow/idempotent release,
+50 simultaneous cancellation/grant cases, evidence parameterization, complete
+prevalidation/budget and retry classification. **PASS:** frontend29 tests,5.73s,
+including same-tab disconnect, another actor's isolation, returning owner recovery,
+UNKNOWN retaining the gate and COMMITTED plus fresh read releasing it.
+
+```sh
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -overlay /tmp/r4-review/overlay.json -run '^TestIndependentR4(Panic|Receipts|Fallback)|^TestM9RAudit' -v ./tests/integration
+```
+
+The temporary overlay initially failed to build because its unused app variable
+remained; corrected only that fixture. Next run **FAIL6.349s as a proposed panic
+assertion**: HTTP middleware recovered the injected panic to500, so a caller-level
+recover did not observe it. The other four roots passed. Corrected assertion
+requires500, zero facts, released gate and a successful fresh command afterward.
+Rerun **PASS7.861s, five roots**:
+
+- Panic after a real business-audit INSERT rolls back record/receipt/audit/outbox,
+  leaves active/queued capacity zero and permits a successful follow-up.
+- A column-only worker receipt SELECT grant makes role readiness deny. Spoofed
+  valid actor/tenant GUCs still expose zero receipt rows through forced RLS.
+- A legacy fallback writer fails after its130th real INSERT of257; the owned
+  transaction leaves zero evidence rows.
+- Real257-entry batching preserves257 distinct decision identities; a foreign
+  tenant in the final chunk fails42501 and rolls back all earlier chunks.
+- A poisoned batch after mutation rolls back every command fact and leaves its
+  receipt UNKNOWN.
+
+These are bounded selected fault/unit/frontend checks, not a claim that this
+reviewer reran the complete repository or all M8/M9 integration tests at this head.
+
+## Independently executed write performance gate
+
+After all correctness processes exited and root kept CPU/database tests idle:
+
+```sh
+make test-write-performance
+```
+
+This expands to the ordinary, non-race command:
+
+```sh
+node scripts/with-env.mjs ./scripts/go.sh test -tags=integration,performance -count=1 -run '^TestM9RIndependentWritePerformanceFloor$' -v ./tests/integration
+```
+
+**PASS61.928s at94932e3.**32 clients ran60.229853704s, completed7643 updates, and
+returned zero errors. Exact returned IDs/versions and final version sum plus
+receipt/business-audit/outbox counts passed. Verified PostgreSQL reference:
+4 CPU quota,8GiB memory, swap disabled, pinned image
+`sha256:29754c7520f4b9654cf8ff98e19ac73b88e255c3a53f6236ebe9d52249bb6df3`.
+Pool/admission limits and acceptance targets were unchanged.
+
+| Independent write workload | n | p50 ms | p95 ms | p99 ms | Throughput/s | Result |
+|---|---:|---:|---:|---:|---:|---|
+| Distinct-record HTTP writes,32 clients |7643|242.985|340.575|392.162|126.90|PASS p95≤500ms,0errors|
+
+Database pool wait count/duration were zero. Marginal phase p95 values were
+request admission237.995ms, connection acquisition0.005ms, role checks13.950ms,
+transaction body99.885ms and commit15.695ms. These are separate distributions;
+adding them does not reconstruct overall request latency.
+
+The workload uses real auth/policy/RLS/audit/receipt/outbox with32 records and
+one synthetic actor/application in an httptest server. It does not measure
+production ingress/TLS, complex metadata mixes, cold-cache/open-loop traffic,
+long-duration capacity or cross-process fairness.
+
+## Prior failures retained and remaining gates
 
 The implementer reported its ordinary32-client,60-second write gate **FAIL62.688s**,
 duration60.260s, one503. Detailed latency/cause were not emitted before failure.
-This reviewer has not independently executed that workload yet and does not
-attribute the503 to a specific cause. Root retains the failure and is preparing
-bounded safe diagnostics; neither a threshold increase nor selection of a later
-passing run can erase it.
+This reviewer did not independently execute that original failure and does not
+attribute its503 to a specific cause. Later root observations, also distinct from
+the independent gate above, remain retained:
 
-Corrected independent faults, live revocation/replay/receipt-grant negatives,
-frontend re-verification and an isolated diagnostic ordinary write workload are
-pending. No full repository/remote-CI/production/process-isolation acceptance or
-metadata unique semantics is inferred. Full schema evolution/new workflow data
+- Diagnostic pre-batching FAIL61.838s:6471 successes,0errors, p95=701.506ms.
+- Batch-only FAIL62.235s: p95=788.839ms.
+- Phase-instrumented FAIL61.646s: p95=839.408ms; acquisition p95=717.820ms,
+  role20.666ms/body184.554ms/commit21.535ms as separate distributions.
+- Root FIFO gate PASS61.879s:8500 writes/60.196s,0errors, p95=297.404ms,
+  p99=337.961ms,141.20/s and exact counts passed.
+
+The code corrections, measured batching/FIFO change and independent passing gate
+support acceptance of this bounded R4 floor. Earlier observations are not erased
+or relabeled; no universal availability/capacity promise is inferred.
+
+Corrected independent faults, queued live revocation, receipt-grant negatives,
+frontend re-verification and the isolated ordinary write gate are complete within
+the stated scope. NOT RUN by this reviewer: an exhaustive per-attempt revocation
+campaign, complete repository/remote-CI/browser suite, production deployment or
+process-isolation acceptance. No metadata unique semantics is inferred.
+Full schema evolution/new workflow data
 pins and the failed R3 HTTP read target remain separate gates.
+
+Root's current R3 read gate also remained FAIL41.143s, HTTP p95=898.985ms>750ms
+despite passing SQL gates; that is not closed by the write result. No reviewer
+R3 rerun was performed here. All owned processes finished and fixture cleanup ran;
+CPU/DB ownership was released. No shared service was reset.

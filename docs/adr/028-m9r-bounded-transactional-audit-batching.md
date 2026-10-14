@@ -1,6 +1,6 @@
 # ADR028: Bounded transactional batching of authorization evidence
 
-Status: implemented with root correctness verification; independent review pending.
+Status: implemented and independently verified within R4 at `94932e3`.
 Batching alone did not pass the capacity target. FIFO admission is recorded in ADR029.
 
 ## Evidence and decision

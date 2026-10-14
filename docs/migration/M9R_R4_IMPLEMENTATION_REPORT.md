@@ -2,7 +2,9 @@
 
 Report date: 14 October 2026 (IST); captures 13–14 October 2026 (UTC).
 
-**R4 STATUS: PARTIAL — the corrected write gate passed in the root run; independent review is pending.**
+**R4 STATUS: PASS for the bounded local-command boundary at `94932e3`.**
+Independent fault review and the unchanged write gate passed. This does not
+complete R2, the failed R3 read gate, metadata uniqueness or production.
 The local preview command boundary is implemented and root correctness/fault/
 browser checks passed. This does not accept the full foundation, production,
 metadata uniqueness, full schema evolution or the failed R3 HTTP floor.
@@ -101,7 +103,7 @@ A MEDIUM frontend probe demonstrated same-login workspace navigation losing an
 in-flight intent. The actor-scoped pre-dispatch journal and inflight navigation
 guard address that unmount boundary; credentials are still cleared on disconnect.
 The [independent report](../verification/M9R_R4_INDEPENDENT_REVIEW.md) retains
-the pre-fix observations. Independent acceptance of the corrections is pending.
+the pre-fix observations. Independent acceptance of both corrections passed at `94932e3`.
 
 The review has not yet accepted this stable boundary. Metadata uniqueness/index
 projection work remains R3b/R3c; no customer unique-field capability is inferred
@@ -142,7 +144,10 @@ This is a capacity bulkhead, not R7's per-user rate limiter. See
 
 No new dependency, database migration or role privilege was needed for the capacity
 correction. The original 503 cause remains unconfirmed; the failure is retained.
-Independent replay/fault/role review and its workload must pass before R4 acceptance.
+Independent replay/fault/role review and its workload passed at `94932e3`:
+32 clients, 60.230 seconds, 7,643 writes, zero errors, p95 340.575 / p99 392.162 ms,
+126.90 writes/s and all exact fact counts passed. Its commands, initial fixture
+failures and threat-model boundaries are retained in the independent report.
 The 100k-row custom-sort HTTP floor is still failed; managed indexing remains R3 work.
 
 ## Recovery and publication
@@ -157,5 +162,6 @@ reviewed forward fix if reconciliation/receipt guards are damaged.
 Source, migration, tests and reports belong in Git; credentials, local fixtures,
 logs, binaries, node_modules and generated builds stay ignored. The user requested
 publication of the current work before the remaining diagnosis/review. This
-checkpoint is explicitly partial and unaccepted; publication does not establish
-completion. Main remains unchanged; M10 remains paused.
+earlier checkpoint was explicitly partial. The corrected local-command boundary
+is now independently accepted; the wider foundation and review remain partial.
+Main remains unchanged; M10 remains paused.

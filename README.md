@@ -18,8 +18,8 @@ independent evidence. Page-fetch correctness passed independent review; the
 current-host HTTP performance gate failed. Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
-the 32-client write gate passed in the root run. Earlier failures are retained and
-independent acceptance is pending. Full schema evolution
+the 32-client write gate passed in root and independent runs (independent p95
+340.575 ms). Earlier failures are retained. Full schema evolution
 and the foundation acceptance gate remain open.
 The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
 qualify historical PASS reports and distinguish previews from contract-only and

@@ -1,6 +1,6 @@
 # ADR027: Independent local writes and durable command reconciliation
 
-Status: implementation in verification. Scope: M9R R4 preview/local database writes.
+Status: independently verified at `94932e3`. Scope: M9R R4 preview/local database writes.
 
 ## Decision
 

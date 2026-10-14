@@ -1,6 +1,6 @@
 # ADR029: Bounded FIFO admission for API database transactions
 
-Status: implemented; independent review pending. Scope: M9R runtime capacity.
+Status: implemented and independently verified at `94932e3`. Scope: M9R runtime capacity.
 
 ## Measured problem and decision
 
