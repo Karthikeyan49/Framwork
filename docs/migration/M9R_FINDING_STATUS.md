@@ -1,7 +1,7 @@
 # External review finding status
 
-Updated 14 October 2026 (IST). Baseline review: `81b88d2`; source corrections
-through `4958df9` include R2c preview evolution on `remediation/m9r-foundation`. Rollback/recovery
+Updated 15 October 2026 (IST). Baseline review: `81b88d2`; source corrections
+through `caa9d84` include R2c preview evolution and bounded R5a capabilities on `remediation/m9r-foundation`. Rollback/recovery
 and FIFO evidence are in the R4 report; governed numeric indexes and corrected
 regressions are in the [R3b report](M9R_R3B_IMPLEMENTATION_REPORT.md).
 This is a progress ledger,
@@ -28,8 +28,8 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Aggregates and bounded join planner | Existing explicit budgets retained; broad SQL aggregation not implemented | R3d planner/aggregation correctness and workload gates |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
 | Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
-| DataScope returns ALL for permitted built-in roles | SQL scope machinery exists; product policy remains incomplete | R5 versioned capabilities, custom roles, ownership/team/share management and field semantics |
-| finance_manager / fixed four roles | Still limited | R5 identity/policy and workflow approval contract changes; never trust token role claims |
+| DataScope returns ALL for permitted built-in roles | [R5a](M9R_R5A_IMPLEMENTATION_REPORT.md) independently PASS: tenant role versions/CAS, live API scopes, exact operation reconciliation, bound engines and trusted worker revocation; bootstrap roles remain broad | HIGH: raw worker SQL lacks role-body/head revocation; R5b next. Record/team/share administration and field semantics also pending |
+| finance_manager / fixed four roles | Custom tenant membership/capability roles now supported through owner-authorized API | Workflow approval contract still limits role names; R5 must expand it safely |
 | JWT skew and token-paste development login | Still limited | R5 provider configuration and production identity UX, with explicit token verification bounds |
 | M8 short outage window / dead predecessor / one consumer | Still limited to documented preview delivery | R7 outage/replay controls; future tool/subscriber contracts must preserve ordering and idempotency |
 | Audit volume / retention / partitioning | Atomic, immutable audit retained; lifecycle not implemented | R7 measured audit policy and retention/archive design; do not delete receipts/evidence to retry |

@@ -1,6 +1,6 @@
 # ADR032: Versioned tenant capability definitions
 
-Status: implemented; root regression and independent acceptance pending.
+Status: R5a independently PASS for trusted Go composition; full R5 PARTIAL.
 
 R5a uses immutable, tenant-scoped role definitions and a CAS head. Trusted
 identity and live membership select the role; token claims and HTTP capability
@@ -68,3 +68,9 @@ record/team/share administration, field masking/partial updates, identity UX/ske
 and frontend administration remain separate acceptance items. Existing workflow
 plans still restrict approval roles. R5a does not close full R5, enable production,
 implement business ERP modules or begin M10.
+
+Independent review at caa9d84 confirmed that raw worker SQL retains access to
+the exact pinned record and declared fields after role-body/active-head denial.
+Trusted-Go checks do not close this boundary. R5b must enforce live capability
+authority in private database ports before full R5 can pass. See the
+[R5a review](../verification/M9R_R5A_INDEPENDENT_REVIEW.md).

@@ -233,6 +233,15 @@ counter in isolation without replacement reference/delete protection.
 
 Owners: identity/policy, data and frontend engineers.
 
+R5a at caa9d84 passes independent API, trusted-Go, fault and workload checks.
+See [implementation](M9R_R5A_IMPLEMENTATION_REPORT.md) and
+[review](../verification/M9R_R5A_INDEPENDENT_REVIEW.md). It does not close full R5.
+R5b is urgent: raw worker SQL must deny live role-body, scope and inactive-head
+revocation for its leased resource. Preserve exact tenant/job/field confinement,
+immutable evidence and durable denial reporting; do not infer credential safety
+from Worker.Step tests. Then deliver sanctioned record administration and the
+remaining field/workflow/identity semantics below.
+
 Replace fixed-role branching with versioned tenant role/capability definitions
 and central RBAC/ABAC policy. Support `finance_manager` without trusting token
 role claims. Add authorized ownership/team/share administration and audit.
