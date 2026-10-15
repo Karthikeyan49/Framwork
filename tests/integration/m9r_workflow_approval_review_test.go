@@ -47,6 +47,21 @@ func r5eReviewDeny(t *testing.T, m *m9Fixture, x workflow.Instance, token string
 	}
 }
 
+func r5eReviewDenialEvidence(t *testing.T, m *m9Fixture, x workflow.Instance, actor, role string) {
+	t.Helper()
+	var n int
+	if err := m.f.operator.QueryRow(`SELECT count(*) FROM audit.entries
+ WHERE tenant_id=$1 AND actor_id=$2 AND action='workflows.rejected' AND NOT allowed
+ AND state->>'role'=$3 AND state->>'workflow_instance_id'=$4
+ AND state->>'workflow_plan_hash'=$5 AND state->>'ir_hash'=$6
+ AND (state->>'workflow_sequence')::bigint=$7 AND state->>'record_id'=$8
+ AND (state->>'record_version')::bigint=$9 AND state->>'workflow_id'=$10
+ AND state->>'workflow_version'=$11 AND state->>'metadata_app'=$12
+ AND (state->>'metadata_revision')::bigint=$13`, m.f.tenantA, actor, role, x.ID, x.Pin.PlanHash, x.Pin.IRHash, x.Version, x.Pin.RecordID, x.Pin.RecordVersion, x.Pin.WorkflowID, x.Pin.WorkflowVersion, x.Pin.AppID, x.Pin.Revision).Scan(&n); err != nil || n != 1 {
+		t.Fatal("denied approval did not retain exact live actor and immutable workflow witnesses")
+	}
+}
+
 func r5eReviewDeniedDefinition(app, action, field string) policy.Definition {
 	d := r5eDefinition(app, policy.DataScope{Kind: "ALL"})
 	d.Grants = append(d.Grants, policy.Grant{Effect: "DENY", Actions: []string{action}, Resource: policy.Selector{AppID: app, EntityID: "entity.contact", FieldID: field}})
@@ -58,6 +73,8 @@ func TestM9RWorkflowApprovalReviewFieldCapabilityAndReceiptRevocation(t *testing
 	r5Assign(t, m.handler, root, m.token, m.f.bob, "finance_manager", 200)
 	x := m.until(t, m.start(t, "review-field-revocation").ID, "WAITING_APPROVAL")
 	signal := workflow.Signal{Operation: "approve", ExpectedVersion: x.Version, StateID: x.StateID, Key: "review-field-signal"}
+	r5eReviewDeny(t, m, x, m.token, signal, 403)
+	r5eReviewDenialEvidence(t, m, x, m.f.alice, "owner")
 	fieldDenied := r5eReviewDeniedDefinition(m.app, "data.field.read", "field.contact.status")
 	r5Publish(t, m.handler, root+"/roles", m.token, 1, fieldDenied, true, uuid(t))
 	r5eReviewDeny(t, m, x, m.approver, signal, 403)
@@ -122,6 +139,7 @@ func TestM9RWorkflowApprovalReviewDistinctStatesAndActors(t *testing.T) {
 	x := m.until(t, m.start(t, "review-two-roles").ID, "WAITING_APPROVAL")
 	first := workflow.Signal{Operation: "approve", ExpectedVersion: x.Version, StateID: x.StateID, Key: "review-state-key"}
 	r5eReviewDeny(t, m, x, quality, first, 403)
+	r5eReviewDenialEvidence(t, m, x, m.f.viewer, "quality_manager")
 	x = m9Decode(t, m5Call(m.handler, m.base+"/instances/"+x.ID+"/signals", m.approver, first))
 	if x.StateID != "state.second" || x.Status != "READY" {
 		t.Fatal("did not enter distinct second approval")
@@ -136,6 +154,7 @@ func TestM9RWorkflowApprovalReviewDistinctStatesAndActors(t *testing.T) {
 	r5eReviewDeny(t, m, x, m.approver, oldState, 409)
 	second := workflow.Signal{Operation: "approve", ExpectedVersion: x.Version, StateID: x.StateID, Key: first.Key}
 	r5eReviewDeny(t, m, x, m.approver, second, 403)
+	r5eReviewDenialEvidence(t, m, x, m.f.bob, "finance_manager")
 	r5eReviewDeny(t, m, x, quality, second, 409) // existing key also binds actor/state/version
 	second.Key = "review-second-key"
 	x = m9Decode(t, m5Call(m.handler, m.base+"/instances/"+x.ID+"/signals", quality, second))

@@ -6,9 +6,10 @@ held production source and competing test workloads frozen during this review.
 Reviewer changes are two regression-test files and this report only. No
 production code, migration, main branch, commit or push was changed by reviewer.
 
-Status: PASS for the bounded R5e review below. No implementation defect
-established; final full checks/build/browser validation remains the root's next
-step. Full R5/M9R remain PARTIAL; M10 is paused.
+Status: PASS for the bounded R5e review below, including closure of the later
+root-observed LOW audit-correlation gap at `d4364a3`. Final full checks/build/
+browser validation of that fix remains the root's next step. Full R5/M9R remain
+PARTIAL; M10 is paused.
 
 ## Scope and threat model
 
@@ -42,8 +43,8 @@ or authorize M10.
 
 ## Findings
 
-No BLOCKER, HIGH, MEDIUM or LOW implementation finding established in this
-bounded review. The first regression run exposed a reviewer fixture error:
+At the initial `44a3979` review, no BLOCKER, HIGH, MEDIUM or LOW implementation
+finding was established by the reviewer. The first regression run exposed a reviewer fixture error:
 `Signal` enters the next state as READY; the worker then records
 WAITING_APPROVAL. The distinct-state test incorrectly required synchronous
 WAITING_APPROVAL. Only the test was corrected to assert READY and explicitly
@@ -134,3 +135,44 @@ lease or performance budget, and leaves performance-target commands unchanged.
 Acceptable harness change. No reviewer tests were run and no source/migration
 was edited while the root's final full verification ran. Its outcome is not
 claimed by this review note.
+
+## Denied-approval audit correlation follow-up
+
+The root subsequently identified a LOW observability gap at final audit
+inspection: role-list and self-approval rejection entries retained the actor,
+tenant, policy decision and role, but could lose the workflow instance, pinned
+IR/plan, version and record correlation when fresh denial evidence replaced
+route evidence. The initial review did not assert those fields for this denial
+branch and did not independently reproduce the pre-fix failure. Authorization
+denial and transaction rollback were already enforced.
+
+Reviewed stable fix `d4364a3` (parent `07276da`): one
+`workflowEvidence(entry, x.Instance, "rejected", "")` call enriches the same
+denied entry before the existing `Allow=false` and live-role assignment. The
+helper copies the loaded instance's immutable pin and current sequence; it
+does not change authority, state transitions, SQL, migrations or transaction
+semantics. The root's test now requires exactly one denied-admin entry with
+the exact instance, plan hash, IR hash, sequence and record. Root reported its
+targeted regression PASS21.244s; this is root-supplied evidence.
+
+Independent re-verification adds exact denial-evidence assertions to the
+reviewer regressions for an owner self-approval denial and two distinct-state
+custom-role denials. Each assertion binds the live actor/role, instance,
+workflow/version, plan/IR hashes, sequence, app/revision and captured record/
+record-version, requiring exactly one matching denial. Existing durable
+version/history/outbox/receipt/effect witnesses must remain unchanged.
+
+Independent command actually executed:
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RWorkflowApproval(CustomRolesAndImmutablePins|ReviewFieldCapabilityAndReceiptRevocation|ReviewDistinctStatesAndActors)$' -v ./tests/integration`
+PASS, three tests,47.401s: field/receipt13.17s, distinct-state16.75s and custom
+role/pins16.43s. This covers the
+exact denied-admin receipt replay plus independent self/role-list correlation,
+field/action/head revocation, state/key/actor negatives and immutable witnesses.
+`./scripts/check-format.sh && make docs-verify && git diff --check` also passed
+after these assertion/report additions. LOW correlation gap CLOSED within
+this executed scope; no authorization or migration fix was required.
+
+Full verification before this small fix was reported by root as
+`make check test build` PASS (integration646.388s) and browser5/5 PASS; those
+results are neither reviewer executions nor final verification of `d4364a3`.
+The root will rerun its final full gates after this re-review.
