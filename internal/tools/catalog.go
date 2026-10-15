@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"regexp"
 	"sort"
@@ -155,8 +156,9 @@ func LoadCatalog(raw []byte) (Catalog, error) {
 	if decoder.Decode(&doc) != nil || decoder.More() || doc.SchemaVersion != CatalogVersion || doc.Tools == nil {
 		return Catalog{}, ErrCatalog
 	}
-	var trailing json.RawMessage
-	if decoder.Decode(&trailing) == nil {
+	// Only whitespace may follow. A stray '}' or ']' is not a decodable value,
+	// so end of input is required explicitly.
+	if _, err := decoder.Token(); err != io.EOF {
 		return Catalog{}, ErrCatalog
 	}
 	return NewCatalog(doc.Tools)
@@ -311,21 +313,38 @@ func safeHeader(h string) bool {
 	if !headerPattern.MatchString(h) {
 		return false
 	}
-	for _, reserved := range []string{"authorization", "host", "content-length", "content-type", "transfer-encoding", "connection", "cookie", "proxy-authorization", "te", "upgrade", "x-forwarded-for", "x-forwarded-host", "forwarded"} {
+	// Headers the gateway sets, and headers that change framing, encoding,
+	// expectations, proxy or browser semantics, can never carry the key.
+	for _, reserved := range []string{"authorization", "host", "content-length", "content-type", "transfer-encoding", "connection", "cookie", "proxy-authorization", "te", "upgrade", "x-forwarded-for", "x-forwarded-host", "forwarded", "accept", "accept-encoding", "content-encoding", "expect", "keep-alive", "trailer", "user-agent", "via", "x-http-method-override", "x-method-override"} {
 		if lower == reserved {
 			return false
 		}
 	}
-	return true
+	return !strings.HasPrefix(lower, "proxy-") && !strings.HasPrefix(lower, "sec-")
 }
 func validEndpoint(e Endpoint) bool {
-	if len(e.Host) > 253 || !hostPattern.MatchString(e.Host) || net.ParseIP(e.Host) != nil || e.Port < 1 || e.Port > 65535 {
+	if len(e.Host) > 253 || !hostPattern.MatchString(e.Host) || net.ParseIP(e.Host) != nil || numericFinalLabel(e.Host) || e.Port < 1 || e.Port > 65535 {
 		return false
 	}
 	if e.Network != "public" && e.Network != "internal" {
 		return false
 	}
 	return e.SecretRef == "" || secretPattern.MatchString(e.SecretRef)
+}
+
+// numericFinalLabel reports a host whose last label is decimal digits or
+// 0x-hex. URL parsers and system resolvers treat such names as IPv4 literals
+// ("127.1", "0x7f.1"), so they are never literal DNS hosts.
+func numericFinalLabel(host string) bool {
+	last := host[strings.LastIndexByte(host, '.')+1:]
+	digits := "0123456789"
+	if strings.HasPrefix(last, "0x") {
+		last, digits = last[2:], "0123456789abcdef"
+		if last == "" {
+			return true
+		}
+	}
+	return last != "" && strings.Trim(last, digits) == ""
 }
 func validField(f Field, input bool) bool {
 	if !namePattern.MatchString(f.Name) {
