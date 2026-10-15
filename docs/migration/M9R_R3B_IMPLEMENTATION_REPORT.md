@@ -1,0 +1,187 @@
+# R3b governed numeric indexing
+
+14 October 2026 (IST). **Bounded numeric R3b STATUS: PASS.** Numeric feature/
+performance independently passed at `58c58ae`; regression corrections and
+authority/error controls independently passed at `5fdb7f1`. This is a numeric
+index subset, not full R3 or foundation PASS.
+
+## Implemented boundary
+
+Fixed shared numeric registry/projection tables retain JSONB as primary storage.
+Tenant metadata cannot create tables, columns, expressions or SQL. Owner/admin
+management derives integer/decimal/money fields from immutable compiled source;
+PostgreSQL independently checks live membership, source fields and active binding.
+Every key/FK includes tenant and physical namespace. Compatible preview bindings
+retain their anchor/index; unsupported fields and mismatched schema witnesses deny.
+
+Database-owned triggers maintain exact numeric values and source row versions
+atomically with record writes; deletion cascades without resurrection. Application
+roles have SELECT only on derived tables, never direct DML. Workers have neither
+generic grants nor permissive policies; new tables join worker grant-drift checks.
+Readiness verifies ownership/FORCE RLS, enabled triggers and required read ports.
+
+Registration advances the existing anchor epoch under an exclusive gate, fencing
+older RR writers. Copy and verification process at most1000 rows per checkpoint.
+BUILDING/VERIFYING indexes use the existing query plan; only READY indexes enter
+ordered page selection. Entity/field/row DataScope, filters and cursors remain
+before LIMIT; JSONB records are fetched in the same statement snapshot. Nulls are
+last in both directions, with UUID ties ascending.
+
+## API and recovery
+
+Under either `/versions/{revision}` or `/datasets/{dataset}/bindings/{binding}`,
+the entity path has `/indexes/{field}` GET, `/register` POST `{}`, and `/build`
+POST `{"expected_checkpoint":N}`. These are real authenticated preview routes,
+not a production release API or a new UI. GET returns state/checkpoint/counts and
+schema identity, never record values.
+
+After an unknown response, GET the checkpoint before repeating a build. Repeating
+the same expected checkpoint returns committed progress without advancing twice.
+Business data, management changes and audit failure roll back together. Copy
+uses shared source locks; a newer update/delete aborts a stale builder rather than
+being overwritten. Forward-only migrations preserve all source records. Keep
+BUILDING/VERIFYING on a failed witness/coverage check; do not declare it READY or
+delete records/checkpoints to retry. Schema-owner corruption requires reviewed
+operator repair. There is no automatic destructive down migration.
+
+## Executed commands and retained failures
+
+| Exact command | Outcome |
+|---|---|
+| `./scripts/go.sh fmt ./internal/runtime/data ./internal/platform/access ./internal/policy` | PASS |
+| `./scripts/go.sh test ./internal/runtime/data ./internal/platform/access ./internal/policy` | PASS |
+| `make migrate migration-status` | PASS: migration31 installed;1–31 applied |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RNumericIndex' -v ./tests/integration` | Initial four roots PASS11.566s; expanded corrected33 suite PASS16.645s; audit/grant-drift expansion PASS17.425s. Later joined-batch result pending below |
+| `make test-performance > /tmp/m9r-r3b-performance.log 2>&1` | FAIL29.566s:100k build completed8.379s and indexed101-row plan executed1.316ms; plan visitor skipped typed root slice. HTTP samples NOT RUN. Corrected visitor, no product defect claimed |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM9RNumericIndexBuildConcurrentWriter$' -v ./tests/integration` | Initial fixture FAIL/terminated87.729s: used restricted pg_stat_activity wait fields and had incorrect cleanup ordering. Fixed owned-backend pg_locks observation/cleanup. Then FAIL2.119s reproduced actual40P01 build registry/FK deadlock. Migration32 correction PASS2.062s; final update/delete subcases pass |
+| `make test-performance > /tmp/m9r-r3b-performance-fixed.log 2>&1` | FAIL30.653s: final full coverage scan exceeded unchanged2s statement budget; HTTP NOT RUN. Migration33 replaced it with checkpoints |
+| `make migrate` (initial33) | FAIL42601: generated regex replacement duplicated SQL suffix. Atomic rollback retained applied1–32. Corrected the still-unapplied33; subsequent migration PASS and repeated no-op PASS |
+| Numeric suite before corrected33 | FAIL4.613s, all fixtures rejected migration33 syntax. Retained; no accepted functionality claim from these failures |
+| `make test-performance > /tmp/m9r-r3b-performance-bounded.log 2>&1` | FAIL30.142s: separate cached projection lookups exceeded2s without fresh stats. Migration34 joins the bounded batch once. HTTP NOT RUN |
+| `make migrate` (32,33,34 individually) | PASS: additive changes, no record cleanup; repeated33 invocation applied0 |
+
+The migration34 correction passed all eight numeric race-test roots18.848s,
+including update/delete subcases, derived-table drift and audit rollback.
+`make test-performance > /tmp/m9r-r3b-performance-joined.log 2>&1` PASSED34.066s:
+100k rows copied and checked in a separate verification pass in203 checkpoints,
+10.492s build time. Unindexed SQL p95 key0.424ms/numeric83.874ms/selective58.776ms
+passed. Numeric HTTP ten-client p50/p95/p99 was56.898/104.506/116.930ms,
+154.00requests/s and zero errors; the unchanged750ms p95 gate passed. The actual
+generic runtime plan uses the numeric ascending index for101 rows and two sets
+of101 source primary-key probes. All100 response samples validate exact expected
+IDs, values, ordering and cursor. PostgreSQL18.6/4CPU/8GiB/swap-off image digest
+`29754c7520f4b9654cf8ff98e19ac73b88e255c3a53f6236ebe9d52249bb6df3` was verified.
+
+`make check test build > /tmp/m9r-r3b-full-checks.log 2>&1` FAILED at the full
+integration step (220.100 s): `TestM1FreshDatabaseMigrations`,
+`TestM9ExpiredLeaseOnEarlySaveAndConcurrentSignals`, and
+`TestM9RejectedMutationsRollbackBeforeHTTPResponse`. Earlier format/static/schema
+checks, Go race units, 5 Node tests and 29 frontend tests passed. Build was NOT RUN
+by that failed sequence. The failures were retained and independently reproduced/
+classified rather than bypassed.
+
+The separate sequence `make build > /tmp/m9r-r3b-build.log 2>&1`,
+`make test-write-performance > /tmp/m9r-r3b-write-performance.log 2>&1`, and
+`make test-e2e > /tmp/m9r-r3b-e2e.log 2>&1` PASSED. Write load (61.302 s) completed
+14,141 distinct successful writes over60 s with32 clients, zero errors and exact
+receipt/business-audit/outbox facts. p50/p95/p99 was133.103/168.610/196.903 ms,
+235.28 writes/s, pool wait0. All five browser tests passed7.3 s; backend/frontend
+builds passed. No increased pool, timeout or write threshold.
+
+Independent numeric review at `58c58ae` PASSED: own populated/fault probes plus
+eight repository roots25.975 s, further scoped/join probes, and one isolated
+ordinary `make test-performance` PASS32.771 s. HTTP p95/p99 was96.713/116.989 ms,
+171.33 requests/s, zero errors. See the
+[independent report](../verification/M9R_R3B_INDEPENDENT_REVIEW.md). Its broader
+regression status remains PARTIAL until the corrections below are reverified.
+
+## Full-regression corrections
+
+The new source-version FK exposes an old two-table TRUNCATE fixture assumption.
+An explicitly owned empty disposable-database dependency closure now reaches the
+immutable statement trigger, instead of an earlier FK rejection. Customer data
+is not part of that probe. Independent temporary correction PASS0.89 s.
+
+The reviewer confirmed MEDIUM workflow rejection provenance: typed lifecycle
+failures rolled business artifacts back but inherited outer `preview` audit
+classification. The workflow handler now retains its actual component/ID before
+fresh denial evidence is written. The original zero-effects and exact denial
+assertions are retained. Live policy checks and grants are unchanged.
+
+An expired capability can fail protected audit/read SQL before the next lease
+check. Worker Step now revalidates only its exact ticket, in a fresh transaction
+after rollback, for42501/P0001. Only a confirmed invalid capability maps to
+ErrLease; valid-ticket permission/database exceptions retain their actual error.
+No business operation is replayed and no audit/RLS authority is extended.
+Deterministic tests execute actual denied SQL after expiry and unrelated actual
+42501/P0001 while the ticket remains valid, with zero effects. Native decision
+version is `m9r-native-v2` to identify the added index-management semantics;
+historical evidence retains its original policy version.
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -run '^TestM1FreshDatabaseMigrations$|^TestM9ExpiredLeaseOnEarlySaveAndConcurrentSignals$|^TestM9RejectedMutationsRollbackBeforeHTTPResponse$|^TestM9RWorkerSecurityErrorClassification$' -v ./tests/integration`
+PASSED17.637 s, then19.439 s after adding the real P0001 control.
+
+The environment interruption removed the temporary log of the then-running
+complete corrected command. Its outcome is unconfirmed, not retroactively PASS.
+After resumption, `make migration-status` confirmed applied migrations1–34.
+`make check test build > /tmp/m9r-r3b-resumed-full-checks.log 2>&1` PASSED at
+`0d08d0a`: source-kit checksums84+43, format/vet/dependency verification, Go race
+units/import boundaries, 5 Node tests, 29 frontend tests, complete integration
+suite254.958 s, backend/frontend builds. The current commits through `0d08d0a`
+were pushed and exact remote equality was verified before further correction.
+
+Independent correction testing at `0d08d0a` closed MEDIUM workflow provenance and
+the migration fixture. It also reproduced LOW error masking: a valid-ticket
+42501 followed by caller cancellation was converted to ErrLease because
+WithJob.ErrJob also represents failed role/context queries. The old phrasing
+that every such ErrJob conclusively proves invalid persisted authority was too
+strong. No capability was expanded, but the original failure classification
+was lost. Independent combined run FAIL21.506 s solely in this own probe;
+all four permanent focused roots passed.
+
+The correction uses `jobs.TicketAuthority`, which preserves cancellation,
+catalog/credential and query errors separately from a successfully returned
+negative exact-ticket database check. Only success plus false becomes ErrLease.
+An unavailable recheck retains the original security error. Valid binding can
+retain ordinary begun/private-context bookkeeping; no business callback runs.
+The permanent real42501-then-cancellation control now asserts the original
+error and zero effects. The same focused four-root command PASSED20.940 s after
+this change.
+
+`make check test-unit build > /tmp/m9r-r3b-final-static-unit-build.log 2>&1`
+PASSED at `5fdb7f1`: format/static/checksums, Go race units, Node/frontend29 tests
+and backend/frontend builds. `git push --all origin` published all local branches,
+including the correction; exact HEAD/remote equality and clean working tree were
+verified. All M0–M9 milestone branch tips are ancestors of this source checkpoint.
+Publication is not a main merge or deployment. Remote CI/deployed production
+verification remains NOT RUN.
+
+Final independent correction review at `5fdb7f1` PASSED22.835 s: its previous
+failing cancellation probe and all four permanent focused roots, now including
+zero-business-effects assertions. Direct TicketAuthority controls PASSED2.416 s:
+valid authority true; persisted expired authority success/false; cancellation,
+nil/closed database, wrong application role and unsafe worker column grants
+return errors rather than a successful false. MEDIUM provenance, the migration
+fixture and LOW error masking are independently closed. Exact commands and
+historical failures remain in the linked independent report. That reviewer did
+not execute the complete suite; the complete254.958 s suite is root evidence
+at `0d08d0a`, followed by focused root/independent and static/unit/build verification
+of the narrow correction. No repeated numeric load was needed for a change
+outside the query/migration implementation.
+
+Earlier current-host R3 HTTP FAIL898.985ms remains historical evidence.
+No threshold, client count, dataset width, pool size or resource limit was raised.
+The load fixture explicitly builds through the authenticated API, preserves the
+unindexed SQL baseline, and asserts the indexed plan visits authorized101 rows.
+
+## Remaining scope
+
+Text/date/search projections, uniqueness metadata/concurrent uniqueness, SQL
+aggregates, general join planning and selective-policy performance guarantees
+remain separate R3 subgates. Incompatible schema generations/canonical live ACLs
+and workflow data pins remain full R2 work. Product custom roles, independent
+acceptance authority, rate limiting/operations, production activation and external
+tools are not delivered by this change. No major dependency was introduced.
+
+Commit migrations, Go/API code, tests and reports. Keep `.env`, credentials,
+dependencies, local logs/profiles, binaries and frontend build outputs ignored.

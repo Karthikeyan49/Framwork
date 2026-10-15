@@ -1,0 +1,23 @@
+# M6R Acceptance Checklist
+
+- [ ] M0–M6 audit report exists
+- [ ] tenant custom metadata cannot alter shared business schema
+- [ ] V3 RecordStore contract exists
+- [ ] Domain Pack storage classification exists
+- [ ] IR/release compatibility contract exists
+- [ ] active production release stores immutable IR
+- [ ] runtime declares supported IR versions
+- [ ] exact candidate-hash approval contract exists
+- [ ] stale candidate invalidation exists
+- [ ] Intent Contract exists
+- [ ] Business Acceptance Spec is independent of generated metadata
+- [ ] DataScope contract exists
+- [ ] DB role taxonomy exists
+- [ ] worker tenant-context flow tested
+- [ ] tool delivery/idempotency semantics exist
+- [ ] sandbox isolation contract exists
+- [ ] ApplicationPatch/base/rebase contract exists
+- [ ] transactional audit/outbox contract exists
+- [ ] Money/time/calendar/document-number contracts exist
+- [ ] legacy storage migration path exists if needed
+- [ ] no unresolved BLOCKER/HIGH review findings

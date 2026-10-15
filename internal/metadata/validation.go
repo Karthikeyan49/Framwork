@@ -45,32 +45,48 @@ func (s Source) Namespace() string     { return s.document.Namespace }
 func (s Source) Hash() string          { return s.hash }
 func (s Source) JSON() json.RawMessage { return append(json.RawMessage(nil), s.raw...) }
 
-type Validator struct{ schema *js.Schema }
+type Validator struct {
+	schema         *js.Schema
+	rulesSchema    *js.Schema
+	workflowSchema *js.Schema
+}
 type noLoader struct{}
 
 func (noLoader) Load(string) (any, error) {
 	return nil, errors.New("external schema loading is disabled")
 }
 func NewValidator() (*Validator, error) {
-	raw, err := contracts.Files.ReadFile("application-v1.schema.json")
-	if err != nil {
-		return nil, err
+	compile := func(file, version string) (*js.Schema, error) {
+		raw, e := contracts.Files.ReadFile(file)
+		if e != nil {
+			return nil, e
+		}
+		schema, e := js.UnmarshalJSON(bytes.NewReader(raw))
+		if e != nil {
+			return nil, e
+		}
+		c := js.NewCompiler()
+		c.DefaultDraft(js.Draft2020)
+		c.UseLoader(noLoader{})
+		id := "urn:framework:metadata:" + version
+		if e = c.AddResource(id, schema); e != nil {
+			return nil, e
+		}
+		return c.Compile(id)
 	}
-	schema, err := js.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
+	old, e := compile("application-v1.schema.json", SchemaVersion)
+	if e != nil {
+		return nil, e
 	}
-	c := js.NewCompiler()
-	c.DefaultDraft(js.Draft2020)
-	c.UseLoader(noLoader{})
-	if err = c.AddResource("urn:framework:metadata:1.0.0", schema); err != nil {
-		return nil, err
+	next, e := compile("application-v1.1.schema.json", RuleSchemaVersion)
+	if e != nil {
+		return nil, e
 	}
-	compiled, err := c.Compile("urn:framework:metadata:1.0.0")
-	if err != nil {
-		return nil, err
+	workflows, e := compile("application-v1.2.schema.json", WorkflowSchemaVersion)
+	if e != nil {
+		return nil, e
 	}
-	return &Validator{compiled}, nil
+	return &Validator{old, next, workflows}, nil
 }
 func (v *Validator) Parse(raw []byte) (Source, error) { return v.parse(raw, MaxBytes) }
 
@@ -87,10 +103,20 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 	if err != nil {
 		return Source{}, err
 	}
-	if err = v.schema.Validate(value); err != nil {
+	active := v.schema
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == RuleSchemaVersion {
+		active = v.rulesSchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == WorkflowSchemaVersion {
+		active = v.workflowSchema
+	}
+	if active == nil {
+		return Source{}, ErrUnavailable
+	}
+	if err = active.Validate(value); err != nil {
 		var validation *js.ValidationError
 		if errors.As(err, &validation) {
-			return Source{}, invalid("/"+strings.Join(validation.InstanceLocation, "/"), "schema_violation", "Document violates metadata schema 1.0.0")
+			return Source{}, invalid("/"+strings.Join(validation.InstanceLocation, "/"), "schema_violation", "Document violates its versioned metadata schema")
 		}
 		return Source{}, ErrInvalid
 	}
@@ -120,7 +146,7 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 	// Ensure Go serialization preserves the published contract, including empty
 	// required arrays/maps and numeric spellings normalized for JSONB persistence.
 	roundTrip, err := DecodeJSON(encoded)
-	if err != nil || v.schema.Validate(roundTrip) != nil {
+	if err != nil || active.Validate(roundTrip) != nil {
 		return Source{}, ErrInvalid
 	}
 	if len(encoded) > MaxBytes {

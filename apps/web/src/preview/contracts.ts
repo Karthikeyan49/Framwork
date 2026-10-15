@@ -93,8 +93,10 @@ export function decodePreview(
     throw new Error("Invalid preview");
   const ir = raw.ir;
   if (
-    ir.ir_version !== rendererVersion ||
-    ir.compiler_version !== "1.0.0" ||
+    (ir.ir_version !== rendererVersion && ir.ir_version !== "1.1.0" && ir.ir_version !== "1.2.0") ||
+    typeof ir.compiler_version !== "string" ||
+    ir.compiler_version.length === 0 ||
+    ir.compiler_version.length > 80 ||
     ir.schema_snapshot !== "hybrid-preview-v1" ||
     !object(ir.application) ||
     ir.application.app_id !== app ||
@@ -229,8 +231,8 @@ export function decodePreview(
     ir_hash: raw.ir_hash,
     can_write: raw.can_write,
     ir: {
-      ir_version: rendererVersion,
-      compiler_version: "1.0.0",
+      ir_version: String(ir.ir_version),
+      compiler_version: String(ir.compiler_version),
       schema_snapshot: "hybrid-preview-v1",
       entities: [...entities.values()],
       application: { app_id: app, definitions: pages },

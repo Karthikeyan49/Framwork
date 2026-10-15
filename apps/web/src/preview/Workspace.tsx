@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { APIError } from "../api/client";
+import { CommandOutcomeUnknown } from "../api/preview";
 import { previewClient } from "../api/preview";
 import { config } from "../config";
 import {
@@ -84,25 +85,57 @@ function inputsFor(row?: Row): Record<string, string> {
 export function ApplicationWorkspace({
   token,
   tenant,
+  pendingCommands: retainedCommands,
+  onPendingCommand,
+  onCommandBusy,
 }: {
   token: string;
   tenant: string;
+  pendingCommands?: Record<string, string>;
+  onPendingCommand?: (scope: string, key: string) => void;
+  onCommandBusy?: (key: string, busy: boolean) => void;
 }) {
   const [app, setApp] = useState("app.contacts");
   const [revision, setRevision] = useState("1");
   const [loaded, setLoaded] = useState<{ preview: Preview; client: Client }>();
   const [page, setPage] = useState("");
+  const [writePending, setWritePending] = useState(false);
+  const [blockedWrites, setBlockedWrites] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [localPendingCommands, setPendingCommands] = useState<Record<string, string>>({});
+  const pendingCommands = retainedCommands ?? localPendingCommands;
+  const scopeKey = loaded
+    ? tenant +
+      ":" +
+      app +
+      ":" +
+      loaded.preview.revision +
+      ":" +
+      loaded.preview.ir_hash
+    : "";
+  const writeKey =
+    scopeKey + ":" + (selectedEntity(loaded?.preview, page) ?? "");
+  function blockWrite(blocked: boolean) {
+    setBlockedWrites((old) => ({ ...old, [writeKey]: blocked }));
+  }
+  function setPendingCommand(key: string) {
+    if (onPendingCommand) onPendingCommand(writeKey, key);
+    else setPendingCommands((old) => ({ ...old, [writeKey]: key }));
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const request = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => request.current?.abort(), []);
   function clear() {
+    if (writePending) return;
     request.current?.abort();
     setLoaded(undefined);
     setError("");
     setBusy(false);
   }
   async function load() {
+    if (writePending) return;
     clear();
     const controller = new AbortController();
     request.current = controller;
@@ -146,6 +179,7 @@ export function ApplicationWorkspace({
         <label>
           Application ID
           <input
+            disabled={writePending}
             value={app}
             onChange={(e) => {
               clear();
@@ -162,6 +196,7 @@ export function ApplicationWorkspace({
             min="1"
             max="1000000000"
             step="1"
+            disabled={writePending}
             value={revision}
             onChange={(e) => {
               clear();
@@ -170,7 +205,7 @@ export function ApplicationWorkspace({
             required
           />
         </label>
-        <button disabled={busy}>
+        <button disabled={busy || writePending}>
           {busy ? "Loading preview…" : "Load preview"}
         </button>
       </form>
@@ -186,6 +221,7 @@ export function ApplicationWorkspace({
             {loaded.preview.ir.application.definitions.map((p) => (
               <button
                 key={p.id}
+                disabled={writePending}
                 aria-current={page === p.id ? "page" : undefined}
                 onClick={() => setPage(p.id)}
               >
@@ -199,6 +235,12 @@ export function ApplicationWorkspace({
               page={selected}
               preview={loaded.preview}
               client={loaded.client}
+              onWritePending={setWritePending}
+              writeBlocked={!!blockedWrites[writeKey]}
+              blockWrite={blockWrite}
+              pendingCommand={pendingCommands[writeKey] ?? ""}
+              setPendingCommand={setPendingCommand}
+              onCommandBusy={onCommandBusy}
             />
           ) : (
             <p>This application has no pages.</p>
@@ -208,7 +250,12 @@ export function ApplicationWorkspace({
     </section>
   );
 }
+function selectedEntity(preview: Preview | undefined, page: string) {
+  return preview?.ir.application.definitions.find((p) => p.id === page)?.page
+    .entity_ref;
+}
 function RelationPicker({
+  reloadEpoch,
   field,
   value,
   set,
@@ -218,6 +265,7 @@ function RelationPicker({
   id,
   label,
 }: {
+  reloadEpoch: number;
   label: string;
   id: string;
   field: Field;
@@ -259,7 +307,7 @@ function RelationPicker({
         if (!controller.signal.aborted) setStatus(message(e));
       });
     return () => controller.abort();
-  }, [client, field, preview]);
+  }, [client, field, preview, reloadEpoch]);
   return (
     <>
       <input
@@ -288,10 +336,22 @@ function RelationPicker({
   );
 }
 function EntityPage({
+  onCommandBusy,
+  pendingCommand,
+  setPendingCommand,
+  writeBlocked,
+  blockWrite,
+  onWritePending,
   page,
   preview,
   client,
 }: {
+  onCommandBusy?: (key: string, busy: boolean) => void;
+  pendingCommand: string;
+  setPendingCommand: (key: string) => void;
+  onWritePending: (pending: boolean) => void;
+  writeBlocked: boolean;
+  blockWrite: (blocked: boolean) => void;
   page: Page;
   preview: Preview;
   client: Client;
@@ -299,7 +359,9 @@ function EntityPage({
   const entity = preview.ir.entities.find(
     (e) => e.id === page.page.entity_ref,
   )!;
-  const [needsReload, setNeedsReload] = useState(false);
+  const needsReload = writeBlocked || Boolean(pendingCommand);
+  const setNeedsReload = blockWrite;
+  const [reloadEpoch, setReloadEpoch] = useState(0);
   const [rows, setRows] = useState<Row[]>([]);
   const [next, setNext] = useState("");
   const [selected, setSelected] = useState<Row>();
@@ -346,9 +408,6 @@ function EntityPage({
     queries.current = controller;
     setBusy(true);
     setError("");
-    setSelected(undefined);
-    setInputs({});
-    setConfirmDelete(false);
     try {
       const result = await client.query(
         entity.id,
@@ -359,17 +418,22 @@ function EntityPage({
       if (!controller.signal.aborted) {
         setRows(result.records);
         setNext(result.next);
-        setNeedsReload(false);
+        setNeedsReload(Boolean(pendingCommand));
+        setSelected(undefined);
+        setInputs({});
+        setConfirmDelete(false);
+        setReloadEpoch((old) => old + 1);
+        return true;
       }
     } catch (e) {
       if (!controller.signal.aborted) {
-        setRows([]);
-        setNext("");
+        setNeedsReload(true);
         setError(message(e));
       }
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
+    return false;
   }
   async function command(operation: "create" | "update" | "delete") {
     if (!preview.can_write || saving || busy || needsReload) return;
@@ -384,9 +448,16 @@ function EntityPage({
     writes.current?.abort();
     const controller = new AbortController();
     writes.current = controller;
+    setNeedsReload(true);
     setSaving(true);
+    onWritePending(true);
     setError("");
     setNotice("");
+    // Retain the key before dispatch, above the workspace's unmount boundary.
+    // Cancellation/disconnect cannot establish that the server rolled back.
+    const key = crypto.randomUUID();
+    setPendingCommand(key);
+    onCommandBusy?.(key, true);
     try {
       const row = await client.command(
         entity.id,
@@ -394,28 +465,42 @@ function EntityPage({
         values,
         selected,
         controller.signal,
+        key,
       );
+      setPendingCommand("");
       if (!controller.signal.aborted) {
-        await load();
+        const reloaded = await load();
+        setNeedsReload(!reloaded);
         setNotice(
-          operation === "delete"
-            ? "Record deleted."
-            : `Record saved · version ${row.version}.`,
+          !reloaded
+            ? "The change was saved, but records could not be reloaded. Reload and inspect records before another write."
+            : operation === "delete"
+              ? "Record deleted."
+              : `Record saved · version ${row.version}.`,
         );
       }
     } catch (e) {
+      // The parent owns recovery facts even after this page is unmounted.
+      if (e instanceof APIError && e.status < 500) setPendingCommand("");
       if (!controller.signal.aborted) {
-        if (!(e instanceof APIError) || e.status >= 500) {
+        if (e instanceof CommandOutcomeUnknown) {
+          setPendingCommand(e.commandKey);
           setNeedsReload(true);
           setError(
-            "The write outcome is uncertain and may have committed. Reload records and inspect them before trying again.",
+            "The write outcome is uncertain. Check the command receipt before another write. An unknown receipt does not prove the command failed.",
           );
-        } else {
+        } else if (e instanceof APIError) {
           if (e.status === 409) setNeedsReload(true);
+          if (e.status !== 409) setNeedsReload(false);
+          setError(message(e));
+        } else {
+          setNeedsReload(true);
           setError(message(e));
         }
       }
     } finally {
+      onCommandBusy?.(key, false);
+      onWritePending(false);
       if (!controller.signal.aborted) setSaving(false);
     }
   }
@@ -425,6 +510,28 @@ function EntityPage({
     setConfirmDelete(false);
     if (!needsReload) setError("");
     setNotice("");
+  }
+  async function reconcile() {
+    if (!pendingCommand || saving || busy) return;
+    setSaving(true);
+    setError("");
+    try {
+      const receipt = await client.receipt(pendingCommand);
+      if (receipt.state === "COMMITTED") {
+        setPendingCommand("");
+        const reloaded = await load();
+        // load captured the old pending key; release the gate only after both
+        // a committed owned receipt and the fresh read have been confirmed.
+        setNeedsReload(!reloaded);
+        setNotice(`Command committed · version ${receipt.record_version}.`);
+      } else {
+        setError("The receipt is still unknown. Keep this command key and check again; do not repeat the write.");
+      }
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setSaving(false);
+    }
   }
   function render(c: Component, key: string): React.ReactNode {
     const children = c.children?.map((child, i) =>
@@ -507,7 +614,7 @@ function EntityPage({
               ))}
             </tbody>
           </table>
-          {!busy && rows.length === 0 && <p>No records yet.</p>}
+          {!busy && !error && rows.length === 0 && <p>No records yet.</p>}
           <div className="actions">
             <button
               type="button"
@@ -592,6 +699,7 @@ function EntityPage({
         {c.type === "relation_picker" ? (
           <span>
             <RelationPicker
+              reloadEpoch={reloadEpoch}
               id={id}
               label={c.label ?? f.label}
               field={f}
@@ -666,6 +774,37 @@ function EntityPage({
       {busy && <p role="status">Loading records…</p>}
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
+      {pendingCommand && (
+        <div>
+          <p>Pending command: <code>{pendingCommand}</code></p>
+          <button type="button" disabled={busy || saving} onClick={() => void reconcile()}>
+            Check command receipt
+          </button>
+        </div>
+      )}
+      {needsReload && !saving && (
+        <p role="status">
+          A write requires review. Reload records and inspect them before
+          writing again.
+        </p>
+      )}
+      {rows.length > 0 && !hasTable(page.page.components) && (
+        <label>
+          Open record
+          <select
+            value={selected?.id ?? ""}
+            onChange={(e) => select(rows.find((r) => r.id === e.target.value))}
+            disabled={busy || saving}
+          >
+            <option value="">Choose a record…</option>
+            {rows.map((r) => (
+              <option value={r.id} key={r.id}>
+                {Object.values(r.values).map(display).join(" · ")}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {page.page.components.map((c, i) => render(c, String(i)))}
     </section>
   );
@@ -696,5 +835,11 @@ function Tabs({
       </div>
       {components[active] && render(components[active], active)}
     </section>
+  );
+}
+
+function hasTable(components: Component[]): boolean {
+  return components.some(
+    (c) => c.type === "table" || hasTable(c.children ?? []),
   );
 }

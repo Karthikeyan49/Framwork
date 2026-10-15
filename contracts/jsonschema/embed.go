@@ -3,5 +3,5 @@ package jsonschema
 
 import "embed"
 
-//go:embed application-v1.schema.json
+//go:embed application-v1.schema.json application-v1.1.schema.json application-v1.2.schema.json
 var Files embed.FS

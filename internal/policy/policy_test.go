@@ -2,20 +2,22 @@ package policy
 
 import (
 	"context"
-	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"strings"
+
 	"testing"
 )
 
 func TestPolicyMatrix(t *testing.T) {
 	for _, role := range []string{"owner", "admin", "member", "viewer", "unknown", ""} {
+		builtin := role == "owner" || role == "admin" || role == "member" || role == "viewer"
 		for _, tc := range []struct {
 			action, kind, owner string
 			permitted           bool
 		}{
-			{"tenant.access", "tenant", "", tenant.ValidRole(role)},
+			{"tenant.access", "tenant", "", builtin},
 			{"memberships.read", "membership", "", role == "owner" || role == "admin"},
-			{"profile.read", "user", "alice", tenant.ValidRole(role)},
-			{"metadata.read", "metadata", "", tenant.ValidRole(role)},
+			{"profile.read", "user", "alice", builtin},
+			{"metadata.read", "metadata", "", builtin},
 			{"metadata.write", "metadata", "", role == "owner" || role == "admin"},
 			{"metadata.write", "tool", "", false},
 			{"profile.read", "user", "bob", false},
@@ -63,5 +65,54 @@ func TestSelfSessionAttributes(t *testing.T) {
 	}
 	if permitsSelf("", "identity.session.read", good) || permitsSelf("alice", "unknown", good) {
 		t.Fatal("unknown session authority accepted")
+	}
+}
+
+func TestRecordAccessAdministrationCapabilities(t *testing.T) {
+	row := Resource{TenantID: "tenant-a", Type: "row", AppID: "app.contacts", EntityID: "entity.contact", RecordID: "record"}
+	for _, role := range []string{"owner", "admin", "member", "viewer", "unknown"} {
+		for _, action := range []string{"data.row.share", "data.row.assign"} {
+			want := role == "owner" || role == "admin"
+			if got := permits("alice", "tenant-a", []string{role}, action, row); got != want {
+				t.Fatalf("%s/%s allow=%v", role, action, got)
+			}
+			collection := row
+			collection.RecordID = ""
+			if permits("alice", "tenant-a", []string{role}, action, collection) {
+				t.Fatal("collection-level record administration")
+			}
+		}
+	}
+	grant := `{"schema_version":"tenant-capabilities-v1","name":"%s","grants":[{"effect":"ALLOW","actions":["data.row.share","data.row.assign"],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "steward", 1)), ""); err != nil {
+		t.Fatal("custom record administration rejected", err)
+	}
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "viewer", 1)), ""); err == nil {
+		t.Fatal("viewer granted record administration")
+	}
+	scoped := strings.Replace(strings.Replace(grant, "%s", "steward", 1), `"field_id":"*"}`, `"field_id":"*"},"scope":{"kind":"ALL"}`, 1)
+	if _, err := CompileDefinition([]byte(scoped), ""); err == nil {
+		t.Fatal("unused scope accepted on row administration gate")
+	}
+}
+
+func TestTeamAdministrationCapabilities(t *testing.T) {
+	team := Resource{TenantID: "tenant-a", Type: "team"}
+	for _, role := range []string{"owner", "admin", "member", "viewer"} {
+		for _, action := range []string{"teams.read", "teams.manage"} {
+			if got := permits("alice", "tenant-a", []string{role}, action, team); got != (role == "owner" || role == "admin") {
+				t.Fatalf("%s/%s allow=%v", role, action, got)
+			}
+		}
+	}
+	if permits("alice", "tenant-a", []string{"owner"}, "teams.manage", Resource{TenantID: "tenant-a", Type: "role"}) {
+		t.Fatal("team action accepted another resource type")
+	}
+	grant := `{"schema_version":"tenant-capabilities-v1","name":"%s","grants":[{"effect":"ALLOW","actions":["teams.read","teams.manage"],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "people_ops", 1)), ""); err != nil {
+		t.Fatal("custom team administration rejected", err)
+	}
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "viewer", 1)), ""); err == nil {
+		t.Fatal("viewer granted team administration")
 	}
 }

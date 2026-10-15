@@ -101,7 +101,15 @@ func newIAM(t *testing.T) *iamFixture {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("M9R_DISPOSABLE_WORKER_BINDING") == "true" {
+		if _, err = operator.Exec(`SELECT control.assign_worker('framework_worker',$1::uuid,true)`, f.tenantA); err != nil {
+			t.Fatal("disposable worker assignment", err)
+		}
+	}
 	t.Cleanup(func() {
+		if os.Getenv("M9R_DISPOSABLE_WORKER_BINDING") == "true" {
+			_, _ = operator.Exec(`DELETE FROM control.worker_principals WHERE tenant_id IN($1,$2)`, f.tenantA, f.tenantB)
+		}
 		_, _ = operator.Exec(`DELETE FROM iam.memberships WHERE tenant_id IN ($1,$2)`, f.tenantA, f.tenantB)
 		_, _ = operator.Exec(`DELETE FROM iam.tenants WHERE id IN ($1,$2)`, f.tenantA, f.tenantB)
 		_, _ = operator.Exec(`DELETE FROM iam.users WHERE id IN ($1,$2,$3)`, f.alice, f.bob, f.viewer)
@@ -579,17 +587,37 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 		t.Fatal("migration binding invalid")
 	}
 	migrateURL.Path = "/" + name
+	query := migrateURL.Query()
+	query.Del("dbname")
+	query.Del("database")
+	query.Del("user")
+	migrateURL.RawQuery = query.Encode()
+	binding, e := pgx.ParseConfig(migrateURL.String())
+	if e != nil || binding.Database != name || binding.User != "framework_migrator" {
+		t.Fatal("effective fresh migration binding mismatch")
+	}
 	migrate, err := postgres.Open(migrateURL.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer migrate.Close()
+	var actual, role string
+	if e = migrate.QueryRowContext(ctx, `SELECT current_database(),session_user`).Scan(&actual, &role); e != nil || actual != name || role != "framework_migrator" {
+		t.Fatal("connected fresh migration binding mismatch")
+	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, migrate, migrations.Files, goose.WithDisableGlobalRegistry(true))
 	if err != nil {
 		t.Fatal("fresh migration provider failed")
 	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 8 {
+	files, fileErr := migrations.Files.ReadDir(".")
+	total := 0
+	for _, file := range files {
+		if strings.HasSuffix(file.Name(), ".sql") {
+			total++
+		}
+	}
+	if err != nil || fileErr != nil || total == 0 || len(results) != total {
 		t.Fatal("fresh migration chain failed")
 	}
 	results, err = provider.Up(ctx)
@@ -601,6 +629,15 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 		t.Fatal("runtime binding invalid")
 	}
 	runtimeURL.Path = "/" + name
+	query = runtimeURL.Query()
+	query.Del("dbname")
+	query.Del("database")
+	query.Del("user")
+	runtimeURL.RawQuery = query.Encode()
+	binding, e = pgx.ParseConfig(runtimeURL.String())
+	if e != nil || binding.Database != name || binding.User != "framework_app" {
+		t.Fatal("effective fresh runtime binding mismatch")
+	}
 	runtimeDB, err := postgres.Open(runtimeURL.String())
 	if err != nil {
 		t.Fatal(err)
@@ -677,7 +714,10 @@ func TestM1FreshDatabaseMigrations(t *testing.T) {
 	for _, statement := range []string{
 		`UPDATE control.metadata_versions SET source_hash=source_hash WHERE false`,
 		`DELETE FROM control.metadata_versions WHERE false`,
-		`TRUNCATE control.metadata_heads,control.metadata_versions`,
+		// This explicitly owned empty database now has further source-version
+		// FKs. Include the dependency closure so the immutable statement trigger,
+		// rather than PostgreSQL's earlier FK rejection, is the tested backstop.
+		`TRUNCATE control.metadata_heads,control.metadata_versions CASCADE`,
 	} {
 		if _, mutationErr := migrate.ExecContext(ctx, statement); mutationErr == nil || !strings.Contains(mutationErr.Error(), "metadata source revisions are immutable") {
 			t.Fatal("metadata owner mutation did not hit immutable trigger")

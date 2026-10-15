@@ -1,5 +1,6 @@
 // Runs owned foundation processes, real dependency probes, telemetry and proxy requests.
 import { spawn, execFileSync } from 'node:child_process'
+import { runtimeEnv } from './runtime-env.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -12,7 +13,7 @@ fs.mkdirSync(path.join(root, '.local'), { recursive: true })
 const owned = []
 function start(command, args, name, detached = false) {
   const log = fs.openSync(path.join(root, '.local', `smoke-${name}.log`), 'w', 0o600)
-  const child = spawn(command, args, { cwd: root, env: process.env, stdio: ['ignore', log, log], detached })
+  const child = spawn(command, args, { cwd: root, env: runtimeEnv(process.env,name), stdio: ['ignore', log, log], detached })
   fs.closeSync(log)
   const exit = new Promise((resolve) => {
     child.on('error', () => resolve({ code: 1, signal: null }))
@@ -42,6 +43,7 @@ try {
   assert.ok((await get('http://127.0.0.1:13133/')).ok, 'Collector health')
   start(path.join(root, 'bin/api'), [], 'api')
   start(path.join(root, 'bin/worker'), [], 'worker')
+  start(path.join(root, 'bin/dispatcher'), [], 'dispatcher')
   start('npm', ['--prefix', 'apps/web', 'run', 'dev'], 'web', true)
   const base = `http://${process.env.HTTP_ADDR || '127.0.0.1:8080'}`
   const health = await ready(`${base}/healthz`)
@@ -50,7 +52,7 @@ try {
   const traceID = '00112233445566778899aabbccddeeff'
   const readiness = await get(`${base}/readyz`, { headers: { traceparent: `00-${traceID}-0011223344556677-01` } })
   assert.equal(readiness.status, 200)
-  assert.deepEqual(await readiness.json(), { status: 'ready', dependencies: { postgres: 'ok', redis: 'ok', identity: 'ok', tenant: 'ok', audit: 'ok', metadata: 'ok', data: 'ok' } })
+  assert.deepEqual(await readiness.json(), { status: 'ready', dependencies: { postgres: 'ok', redis: 'ok', events:'ok', workflows:'ok', identity: 'ok', tenant: 'ok', audit: 'ok', metadata: 'ok', data: 'ok' } })
   const web = await ready('http://127.0.0.1:5173/')
   assert.match(await web.text(), /Framework Console/)
   const proxy = await get('http://127.0.0.1:5173/api/readyz')
@@ -63,11 +65,13 @@ try {
   // Runtime metrics export on a 10-second interval; sampled parent forces trace export.
   await delay(11000)
   assert.ok(fs.readFileSync(path.join(root, '.local/smoke-api.log'), 'utf8').includes(traceID), 'W3C request/trace correlation')
+  if(process.env.WORKFLOWS_ENABLED!=='false')assert.ok(fs.readFileSync(path.join(root,'.local/smoke-worker.log'),'utf8').includes('workflow execution started'),'M9 workflow runtime initialized')
+  for(const name of ['worker','dispatcher'])assert.ok(fs.readFileSync(path.join(root, `.local/smoke-${name}.log`),'utf8').includes('event delivery started'),`${name} initialized M8 delivery`)
   for (const item of owned) await stop(item)
   const collector = execFileSync('docker', ['compose', '--env-file', '.env', '-f', 'infra/compose/compose.yaml', 'logs', '--since', since, 'otel-collector'], { cwd: root, encoding: 'utf8' })
   assert.match(collector, /Traces/, 'Collector received traces')
   assert.match(collector, /Metrics/, 'Collector received runtime/HTTP metrics')
-  console.log('PASS: live health/readiness, PG/Redis/IAM, frontend proxy, authentication denial, exact CORS, trace correlation, collector traces/metrics, graceful API/worker shutdown')
+  console.log('PASS: live health/readiness, PG/Redis/IAM/events, frontend proxy, authentication denial, exact CORS, trace correlation, collector traces/metrics, initialized M8 delivery and graceful API/worker/dispatcher shutdown')
 } finally {
   for (const item of owned) { if (item.child.exitCode === null && item.child.signalCode === null) await stop(item) }
 }
