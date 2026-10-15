@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,9 +18,11 @@ import (
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
@@ -376,7 +380,10 @@ func TestIndependentR5dStrictRuleCannotInferOwnerDeniedField(t *testing.T) {
 }
 func TestIndependentR5dStrictWorkflowCannotCaptureOwnerDeniedField(t *testing.T) {
 	m := m9Setup(t, nil)
-	engine := independentR5dEmbeddedOwnerPolicy{field: "field.contact.name"}
+	// Status is consumed by the executable workflow transition. Name is only
+	// referenced by an unrelated rule and is deliberately tested below as an
+	// authorized positive rather than an alleged capture bypass.
+	engine := independentR5dEmbeddedOwnerPolicy{field: "field.contact.status"}
 	api := access.API{DB: m.f.db, Auth: m.f.verifier, Policy: engine, Audit: audit.Postgres{}, Registry: m3Registry(t), PreviewEnabled: true, WorkflowsEnabled: true}
 	restricted := httpserver.Handler(httpserver.Options{Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Register: api.Register, AllowPOST: api.AcceptsPOST})
 	w := m5Call(restricted, m.base+"/start", m.token, map[string]string{"record_id": m.record.ID, "idempotency_key": "independent-owned-source-denied"})
@@ -387,4 +394,226 @@ func TestIndependentR5dStrictWorkflowCannotCaptureOwnerDeniedField(t *testing.T)
 	if w.Code != 403 || count != 0 {
 		t.Fatal("strict workflow captured owner-denied source", w.Code, "persisted bindings", count)
 	}
+}
+
+func TestIndependentR5dStrictWorkflowExcludesUnconsumedHiddenField(t *testing.T) {
+	m := m9Setup(t, nil)
+	engine := independentR5dEmbeddedOwnerPolicy{field: "field.contact.name"}
+	api := access.API{DB: m.f.db, Auth: m.f.verifier, Policy: engine, Audit: audit.Postgres{}, Registry: m3Registry(t), PreviewEnabled: true, WorkflowsEnabled: true}
+	restricted := httpserver.Handler(httpserver.Options{Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Register: api.Register, AllowPOST: api.AcceptsPOST})
+	w := m5Call(restricted, m.base+"/start", m.token, map[string]string{"record_id": m.record.ID, "idempotency_key": "independent-unconsumed-name"})
+	if w.Code != 200 {
+		t.Fatal("unconsumed hidden field unnecessarily blocked workflow", w.Code)
+	}
+	var inputs []byte
+	if err := m.f.operator.QueryRow(`SELECT inputs FROM runtime.workflow_bindings WHERE tenant_id=$1 AND app_id=$2`, m.f.tenantA, m.app).Scan(&inputs); err != nil {
+		t.Fatal("snapshot evidence unavailable", err)
+	}
+	var snapshot struct {
+		Fields []string                   `json:"fields"`
+		Values map[string]json.RawMessage `json:"values"`
+	}
+	if json.Unmarshal(inputs, &snapshot) != nil || !slices.Contains(snapshot.Fields, "field.contact.status") || slices.Contains(snapshot.Fields, engine.field) {
+		t.Fatal("workflow did not capture precisely consumed fields")
+	}
+	if _, present := snapshot.Values[engine.field]; present {
+		t.Fatal("unconsumed hidden value entered snapshot")
+	}
+}
+
+func reviewR5dScope(t *testing.T, app string) data.Scope {
+	t.Helper()
+	raw, err := os.ReadFile("../../contracts/examples/contacts-draft-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := m3Registry(t).Parse([]byte(strings.Replace(string(raw), "app.contacts", app, 1)))
+	if err != nil {
+		t.Fatal("scope authoring fixture", err)
+	}
+	program, diagnostics := compiler.Compile(source, compiler.PlatformCatalog())
+	if !program.Valid() {
+		t.Fatal("scope compiler fixture", diagnostics)
+	}
+	scope, err := data.NewScope(program, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scope
+}
+func TestIndependentR5dJoinedTargetOwnerDenialStaysInSQL(t *testing.T) {
+	m8Database(t)
+	f, owner, base, alice, app := m5Fixture(t)
+	parent := m5Create(t, owner, base, alice, "Joined hidden parent")
+	if err := (tenant.Store{}).Provision(context.Background(), f.operator, f.tenantA, "Joined review", f.bob, "member", true); err != nil {
+		t.Fatal(err)
+	}
+	bob := f.token(t, f.bobSubject, nil)
+	values := m5Values("Readable child")
+	values["field.contact.parent"] = parent.ID
+	child := reviewR5dRecord(t, owner, base, bob, values)
+	engine := independentR5dEmbeddedOwnerPolicy{field: "field.contact.name"}
+	restricted := m5Handler(t, f, engine, audit.Postgres{}, true)
+	query := data.Query{RecordID: child.ID, Projection: []string{"field.contact.name", "field.contact.parent"}, Join: &data.Join{Relationship: "relationship.contact.parent", Projection: []string{engine.field}}, Limit: 1}
+	w := m5Call(restricted, base+"/query", alice, query)
+	page := m5Page(t, w)
+	related := page.Records[0].Related[query.Join.Relationship]
+	if related == nil || related.ID != parent.ID || related.FieldAccess == nil || !slices.Contains(related.FieldAccess.Masked, engine.field) {
+		t.Fatal("joined owner denial lost target visibility/mask")
+	}
+	if strings.Contains(w.Body.String(), "Joined hidden parent") {
+		t.Fatal("joined owner-denied value escaped SQL mask")
+	}
+	if page.Records[0].Values[engine.field] != "Readable child" {
+		t.Fatal("source owner field incorrectly masked")
+	}
+	// Strict internal point joins must reject inaccessible inputs rather than
+	// returning a masked value; the same target owner context is authoritative.
+	scope := reviewR5dScope(t, app)
+	principal, err := f.verifier.Verify(alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+		authority, err := m3Scope(f, ctx, q, principal, f.tenantA)
+		if err != nil {
+			return err
+		}
+		guard := data.Guard(func(_ context.Context, action string, r data.Resource) error {
+			if action == "data.field.read" && r.FieldID == engine.field && r.OwnerID == f.alice {
+				return data.ErrDenied
+			}
+			return nil
+		})
+		resolve := data.ScopeResolver(func(context.Context, string, data.Resource) (policy.DataScope, error) {
+			return policy.DataScope{Kind: "ALL"}, nil
+		})
+		_, err = (data.Store{}).Query(ctx, q, scope, authority, "entity.contact", query, guard, resolve)
+		if !errors.Is(err, data.ErrDenied) {
+			return fmt.Errorf("strict joined target not denied: %v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndependentR5dOpaqueBoundCannotBeShrunkAndNativeBudgetsRemain(t *testing.T) {
+	m8Database(t)
+	f, owner, base, alice, app := m5Fixture(t)
+	first := m5Create(t, owner, base, alice, "Bounded first")
+	m9rNumericSeed(t, f, app, data.MaxOpaqueActionRows+8)
+	query := data.Query{Projection: []string{"field.contact.id", "field.contact.name", "field.contact.status"}, Limit: 100}
+	native := m5Page(t, m5Call(owner, base+"/query", alice, query))
+	if len(native.Records) != data.MaxOpaqueActionRows+9 {
+		t.Fatal("native query inherited opaque budget")
+	}
+	defined, user, _, _ := r5dLimited(t, f, app, alice)
+	p := m5Page(t, m5Call(defined, base+"/query", user, query))
+	if len(p.Records) != len(native.Records) {
+		t.Fatal("tenant-defined native kernel inherited opaque budget")
+	}
+	for _, row := range p.Records {
+		if row.FieldAccess == nil || !slices.Contains(row.FieldAccess.Masked, "field.contact.name") {
+			t.Fatal("optimized kernel bypassed explicit deny")
+		}
+	}
+	opaque := m5Handler(t, f, independentR5dEmbeddedOwnerPolicy{field: "field.contact.name"}, audit.Postgres{}, true)
+	query.Limit = 1
+	query.Filter = &data.Filter{Op: "eq", Field: "field.contact.status", Value: json.RawMessage(`"active"`)}
+	if w := m5Call(opaque, base+"/query", alice, query); w.Code != 400 {
+		t.Fatal("filter/limit shrank opaque universe", w.Code)
+	}
+	query.RecordID = first.ID
+	if p = m5Page(t, m5Call(opaque, base+"/query", alice, query)); len(p.Records) != 1 || p.Records[0].ID != first.ID {
+		t.Fatal("exact-point opaque universe unnecessarily blocked")
+	}
+}
+
+type independentR5dExecutorWrapper struct{ postgres.Executor }
+
+func TestIndependentR5dOpaqueSnapshotProofRejectsAutocommitAndRawRR(t *testing.T) {
+	m8Database(t)
+	f, owner, base, alice, app := m5Fixture(t)
+	record := m5Create(t, owner, base, alice, "Snapshot proof fixture")
+	scope := reviewR5dScope(t, app)
+	principal, err := f.verifier.Verify(alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := data.Guard(func(context.Context, string, data.Resource) error { return nil })
+	resolve := data.ScopeResolver(func(context.Context, string, data.Resource) (policy.DataScope, error) {
+		return policy.DataScope{Kind: "ALL"}, nil
+	})
+	query := data.Query{RecordID: record.ID, Projection: []string{"field.contact.name"}, Limit: 1}
+	var authority tenant.Access
+	if err = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+		var er error
+		authority, er = m3Scope(f, ctx, q, principal, f.tenantA)
+		if er != nil {
+			return er
+		}
+		if !postgres.RuntimeSnapshot(q) {
+			return errors.New("actual runtime port not certified")
+		}
+		page, er := (data.Store{}).QueryVisible(ctx, q, scope, authority, "entity.contact", query, guard, resolve)
+		if er != nil {
+			return er
+		}
+		if len(page.Records) != 1 {
+			return errors.New("actual runtime snapshot failed populated positive")
+		}
+		wrapped := independentR5dExecutorWrapper{q}
+		if postgres.RuntimeSnapshot(wrapped) {
+			return errors.New("unknown wrapper inherited proof")
+		}
+		if _, er = (data.Store{}).QueryVisible(ctx, wrapped, scope, authority, "entity.contact", query, guard, resolve); !errors.Is(er, data.ErrDenied) {
+			return fmt.Errorf("unknown wrapper not rejected: %v", er)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reject := func(name string, q postgres.Executor) {
+		t.Helper()
+		if postgres.RuntimeSnapshot(q) {
+			t.Fatal(name, "falsely certified")
+		}
+		if _, er := (data.Store{}).QueryVisible(context.Background(), q, scope, authority, "entity.contact", query, guard, resolve); !errors.Is(er, data.ErrDenied) {
+			t.Fatal(name, "opaque visible executor accepted", er)
+		}
+		if _, er := (data.Store{}).Query(context.Background(), q, scope, authority, "entity.contact", query, guard, resolve); !errors.Is(er, data.ErrDenied) {
+			t.Fatal(name, "strict point executor accepted", er)
+		}
+	}
+	reject("autocommit pool", f.db)
+	conn, err := f.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = conn.ExecContext(context.Background(), `SET default_transaction_isolation='repeatable read'`); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	var isolation string
+	if err = conn.QueryRowContext(context.Background(), `SELECT current_setting('transaction_isolation')`).Scan(&isolation); err != nil || isolation != "repeatable read" {
+		conn.Close()
+		t.Fatal("autocommit RR fixture", err)
+	}
+	reject("autocommit RR connection", conn)
+	if _, err = conn.ExecContext(context.Background(), `SET default_transaction_isolation TO DEFAULT`); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	conn.Close()
+	tx, err := f.db.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err = tx.QueryRowContext(context.Background(), `SELECT current_setting('transaction_isolation')`).Scan(&isolation); err != nil || isolation != "repeatable read" {
+		t.Fatal("raw RR fixture", err)
+	}
+	reject("raw RR transaction", tx)
 }

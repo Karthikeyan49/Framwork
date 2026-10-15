@@ -9,6 +9,13 @@ Initial result: **PARTIAL — two HIGH findings require implementation fixes and
 independent re-verification before R5d completion.** Overall M9R remains PARTIAL;
 this review does not authorize production activation, a main merge or M10.
 
+Final re-review at `a4d6054`: **PASS for bounded R5d adversarial review**. The two
+initial HIGH findings and the subsequently demonstrated strict-rule input HIGH
+are closed by executed regressions. Twenty focused integration tests passed in
+41.567s, plus eight decoder tests. Full repository/build/browser verification
+remains the implementation author's separate completion gate. The initial
+workflow Name interpretation was incorrect and is explicitly withdrawn below.
+
 ## Findings
 
 1. **HIGH — partial writes omit trusted owner attributes from field decisions.**
@@ -123,14 +130,13 @@ executed wrapper embedding Native correctly remained opaque and its denied
 balance was masked by the interactive endpoint. Full independent closure of the
 original regressions is deferred until the following alternate path is fixed.
 
-3. **HIGH — strict rule/workflow inputs bypass the same owner-sensitive field
+3. **HIGH — strict rule inputs bypass the same owner-sensitive field
    action denial.** The strict `Store.Query` port still checks fields without
    actual row/owner context. With a Native-embedding policy denying read access
    to the owner's balance and returning SQL scope ALL, the interactive endpoint
    correctly masks that balance, but the rule evaluation endpoint returns 200
-   and its threshold result. A corresponding owner-denied name can still enter
-   a workflow snapshot; workflow start returns 200. This is an alternate value
-   inference/capture path and prevents R5d closure even though the new visible
+   and its threshold result. This is an alternate value inference path and
+   prevents R5d closure even though the new visible
    port itself is corrected. Strict point inputs must obtain trusted header
    context and enforce the field/row actions before consuming record values.
    Preserve the private worker source adapter; do not substitute generic worker
@@ -138,8 +144,10 @@ original regressions is deferred until the following alternate path is fixed.
 
 `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dStrict(Rule|Workflow)Cannot' ./tests/integration`
 
-**FAIL 3.951s**: both the rule and workflow returned 200 for owner-denied source
-fields. Both probes use populated disposable databases and central policy ports.
+**FAIL 3.951s**: the rule returned 200 using an owner-denied consumed balance.
+The workflow also returned 200, but its Name field was not a consumed input;
+the workflow test's expected denial was mistaken. Both probes used populated
+disposable databases and central policy ports.
 No source edits or unrelated test workloads ran during the review. The reviewer
 added the two independent strict-input regressions. Status remains **PARTIAL**
 pending a source fix and re-verification, including the original owner probes,
@@ -150,3 +158,60 @@ A follow-up evidence assertion queried durable workflow bindings:
 `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dStrictWorkflowCannot' ./tests/integration`
 
 **FAIL 2.934s**: workflow start returned 200 and one workflow binding persisted.
+This command/result is retained as executed evidence, but the interpretation of
+an unauthorized Name capture is **withdrawn**. The executable workflow consumes
+Status; Name is referenced only by an unrelated rule. Starting a workflow while
+an unrelated field is hidden is legitimate, and the response/binding count did
+not prove that Name entered its snapshot. The corrected negative denies Status,
+and a separate positive now asserts the stored snapshot excludes Name.
+
+## Final independent re-verification — `a4d6054`
+
+Implementation fixes were stable while this reviewer added/executed tests;
+there were no simultaneous source edits or other agent test workloads. Only
+review tests and this report changed during this phase.
+
+The exact command below passed all 20 selected top-level integration tests in
+**41.567s** with the race detector:
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestIndependentR5d.*|TestIndependentM6RFieldScopeBypass|TestM5RecordSpecificFieldABACAndReferenceEntityPolicy|TestM9RCustomSortPagePreservesTiesNullsScopesAndJoins|TestM7PreviewRuleAuthorizationIsolationAndAuditFailClosed|TestM9FieldScopeDeniesStartSnapshotAndWorkerResume)$' ./tests/integration`
+
+`npm --prefix apps/web test -- --run src/preview/contracts.review.test.ts`
+also passed **8/8 in 1.50s**. `git diff --check` passed.
+
+Closure evidence:
+
+- Finding 1: a real owned record's protected patch is denied just as its full
+  replacement is denied. A complementary owner-only allow policy can patch its
+  owned field. Both use the row's loaded ID/owner, before value validation.
+- Finding 2: owned fields are SQL-masked in point reads and general lists while
+  another owner's allowed field remains readable. Hidden filters/sorts fail
+  before value execution. An engine embedding Native but overriding decisions
+  remains opaque. Interactive joins preserve an entity-visible target and mask
+  its denied field using the target's actual owner; strict point joins reject
+  that target input. Source fields remain correct in both cases.
+- Finding 3: the threshold rule now returns 403 without a result when its
+  consumed balance is denied by an owner-dependent Go policy. The corrected
+  workflow negative denies its consumed Status and persists no binding. The
+  unrelated hidden Name positive starts successfully, and SQL inspection of the
+  stored snapshot confirms Status is included and Name is absent from both
+  fields and values. No workflow Name-capture exploit is claimed.
+- Exact Native and live tenant-defined policies successfully read 41 populated
+  records, beyond the opaque bound, while still enforcing explicit field DENY.
+  An opaque wrapper cannot shrink its complete predicate universe using a
+  selective filter or limit 1. An exact record selection remains usable.
+- A real `WithRuntime` executor successfully reads the populated fixture. Plain
+  autocommit pools, an autocommit connection with an actual REPEATABLE READ
+  default, a raw REPEATABLE READ transaction and an opaque executor wrapper are
+  not certified. Visible/strict point entry rejects those unknown ports rather
+  than assuming one stable snapshot from an isolation label alone.
+- Prior wide-schema hidden-size admission, cursor revocation, hidden source
+  joins, concurrent CAS/private-value preservation, numeric index maintenance,
+  audit/receipt/outbox rollback and legacy/strict field-scope regressions pass.
+
+No remaining HIGH finding was found within this bounded review. Opaque Go
+policy universes/projected headers are capped at 32; native/tenant-defined
+policy query budgets stay unchanged. Unknown executor wrappers are deliberately
+rejected. Full `make check test build` and browser E2E remain **NOT RUN by this
+reviewer**; the implementation author must record their actual final results.
+Overall R5/M9R remain PARTIAL for the separately tracked remaining slices.
