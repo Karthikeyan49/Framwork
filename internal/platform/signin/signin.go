@@ -123,7 +123,9 @@ func (a API) complete(w http.ResponseWriter, r *http.Request) {
 		rejection(w, r, err)
 		return
 	}
-	http.SetCookie(w, a.cookie("", -1))
+	// Do not delete the shared browser cookie here: another tab may have started
+	// a newer flow while this exchange was in flight. This flow is already spent
+	// by atomic Take; its binding expires in five minutes or is replaced at Start.
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	httpserver.JSON(w, 200, struct {

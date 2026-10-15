@@ -43,7 +43,13 @@ Completion requires the exact configured browser origin, binding cookie and
 state. Atomically consume the flow before exchange; bind its stored parameters
 to the provider configuration. Never retry exchange after an unknown outcome.
 Reject duplicate binding cookies and callback parameters. Use production
-`__Host-` cookie naming, Path=/ and no Domain. The redirect has a fixed
+`__Host-` cookie naming, Path=/ and no Domain.
+Successful completion must not set or delete this shared cookie: an older
+in-flight exchange cannot observe a newer tab's binding. Atomic flow consumption
+prevents replay; the binding is replaced by the next start or expires after
+five minutes. This closes independently reproduced R5F-IR-01 without weakening
+state/browser binding.
+The redirect has a fixed
 `/auth/callback` path and no query/fragment. Use a bounded verified-TLS HTTP
 client with explicit public-client AuthStyleInParams (no auto-probe retry),
 refuse redirects, limit the response,

@@ -49,7 +49,12 @@ promise shared across StrictMode/remount, connection state above SPA routes,
 and exact-connection 401 clearing in preview/administration transports. Manual
 tokens are a separately labelled development option; disabled production sign-in
 is explicit. Tokens never enter web storage or operation journals. Independent
-executable review and final full checks/tests/build remain pending.
+executable review reproduced R5F-IR-01: a successful older exchange deleted the
+cookie for a newer tab's flow (MEDIUM availability issue; no authority bypass).
+The deterministic real HTTPS/shared-jar regression failed in three repetitions.
+Correction leaves the cookie unchanged on completion: atomic Take already spent
+the old flow, and only a new start or five-minute expiry replaces its binding.
+Independent re-verification and final full checks/tests/build remain pending.
 
 ## Boundaries
 
