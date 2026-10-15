@@ -527,16 +527,43 @@ func TestM9RNumericIndexDataScopeEquivalence(t *testing.T) {
 	if _, err := f.operator.Exec(`INSERT INTO runtime.record_shares(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,user_id) SELECT tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,$3 FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND custom_data->>'field.contact.status'='inactive'`, f.tenantA, app, f.alice); err != nil {
 		t.Fatal(err)
 	}
+	// This 78-row equivalence fixture exercises the production SQL-scope kernel.
+	// Opaque Go callbacks have a separate, explicit 32-header admission contract.
+	h = r5Handler(t, f, audit.Postgres{})
+	root := "/v1/tenants/" + f.tenantA
+	r5Assign(t, h, root, token, f.viewer, "owner", 200)
+	admin := f.token(t, f.viewerSubject, nil)
+	var version int64
+	setMode := func(mode string) {
+		scope := policy.DataScope{Kind: "ALL"}
+		switch mode {
+		case "owner":
+			scope.Kind = "OWNER"
+		case "share":
+			scope.Kind = "SHARE"
+		case "condition":
+			scope = policy.DataScope{Kind: "CONDITION", Condition: &policy.ScopeCondition{Field: "field.contact.name", Op: "contains", Value: json.RawMessage(`"Owned"`)}}
+		}
+		definition := r5Definition("scope_reader", app, scope)
+		if mode == "field_none" {
+			definition.Grants = append(definition.Grants, policy.Grant{Effect: "DENY", Actions: []string{"data.field.read"}, Resource: policy.Selector{AppID: app, EntityID: "entity.contact", FieldID: "field.contact.name"}})
+		}
+		v := r5Publish(t, h, root+"/roles", admin, version, definition, true, uuid(t))
+		version = v.Version
+		if version == 1 {
+			r5Assign(t, h, root, admin, f.alice, definition.Name, 200)
+		}
+	}
 	modes := []string{"owner", "share", "condition", "field_none"}
 	before := map[string][]data.Record{}
 	for _, mode := range modes {
-		restricted := m5Handler(t, f, scopedPolicy{mode}, audit.Postgres{}, true)
-		before[mode] = m9rAllPages(t, restricted, base, token, false)
+		setMode(mode)
+		before[mode] = m9rAllPages(t, h, base, token, false)
 	}
-	m9rIndexReady(t, h, base+"/indexes/field.contact.balance", token)
+	m9rIndexReady(t, h, base+"/indexes/field.contact.balance", admin)
 	for _, mode := range modes {
-		restricted := m5Handler(t, f, scopedPolicy{mode}, audit.Postgres{}, true)
-		after := m9rAllPages(t, restricted, base, token, false)
+		setMode(mode)
+		after := m9rAllPages(t, h, base, token, false)
 		if !reflect.DeepEqual(before[mode], after) {
 			t.Fatal("scope changed before LIMIT", mode)
 		}
