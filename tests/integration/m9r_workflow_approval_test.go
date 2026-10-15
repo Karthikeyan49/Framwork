@@ -114,7 +114,7 @@ func TestM9RWorkflowApprovalCustomRolesAndImmutablePins(t *testing.T) {
 		t.Fatal("old receipt bypassed live role", w.Code)
 	}
 	var n int
-	if e := m.f.operator.QueryRow(`SELECT count(*) FROM audit.entries WHERE tenant_id=$1 AND action='workflows.rejected' AND NOT allowed AND state->>'role'='admin'`, m.f.tenantA).Scan(&n); e != nil || n < 1 {
+	if e := m.f.operator.QueryRow(`SELECT count(*) FROM audit.entries WHERE tenant_id=$1 AND action='workflows.rejected' AND NOT allowed AND state->>'role'='admin' AND state->>'workflow_instance_id'=$2 AND state->>'workflow_plan_hash'=$3 AND state->>'ir_hash'=$4 AND (state->>'workflow_sequence')::bigint=$5 AND state->>'record_id'=$6`, m.f.tenantA, x.ID, x.Pin.PlanHash, x.Pin.IRHash, accepted.Version, m.record.ID).Scan(&n); e != nil || n != 1 {
 		t.Fatal("role denial evidence", n, e)
 	}
 	m.counts(t, accepted, 1)

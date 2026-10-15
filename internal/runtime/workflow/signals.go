@@ -44,6 +44,7 @@ func (s Store) Signal(ctx context.Context, q postgres.Executor, a tenant.Access,
 			}
 		}
 		if !allowed {
+			entry = workflowEvidence(entry, x.Instance, "rejected", "")
 			entry.Allow = false
 			entry.State.Role = ""
 			if roles := a.Roles(); len(roles) == 1 {
