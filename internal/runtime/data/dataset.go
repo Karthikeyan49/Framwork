@@ -172,8 +172,9 @@ func (DatasetStore) Get(ctx context.Context, q postgres.Executor, a tenant.Acces
 
 // SandboxEvidence is the immutable freeze record bound to exact inputs.
 type SandboxEvidence struct {
-	Hash string          `json:"hash"`
-	Body json.RawMessage `json:"body"`
+	Hash     string          `json:"hash"`
+	Body     json.RawMessage `json:"body"`
+	FrozenBy string          `json:"frozen_by"`
 }
 
 // FreezeSandbox seals the sandbox and records immutable evidence. The catalog
@@ -193,7 +194,7 @@ func (DatasetStore) Evidence(ctx context.Context, q postgres.Executor, a tenant.
 	if !tenant.ValidID(id) {
 		return e, ErrInvalid
 	}
-	err := q.QueryRowContext(ctx, `SELECT body_hash,body FROM runtime.sandbox_evidence WHERE tenant_id=$1 AND app_id=$2 AND dataset_id=$3`, a.TenantID(), app, id).Scan(&e.Hash, &e.Body)
+	err := q.QueryRowContext(ctx, `SELECT body_hash,body,frozen_by::text FROM runtime.sandbox_evidence WHERE tenant_id=$1 AND app_id=$2 AND dataset_id=$3`, a.TenantID(), app, id).Scan(&e.Hash, &e.Body, &e.FrozenBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return e, ErrNotFound
 	}

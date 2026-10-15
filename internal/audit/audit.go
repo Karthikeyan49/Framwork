@@ -54,6 +54,10 @@ type State struct {
 	ToolMode             string `json:"tool_mode,omitempty"`
 	ToolAttempt          int64  `json:"tool_attempt,omitempty"`
 	ToolOutcome          string `json:"tool_outcome,omitempty"`
+	RequirementsVersion  int64  `json:"requirements_version,omitempty"`
+	AcceptanceID         string `json:"acceptance_id,omitempty"`
+	RiskLevel            string `json:"risk_level,omitempty"`
+	VerifierOutcome      string `json:"verifier_outcome,omitempty"`
 	MetadataApp          string `json:"metadata_app,omitempty"`
 	MetadataRevision     int64  `json:"metadata_revision,omitempty"`
 	MetadataHash         string `json:"metadata_hash,omitempty"`
@@ -108,6 +112,9 @@ func encodeEntry(e Entry) ([]any, error) {
 	}
 	if len(e.State.ToolRef) > 160 || len(e.State.ToolVersion) > 20 || len(e.State.ToolMode) > 16 || e.State.ToolAttempt < 0 || e.State.ToolAttempt > 20 || len(e.State.ToolOutcome) > 80 {
 		return nil, errors.New("invalid tool evidence")
+	}
+	if e.State.RequirementsVersion < 0 || e.State.RequirementsVersion > 1000000 || len(e.State.AcceptanceID) > 36 || len(e.State.RiskLevel) > 16 || len(e.State.VerifierOutcome) > 16 {
+		return nil, errors.New("invalid release evidence")
 	}
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")

@@ -116,3 +116,47 @@ func TestTeamAdministrationCapabilities(t *testing.T) {
 		t.Fatal("viewer granted team administration")
 	}
 }
+
+func TestReleaseBuilderCapabilities(t *testing.T) {
+	preview := Resource{TenantID: "tenant-a", Type: "preview", AppID: "app.orders"}
+	for _, role := range []string{"owner", "admin", "member", "viewer"} {
+		for _, action := range []string{"requirements.read", "acceptance.read", "candidates.read"} {
+			if !permits("alice", "tenant-a", []string{role}, action, preview) {
+				t.Fatalf("%s denied %s", role, action)
+			}
+		}
+		for _, action := range []string{"requirements.decide", "acceptance.author", "candidates.build"} {
+			if got := permits("alice", "tenant-a", []string{role}, action, preview); got != (role == "owner" || role == "admin") {
+				t.Fatalf("%s/%s allow=%v", role, action, got)
+			}
+		}
+	}
+	for _, action := range []string{"requirements.read", "requirements.decide", "acceptance.read", "acceptance.author", "candidates.read", "candidates.build"} {
+		if permits("alice", "tenant-a", []string{"owner"}, action, Resource{TenantID: "tenant-a", Type: "preview"}) {
+			t.Fatalf("%s accepted a resource without an application", action)
+		}
+		if permits("alice", "tenant-a", []string{"owner"}, action, Resource{TenantID: "tenant-a", Type: "team", AppID: "app.orders"}) {
+			t.Fatalf("%s accepted another resource type", action)
+		}
+		if permits("alice", "tenant-b", []string{"owner"}, action, preview) {
+			t.Fatalf("%s crossed tenants", action)
+		}
+	}
+	grant := `{"schema_version":"tenant-capabilities-v1","name":"%s","grants":[{"effect":"ALLOW","actions":["requirements.read","requirements.decide","acceptance.read","acceptance.author","candidates.read","candidates.build"],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "release_manager", 1)), ""); err != nil {
+		t.Fatal("custom release role rejected", err)
+	}
+	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "viewer", 1)), ""); err == nil {
+		t.Fatal("viewer granted release authority")
+	}
+	if !strings.HasPrefix(Version, "m12-native-v") {
+		t.Fatal("policy version not advanced for the new actions", Version)
+	}
+}
+
+func TestActionCatalogHashIsStableAndSensitive(t *testing.T) {
+	h := ActionCatalogHash()
+	if len(h) != 64 || h != ActionCatalogHash() {
+		t.Fatal("unstable action catalog hash")
+	}
+}

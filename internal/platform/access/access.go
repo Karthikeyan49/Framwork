@@ -73,6 +73,9 @@ func (a API) Register(mux *http.ServeMux) {
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/freeze", a.serve)
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/evidence", a.serve)
+		for pattern := range releasePatterns {
+			mux.HandleFunc(pattern, a.serve)
+		}
 		for _, op := range []string{"advance", "activate", "abort", "reverify"} {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}/"+op, a.serve)
 		}
@@ -390,6 +393,9 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 				action = "sandbox.manage"
 			}
 		}
+		if releaseAction, ok := releasePatterns[r.Pattern]; ok {
+			action = releaseAction
+		}
 	}
 	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") {
 		resource = "role"
@@ -445,6 +451,8 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			evidence.State.CommandKey = r.PathValue("command")
 			receipt, err = data.CommandReceipt(ctx, tx, access, appID, r.PathValue("command"))
 			result = reply{status: 200, body: receipt}
+		} else if _, ok := releasePatterns[r.Pattern]; ok {
+			result, err = a.release(ctx, tx, r, u, access, &evidence)
 		} else if sandboxPatterns[r.Pattern] {
 			result, err = a.sandbox(ctx, tx, r, u, access, &evidence)
 		} else if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {

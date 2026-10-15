@@ -206,6 +206,14 @@ func (c Catalog) Lookup(ref, version, pinned string) (Definition, bool) {
 	return d, true
 }
 
+// Current returns the live definition for ref@version regardless of any pin. It
+// exists so staleness can tell a changed definition (a different hash is
+// installed) from a removed one; it never authorizes a send.
+func (c Catalog) Current(ref, version string) (Definition, bool) {
+	d, ok := c.definitions[key(ref, version)]
+	return d, ok
+}
+
 func validateDefinition(d Definition) (Definition, error) {
 	bad := ErrCatalog
 	if !refPattern.MatchString(d.Ref) || len(d.Ref) > 160 || !semverPattern.MatchString(d.Version) {

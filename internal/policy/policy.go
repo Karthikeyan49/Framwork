@@ -12,9 +12,11 @@ import (
 // R5a adds explicit owner-only role administration to the bootstrap adapter;
 // R5c-a (v5) adds owner/admin record access administration; R5c-b (v6) adds
 // owner/admin team administration; M10 (v7) adds non-viewer tools.invoke; M11 (v8)
-// adds sandbox.read (all roles) and owner/admin sandbox.manage.
+// adds sandbox.read (all roles) and owner/admin sandbox.manage; M12 (v9) adds
+// requirements/acceptance/candidates read (all roles) and owner/admin
+// requirements.decide, acceptance.author and candidates.build.
 // Retained evidence keeps its original version.
-const Version = "m11-native-v8"
+const Version = "m12-native-v9"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -71,8 +73,14 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			if resource.Type == "role" && role == "owner" {
 				return true
 			}
-		case "sandbox.read":
+		case "sandbox.read", "requirements.read", "acceptance.read", "candidates.read":
 			if resource.Type == "preview" && resource.AppID != "" {
+				return true
+			}
+		case "requirements.decide", "acceptance.author", "candidates.build":
+			// M12: release content authority stays with tenant administrators by
+			// default; custom roles may be granted these explicitly (never viewer).
+			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
 				return true
 			}
 		case "sandbox.manage":
