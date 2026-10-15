@@ -46,6 +46,11 @@ func FuzzWorkflowRestore(f *testing.F) {
 		f.Fatal(e)
 	}
 	f.Add(seed.JSON())
+	tool, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, itemResolver(testToolHash))
+	if e != nil {
+		f.Fatal(e)
+	}
+	f.Add(tool.JSON())
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > MaxPlanBytes {
 			return
@@ -59,6 +64,9 @@ func FuzzWorkflowRestore(f *testing.F) {
 				t.Fatal("restore not stable")
 			}
 			for _, s := range p.Plan().States {
+				if s.IsTool() && (p.Plan().DSLVersion != ToolDSLVersion || !toolHashPattern.MatchString(s.ToolHash)) || !s.IsTool() && s.ToolHash != "" {
+					t.Fatal("unpinned or misplaced tool activity")
+				}
 				for _, tr := range s.Transitions {
 					if tr.Condition != nil {
 						b, _ := json.Marshal(tr.Condition)

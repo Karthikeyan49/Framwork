@@ -18,14 +18,20 @@ func (p Program) Workflow(id string) (workflow.Program, error) {
 	}
 	return workflow.Program{}, workflow.ErrInvalid
 }
+
+// validateStoredWorkflows checks stored plans against their authored source
+// without compiling. Tool pins cannot be derived from source; Restore only
+// requires them well-formed and the runtime re-resolves each pin in the live
+// trusted catalog before any send.
 func validateStoredWorkflows(ir IR) error {
-	if ir.IRVersion != WorkflowIRVersion {
+	tools := ir.IRVersion == ToolWorkflowIRVersion
+	if ir.IRVersion != WorkflowIRVersion && !tools {
 		if len(ir.Workflows) != 0 {
 			return workflow.ErrInvalid
 		}
 		return nil
 	}
-	if ir.Application.SchemaVersion != metadata.WorkflowSchemaVersion {
+	if !tools && ir.Application.SchemaVersion != metadata.WorkflowSchemaVersion || tools && ir.Application.SchemaVersion != metadata.ToolWorkflowSchemaVersion {
 		return workflow.ErrInvalid
 	}
 	index := 0
@@ -42,6 +48,9 @@ func validateStoredWorkflows(ir IR) error {
 		p, e := workflow.Restore(raw, workflow.Hash(raw))
 		if e != nil {
 			return e
+		}
+		if !tools && p.HasTools() {
+			return workflow.ErrInvalid
 		}
 		var entity Entity
 		for _, x := range ir.Entities {
