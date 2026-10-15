@@ -220,9 +220,10 @@ intent is unchanged.
    author ≠ requester (R1); acceptance author ≠ author of the compiled source
    revision (R2); frozen sandbox evidence exists, matches the IR/revision/data
    mode and records its freezer (R3, recorded and bound; sandbox freezing is
-   `sandbox.manage`, owner/admin only). The requirement decider and sandbox
-   freezer are recorded in the candidate, not compared to the requester at
-   build; approval-time exclusion of the requester, acceptance author and
+   `sandbox.manage`, owner/admin only). The requirement decider is recorded
+   on the immutable `control.requirement_sets` row the candidate names (by
+   version and hash) and the sandbox freezer is bound in the bundle and the
+   candidate index; neither is compared to the requester at build. Approval-time exclusion of the requester, acceptance author and
    freezer is M13. No waiver mechanism exists, so a single-actor tenant cannot
    build a candidate.
 5. **Changed-surface rule (§4).** `NonEqualStorage` completeness excludes a

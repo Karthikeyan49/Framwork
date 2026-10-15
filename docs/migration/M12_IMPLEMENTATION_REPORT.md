@@ -61,7 +61,8 @@ No new Go or npm dependency. No UI change.
 | `-run TestM12` (5 tests), early runs | FAIL: release routes were registered but not dispatched; replay and rejection audits were miscounted by the test; `stage_candidate` did not bind the sandbox freezer (real defect, fixed in migration 48); the worker-guard check ran as the wrong role. Each fixed, then 5/5 PASS (25.4 s) |
 | `make check` (docs checksums, format, vet, `mod verify`) | PASS for docs/format/vet/mod verify; web lint needs `node_modules` in this worktree (symlinked afterwards) |
 | Go unit tests `./cmd/... ./internal/... ./tests/...` with `-race` | PASS |
-| Full `go test -race -tags=integration ./tests/integration` | see gate record below |
+| Full `go test -race -tags=integration ./tests/integration` (978.6 s) | One FAIL of the whole suite: `TestM9RRecordAccessCanonicalDatasetGeneration` (stale policy-version assertion in a binary built before `bf70752` was merged); the merged test plus `TestM12*` then PASS (31.7 s). A final full run on the review-fixed tree is still required |
+| `make build` | PASS |
 
 Evidence gap: the pre-fix exploit (a hand-built PASS bundle inserted by
 `framework_app`) was removed with the M6R test that exercised it; it was not
@@ -78,12 +79,15 @@ bodies refused with 22023/55000/42501).
   approval and activation**. A separate verifier credential is recommended.
 - The verifier is deterministic evidence, not an independent attestation.
   Acceptance authorship is by authenticated actor, not proof of human authorship.
+- The build runs in one REPEATABLE READ snapshot. The active base or a role can
+  advance after the snapshot starts; the candidate then reads STALE on its first
+  detail read (`BASE_CHANGED`, `POLICY_CHANGED`) and M13 re-evaluates at approval.
 - Production volume is not measured: later releases carry `UNVERIFIED` volume, so
   any non-EQUAL second release rates HIGH or CRITICAL until M13.
 - Single-actor tenants cannot build candidates (acceptance author must differ from
   requester and source author). No waiver mechanism exists.
-- Requirement decider and sandbox freezer are recorded but exclusion from approving
-  is M13. Only categories `approval_threshold`, `approval_gate`, `tool_effect` and
+- The requirement decider (on the requirement-set row) and the sandbox freezer (in
+  the bundle and index) are recorded; excluding them from approving is M13. Only categories `approval_threshold`, `approval_gate`, `tool_effect` and
   `data_migration` are verifiable; other mandatory categories BLOCK.
 - Level-2 sandbox end-to-end acceptance, redacted snapshots, field-level rebase and
   AI patch endpoints are deferred.
