@@ -36,9 +36,11 @@ has independent evidence. [Configurable workflow approval roles](docs/migration/
 now pass independent review and final full checks/build/browser regressions.
 [Field visibility and partial writes](docs/migration/M9R_R5D_IMPLEMENTATION_REPORT.md)
 also pass bounded independent review, full checks/tests/build, six browser cases
-and the configured 100k-row query gate. R5 administration UI and identity UX
-remain open. An intermittent workflow connection failure has an unconfirmed
-cause and remains tracked under R7; the failed run is retained in the report.
+and the configured 100k-row query gate. The [record/team administration UI](docs/migration/M9R_R5C_UI_IMPLEMENTATION_REPORT.md)
+now passes independent review, full checks/tests/build and nine browser cases.
+R5 identity/provider UX remains open; role-definition editing remains API-only.
+An intermittent workflow connection failure and a worker-policy statement-timeout
+capacity failure remain tracked under R7; failed runs are retained in the reports.
 The foundation acceptance gate remains open.
 The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
 qualify historical PASS reports and distinguish previews from contract-only and
@@ -403,6 +405,15 @@ returns deterministic IR/hash or422 diagnostics and does not activate the draft.
 In Workspace access, connect, select a workspace, enter the application ID and draft
 revision, then Load preview. Forms/tables/details use isolated records pinned to that
 source revision and IR hash; a new revision begins a separate preview dataset.
+
+The connected workspace also offers **Manage teams** for hierarchy and direct
+membership administration. Open a record to use **Manage ownership** or
+**Manage sharing**. These controls use the server's live capabilities and scopes;
+a displayed button is not permission. See the [R5c UI report](docs/migration/M9R_R5C_UI_IMPLEMENTATION_REPORT.md).
+Reload stale state after conflicts. An uncertain access change keeps that resource
+blocked until a fresh authorized read and manual review; a truncated share view
+cannot establish an unlisted recipient's state. No POST is repeated automatically.
+Keep pending IDs before closing the tab: recovery is in memory and warns on unload.
 
 Preview API: `GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}`; entity queries
 and commands are POST under that path at `/entities/{entity}/query` and `/commands`.

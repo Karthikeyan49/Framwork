@@ -102,3 +102,12 @@ Membership changes apply to subsequent statements, not committed effects.
 R5c-b STATUS: PASS (bounded team administration and documented verification scope)
 
 R5 / M9R STATUS: PARTIAL
+
+## Later R5c UI follow-up
+
+The [R5c UI report](M9R_R5C_UI_IMPLEMENTATION_REPORT.md) records ADR038
+record ownership/sharing and team administration controls, recovery behavior,
+independently reproduced fixes and final verification. The earlier UI limits
+above describe those historical checkpoints; they do not mean the new bounded
+preview controls are absent. No production administration portal or role-definition
+editor is claimed. R5/M9R remain PARTIAL.

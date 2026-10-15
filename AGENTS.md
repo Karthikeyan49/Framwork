@@ -56,6 +56,10 @@ belongs to `internal/platform/app`.
   ADR037: interactive queries use SQL masking; strict point inputs check trusted
   record/owner headers. Preserve snapshot proofs, opaque-policy budgets and
   omitted-field semantics in partial patches.
+- ADR038: access administration reads typed headers under live entity/row
+  authority, never unrelated business values. Preserve actor-owned recovery
+  across SPA routes; unknown outcomes and unobservable truncated-list targets
+  block new changes. No automatic administrative POST retry.
 - ADR021: pure DSL2 has no ambient clock/network/filesystem/DB/tool access.
   Preserve exact fixed-point money, rounding, pinned calendar/timezone data,
   budgets and declared legacy IR compatibility. Rules never authorize effects.

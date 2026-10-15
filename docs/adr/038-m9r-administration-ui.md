@@ -1,6 +1,8 @@
 # ADR038 — Governed record and team administration UI
 
-Status: accepted for implementation, 15 October 2026 IST. R5c UI only;
+Status: implemented and independently verified, 15 October 2026 IST. See the
+[implementation report](../migration/M9R_R5C_UI_IMPLEMENTATION_REPORT.md) and
+[independent review](../verification/M9R_R5C_UI_INDEPENDENT_REVIEW.md). R5c UI only;
 full R5/M9R remain PARTIAL. No M10, production activation or main merge.
 
 ## Decision

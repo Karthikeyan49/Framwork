@@ -263,10 +263,16 @@ passed (integration 829.428s), browser 6/6 and the numeric 100k/ten-client gate
 passed (p95 216.415 ms, zero errors). Preserve its explicit custom-policy,
 conditional-write and hidden-size limits. The earlier intermittent workflow
 connection failure remains unconfirmed and tracked for R7 diagnosis.
-Remaining R5 product slices: administration UI for the R5c APIs and separate
-provider/login/clock-skew identity work. Implement and review these separately
-before promising product policy completeness. Remaining R3b types, R3c/R3d,
-R6 and R7 remain in this plan.
+[R5c administration UI](M9R_R5C_UI_IMPLEMENTATION_REPORT.md) (ADR038) now passes
+independent review, full checks/tests/build (177 integration tests in 561.291s,
+frontend 86/86) and browser 9/9. Three demonstrated review findings are closed.
+Preserve actor-owned recovery, observable-target review and typed-header access
+administration without unrelated business values. The initial full-run worker
+statement timeout remains an R7 capacity issue despite passing reruns.
+Remaining R5 product work: provider/login/clock-skew identity. Role-definition
+editing remains API-only; enterprise UI remains separate from the R5c controls.
+Implement and review remaining work before promising product policy completeness.
+Remaining R3b types, R3c/R3d, R6 and R7 remain in this plan.
 
 Replace fixed-role branching with versioned tenant role/capability definitions
 and central RBAC/ABAC policy. Support `finance_manager` without trusting token
@@ -329,6 +335,10 @@ any earlier M10 dependency must be delivered before the relevant tool ships.
   telemetry must still retain meaningful denial evidence. Separate immutable
   business audit from high-volume decision diagnostics, with retention, partition,
   export and deletion authority appropriate to each class.
+- Diagnose the R5c UI full-regression worker-policy EXPLAIN timeout under the
+  unchanged 2s SQL limit (96 receipts, 63 scope nodes). Three isolated repetitions
+  passed, but this is not a capacity fix. Preserve the historical R5b narrow-margin
+  measurements and separate this from the unconfirmed workflow connection failure.
 - Profile compilation, validator construction and catalog guards; cache only with
   explicit immutable keys and invalidation/revocation guarantees. Preserve startup
   and runtime privilege-drift detection.
@@ -375,7 +385,7 @@ After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
-governed numeric R3b, R5a/R5b, R5c server administration, R5d and R5e independently
-verified. Production R2 execution, remaining R3b types/R3c/R3d, R5 administration
-UI/identity and R6–R7 remain open. The complete foundation gate and broader
-review findings are not accepted as resolved.**
+governed numeric R3b, R5a/R5b, R5c server and preview UI administration, R5d and
+R5e independently verified. Production R2 execution, remaining R3b types/R3c/R3d,
+R5 identity/provider UX and R6–R7 remain open. Role-definition UI remains separate.
+The complete foundation gate and broader review findings are not accepted as resolved.**
