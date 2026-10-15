@@ -188,11 +188,13 @@ production release or M10 work was enabled.
 ## Git
 
 All work stays on `remediation/m9r-foundation`; no main merge or history rewrite.
-Fetch confirmed the remote branch is an ancestor of local HEAD, with 18 local
-commits not yet on that remote at the checkpoint (including the earlier R5d
-work). Delivery pushes those commits and the final documentation together, then
-checks local/remote SHA equality and a clean worktree. The completion message
-records the delivered SHA. Source, tests, ADRs, reports and CI changes belong in
+The server accepted a normal push from `aa1fa2a` to `e717224`; earlier R5d
+work was already present at that server checkpoint. The initial 18-commit ahead
+count came from an older cached remote-tracking ref, not the live server head,
+and is not evidence that R5d had been missing remotely. A direct remote read
+confirmed `e717224` matched local HEAD with a clean worktree. This documentation
+correction is a forward commit on the same branch; delivery verifies and records
+its final local/remote SHA in the completion message. Source, tests, ADRs, reports and CI changes belong in
 git; `.env`, keys, dependencies, logs, Playwright output, caches and generated
 binaries/builds remain ignored.
 
