@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,14 +64,28 @@ func TestIndependentOlderCompletionPreservesNewerBrowserBinding(t *testing.T) {
 		}
 		return input + "." + base64.RawURLEncoding.EncodeToString(sig)
 	}
-	var nonce string
+	var grants sync.Map
+	var exchanges atomic.Int32
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	releaseProvider := func() { releaseOnce.Do(func() { close(release) }) }
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(entered)
-		<-release
+		exchanges.Add(1)
+		if r.ParseForm() != nil {
+			w.WriteHeader(400)
+			return
+		}
+		code := r.PostForm.Get("code")
+		nonce, ok := grants.LoadAndDelete(code)
+		if !ok {
+			w.WriteHeader(400)
+			return
+		}
+		if code == "synthetic-code" {
+			close(entered)
+			<-release
+		}
 		now := time.Now().Unix()
 		access := sign("at+jwt", map[string]any{"iss": "https://id.example", "aud": "api", "sub": "synthetic", "iat": now, "exp": now + 600})
 		id := sign("JWT", map[string]any{"iss": "https://id.example", "aud": "web", "sub": "synthetic", "iat": now, "exp": now + 600, "nonce": nonce})
@@ -116,7 +131,12 @@ func TestIndependentOlderCompletionPreservesNewerBrowserBinding(t *testing.T) {
 		return v.URL
 	}
 	first, _ := url.Parse(start())
-	nonce = first.Query().Get("nonce")
+	grants.Store("synthetic-code", first.Query().Get("nonce"))
+	origin, _ := url.Parse(gateway.URL)
+	firstCookies := client.Jar.Cookies(origin)
+	if len(firstCookies) != 1 {
+		t.Fatal("first browser binding missing")
+	}
 	body, _ := json.Marshal(map[string]string{"code": "synthetic-code", "state": first.Query().Get("state")})
 	completed := make(chan int, 1)
 	go func() {
@@ -133,8 +153,8 @@ func TestIndependentOlderCompletionPreservesNewerBrowserBinding(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("first exchange did not start")
 	}
-	_ = start()
-	origin, _ := url.Parse(gateway.URL)
+	second, _ := url.Parse(start())
+	grants.Store("newer-code", second.Query().Get("nonce"))
 	newer := client.Jar.Cookies(origin)
 	if len(newer) != 1 {
 		t.Fatal("new browser binding missing before first completion")
@@ -152,5 +172,32 @@ func TestIndependentOlderCompletionPreservesNewerBrowserBinding(t *testing.T) {
 	after := client.Jar.Cookies(origin)
 	if len(after) != 1 || after[0].Value != expected {
 		t.Fatal("older successful completion erased the newer flow's browser binding")
+	}
+	// Retaining a browser cookie never revives the atomically consumed A flow.
+	replay, e := http.NewRequest("POST", gateway.URL+"/v1/auth/login/complete", strings.NewReader(string(body)))
+	if e != nil {
+		t.Fatal("replay fixture")
+	}
+	replay.Header.Set("Origin", gateway.URL)
+	replay.Header.Set("Content-Type", "application/json")
+	replay.AddCookie(firstCookies[0])
+	replayClient := *gateway.Client()
+	replayClient.Jar = nil
+	response, e := replayClient.Do(replay)
+	if e != nil {
+		t.Fatal("replay transport")
+	}
+	response.Body.Close()
+	if response.StatusCode != 401 || exchanges.Load() != 1 {
+		t.Fatal("retained original binding revived the spent flow")
+	}
+	secondBody, _ := json.Marshal(map[string]string{"code": "newer-code", "state": second.Query().Get("state")})
+	response, e = post("/v1/auth/login/complete", string(secondBody))
+	if e != nil {
+		t.Fatal("newer completion transport")
+	}
+	response.Body.Close()
+	if response.StatusCode != 200 || exchanges.Load() != 2 {
+		t.Fatal("preserved newer binding could not complete its own flow")
 	}
 }

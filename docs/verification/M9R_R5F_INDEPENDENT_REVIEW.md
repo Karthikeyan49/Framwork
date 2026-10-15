@@ -80,4 +80,31 @@ testing or load-test login admission. Deployment callback-query log redaction
 remains an operator requirement. Existing R7 worker/connection findings remain
 open. No M10, production activation or main merge is authorized by this report.
 
-Correction status: pending implementation and independent re-verification.
+## Correction and independent re-verification
+
+Stable correction reviewed: `01aeb34`, following regression checkpoint
+`1320a40`. The implementer removed the successful response's cookie deletion
+and documented the concurrent-tab rationale in ADR039. No other authentication
+or cookie-validation behavior was relaxed. The reviewer again held exclusive
+test access while the implementer paused edits and workloads.
+
+The independent HTTPS/cookie-jar regression was strengthened to complete B
+after A, and to replay A using its **original** binding in a separate cookie-free
+transport. The retained original binding returns 401 with no extra token
+exchange; B completes with 200 and exactly the second exchange. This checks
+both the recovery of the newer flow and preservation of single-use authority.
+
+| Exact command after correction | Result | Evidence |
+| --- | --- | --- |
+| `./scripts/go.sh test -race -count=3 -run '^TestIndependentOlderCompletionPreservesNewerBrowserBinding$' ./internal/platform/signin` | PASS | Three repetitions including successful B and spent-A replay, 1.309s. |
+| `./scripts/go.sh test -race -count=1 ./internal/identity ./internal/config ./internal/platform/signin ./tests/security` | PASS | Identity 2.011s; config 1.020s; signin 1.250s; security 1.031s. |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9ROIDC' ./tests/integration` | PASS | Live Redis/PostgreSQL regressions, 1.861s. |
+| `./scripts/go.sh build -o bin/api ./cmd/api` | PASS | Browser exercised the rebuilt corrected API. |
+| `make test-signin-e2e` | PASS | Seven real browser/provider scenarios on rebuilt corrected API, 8.8s. |
+
+**R5F-IR-01: CLOSED by correction and executed independent regression.**
+**Final independent verdict: PASS for this bounded R5f adapter slice.** No
+unresolved finding remains in this review. Full repository checks/build/tests
+and the general browser suite remain the implementer's responsibility before
+marking the implementation complete. This does not close overall M9R or certify
+an external provider/production deployment.
