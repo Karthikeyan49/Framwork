@@ -8,7 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"strings"
+	"regexp"
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
@@ -223,8 +223,10 @@ func TestM9RRecordAccessCanonicalDatasetGeneration(t *testing.T) {
 	if r5cVisible(t, shares, retired, viewer, record.ID) {
 		t.Fatal("revoked canonical share visible through retired generation")
 	}
-	if !strings.HasPrefix(policy.Version, "m9r-native-") {
-		t.Fatal("policy version")
+	// The decision engine version advances with each milestone that adds actions
+	// (m9r, m10, m11 ...); the invariant is a stable, non-empty native label.
+	if !regexp.MustCompile(`^m[0-9]+r?-native-v[0-9]+$`).MatchString(policy.Version) {
+		t.Fatal("policy version", policy.Version)
 	}
 }
 
