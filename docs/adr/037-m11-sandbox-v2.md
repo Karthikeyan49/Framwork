@@ -67,8 +67,8 @@ and said M11 must open it; `runtime.datasets` allowed only `preview`.
 7. **API and policy.** `POST .../preview/{app}/sandboxes` (witness of the exact
    compiled IR, workspace UUID, ceiling), `GET .../sandboxes/{id}`,
    `POST .../sandboxes/{id}/freeze`, `GET .../sandboxes/{id}/evidence`. Actions:
-   `sandbox.read` (all roles) and `sandbox.manage` (owner/admin, delegable, never
-   a role named `viewer`). Sandbox data and workflows use the existing dataset
+   `sandbox.read` (all roles) and `sandbox.manage` (owner/admin only; not delegable to
+   custom roles, as `policy.supportedRoleAction` rejects any other role). Sandbox data and workflows use the existing dataset
    binding routes. Routes exist only where preview exists (development/test).
 8. **Out of scope.** UI sandbox badge, redacted snapshot/PII scan, ephemeral
    databases, patch/rebase, running acceptance, promotion, production exposure.

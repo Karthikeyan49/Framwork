@@ -195,6 +195,60 @@ runtime, AI capture (M14), Level-2 sandbox end-to-end acceptance, redacted
 snapshots, custom approval roles (R5e), outbox events for release lifecycle,
 field-level rebase.
 
+## Amendments recorded at implementation (2026-10-15)
+
+These supersede the matching sentences above where they differ; the design
+intent is unchanged.
+
+1. **Volume source (§3).** No volume definer function was built. Until M13 can
+   measure a production dataset, `promotion.DefaultVolume` supplies the bucket:
+   a first release has no data (`NONE`); every later release is `UNVERIFIED`,
+   which the risk policy rates at the top of its band. The volume value is part
+   of the hashed risk facts, so `Restore` still recomputes it identically.
+2. **One strict restore path (§1, §6).** `promotion.Restore` dispatches on the
+   bundle version. 2.0.0 bodies are decoded with unknown fields rejected and are
+   fully recomputed (diff, storage class, facts, risk, requirements,
+   acceptance, verifier report, dependency hashes). 1.0.0 bodies stay readable so
+   stored artifacts and `cmd/release-check` keep working, but `Store.Stage`
+   refuses them and `control.stage_candidate` accepts only version `2.0.0`.
+3. **Approver roles compare by set equality (§4).** The verifier requires the
+   workflow's approval roles to equal the requirement's roles (canonical sorted
+   set), not merely overlap: a route that also admits another role is
+   `APPROVAL_MISMATCH`/`GATE_ROLES_MISMATCH`.
+4. **Separation of duties as shipped (§5).** The stage port enforces from
+   database-stamped identities: requester = authenticated actor; acceptance
+   author ≠ requester (R1); acceptance author ≠ author of the compiled source
+   revision (R2); frozen sandbox evidence exists, matches the IR/revision/data
+   mode and records its freezer (R3, recorded and bound; sandbox freezing is
+   `sandbox.manage`, owner/admin only). The requirement decider and sandbox
+   freezer are recorded in the candidate, not compared to the requester at
+   build; approval-time exclusion of the requester, acceptance author and
+   freezer is M13. No waiver mechanism exists, so a single-actor tenant cannot
+   build a candidate.
+5. **Changed-surface rule (§4).** `NonEqualStorage` completeness excludes a
+   first release (the whole schema is new and has no migration risk); financial
+   rules, approval gates and tool activity still require covering requirements.
+6. **Role grants (§9).** `requirements.decide`, `acceptance.author` and
+   `candidates.build` are owner/admin in the native policy; stored custom roles
+   may include them (never `viewer`). `sandbox.manage` is owner/admin only and
+   cannot be delegated (`policy.supportedRoleAction`); ADR037 wording is
+   corrected accordingly. Native policy version is `m12-native-v9`.
+7. **Staging row bindings (§6).** `stage_candidate` additionally binds the
+   frozen sandbox evidence text and freezer, the requirement set row hash, the
+   acceptance row (author, requirements hash) and the active base
+   (`artifact_hash` and generation), and then writes the bundle and its derived
+   `control.release_candidates` row in one statement. `control.append_requirements`
+   (compare-and-set head) and `control.author_acceptance` (idempotent for the
+   same author and content) stamp the decider and author from the database
+   actor. Direct INSERT on `control.release_bundles` is revoked at table and
+   column level for `framework_app`; TRUNCATE guards cover the new tables,
+   bundles and approvals; `control.worker_grants_safe()` includes the new tables.
+8. **Audit (§9).** Successful stages record `release.candidate_staged`;
+   an idempotent replay records `release.candidate_replayed`; verifier or
+   risk rejections (422) and database refusals record `candidates.build.rejected`
+   with the report/assessment hashes in the audit state. Requirement decisions
+   record `requirements.decide` with the version and hash.
+
 ## Consequences
 
 Candidates become reproducible server-built artifacts whose risk, dependencies
