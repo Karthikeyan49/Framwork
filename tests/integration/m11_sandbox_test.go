@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
@@ -145,10 +144,21 @@ func TestM11SandboxIsolationPolicyFreezeAndEvidence(t *testing.T) {
 	if json.Unmarshal(w.Body.Bytes(), &ev) != nil || len(ev.Hash) != 64 {
 		t.Fatal("evidence contract")
 	}
-	for _, want := range []string{`"tool_ceiling": "REROUTE"`, `"data_mode": "SYNTHETIC_SEPARATE"`, `"count": 1`, `"schema_version": "sandbox-evidence-v1"`} {
-		if !strings.Contains(string(ev.Body), want) {
-			t.Fatal("evidence body missing", want, string(ev.Body))
-		}
+	var body struct {
+		SchemaVersion string `json:"schema_version"`
+		DataMode      string `json:"data_mode"`
+		ToolCeiling   string `json:"tool_ceiling"`
+		Records       struct {
+			Count int `json:"count"`
+		} `json:"records"`
+		Ledger struct {
+			Count int `json:"count"`
+		} `json:"tool_ledger"`
+		CatalogHash string `json:"tool_catalog_hash"`
+		PolicyHash  string `json:"policy_hash"`
+	}
+	if json.Unmarshal(ev.Body, &body) != nil || body.SchemaVersion != "sandbox-evidence-v1" || body.DataMode != "SYNTHETIC_SEPARATE" || body.ToolCeiling != "REROUTE" || body.Records.Count != 1 || body.Ledger.Count != 0 || len(body.CatalogHash) != 64 || len(body.PolicyHash) != 64 {
+		t.Fatal("evidence body", string(ev.Body))
 	}
 	if w = m5Call(h, root+"/sandboxes/"+box.ID+"/freeze", alice, struct{}{}); w.Code != 409 {
 		t.Fatal("double freeze", w.Code)
