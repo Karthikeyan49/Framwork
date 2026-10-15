@@ -37,8 +37,13 @@ func TestIndependentM6RFieldScopeBypass(t *testing.T) {
 	restricted := m5Handler(t, f, independentM6RFieldScope{}, audit.Postgres{}, true)
 	query := data.Query{Projection: []string{"field.contact.name"}, Limit: 100}
 	list := m5Page(t, m5Call(restricted, base+"/query", token, query))
-	if len(list.Records) != 0 {
-		t.Fatal("list field scope not enforced")
+	if len(list.Records) != 2 {
+		t.Fatal("projection masking changed entity visibility")
+	}
+	for _, record := range list.Records {
+		if len(record.Values) != 0 || record.FieldAccess == nil || len(record.FieldAccess.Masked) != 1 || record.FieldAccess.Masked[0] != "field.contact.name" {
+			t.Fatal("list field scope not enforced")
+		}
 	}
 	join := data.Query{Projection: []string{"field.contact.id"}, Limit: 100, Join: &data.Join{Relationship: "relationship.contact.parent", Projection: []string{"field.contact.name"}}}
 	jw := m5Call(restricted, base+"/query", token, join)

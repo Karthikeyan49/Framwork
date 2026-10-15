@@ -381,7 +381,11 @@ func TestM5RecordSpecificFieldABACAndReferenceEntityPolicy(t *testing.T) {
 	r := m5Create(t, h, base, token, "Owned")
 	restricted := m5Handler(t, f, contextualDataPolicy{"field_at_row"}, audit.Postgres{}, true)
 	query := m5Query()
-	if w := m5Call(restricted, base+"/query", token, query); w.Code != 403 {
+	page := m5Page(t, m5Call(restricted, base+"/query", token, query))
+	if len(page.Records) != 1 || page.Records[0].FieldAccess == nil || len(page.Records[0].FieldAccess.Masked) != 1 || page.Records[0].FieldAccess.Masked[0] != "field.contact.name" {
+		t.Fatal("record-specific field must be masked without removing the visible row")
+	}
+	if _, present := page.Records[0].Values["field.contact.name"]; present {
 		t.Fatal("record-specific field projection bypass")
 	}
 	query.Projection = []string{"field.contact.id"}

@@ -90,9 +90,14 @@ func TestM9RCustomSortPagePreservesTiesNullsScopesAndJoins(t *testing.T) {
 	if len(page.Records) != 1 || page.Records[0].Values["field.contact.name"] != "Same B" || page.Next != "" {
 		t.Fatal("row scope applied after page selection")
 	}
-	// Field denial must still reject the request before the page is selected.
+	// Mask an unrelated projected field without changing the numeric sort page.
+	// Predicates over the denied field still fail closed in the ABAC regressions.
 	scoped := m5Handler(t, f, contextualDataPolicy{"field_at_row"}, audit.Postgres{}, true)
-	if denied := m5Call(scoped, base+"/query", token, query); denied.Code != 403 {
+	page = m5Page(t, m5Call(scoped, base+"/query", token, query))
+	if len(page.Records) != 1 || page.Records[0].ID != low[0] || page.Records[0].FieldAccess == nil || len(page.Records[0].FieldAccess.Masked) != 1 || page.Records[0].FieldAccess.Masked[0] != "field.contact.name" {
+		t.Fatal("field mask changed numeric page selection")
+	}
+	if _, present := page.Records[0].Values["field.contact.name"]; present {
 		t.Fatal("field scope bypass")
 	}
 }
