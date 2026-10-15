@@ -33,7 +33,7 @@ test-unit:
 	$(NPM) test
 # Aggregate suite deadline; individual runtime/query/lock budgets are unchanged.
 test-integration:
-	node scripts/with-env.mjs $(GO) test -race -tags=integration -timeout=15m -count=1 ./tests/integration
+	node scripts/with-env.mjs $(GO) test -race -tags=integration -timeout=20m -count=1 ./tests/integration
 .PHONY: test-performance test-write-performance
 test-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -count=1 -run '^TestM9RMembershipPerformanceFloor$$' -v ./tests/integration

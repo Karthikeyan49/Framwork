@@ -77,6 +77,14 @@ workspace/route switches, and unknown-outcome review. Browser tests exercise rea
 team and record APIs, scope changes, conflicts, denial and lost responses; no
 mocked response alone proves a business mutation. Obtain independent adversarial
 review of stable code, then run full checks/tests/build and browser regressions.
+The first full run reached the 15-minute aggregate integration deadline after
+162 completed tests (880.2 seconds summed top-level time), while the current
+test had run only 12 seconds. The expanded suite has 177 top-level tests. Set
+the aggregate integration ceiling to 20 minutes and the encompassing CI job
+to 35 minutes for setup, checks, fuzz/build/browser work. This is test-runner
+capacity only: no assertion, test selection, query/statement/lock budget or
+workflow clock/lease is relaxed. Retain the failed run and require an executed
+full rerun, plus independent inspection of these harness changes.
 
 Rollback is a frontend rollback only: preserve server migrations, owner/team/
 share facts and audit. Resolve pending changes by inspecting live state with an
