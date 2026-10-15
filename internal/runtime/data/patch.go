@@ -90,11 +90,6 @@ func patch(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e
 		if !ok || f.CoreID {
 			return Record{}, ErrInvalid
 		}
-		for _, action := range []string{"data.field.read", "data.field.write"} {
-			if err = g.check(ctx, action, Resource{EntityID: entity, FieldID: id, RecordID: c.ID}); err != nil {
-				return Record{}, err
-			}
-		}
 	}
 	b := builder{args: append(base(s, a, entity), c.ID)}
 	where := recordWhere + " AND r.id=$6"
@@ -128,6 +123,13 @@ func patch(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e
 	for _, action := range []string{"data.row.read", "data.row.write"} {
 		if err = g.check(ctx, action, Resource{EntityID: entity, RecordID: c.ID, OwnerID: existing.OwnerID}); err != nil {
 			return Record{}, err
+		}
+	}
+	for _, id := range keys {
+		for _, action := range []string{"data.field.read", "data.field.write"} {
+			if err = g.check(ctx, action, Resource{EntityID: entity, FieldID: id, RecordID: c.ID, OwnerID: existing.OwnerID}); err != nil {
+				return Record{}, err
+			}
 		}
 	}
 	if existing.Version != c.ExpectedVersion {

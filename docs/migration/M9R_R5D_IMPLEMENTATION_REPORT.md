@@ -78,3 +78,45 @@ reservations are explicit conservative limits, not completed general solutions.
 
 Administration UI, identity login/clock skew, R3b–R3d, R6 and R7 remain separate
 open work. No main merge and no M10.
+
+## Independent findings and remediation checkpoint
+
+Independent review of `88c8528`, committed as `fa22701`, reproduced two HIGH
+findings with executed negative fixtures. Patch omitted trusted owner attributes
+from field actions; SQL-masked projections/predicates also used contextless
+field actions. Five owner-policy regressions initially failed. The independent
+report preserves exploit evidence and successful boundaries; these findings
+were not dismissed as unsupported callbacks.
+
+The fix moves definitive touched-field read/write guards after trusted owner
+loading and before field-value validation. Interactive custom Go engines now
+use a bounded header-only preflight. Guards receive actual record ID/owner;
+allowed ID arrays become SQL CASE predicates, so denied values never reach Go.
+Predicates check the complete entity-visible header universe before caller
+filters/sorts/cursors/limits/joins (except exact ID selection). Any denied field
+rejects the predicate. Opaque universes/pages cap at 32 headers, including
+lookahead; larger cases fail budget. The opaque port verifies actual RR or
+SERIALIZABLE isolation; weak-isolation executors fail before value selection
+or patch mutation. Existing WithRuntime already provides RR.
+
+A closed proof in policy recognizes exact Native/Defined concrete kernels;
+API supplies its actual live policy engine to that optimized port. Unknown
+wrappers, including embedded Native, cannot inherit the optimization. Native/
+tenant-definition page and workload gates are unchanged. This is an explicit
+custom-callback bound, not a widened SQL permission or post-fetch redaction.
+
+Post-fix focused owner/root/legacy projection regressions passed 34.162s.
+A new opaque-budget test initially expected budget rejection while filtering a
+field whose OWNER scope correctly rejects coverage first (403). The fixture now
+filters the public ID to exercise budget admission independently; all existing
+scope/inference denials remain. The corrected owner/budget regressions passed
+22.521s, and Go policy/data race tests passed. Final snapshot guard and full
+verification are recorded after independent re-verification.
+
+The final snapshot proof also certifies the unexported WithRuntime executor;
+an autocommit pool with default RR cannot impersonate a shared transaction.
+Unknown executor wrappers/raw transactions are rejected by the opaque port.
+`make check` passed again. The final owner/root/legacy projection command
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9RField|^TestIndependentR5d|^TestIndependentM6RFieldScope|^TestM5RecordSpecificField|^TestM9RCustomSortPage' ./tests/integration`
+passed in 41.176s. Independent second review and final whole-suite run remain
+pending at this checkpoint.

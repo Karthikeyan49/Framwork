@@ -19,6 +19,13 @@ import (
 func (Store) QueryVisible(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard, resolve ...ScopeResolver) (Page, error) {
 	return (Store{visible: true}).Query(ctx, q, s, a, entity, query, g, resolve...)
 }
+
+// QueryVisibleWithPolicy uses only the exact live action engine supplied by API
+// composition. Concrete closed kernels can express field decisions in scopes;
+// unknown engines retain the bounded opaque callback path.
+func (Store) QueryVisibleWithPolicy(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, engine policy.Engine, g Guard, resolve ...ScopeResolver) (Page, error) {
+	return (Store{visible: true, sqlFields: policy.SQLFieldActions(engine)}).Query(ctx, q, s, a, entity, query, g, resolve...)
+}
 func scopeAll(s policy.DataScope) bool {
 	if s.Kind == "ALL" {
 		return true
@@ -53,14 +60,23 @@ func hasCondition(s policy.DataScope) bool {
 }
 
 // Unknown/unavailable policy errors are never softened into a mask.
-func fieldPredicate(ctx context.Context, e compiler.Entity, a tenant.Access, alias string, b *builder, g Guard, resolve []ScopeResolver, action, id string) (string, error) {
+func fieldPredicate(ctx context.Context, e compiler.Entity, a tenant.Access, alias string, b *builder, g Guard, resolve []ScopeResolver, action, id string, actions fieldActions) (string, error) {
 	r := Resource{EntityID: e.ID, FieldID: id}
 	cap := strings.Replace(action, "data.", "data.field.", 1)
-	if err := g.check(ctx, cap, r); err != nil {
-		if errors.Is(err, ErrDenied) {
+	if actions == nil {
+		if err := g.check(ctx, cap, r); err != nil {
+			if errors.Is(err, ErrDenied) {
+				return "FALSE", nil
+			}
+			return "", err
+		}
+	}
+	actionPredicate := "TRUE"
+	if actions != nil {
+		actionPredicate = actions.predicate(e.ID, id, action, alias, b)
+		if actionPredicate == "FALSE" {
 			return "FALSE", nil
 		}
-		return "", err
 	}
 	scope, err := resolveScope(ctx, resolve, action, r)
 	if err != nil {
@@ -70,11 +86,12 @@ func fieldPredicate(ctx context.Context, e compiler.Entity, a tenant.Access, ali
 		return "", err
 	}
 	n := 0
-	return scopeSQL(ctx, e, scope, a, alias, b, 0, &n)
+	predicate, err := scopeSQL(ctx, e, scope, a, alias, b, 0, &n)
+	return "(" + actionPredicate + ") AND (" + predicate + ")", err
 }
 
 // Mask in SQL, never fetch full JSONB and redact it after crossing the port.
-func visibleJSON(ctx context.Context, e compiler.Entity, ids []string, a tenant.Access, alias string, b *builder, g Guard, resolve []ScopeResolver) (string, error) {
+func visibleJSON(ctx context.Context, e compiler.Entity, ids []string, a tenant.Access, alias string, b *builder, g Guard, resolve []ScopeResolver, actions fieldActions) (string, error) {
 	parts := []string{"'{}'::jsonb"}
 	masked := []string{"'[]'::jsonb"}
 	writable := []string{"'[]'::jsonb"}
@@ -106,7 +123,7 @@ func visibleJSON(ctx context.Context, e compiler.Entity, ids []string, a tenant.
 	for _, id := range ids {
 		f, _ := field(e, id)
 		k := b.bind(id) + "::text"
-		pred, er := fieldPredicate(ctx, e, a, alias, b, g, resolve, "data.read", id)
+		pred, er := fieldPredicate(ctx, e, a, alias, b, g, resolve, "data.read", id, actions)
 		if er != nil {
 			return "", er
 		}
@@ -128,7 +145,7 @@ func visibleJSON(ctx context.Context, e compiler.Entity, ids []string, a tenant.
 				return "", we
 			}
 			if re == nil && we == nil && !hasCondition(rs) && !hasCondition(ws) {
-				wp, er := fieldPredicate(ctx, e, a, alias, b, g, resolve, "data.write", id)
+				wp, er := fieldPredicate(ctx, e, a, alias, b, g, resolve, "data.write", id, actions)
 				if er != nil {
 					return "", er
 				}

@@ -327,3 +327,30 @@ func TestM9RFieldPatchUnknownCommitReconciliation(t *testing.T) {
 	}
 	m9rCommandCounts(t, f, app, 1, 1, 2)
 }
+
+// An opaque callback cannot prove unseen rows safe by selecting a tiny page.
+func TestM9RFieldOpaqueHeaderBudgetAndNativePageCompatibility(t *testing.T) {
+	m8Database(t)
+	f, owner, base, alice, _ := m5Fixture(t)
+	first := m5Create(t, owner, base, alice, "Owned first")
+	for i := 0; i < data.MaxOpaqueActionRows; i++ {
+		m5Create(t, owner, base, alice, "Owned remaining")
+	}
+	query := data.Query{Projection: []string{"field.contact.id", "field.contact.name"}, Limit: 100}
+	if page := m5Page(t, m5Call(owner, base+"/query", alice, query)); len(page.Records) != data.MaxOpaqueActionRows+1 {
+		t.Fatal("native page limit changed")
+	}
+	opaque := m5Handler(t, f, r5dScoped{scopedPolicy{"owner"}}, audit.Postgres{}, true)
+	if w := m5Call(opaque, base+"/query", alice, query); w.Code != 400 {
+		t.Fatal("opaque header page is unbounded", w.Code)
+	}
+	query.Limit = 1
+	query.Filter = &data.Filter{Op: "eq", Field: "field.contact.id", Value: json.RawMessage(`"` + first.ID + `"`)}
+	if w := m5Call(opaque, base+"/query", alice, query); w.Code != 400 {
+		t.Fatal("filter/limit shrank predicate universe", w.Code)
+	}
+	query.RecordID = first.ID
+	if page := m5Page(t, m5Call(opaque, base+"/query", alice, query)); len(page.Records) != 1 || page.Records[0].ID != first.ID {
+		t.Fatal("bounded exact record callback unsupported")
+	}
+}

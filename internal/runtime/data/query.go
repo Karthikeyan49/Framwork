@@ -192,6 +192,18 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > 2048 || len(query.Projection) == 0 || len(query.Projection) > 32 {
 		return Page{}, ErrBudget
 	}
+	if st.visible && !st.sqlFields {
+		if !postgres.RuntimeSnapshot(q) {
+			return Page{}, ErrDenied
+		}
+		var stable bool
+		if err = q.QueryRowContext(ctx, `SELECT current_setting('transaction_isolation') IN ('repeatable read','serializable')`).Scan(&stable); err != nil {
+			return Page{}, err
+		}
+		if !stable {
+			return Page{}, ErrDenied
+		}
+	}
 	seen := map[string]bool{}
 	projected := map[string]bool{}
 	for _, id := range query.Projection {
@@ -227,8 +239,10 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	predicateGuard := g
 	if st.visible {
 		predicateGuard = func(ctx context.Context, action string, r Resource) error {
-			if er := g.check(ctx, action, r); er != nil {
-				return er
+			if st.sqlFields {
+				if er := g.check(ctx, action, r); er != nil {
+					return er
+				}
 			}
 			fs, er := resolveScope(ctx, resolve, "data.read", r)
 			if er != nil {
@@ -238,6 +252,20 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				return ErrDenied
 			}
 			return nil
+		}
+	}
+	if st.visible && !st.sqlFields {
+		ids, er := predicateFields(s, e, query)
+		if er != nil {
+			return Page{}, er
+		}
+		for _, id := range ids {
+			if er = predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: id}); er != nil {
+				return Page{}, er
+			}
+		}
+		if er = checkPredicateActions(ctx, q, st, e, where, b, ids, g); er != nil {
+			return Page{}, er
 		}
 	}
 	if query.Filter != nil {
@@ -387,12 +415,6 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 			}
 		}
 		joinedData := "j.custom_data"
-		if st.visible {
-			joinedData, er = visibleJSON(ctx, target, query.Join.Projection, a, "j", &b, g, resolve)
-			if er != nil {
-				return Page{}, er
-			}
-		}
 		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + joinedData
 	}
 	if query.Aggregate != nil {
@@ -450,17 +472,32 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if query.Sort != nil && !slices.Contains(readIDs, sf.ID) {
 		readIDs = append(readIDs, sf.ID)
 	}
-	selectedData := "r.custom_data"
-	if st.visible {
-		selectedData, err = visibleJSON(ctx, e, readIDs, a, "r", &b, g, resolve)
-		if err != nil {
-			return Page{}, err
-		}
-	}
 	order := "ASC"
 	if desc {
 		order = "DESC"
 	}
+	selectedData := "r.custom_data"
+	if st.visible {
+		var actions fieldActions
+		if !st.sqlFields {
+			actions, err = projectActions(ctx, q, st, e, target, query, readIDs, where, indexJoin, joinSQL, sortExpr, order, b, g)
+			if err != nil {
+				return Page{}, err
+			}
+		}
+		selectedData, err = visibleJSON(ctx, e, readIDs, a, "r", &b, g, resolve, actions)
+		if err != nil {
+			return Page{}, err
+		}
+		if query.Join != nil {
+			joinedData, er := visibleJSON(ctx, target, query.Join.Projection, a, "j", &b, g, resolve, actions)
+			if er != nil {
+				return Page{}, er
+			}
+			joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + joinedData
+		}
+	}
+
 	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + indexJoin + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
 	if query.Sort != nil && !sf.CoreID && !st.workerSource {
 		// Bound the sort tuple to ID/key before fetching wide JSONB records. Both

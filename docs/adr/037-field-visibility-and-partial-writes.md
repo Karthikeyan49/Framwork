@@ -16,6 +16,28 @@ The existing strict query port remains unchanged for rules, workflows, worker
 source capabilities, legacy adapters and internal integrity operations. They
 must reject inaccessible inputs rather than evaluating a redacted null.
 
+Action callbacks also receive trusted row ID/owner context. For interactive
+reads, opaque Go engines use a header-only preflight and bounded ID-array SQL
+predicates; values still remain in SQL until the masking decision. Predicate
+preflight examines the entire entity-visible universe before any caller filter,
+sort, cursor, join or result limit, except an exact record selection. Reject a
+predicate if any row denies the field. Opaque universes/projected pages are
+limited to 32 headers; larger requests fail budget. Arrays bound SQL parameters
+per field/action, rather than expanding one parameter per row/field pair.
+The opaque port verifies actual PostgreSQL REPEATABLE READ or SERIALIZABLE
+isolation before preflight. READ COMMITTED/default executors fail closed. The
+API's existing WithRuntime transaction supplies the stable snapshot; headers,
+owner decisions and final value selection cannot observe different snapshots.
+Postgres also certifies the actual WithRuntime executor, so an autocommit pool
+with a REPEATABLE READ default cannot masquerade as one transaction. Unknown
+executor wrappers fail closed; trusted code must preserve the provided port.
+
+The policy module proves scope-only field actions for exact concrete Native and
+Defined engines. API composition supplies the same live engine used by its guard
+to the optimized query port; unknown wrappers and the default visible-query port
+use header preflight. An inherited marker cannot claim the optimization. Native
+and tenant-defined policy workload/page budgets remain unchanged.
+
 A filter, sort, sum or source relationship key must be readable over the entire
 entity-visible set. Accept ALL (including OR containing ALL), or exactly the
 same normalized scope as the entity boundary; conservatively reject other
@@ -31,7 +53,8 @@ read+write and read+write for touched fields only, rejects core/unknown fields,
 validates touched values only, and merges JSONB inside PostgreSQL under record
 CAS. Omitted fields and their reference projections remain untouched; explicit
 null clears an optional field. Reject inaccessible touched fields before value
-validation. Responses use the same SQL masking port. Receipts, audit, outbox,
+validation, using the trusted existing owner after loading the row header.
+Responses use the same SQL masking port. Receipts, audit, outbox,
 reference/index updates and workflow triggers retain one transaction. Patch
 emits `record.updated`; receipt replay returns headers only.
 

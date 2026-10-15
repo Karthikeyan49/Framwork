@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-type Store struct{ legacy, workerSource, visible bool }
+type Store struct{ legacy, workerSource, visible, sqlFields bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool

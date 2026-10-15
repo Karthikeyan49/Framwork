@@ -26,6 +26,15 @@ var ErrCommitUnknown = errors.New("database commit outcome is unconfirmed")
 
 type executor struct{ tx *sql.Tx }
 
+// RuntimeSnapshot identifies the transaction-bound port created by WithRuntime.
+// An isolation setting alone cannot prove a shared snapshot: an autocommit DB
+// pool may also default to REPEATABLE READ across separate transactions.
+// Opaque/decorated executors are deliberately not certified by this proof.
+func RuntimeSnapshot(q Executor) bool {
+	e, ok := q.(executor)
+	return ok && e.tx != nil
+}
+
 func (e executor) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
 	return e.tx.ExecContext(ctx, q, args...)
 }

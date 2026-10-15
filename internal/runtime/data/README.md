@@ -31,3 +31,9 @@ values under CAS and preserves untouched inaccessible fields and reference
 links. CONDITION write scopes and unsafe hidden-size reservations fail closed.
 Existing `update` remains replacement. No worker port uses visible queries or
 patch; workflow/rule inputs remain strict.
+Opaque Go action callbacks additionally require an enforced RR/Serializable
+snapshot and trusted ID/owner header preflight (32 headers including lookahead).
+Predicates check the full entity-visible universe before caller filtering.
+`QueryVisibleWithPolicy` optimizes only exact closed Native/Defined kernels;
+composition must pass the same live engine used by its guard. Unknown wrappers
+cannot inherit that optimization. See ADR037 for the explicit callback bounds.

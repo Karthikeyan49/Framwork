@@ -227,7 +227,7 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 		var query data.Query
 		if err = readDataCommand(r, &query); err == nil {
 			before := *evidence
-			result, err = (data.Store{}).QueryVisible(ctx, q, scope, access, entity, query, guard, resolve)
+			result, err = (data.Store{}).QueryVisibleWithPolicy(ctx, q, scope, access, entity, query, a.Policy, guard, resolve)
 			if err == nil {
 				*evidence = before
 			}
