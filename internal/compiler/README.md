@@ -14,3 +14,14 @@ remains unchanged. Program.Rule restores stored plans, never compiles authoring
 source at execution. SupportedIRVersions returns the explicit runtime matrix.
 Stored restoration verifies source/plan/field/calendar/type/hash agreement and
 preserves historical compiler provenance. See ADR021 and rules_test.go.
+
+ADR036 adds opt-in schema/IR 1.3.0. `Catalog.ToolCatalog` (excluded from
+`CatalogHash`, so existing IR hashes are unchanged) resolves each tool activity in
+the operator-owned `tools.Catalog`, type-checks its input mapping against the
+workflow entity, and requires an approval state's `approved` transition on every
+path to an approval-required tool (`unknown_tool`, `tool_input_*`,
+`tool_requires_approval`). A plan with a tool uses workflow DSL 2.1.0 and pins the
+definition's canonical hash in `State.ToolHash`; tool-free plans keep DSL 2.0.0 and
+identical bytes. Restore never recompiles: it requires a well-formed pin, and the
+runtime re-resolves the pin against the live catalog and checks the tenant
+allowlist before any send.
