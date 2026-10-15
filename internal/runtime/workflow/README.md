@@ -61,3 +61,13 @@ responses. The cap rejects new mutation/recovery signals. At that boundary pause
 the job and use a reviewed operational forward fix; never clear immutable history,
 pins, snapshots or receipts to extend it. This bounded preview adapter does not
 promise unlimited manual retries. Local callbacks must honor context deadlines.
+
+R5e retains the DSL2.0 reader/four built-in role names and adds opt-in DSL2.1
+(metadata/IR1.3) tenant role references. Signals use a mandatory approval-authority
+port in addition to live capability/DataScope authorization. The app-only SQL
+port locks the current tenant/user/membership/head through commit, rejects a
+retained Access after reassignment, and runs even for repeated signal keys.
+Workers/dispatchers cannot approve. Undefined roles never grant access. Pending
+instances retain their exact plans when newer authoring revisions change role
+lists. See ADR036 and docs/migration/M9R_R5E_IMPLEMENTATION_REPORT.md. Production,
+current-document approvals, field masking and administration UI remain separate.

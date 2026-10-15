@@ -9,6 +9,7 @@ import (
 const SchemaVersion = "1.0.0"
 const RuleSchemaVersion = "1.1.0"
 const WorkflowSchemaVersion = "1.2.0"
+const ApprovalSchemaVersion = "1.3.0"
 const MaxBytes = 256 << 10
 
 type Document struct {

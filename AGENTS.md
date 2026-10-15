@@ -62,7 +62,9 @@ belongs to `internal/platform/app`.
 - ADR023: workflows pin IR/plan/input bytes. Preserve fenced leases, durable
   history, versioned signals, cancellation, recovery and compensation limits.
   Only `local.noop` is registered. M9R corrects the historic worker boundary;
-  external tools and production activation remain later milestones.
+  external tools and production activation remain later milestones. ADR036 adds
+  opt-in metadata/IR1.3 and Workflow DSL2.1 tenant approval roles; preserve legacy
+  readers and live revocation fences. Role references never grant capabilities.
 
 ## Delivery and verification
 

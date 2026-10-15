@@ -28,6 +28,30 @@ func (s Store) Signal(ctx context.Context, q postgres.Executor, a tenant.Access,
 	if e != nil {
 		return Instance{}, e
 	}
+	// A repeated receipt must also satisfy today's membership/head requirement.
+	// Look up the requested pinned state (which can precede the current state
+	// after a successful signal); never infer authority from a prior receipt.
+	if r.Operation == "approve" || r.Operation == "reject" {
+		approval, ok := x.program.State(r.StateID)
+		if !ok || approval.Type != "approval" {
+			return Instance{}, ErrConflict
+		}
+		allowed := false
+		if a.ActorID() != x.ActorID {
+			allowed, e = s.Approver(ctx, q, a, approval.ApprovalRoles)
+			if e != nil {
+				return Instance{}, e
+			}
+		}
+		if !allowed {
+			entry.Allow = false
+			entry.State.Role = ""
+			if roles := a.Roles(); len(roles) == 1 {
+				entry.State.Role = roles[0]
+			}
+			return Instance{}, &AuthorizationDenied{Evidence: entry}
+		}
+	}
 	raw, _ := json.Marshal(struct {
 		Signal Signal
 		Actor  string
@@ -67,18 +91,6 @@ func (s Store) Signal(ctx context.Context, q postgres.Executor, a tenant.Access,
 	case "approve", "reject":
 		if x.Status != "WAITING_APPROVAL" || state.Type != "approval" || !now.Before(x.DueAt) || !now.Before(x.Deadline) {
 			return Instance{}, ErrConflict
-		}
-		if a.ActorID() == x.ActorID {
-			return Instance{}, ErrDenied
-		}
-		allowed := false
-		for _, role := range a.Roles() {
-			if includes(state.ApprovalRoles, role) {
-				allowed = true
-			}
-		}
-		if !allowed {
-			return Instance{}, ErrDenied
 		}
 		on := "approved"
 		if r.Operation == "reject" {

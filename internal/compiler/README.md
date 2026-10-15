@@ -14,3 +14,9 @@ remains unchanged. Program.Rule restores stored plans, never compiles authoring
 source at execution. SupportedIRVersions returns the explicit runtime matrix.
 Stored restoration verifies source/plan/field/calendar/type/hash agreement and
 preserves historical compiler provenance. See ADR021 and rules_test.go.
+
+R5e adds explicit schema/IR/compiler1.3 and Workflow DSL2.1 for tenant-defined
+approval role identifiers. Legacy schemas/compiled bytes/hashes stay unchanged;
+restoration dispatches by stored versions without compiling. Tenant catalog
+existence and capability authority are live runtime checks, never inferred from
+a syntactically valid role reference. See ADR036 and approval_roles_test.go.

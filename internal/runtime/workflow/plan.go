@@ -17,7 +17,9 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
 )
 
+// Version retains the closed legacy role contract. TenantRoleVersion opts in to tenant role identifiers.
 const Version = "2.0.0"
+const TenantRoleVersion = "2.1.0"
 const ActivityVersion = "1.0.0"
 const MaxPlanBytes = 1 << 20
 
@@ -27,6 +29,7 @@ var ErrDenied = errors.New("workflow access denied")
 var ErrNotFound = errors.New("workflow instance not found")
 var ErrLease = errors.New("workflow lease is stale")
 var idPattern = regexp.MustCompile(`^(workflow|entity|state|local)\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
+var rolePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var versionPattern = regexp.MustCompile(`^[1-9][0-9]{0,3}\.[0-9]{1,4}\.[0-9]{1,4}$`)
 
 type Transition struct {
@@ -156,7 +159,7 @@ func Restore(raw []byte, hash string) (Program, error) {
 	return Program{append([]byte(nil), raw...), hash}, nil
 }
 func validatePlan(p Plan) error {
-	if p.DSLVersion != Version || !validID(p.ID, "workflow") || !validID(p.EntityID, "entity") || !versionPattern.MatchString(p.Version) || p.TimeoutMS < 1 || p.TimeoutMS > 604800000 || !includes([]string{"manual", "record.created", "record.updated"}, p.Trigger) || len(p.States) < 2 || len(p.States) > 100 {
+	if !includes([]string{Version, TenantRoleVersion}, p.DSLVersion) || !validID(p.ID, "workflow") || !validID(p.EntityID, "entity") || !versionPattern.MatchString(p.Version) || p.TimeoutMS < 1 || p.TimeoutMS > 604800000 || !includes([]string{"manual", "record.created", "record.updated"}, p.Trigger) || len(p.States) < 2 || len(p.States) > 100 {
 		return ErrInvalid
 	}
 	fs, _, e := rules.CanonicalInputs(p.Fields, nil)
@@ -185,8 +188,15 @@ func validatePlan(p Plan) error {
 				return ErrInvalid
 			}
 		}
+		if len(s.ApprovalRoles) > 100 {
+			return ErrInvalid
+		}
 		for i, role := range s.ApprovalRoles {
-			if !includes([]string{"owner", "admin", "member", "viewer"}, role) || (i > 0 && s.ApprovalRoles[i-1] >= role) {
+			valid := rolePattern.MatchString(role)
+			if p.DSLVersion == Version {
+				valid = includes([]string{"owner", "admin", "member", "viewer"}, role)
+			}
+			if !valid || (i > 0 && s.ApprovalRoles[i-1] >= role) {
 				return ErrInvalid
 			}
 		}

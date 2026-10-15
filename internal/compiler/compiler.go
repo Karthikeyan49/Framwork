@@ -20,8 +20,12 @@ const RuleIRVersion = "1.1.0"
 const RuleCompilerVersion = "1.1.0"
 const WorkflowIRVersion = "1.2.0"
 const WorkflowCompilerVersion = "1.2.0"
+const ApprovalIRVersion = "1.3.0"
+const ApprovalCompilerVersion = "1.3.0"
 
-func SupportedIRVersions() []string { return []string{IRVersion, RuleIRVersion, WorkflowIRVersion} }
+func SupportedIRVersions() []string {
+	return []string{IRVersion, RuleIRVersion, WorkflowIRVersion, ApprovalIRVersion}
+}
 
 const SchemaSnapshot = "hybrid-preview-v1"
 
@@ -259,7 +263,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if r := d.Rule; r != nil {
 			resolve(r.EntityRef, "entity", path)
-			if doc.SchemaVersion == metadata.RuleSchemaVersion || doc.SchemaVersion == metadata.WorkflowSchemaVersion {
+			if doc.SchemaVersion == metadata.RuleSchemaVersion || doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion {
 				var entity Entity
 				for _, e := range entities {
 					if e.ID == r.EntityRef {
@@ -285,7 +289,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if w := d.Workflow; w != nil {
 			resolve(w.EntityRef, "entity", path)
-			if doc.SchemaVersion == metadata.WorkflowSchemaVersion {
+			if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion {
 				var entity Entity
 				for _, e := range entities {
 					if e.ID == w.EntityRef {
@@ -345,11 +349,15 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		ir.CompilerVersion = RuleCompilerVersion
 		ir.Rules = rulePlans
 	}
-	if doc.SchemaVersion == metadata.WorkflowSchemaVersion {
+	if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion {
 		ir.IRVersion = WorkflowIRVersion
 		ir.CompilerVersion = WorkflowCompilerVersion
 		ir.Rules = rulePlans
 		ir.Workflows = workflowPlans
+	}
+	if doc.SchemaVersion == metadata.ApprovalSchemaVersion {
+		ir.IRVersion = ApprovalIRVersion
+		ir.CompilerVersion = ApprovalCompilerVersion
 	}
 	raw, err := json.Marshal(ir)
 	if err != nil {

@@ -42,6 +42,10 @@ type Snapshot struct {
 // never compile source. Capture/Authorize enforce live policy and SQL DataScope.
 type RestoreRelease func([]byte, string, string) (Program, error)
 type Authorizer func(context.Context, postgres.Executor, tenant.Access, string, Pin, []string) (audit.Entry, error)
+
+// ApprovalAuthority checks current membership/head and fences revocation through commit.
+// The pinned role list is a requirement, never a capability grant.
+type ApprovalAuthority func(context.Context, postgres.Executor, tenant.Access, []string) (bool, error)
 type Capture func(context.Context, postgres.Executor, tenant.Access, Pin, []string) (Snapshot, error)
 type ActivityRequest struct {
 	InstanceID, StepKey, ActivityRef, Version, RequestHash string
@@ -140,6 +144,7 @@ type Durability interface {
 type Store struct {
 	Restore   RestoreRelease
 	Authorize Authorizer
+	Approver  ApprovalAuthority
 	Capture   Capture
 	Audit     audit.Writer
 	Events    events.LifecycleWriter
@@ -147,7 +152,7 @@ type Store struct {
 }
 
 func (s Store) configured() bool {
-	return s.Restore != nil && s.Authorize != nil && s.Capture != nil && s.Audit != nil && s.Events != nil
+	return s.Restore != nil && s.Authorize != nil && s.Approver != nil && s.Capture != nil && s.Audit != nil && s.Events != nil
 }
 func terminal(s string) bool {
 	return includes([]string{"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "DEAD", "RECONCILE", "COMPENSATION_FAILED"}, s)

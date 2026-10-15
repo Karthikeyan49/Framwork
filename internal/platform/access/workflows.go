@@ -255,7 +255,13 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		}
 		return entry, nil
 	}
-	return workflow.Store{Restore: restore, Capture: capture, Authorize: authorize, Audit: writer, Events: lifecycle, Activity: workflow.Noop}
+	approver := func(ctx context.Context, q postgres.Executor, a tenant.Access, roles []string) (bool, error) {
+		if worker {
+			return false, nil
+		}
+		return (policy.RoleStore{}).LockWorkflowApprover(ctx, q, a, roles)
+	}
+	return workflow.Store{Approver: approver, Restore: restore, Capture: capture, Authorize: authorize, Audit: writer, Events: lifecycle, Activity: workflow.Noop}
 }
 
 func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, scope data.Scope) (reply, error) {

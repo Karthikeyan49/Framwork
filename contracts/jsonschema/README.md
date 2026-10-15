@@ -14,3 +14,10 @@ YAML authoring is supported by the backend; output/storage are normalized JSON.
 A schema-valid source is draft, not compiled/authorized production functionality.
 Symbol resolution, type checking and canonical IR belong to M4. Contract changes
 must preserve immutable history and document explicit version compatibility.
+
+R5e adds opt-in schema1.3 (`application-v1.3.schema.json`) and Workflow DSL2.1
+for tenant-defined approval-role names. Schemas1.0/1.1/1.2 retain their original
+contracts; schema1.2 workflows still require DSL2.0 and the four built-in role
+names. Rules in1.1–1.3 remain DSL2.0. A role reference is not a permission grant:
+live membership, role head, capabilities and DataScope govern approval.
+See ADR036 and the R5e implementation report for compatibility and recovery.

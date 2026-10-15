@@ -19,13 +19,13 @@ func (p Program) Workflow(id string) (workflow.Program, error) {
 	return workflow.Program{}, workflow.ErrInvalid
 }
 func validateStoredWorkflows(ir IR) error {
-	if ir.IRVersion != WorkflowIRVersion {
+	if ir.IRVersion != WorkflowIRVersion && ir.IRVersion != ApprovalIRVersion {
 		if len(ir.Workflows) != 0 {
 			return workflow.ErrInvalid
 		}
 		return nil
 	}
-	if ir.Application.SchemaVersion != metadata.WorkflowSchemaVersion {
+	if !(ir.IRVersion == WorkflowIRVersion && ir.Application.SchemaVersion == metadata.WorkflowSchemaVersion || ir.IRVersion == ApprovalIRVersion && ir.Application.SchemaVersion == metadata.ApprovalSchemaVersion) {
 		return workflow.ErrInvalid
 	}
 	index := 0

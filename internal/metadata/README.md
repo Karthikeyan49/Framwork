@@ -23,3 +23,8 @@ M7 additionally admits explicit schema1.1.0 through its own embedded closed sche
 Its rules require DSL2.0.0 and may contain pinned calendar snapshots and typed
 literals. Schema1.0.0 is retained verbatim. Migration17 derives schema_version from
 the inserted envelope without extending runtime column grants or mutating history.
+
+R5e additionally admits opt-in1.3 via its own embedded closed schema and forward
+migration45. Its workflows require DSL2.1; approval-role names use the tenant
+role grammar. Prior schemas/immutable versions remain unchanged. Validation
+never creates a tenant role or grants approval authority. See ADR036.

@@ -41,6 +41,16 @@ type m9Fixture struct {
 
 func m9Setup(t *testing.T, change func(*metadata.Workflow)) *m9Fixture {
 	t.Helper()
+	return m9SetupDocument(t, func(doc *metadata.Document) {
+		for i := range doc.Definitions {
+			if change != nil && doc.Definitions[i].Workflow != nil {
+				change(doc.Definitions[i].Workflow)
+			}
+		}
+	})
+}
+func m9SetupDocument(t *testing.T, change func(*metadata.Document)) *m9Fixture {
+	t.Helper()
 	m8Database(t)
 	f := newIAM(t)
 	raw, e := os.ReadFile("../../contracts/examples/workflow-draft-v1.2.json")
@@ -52,10 +62,8 @@ func m9Setup(t *testing.T, change func(*metadata.Workflow)) *m9Fixture {
 		t.Fatal(e)
 	}
 	doc.AppID = "app.workflows_" + strings.ReplaceAll(uuid(t), "-", "")
-	for i := range doc.Definitions {
-		if change != nil && doc.Definitions[i].Workflow != nil {
-			change(doc.Definitions[i].Workflow)
-		}
+	if change != nil {
+		change(&doc)
 	}
 	raw, _ = json.Marshal(doc)
 	api := access.API{DB: f.db, Auth: f.verifier, Policy: policy.Native{}, Audit: audit.Postgres{}, Registry: m3Registry(t), PreviewEnabled: true, WorkflowsEnabled: true}

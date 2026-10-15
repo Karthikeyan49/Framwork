@@ -38,6 +38,9 @@ func Ready(ctx context.Context, db *sql.DB, expected string) error {
 	if e != nil || !valid {
 		return errors.New("workflow storage contract unavailable")
 	}
+	if e = db.QueryRowContext(ctx, `SELECT p.prosecdef AND p.proowner='framework_schema_owner'::regrole AND p.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'] AND has_function_privilege(p.oid,'EXECUTE')=$1 FROM pg_catalog.pg_proc p WHERE p.oid='control.lock_workflow_approver(uuid,uuid,text)'::regprocedure`, expected == "framework_app").Scan(&valid); e != nil || !valid {
+		return errors.New("workflow approval authority unavailable")
+	}
 	if expected == "framework_worker" {
 		if e = db.QueryRowContext(ctx, `SELECT control.worker_principal() AND NOT has_function_privilege('control.claim_workflow(uuid)','EXECUTE') AND has_function_privilege('control.assigned_workflow()','EXECUTE') AND has_function_privilege('control.bind_worker_job(uuid,uuid,text,bigint,uuid,text)','EXECUTE') AND has_function_privilege('runtime.worker_source_record()','EXECUTE') AND NOT has_table_privilege('runtime.records','SELECT,INSERT,UPDATE,DELETE') AND NOT has_any_column_privilege('runtime.records','SELECT,INSERT,UPDATE') AND NOT has_table_privilege('control.worker_context','SELECT,INSERT,UPDATE,DELETE') AND has_function_privilege('control.check_workflow_lease(uuid,uuid,text,bigint,uuid)','EXECUTE')`).Scan(&valid); e != nil || !valid {
 			return ErrDenied

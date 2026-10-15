@@ -472,6 +472,9 @@ it("accepts opt-in M7 IR while retaining renderer version checks", () => {
   raw.ir.ir_version = "1.2.0";
   raw.ir.compiler_version = "1.2.0";
   expect(decodePreview(raw, "app.contacts", 1).ir.ir_version).toBe("1.2.0");
+  raw.ir.ir_version = "1.3.0";
+  raw.ir.compiler_version = "1.3.0";
+  expect(decodePreview(raw, "app.contacts", 1).ir.ir_version).toBe("1.3.0");
   raw.ir.ir_version = "2.0.0";
   expect(() => decodePreview(raw, "app.contacts", 1)).toThrow(
     "Unsupported preview version",

@@ -49,6 +49,7 @@ type Validator struct {
 	schema         *js.Schema
 	rulesSchema    *js.Schema
 	workflowSchema *js.Schema
+	approvalSchema *js.Schema
 }
 type noLoader struct{}
 
@@ -86,7 +87,11 @@ func NewValidator() (*Validator, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Validator{old, next, workflows}, nil
+	approvals, e := compile("application-v1.3.schema.json", ApprovalSchemaVersion)
+	if e != nil {
+		return nil, e
+	}
+	return &Validator{old, next, workflows, approvals}, nil
 }
 func (v *Validator) Parse(raw []byte) (Source, error) { return v.parse(raw, MaxBytes) }
 
@@ -109,6 +114,9 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 	}
 	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == WorkflowSchemaVersion {
 		active = v.workflowSchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == ApprovalSchemaVersion {
+		active = v.approvalSchema
 	}
 	if active == nil {
 		return Source{}, ErrUnavailable
