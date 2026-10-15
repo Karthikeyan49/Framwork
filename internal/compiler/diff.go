@@ -57,6 +57,7 @@ var aspectVocabulary = []string{AspectLabel, AspectStorage, AspectRuleLogic, Asp
 type DefinitionChange struct {
 	Kind       string   `json:"kind"`
 	ID         string   `json:"id"`
+	EntityRef  string   `json:"entity_ref"`
 	Change     string   `json:"change"`
 	Aspects    []string `json:"aspects"`
 	BaseHash   string   `json:"base_hash"`
@@ -412,6 +413,11 @@ func ComputeDiff(base, target Program) (Diff, error) {
 		if old.Tool != nil || now.Tool != nil {
 			d.ToolDeclarations = append(d.ToolDeclarations, declarationChange(id, hadOld, hasNew, old, now))
 		}
+		if hasNew {
+			change.EntityRef = entityRefOf(now)
+		} else {
+			change.EntityRef = entityRefOf(old)
+		}
 		if change.Aspects == nil {
 			change.Aspects = []string{}
 		}
@@ -461,6 +467,26 @@ func ComputeDiff(base, target Program) (Diff, error) {
 	sort.Slice(d.TriggerChanges, func(i, j int) bool { return d.TriggerChanges[i].WorkflowID < d.TriggerChanges[j].WorkflowID })
 	sort.Slice(d.ToolDeclarations, func(i, j int) bool { return d.ToolDeclarations[i].ID < d.ToolDeclarations[j].ID })
 	return d, nil
+}
+
+// entityRefOf names the entity a definition belongs to, so a risk reducer and
+// the verifier can tell which entity a rule, workflow or page change concerns.
+func entityRefOf(d metadata.Definition) string {
+	switch {
+	case d.Entity != nil:
+		return d.ID
+	case d.Field != nil:
+		return d.Field.EntityRef
+	case d.Page != nil:
+		return d.Page.EntityRef
+	case d.Rule != nil:
+		return d.Rule.EntityRef
+	case d.Workflow != nil:
+		return d.Workflow.EntityRef
+	case d.Relationship != nil:
+		return d.Relationship.FromEntity
+	}
+	return ""
 }
 
 func workflowPlans(ir IR) map[string]workflow.Plan {
