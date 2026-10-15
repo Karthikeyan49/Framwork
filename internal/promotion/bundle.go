@@ -91,8 +91,15 @@ func Build(source metadata.Source, program compiler.Program, b Bundle) (Candidat
 }
 
 func Restore(raw []byte, hash string, supportedIR []string) (Candidate, error) {
-	if len(raw) > 8<<20 || Hash(raw) != hash {
+	if len(raw) > MaxBundleBytes || Hash(raw) != hash {
 		return Candidate{}, ErrGate
+	}
+	var probe struct{ Version string }
+	if json.Unmarshal(raw, &probe) != nil {
+		return Candidate{}, ErrGate
+	}
+	if probe.Version == BundleVersion2 {
+		return restoreV2(raw, hash, supportedIR)
 	}
 	var b Bundle
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -173,14 +180,14 @@ type Gate interface {
 
 // Approval and activation must use the same frozen artifact and current base.
 func Approve(c Candidate, exactHash, tenantID, actor string, gate Gate) (Approval, error) {
-	b := c.Bundle()
+	b := c.Header()
 	if c.hash == "" || exactHash != c.hash || !tenant.ValidID(tenantID) || actor == "" || gate == nil || !gate.AuthorizeRelease(tenantID, actor, "approve", c.hash) || b.HighRisk && actor == b.RequesterID {
 		return Approval{}, ErrGate
 	}
 	return Approval{c.hash, actor, tenantID}, nil
 }
 func ValidateActivation(c Candidate, a Approval, currentBase string, current Dependencies, tenantID, actor string, gate Gate) error {
-	b := c.Bundle()
+	b := c.Header()
 	if c.hash == "" || a.artifact != c.hash || a.actor == "" || a.tenantID != tenantID || !tenant.ValidID(tenantID) || b.BaseRelease != currentBase || b.Dependencies != current || gate == nil || !gate.AuthorizeRelease(tenantID, actor, "activate", c.hash) {
 		return ErrGate
 	}

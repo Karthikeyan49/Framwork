@@ -21,7 +21,7 @@ func (st Store) Rollback(ctx context.Context, q postgres.Executor, a tenant.Acce
 	if !plan.StorageCompatible || !plan.ExternalEffectsReviewed || plan.RecoveryRequired || !ValidHash(plan.PlanHash) || gate == nil || !gate.AuthorizeRelease(a.TenantID(), a.ActorID(), "rollback", target.Hash()) {
 		return ErrGate
 	}
-	r, e := q.ExecContext(ctx, `UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$4 AND generation=$5`, a.TenantID(), bApplication(target.Bundle()), target.Hash(), currentHash, generation)
+	r, e := q.ExecContext(ctx, `UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$4 AND generation=$5`, a.TenantID(), target.Header().AppID, target.Hash(), currentHash, generation)
 	if e != nil {
 		return e
 	}
@@ -37,19 +37,27 @@ func (st Store) evidence(ctx context.Context, q postgres.Executor, a tenant.Acce
 	if w == nil {
 		w = audit.Postgres{}
 	}
-	return w.Append(ctx, q, audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: action, Resource: "release", Allow: true, PolicyVersion: "m6r-release-contract-v1", State: audit.State{IRHash: c.Bundle().IRHash, ArtifactHash: c.Hash(), MetadataApp: bApplication(c.Bundle())}})
+	return w.Append(ctx, q, audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: action, Resource: "release", Allow: true, PolicyVersion: "m6r-release-contract-v1", State: audit.State{IRHash: c.Header().IRHash, ArtifactHash: c.Hash(), MetadataApp: c.Header().AppID}})
 }
 
-func (st Store) Stage(ctx context.Context, q postgres.Executor, a tenant.Access, c Candidate, gate Gate) error {
-	b := c.Bundle()
-	if a.ActorID() == "" || b.RequesterID != a.ActorID() || gate == nil || !gate.AuthorizeRelease(a.TenantID(), a.ActorID(), "stage", c.Hash()) {
-		return ErrGate
+// Stage persists a server-built 2.0.0 candidate through control.stage_candidate,
+// which binds the body to the authenticated requester and to the stored
+// requirement set, acceptance spec, frozen sandbox evidence, source revision and
+// active base. Bundle 1.0.0 is no longer stageable: its claims were caller
+// declared, and the runtime role has no INSERT on control.release_bundles.
+func (st Store) Stage(ctx context.Context, q postgres.Executor, a tenant.Access, c Candidate, gate Gate) (bool, error) {
+	h := c.Header()
+	if h.Version != BundleVersion2 || a.ActorID() == "" || h.RequesterID != a.ActorID() || h.TenantID != a.TenantID() || gate == nil || !gate.AuthorizeRelease(a.TenantID(), a.ActorID(), "stage", c.Hash()) {
+		return false, ErrGate
 	}
-	_, e := q.ExecContext(ctx, `INSERT INTO control.release_bundles(tenant_id,app_id,artifact_hash,body) VALUES($1,$2,$3,$4)`, a.TenantID(), bApplication(b), c.Hash(), c.JSON())
-	if e != nil {
-		return e
+	var staged bool
+	if e := q.QueryRowContext(ctx, `SELECT control.stage_candidate($1,$2,$3)`, h.AppID, c.Hash(), c.JSON()).Scan(&staged); e != nil {
+		return false, e
 	}
-	return st.evidence(ctx, q, a, c, "release.staged")
+	if !staged {
+		return false, nil
+	}
+	return true, st.evidence(ctx, q, a, c, "release.staged")
 }
 func bApplication(b Bundle) string {
 	p, e := compiler.Restore(b.IR, b.IRHash, compiler.SupportedIRVersions())
@@ -63,7 +71,7 @@ func (st Store) Approve(ctx context.Context, q postgres.Executor, a tenant.Acces
 	if e != nil {
 		return Approval{}, e
 	}
-	_, e = q.ExecContext(ctx, `INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash) VALUES($1,$2,$3)`, a.TenantID(), bApplication(c.Bundle()), c.Hash())
+	_, e = q.ExecContext(ctx, `INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash) VALUES($1,$2,$3)`, a.TenantID(), c.Header().AppID, c.Hash())
 	if e != nil {
 		return Approval{}, e
 	}
@@ -76,7 +84,7 @@ func (st Store) Activate(ctx context.Context, q postgres.Executor, a tenant.Acce
 	if e := ValidateActivation(c, approval, currentBase, deps, a.TenantID(), a.ActorID(), gate); e != nil {
 		return e
 	}
-	app := bApplication(c.Bundle())
+	app := c.Header().AppID
 	var changed int64
 	if expectedGeneration == 0 && currentBase == "" {
 		r, e := q.ExecContext(ctx, `INSERT INTO control.active_releases(tenant_id,app_id,artifact_hash,generation) VALUES($1,$2,$3,1) ON CONFLICT DO NOTHING`, a.TenantID(), app, c.Hash())
@@ -110,6 +118,6 @@ func (Store) Active(ctx context.Context, q postgres.Executor, a tenant.Access, a
 	if e != nil {
 		return compiler.Program{}, "", 0, e
 	}
-	p, e := compiler.Restore(c.Bundle().IR, c.Bundle().IRHash, supported)
+	p, e := c.Program(supported)
 	return p, hash, generation, e
 }
