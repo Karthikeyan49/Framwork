@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/platform/access"
+	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
@@ -338,5 +342,49 @@ func TestIndependentR5dVisiblePredicateHonorsTrustedFieldOwnerABAC(t *testing.T)
 	query.Sort = &data.Sort{Field: "field.contact.name"}
 	if w := m5Call(restricted, base+"/query", alice, query); w.Code != 403 {
 		t.Fatal("contextless field action authorized hidden sort", w.Code)
+	}
+}
+
+// Embedding a concrete optimized kernel must not inherit its proof when a
+// wrapper overrides field actions with trusted-owner-dependent decisions.
+type independentR5dEmbeddedOwnerPolicy struct {
+	policy.Native
+	field string
+}
+
+func (p independentR5dEmbeddedOwnerPolicy) Decide(ctx context.Context, s policy.Subject, action string, r policy.Resource, c policy.Context) policy.Decision {
+	d := p.Native.Decide(ctx, s, action, r, c)
+	if action == "data.field.read" && r.FieldID == p.field && r.OwnerID == s.User.ID() {
+		d.Allow = false
+	}
+	return d
+}
+func TestIndependentR5dStrictRuleCannotInferOwnerDeniedField(t *testing.T) {
+	m8Database(t)
+	f, owner, base, alice, _ := m7Fixture(t)
+	record := m7Record(t, owner, base, alice, "501")
+	engine := independentR5dEmbeddedOwnerPolicy{field: "field.contact.balance"}
+	restricted := m5Handler(t, f, engine, audit.Postgres{}, true)
+	page := m5Page(t, m5Call(restricted, base+"/entities/entity.contact/query", alice, data.Query{RecordID: record.ID, Projection: []string{"field.contact.balance"}, Limit: 1}))
+	if len(page.Records) != 1 || page.Records[0].FieldAccess == nil || !slices.Contains(page.Records[0].FieldAccess.Masked, engine.field) {
+		t.Fatal("embedded engine inherited SQL action proof")
+	}
+	w := m5Call(restricted, base+"/rules/rule.contact.approval_required/evaluate", alice, map[string]string{"record_id": record.ID})
+	if w.Code != 403 || strings.Contains(w.Body.String(), `"result"`) {
+		t.Fatal("strict rule inferred an owner-denied amount", w.Code)
+	}
+}
+func TestIndependentR5dStrictWorkflowCannotCaptureOwnerDeniedField(t *testing.T) {
+	m := m9Setup(t, nil)
+	engine := independentR5dEmbeddedOwnerPolicy{field: "field.contact.name"}
+	api := access.API{DB: m.f.db, Auth: m.f.verifier, Policy: engine, Audit: audit.Postgres{}, Registry: m3Registry(t), PreviewEnabled: true, WorkflowsEnabled: true}
+	restricted := httpserver.Handler(httpserver.Options{Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Register: api.Register, AllowPOST: api.AcceptsPOST})
+	w := m5Call(restricted, m.base+"/start", m.token, map[string]string{"record_id": m.record.ID, "idempotency_key": "independent-owned-source-denied"})
+	var count int
+	if err := m.f.operator.QueryRow(`SELECT count(*) FROM runtime.workflow_bindings WHERE tenant_id=$1 AND app_id=$2`, m.f.tenantA, m.app).Scan(&count); err != nil {
+		t.Fatal("capture evidence unavailable", err)
+	}
+	if w.Code != 403 || count != 0 {
+		t.Fatal("strict workflow captured owner-denied source", w.Code, "persisted bindings", count)
 	}
 }

@@ -111,3 +111,42 @@ Additional initial-source evidence:
 filter returned 200. Both fixtures were populated, including another visible
 owner's record in the list case. These are regression tests for finding 2;
 implementation and re-verification remain pending at this review checkpoint.
+
+## First fix checkpoint — `c96c534`
+
+The implementation author added trusted row/owner field actions for opaque
+interactive queries, SQL ID-array masks, a bounded complete predicate universe,
+a concrete Native/Defined optimization proof and a closed WithRuntime stable
+snapshot proof. Patch checks now use the loaded owner before validation.
+Source review found those changes consistent with the intended fixes. One
+executed wrapper embedding Native correctly remained opaque and its denied
+balance was masked by the interactive endpoint. Full independent closure of the
+original regressions is deferred until the following alternate path is fixed.
+
+3. **HIGH — strict rule/workflow inputs bypass the same owner-sensitive field
+   action denial.** The strict `Store.Query` port still checks fields without
+   actual row/owner context. With a Native-embedding policy denying read access
+   to the owner's balance and returning SQL scope ALL, the interactive endpoint
+   correctly masks that balance, but the rule evaluation endpoint returns 200
+   and its threshold result. A corresponding owner-denied name can still enter
+   a workflow snapshot; workflow start returns 200. This is an alternate value
+   inference/capture path and prevents R5d closure even though the new visible
+   port itself is corrected. Strict point inputs must obtain trusted header
+   context and enforce the field/row actions before consuming record values.
+   Preserve the private worker source adapter; do not substitute generic worker
+   table access or masked nulls.
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dStrict(Rule|Workflow)Cannot' ./tests/integration`
+
+**FAIL 3.951s**: both the rule and workflow returned 200 for owner-denied source
+fields. Both probes use populated disposable databases and central policy ports.
+No source edits or unrelated test workloads ran during the review. The reviewer
+added the two independent strict-input regressions. Status remains **PARTIAL**
+pending a source fix and re-verification, including the original owner probes,
+joined target checks, bounded universes and executor-isolation negatives.
+
+A follow-up evidence assertion queried durable workflow bindings:
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dStrictWorkflowCannot' ./tests/integration`
+
+**FAIL 2.934s**: workflow start returned 200 and one workflow binding persisted.
