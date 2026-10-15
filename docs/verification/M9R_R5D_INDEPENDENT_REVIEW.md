@@ -215,3 +215,40 @@ policy query budgets stay unchanged. Unknown executor wrappers are deliberately
 rejected. Full `make check test build` and browser E2E remain **NOT RUN by this
 reviewer**; the implementation author must record their actual final results.
 Overall R5/M9R remain PARTIAL for the separately tracked remaining slices.
+
+## Final numeric-index fixture review — `ea6d20e`
+
+The implementation author reported that the first full repository run failed
+only `TestM9RNumericIndexDataScopeEquivalence`: its 78-row custom Go callback
+exceeded the intentionally closed 32-header opaque admission budget. This
+reviewer did not execute that full run. The fixture-only correction at
+`ea6d20e` changes this index-equivalence fixture to the actual live tenant-role
+SQL-scope kernel; runtime source remains `a4d6054`.
+
+Independent diff review confirms the fixture retains all 78 records, four
+modes (OWNER, SHARE, CONDITION and explicit field DENY), the numeric sort/index
+build and exact before/after record comparison. The assigned role is loaded
+from live membership; it is not asserted through token claims. A distinct
+owner authorizes role publication and governed index creation. No application
+policy, admission limit or opaque negative was relaxed.
+
+The reviewer strengthened the fixture to reject vacuous equivalence: both
+before and after index creation it must return exactly 39 owned records, 39
+shared foreign-owned records, one matching condition record and 78 records with
+Name explicitly masked in the field-DENY mode. Nonmatching/unshared/foreign-owned
+rows are excluded as appropriate. Name is absent from masked values and present
+in allowed modes. These are populated positive and negative expectations, not
+merely a comparison of two potentially empty results.
+
+Executed commands:
+
+- `./scripts/go.sh fmt ./tests/integration` — PASS.
+- `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestM9RNumericIndexDataScopeEquivalence|TestM9RFieldOpaqueHeaderBudgetAndNativePageCompatibility|TestIndependentR5dOpaqueBoundCannotBeShrunkAndNativeBudgetsRemain|TestIndependentR5dVisiblePredicateHonorsTrustedFieldOwnerABAC)$' ./tests/integration`
+  — **PASS 11.370s**, all four selected top-level tests, including unchanged
+  opaque-budget failures and owner-sensitive hidden-predicate rejection.
+- `git diff --check` — PASS.
+
+**PASS for this fixture-only correction.** Root-owned AGENTS/README edits were
+left untouched. No runtime edits or concurrent test workloads occurred during
+this review; full final repository/build/browser execution remains the
+implementation author's completion gate.

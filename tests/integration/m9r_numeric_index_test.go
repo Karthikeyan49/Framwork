@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -522,7 +523,7 @@ func TestM9RNumericIndexTypedValuesAndScopes(t *testing.T) {
 func TestM9RNumericIndexDataScopeEquivalence(t *testing.T) {
 	m8Database(t)
 	f, h, base, token, app := m5Fixture(t)
-	m5Create(t, h, base, token, "Owned original")
+	original := m5Create(t, h, base, token, "Owned original")
 	m9rNumericSeed(t, f, app, 77)
 	if _, err := f.operator.Exec(`INSERT INTO runtime.record_shares(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,user_id) SELECT tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,$3 FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND custom_data->>'field.contact.status'='inactive'`, f.tenantA, app, f.alice); err != nil {
 		t.Fatal(err)
@@ -555,15 +556,42 @@ func TestM9RNumericIndexDataScopeEquivalence(t *testing.T) {
 		}
 	}
 	modes := []string{"owner", "share", "condition", "field_none"}
+	// Equivalence alone can pass if both plans incorrectly return nothing or
+	// both expose every tenant row. Demand the exact populated policy result.
+	wantRows := map[string]int{"owner": 39, "share": 39, "condition": 1, "field_none": 78}
+	assertScope := func(mode string, records []data.Record) {
+		t.Helper()
+		if len(records) != wantRows[mode] {
+			t.Fatal("populated scope cardinality", mode, len(records), wantRows[mode])
+		}
+		for _, record := range records {
+			if mode == "owner" && record.OwnerID != f.alice {
+				t.Fatal("owner scope exposed foreign-owned row")
+			}
+			if mode == "share" && (record.OwnerID != f.viewer || record.ID == original.ID) {
+				t.Fatal("share scope exposed an unshared owned row")
+			}
+			if mode == "condition" && record.ID != original.ID {
+				t.Fatal("condition scope exposed a nonmatching populated row")
+			}
+			_, hasName := record.Values["field.contact.name"]
+			maskedName := record.FieldAccess != nil && slices.Contains(record.FieldAccess.Masked, "field.contact.name")
+			if mode == "field_none" && (hasName || !maskedName) || mode != "field_none" && (!hasName || maskedName) {
+				t.Fatal("scope field visibility", mode)
+			}
+		}
+	}
 	before := map[string][]data.Record{}
 	for _, mode := range modes {
 		setMode(mode)
 		before[mode] = m9rAllPages(t, h, base, token, false)
+		assertScope(mode, before[mode])
 	}
 	m9rIndexReady(t, h, base+"/indexes/field.contact.balance", admin)
 	for _, mode := range modes {
 		setMode(mode)
 		after := m9rAllPages(t, h, base, token, false)
+		assertScope(mode, after)
 		if !reflect.DeepEqual(before[mode], after) {
 			t.Fatal("scope changed before LIMIT", mode)
 		}
