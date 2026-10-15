@@ -218,11 +218,12 @@ racing activation is safe because activation re-counts approvals under the lock.
 
 ### 9. Removal of the M6R write paths
 
-`promotion.Store.Approve/Activate/Rollback` (direct DML with a caller `Gate`) are
-removed, together with the `releaseGate`/`fixtureReleaseGate` shims. Pure
-M6R contracts that stay useful (`Candidate`, `Restore`, `ExecutionPin`,
-`CheckActiveCompatibility`) remain; `Store.Active`/`ActiveBase` keep reading the
-pointer. `cmd/release-check` keeps rejecting unsupported active IR.
+`promotion.Store.Approve/Activate/Rollback` (direct DML with a caller `Gate`) and the
+M6R pure `Approve`/`ValidateActivation`/`Approval` token are removed: the runtime
+role no longer has the privileges they need. `Gate` and `Store.Stage` (ADR038) stay
+unchanged, as do `Candidate`, `Restore`, `ExecutionPin`, `Store.Active` /
+`ActiveBase` (they read the pointer) and `CheckActiveCompatibility`.
+`cmd/release-check` keeps rejecting unsupported active IR.
 
 ### 10. Non-goals — the production data plane is NOT part of this ADR
 
