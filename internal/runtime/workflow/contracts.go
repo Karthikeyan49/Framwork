@@ -43,6 +43,10 @@ type Snapshot struct {
 // never compile source. Capture/Authorize enforce live policy and SQL DataScope.
 type RestoreRelease func([]byte, string, string) (Program, error)
 type Authorizer func(context.Context, postgres.Executor, tenant.Access, string, Pin, []string) (audit.Entry, error)
+
+// MultiAuthorizer decides several actions over a single read of the leased
+// record and returns one audit entry per decided action (the denied one last).
+type MultiAuthorizer func(context.Context, postgres.Executor, tenant.Access, []string, Pin, []string) ([]audit.Entry, error)
 type Capture func(context.Context, postgres.Executor, tenant.Access, Pin, []string) (Snapshot, error)
 type ActivityRequest struct {
 	InstanceID, StepKey, ActivityRef, Version, RequestHash string
@@ -153,10 +157,12 @@ type Durability interface {
 type Store struct {
 	Restore   RestoreRelease
 	Authorize Authorizer
-	Capture   Capture
-	Audit     audit.Writer
-	Events    events.LifecycleWriter
-	Activity  LocalActivity
+	// AuthorizeActions is an optimization: nil falls back to sequential Authorize.
+	AuthorizeActions MultiAuthorizer
+	Capture          Capture
+	Audit            audit.Writer
+	Events           events.LifecycleWriter
+	Activity         LocalActivity
 	// Tools executes governed external effects outside transactions (ADR036).
 	// ToolCatalog is trusted operator configuration; plans pin its hashes.
 	Tools       tools.Executor

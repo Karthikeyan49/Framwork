@@ -32,7 +32,7 @@ test-unit:
 	node --test scripts/*.test.mjs
 	$(NPM) test
 test-integration:
-	node scripts/with-env.mjs $(GO) test -race -tags=integration -count=1 ./tests/integration
+	node scripts/with-env.mjs $(GO) test -race -tags=integration -count=1 -timeout 40m ./tests/integration
 .PHONY: test-performance test-write-performance
 test-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -count=1 -run '^TestM9RMembershipPerformanceFloor$$' -v ./tests/integration

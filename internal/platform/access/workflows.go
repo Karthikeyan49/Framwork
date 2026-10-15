@@ -219,43 +219,57 @@ func workflowStore(engine policy.Engine, writer audit.Writer, lifecycle events.L
 		sort.Strings(ids)
 		return workflow.Snapshot{Fields: ids, Values: values, RecordVersion: r.Version}, nil
 	}
-	authorize := func(ctx context.Context, q postgres.Executor, a tenant.Access, action string, pin workflow.Pin, fields []string) (audit.Entry, error) {
+	// authorizeActions decides several actions over ONE read of the leased
+	// record. Each action still gets its own decision and audit evidence; a
+	// denial appends its entry and stops, exactly like a single-action call.
+	authorizeActions := func(ctx context.Context, q postgres.Executor, a tenant.Access, actions []string, pin workflow.Pin, fields []string) ([]audit.Entry, error) {
 		currentEngine := engine
 		if loaded, ok := engine.(policy.Transactional); ok {
 			var err error
 			currentEngine, err = loaded.Resolve(ctx, q, a)
 			if err != nil {
-				return audit.Entry{}, workflowRoleDenial(ctx, a, pin, err)
+				return nil, workflowRoleDenial(ctx, a, pin, err)
 			}
 		}
-		if user == nil || engine == nil {
-			return audit.Entry{}, workflow.ErrDenied
+		if user == nil || engine == nil || len(actions) == 0 {
+			return nil, workflow.ErrDenied
 		}
 		u, e := user(ctx, q, a)
 		if e != nil || u.ID() != a.ActorID() {
-			return audit.Entry{}, workflow.ErrDenied
+			return nil, workflow.ErrDenied
 		}
 		p, e := restore(pin.IR, pin.IRHash, pin.WorkflowID)
 		if e != nil {
-			return audit.Entry{}, e
+			return nil, e
 		}
 		source, e := record(ctx, q, a, pin, fields)
 		if e != nil {
-			return audit.Entry{}, e
+			return nil, e
 		}
-		d := enforce(currentEngine.Decide(ctx, policy.Subject{User: u, Access: a}, action, policy.Resource{TenantID: a.TenantID(), Type: "workflow", OwnerID: source.OwnerID, AppID: pin.AppID, EntityID: p.Plan().EntityID, RecordID: pin.RecordID, WorkflowID: pin.WorkflowID}, policy.Context{RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String()}))
-		entry := audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: action, Resource: "workflow", Allow: d.Allow, DecisionID: d.ID, PolicyVersion: d.Version, RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String(), State: audit.State{EntityID: p.Plan().EntityID}}
-		if !d.Allow {
-			if writer != nil {
-				if e := writer.Append(ctx, q, entry); e != nil {
-					return entry, e
+		entries := make([]audit.Entry, 0, len(actions))
+		for _, action := range actions {
+			d := enforce(currentEngine.Decide(ctx, policy.Subject{User: u, Access: a}, action, policy.Resource{TenantID: a.TenantID(), Type: "workflow", OwnerID: source.OwnerID, AppID: pin.AppID, EntityID: p.Plan().EntityID, RecordID: pin.RecordID, WorkflowID: pin.WorkflowID}, policy.Context{RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String()}))
+			entry := audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: action, Resource: "workflow", Allow: d.Allow, DecisionID: d.ID, PolicyVersion: d.Version, RequestID: pin.RequestID, TraceID: trace.SpanContextFromContext(ctx).TraceID().String(), State: audit.State{EntityID: p.Plan().EntityID}}
+			entries = append(entries, entry)
+			if !d.Allow {
+				if writer != nil {
+					if e := writer.Append(ctx, q, entry); e != nil {
+						return entries, e
+					}
 				}
+				return entries, &workflow.AuthorizationDenied{Evidence: entry}
 			}
-			return entry, &workflow.AuthorizationDenied{Evidence: entry}
 		}
-		return entry, nil
+		return entries, nil
 	}
-	return workflow.Store{Restore: restore, Capture: capture, Authorize: authorize, Audit: writer, Events: lifecycle, Activity: workflow.Noop}
+	authorize := func(ctx context.Context, q postgres.Executor, a tenant.Access, action string, pin workflow.Pin, fields []string) (audit.Entry, error) {
+		entries, err := authorizeActions(ctx, q, a, []string{action}, pin, fields)
+		if len(entries) == 0 {
+			return audit.Entry{}, err
+		}
+		return entries[len(entries)-1], err
+	}
+	return workflow.Store{Restore: restore, Capture: capture, Authorize: authorize, AuthorizeActions: authorizeActions, Audit: writer, Events: lifecycle, Activity: workflow.Noop}
 }
 
 func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry, scope data.Scope) (reply, error) {

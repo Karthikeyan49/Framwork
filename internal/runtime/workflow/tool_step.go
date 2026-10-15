@@ -163,7 +163,7 @@ func toolEvidence(e audit.Entry, x stored, step string, t toolActivityState, mod
 // toolActivity runs inside the leased step transaction. It either confirms an
 // existing receipt (done), records a receipt from a settled ledger (done), or
 // commits one attempt intent and returns it for execution after commit.
-func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.Access, x *stored, state State, call ActivityRequest, now time.Time) (*toolDispatch, error) {
+func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.Access, x *stored, state State, call ActivityRequest, now time.Time, pre *[2]audit.Entry) (*toolDispatch, error) {
 	t, _ := toolState(state)
 	var requestHash string
 	err := q.QueryRowContext(ctx, `SELECT request_hash FROM runtime.workflow_receipts WHERE tenant_id=$1 AND instance_id=$2 AND step_key=$3`, a.TenantID(), x.ID, call.StepKey).Scan(&requestHash)
@@ -215,12 +215,10 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 	if err != nil {
 		return nil, fail(Permanent())
 	}
-	activityEntry, err := s.Authorize(ctx, q, a, "workflows.activity", x.Pin, x.inputs.Fields)
-	if err != nil {
-		return nil, err
-	}
-	invokeEntry, err := s.Authorize(ctx, q, a, "tools.invoke", x.Pin, x.inputs.Fields)
-	if err != nil {
+	var activityEntry, invokeEntry audit.Entry
+	if pre != nil {
+		activityEntry, invokeEntry = pre[0], pre[1]
+	} else if activityEntry, invokeEntry, err = s.authorizeTool(ctx, q, a, *x); err != nil {
 		return nil, err
 	}
 	mode, err := s.toolMode(ctx, q, def)
@@ -321,4 +319,50 @@ func canonicalToolOutput(out map[string]any) ([]byte, error) {
 		return nil, err
 	}
 	return canonicalOutput(raw)
+}
+
+// authorizeTool requires both workflows.activity and tools.invoke. One read of
+// the leased record serves both decisions, keeping the dispatch transaction
+// inside the 3 s runtime budget; each decision keeps its own evidence.
+func (s Store) authorizeTool(ctx context.Context, q postgres.Executor, a tenant.Access, x stored) (activity, invoke audit.Entry, err error) {
+	if s.AuthorizeActions != nil {
+		entries, e := s.AuthorizeActions(ctx, q, a, []string{"workflows.activity", "tools.invoke"}, x.Pin, x.inputs.Fields)
+		if e != nil || len(entries) != 2 {
+			if e == nil {
+				e = ErrDenied
+			}
+			return audit.Entry{}, audit.Entry{}, e
+		}
+		return entries[0], entries[1], nil
+	}
+	if activity, err = s.Authorize(ctx, q, a, "workflows.activity", x.Pin, x.inputs.Fields); err != nil {
+		return audit.Entry{}, audit.Entry{}, err
+	}
+	if invoke, err = s.Authorize(ctx, q, a, "tools.invoke", x.Pin, x.inputs.Fields); err != nil {
+		return audit.Entry{}, audit.Entry{}, err
+	}
+	return activity, invoke, nil
+}
+
+// authorizeStep decides the step's own action. For a tool activity it also
+// decides workflows.activity and tools.invoke over the same single read of the
+// leased record, so the dispatch transaction stays inside the 3 s runtime
+// budget. Each decision keeps its own audit evidence; a denial of any of them
+// stops the step exactly as a sequential denial would.
+func (s Store) authorizeStep(ctx context.Context, q postgres.Executor, a tenant.Access, x stored) (audit.Entry, *[2]audit.Entry, error) {
+	if state, ok := x.program.State(x.StateID); ok && s.AuthorizeActions != nil && x.Termination == "" && x.Status != "COMPENSATING" && state.Type == "activity" && state.IsTool() {
+		entries, err := s.AuthorizeActions(ctx, q, a, []string{"workflows.execute", "workflows.activity", "tools.invoke"}, x.Pin, x.inputs.Fields)
+		if err != nil || len(entries) != 3 {
+			if err == nil {
+				err = ErrDenied
+			}
+			if len(entries) > 0 {
+				return entries[len(entries)-1], nil, err
+			}
+			return audit.Entry{}, nil, err
+		}
+		return entries[0], &[2]audit.Entry{entries[1], entries[2]}, nil
+	}
+	entry, err := s.Authorize(ctx, q, a, "workflows.execute", x.Pin, x.inputs.Fields)
+	return entry, nil, err
 }

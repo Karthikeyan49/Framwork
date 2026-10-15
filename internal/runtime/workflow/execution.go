@@ -83,7 +83,7 @@ func (w Worker) step(ctx context.Context, lease jobs.WorkflowLease, dispatch **t
 		ctx = (propagation.TraceContext{}).Extract(ctx, propagation.MapCarrier{"traceparent": x.Pin.TraceParent})
 		ctx, span := otel.Tracer("framework/workflow").Start(ctx, "workflow.step", trace.WithAttributes(attribute.String("tenant_id", a.TenantID()), attribute.String("actor_id", a.ActorID()), attribute.String("workflow_instance_id", x.ID), attribute.String("workflow_id", x.Pin.WorkflowID), attribute.String("workflow_version", x.Pin.WorkflowVersion), attribute.String("metadata_version", x.Pin.IRHash), attribute.String("request_id", x.Pin.RequestID)))
 		defer span.End()
-		entry, e := w.Store.Authorize(ctx, q, a, "workflows.execute", x.Pin, x.inputs.Fields)
+		entry, toolEntries, e := w.Store.authorizeStep(ctx, q, a, x)
 		if e != nil {
 			if (errors.Is(e, ErrDenied) || errors.Is(e, ErrNotFound)) && errors.Is(checkLease(ctx, q, a, x, lease), ErrLease) {
 				return ErrLease
@@ -158,7 +158,7 @@ func (w Worker) step(ctx context.Context, lease jobs.WorkflowLease, dispatch **t
 				return e
 			}
 			if _, tool := toolState(state); tool {
-				d, e := w.Store.toolActivity(ctx, q, a, &x, state, call, now)
+				d, e := w.Store.toolActivity(ctx, q, a, &x, state, call, now, toolEntries)
 				if e != nil {
 					return e
 				}

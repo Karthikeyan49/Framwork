@@ -478,7 +478,11 @@ func (m *m10Fixture) drive(t *testing.T, id, status string) workflow.Instance {
 		if x.Status == status {
 			return x
 		}
+		began := time.Now()
 		found, e := m.worker.Once(context.Background())
+		if found && os.Getenv("M10_TIMING") != "" {
+			t.Logf("step %s status=%s state=%s err=%v", time.Since(began).Round(time.Millisecond), x.Status, x.StateID, e)
+		}
 		if e != nil && !errors.Is(e, workflow.ErrLease) {
 			t.Fatal("worker", e)
 		}
