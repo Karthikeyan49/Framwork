@@ -132,3 +132,27 @@ it("independent: malformed 200 team detail never offers editable controls or cle
   expect(screen.queryByRole("form", { name: "Edit team" })).not.toBeInTheDocument();
   expect(remember).not.toHaveBeenCalled();
 });
+
+it.each(["record.share", "record.unshare"] as const)("independent: a complete list proves current absence for explicit review of %s", async (kind) => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(response({ ...access, shares: [], shares_truncated: false }));
+  render(<RecordHarness initial={{ scope: { status: "unknown", scope: "scope", kind, tenant, resource: record, target } }} />);
+  await screen.findByText("No explicit shares.");
+  expect(screen.getByRole("button", { name: "Use reviewed record state" })).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "Use reviewed record state" }));
+  expect(screen.getByText(/earlier request's outcome is not proven/)).toBeInTheDocument();
+  expect(screen.queryByText(/An access change has an uncertain outcome/)).not.toBeInTheDocument();
+});
+
+it("independent: an unknown share absent from a truncated window remains blocked with a clear explanation", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(response({ ...access, shares: [], shares_truncated: true }));
+  render(<RecordHarness initial={{ scope: { status: "unknown", scope: "scope", kind: "record.share", tenant, resource: record, target } }} />);
+  await screen.findByText(/pending recipient is outside this share window/);
+  expect(screen.getByRole("button", { name: "Use reviewed record state" })).toBeDisabled();
+});
+
+it("independent: even a complete read cannot dismiss an intent with no valid target", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(response({ ...access, shares: [], shares_truncated: false }));
+  render(<RecordHarness initial={{ scope: { status: "unknown", scope: "scope", kind: "record.share", tenant, resource: record } }} />);
+  await screen.findByText("No explicit shares.");
+  expect(screen.getByRole("button", { name: "Use reviewed record state" })).toBeDisabled();
+});

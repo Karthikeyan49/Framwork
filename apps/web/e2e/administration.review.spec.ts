@@ -65,6 +65,17 @@ test("independent assign-only delegated administrator transfers an OWNER-scoped 
   await expect(page.getByRole("status").filter({ hasText: "permissions" })).toBeVisible();
   await page.getByLabel("Owner user ID", { exact: true }).fill(recipient);
   await page.getByRole("checkbox").check(); await page.getByRole("button", { name: "Transfer ownership", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("permissions");
+  const rejected = await (await request.get(entity + "/records/" + record.id + "/access", { headers })).json();
+  expect(rejected.owner_user_id).toBe(delegate); expect(rejected.version).toBe(2);
+  // preview.write is a separate server capability even for assign-only delegates.
+  // Grant it explicitly after the negative control; do not infer it from row.assign.
+  definition.grants[1].actions.push("preview.write");
+  expect((await request.post(api + "/roles", { headers, data: { operation_id: randomUUID(), expected_version: 1, active: true, definition } })).status()).toBe(200);
+  await page.getByRole("button", { name: "Reload record access", exact: true }).click();
+  await expect(page.getByLabel("Owner user ID", { exact: true })).toHaveValue(delegate);
+  await page.getByLabel("Owner user ID", { exact: true }).fill(recipient);
+  await page.getByRole("checkbox").check(); await page.getByRole("button", { name: "Transfer ownership", exact: true }).click();
   await expect(page.getByText("Access change saved · version 3.", { exact: true })).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("unavailable");
   await expect(page.getByRole("form", { name: "Change record ownership" })).toHaveCount(0);
@@ -72,4 +83,18 @@ test("independent assign-only delegated administrator transfers an OWNER-scoped 
   expect(stored.owner_user_id).toBe(recipient); expect(stored.version).toBe(3);
   const query = await request.post(`${entity}/query`, { headers: delegated, data: { projection: ["field.contact.id"], limit: 20 } });
   expect(query.status()).toBe(200); expect((await query.json()).records).toHaveLength(0);
+  await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await enterAccessToken(page, ownerToken); await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByLabel("Workspace", { exact: true }).selectOption(tenant);
+  await page.getByRole("button", { name: "Manage teams", exact: true }).click();
+  await page.getByLabel("New team name").fill("Independent narrow hierarchy");
+  await page.getByRole("button", { name: "Create team", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Independent narrow hierarchy", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "Close teams", exact: true }).click();
+  await page.getByLabel("Application ID").fill(app); await page.getByRole("button", { name: "Load preview", exact: true }).click();
+  await page.getByRole("button", { name: "Open record", exact: true }).click();
+  await page.getByRole("button", { name: "Manage sharing", exact: true }).click();
+  await expect(page.getByRole("form", { name: "Grant record share", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

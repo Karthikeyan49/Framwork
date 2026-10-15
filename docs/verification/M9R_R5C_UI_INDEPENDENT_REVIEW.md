@@ -2,7 +2,7 @@
 
 Date: 15 October 2026 IST. Implementation reviewed: `c993362` on
 `remediation/m9r-foundation`, based on `aa1fa2a`.
-Status: **FAIL — fixes and independent re-verification required**.
+Status: **FAIL — original findings closed at f81d207; R5C-UI-03 requires a fix and independent re-verification**.
 Full R5/M9R remain PARTIAL; no M10, main merge or production activation.
 
 This review was performed by a separate agent after the implementation was
@@ -105,3 +105,64 @@ independent re-review. Do not mark R5c UI complete until the negative fixtures,
 real delegated browser case, final checks/build/browser suite and reports pass.
 No production source fix was made by the reviewer. The earlier unconfirmed
 workflow database connection failure remains R7 work.
+
+## Re-review of f81d207
+
+The implementing agent committed both original corrections and froze the source
+again. Independent execution confirms R5C-UI-01 and R5C-UI-02 are closed within
+the exercised cases: all eight role/projection combinations and the opaque
+scope-denial read pass; the missing target in a truncated window is blocked.
+Additional complete-list absence, absent unknown-share, and malformed-target
+controls pass. No scope, snapshot proof or row-budget relaxation was observed.
+
+### HIGH R5C-UI-03 — Masked assign-only delegation is rejected by full-record authorization
+
+The real browser now reaches the selected masked record and ownership panel.
+Its first transfer without `preview.write` correctly returns 403 and leaves the
+owner/version unchanged. The reviewer corrected the browser fixture to publish
+a new live role version explicitly granting `preview.write`; no server authority
+was weakened. The resulting transfer still returns 403 despite the required
+preview, entity OWNER read/write and row read/write/assign capabilities.
+
+`authorizeAccess` calls `current`, which computes read DataScope for every field
+and fetches/decodes the complete business JSONB. It then calls
+`authorizeExistingWrite`, which requires write scope for every business field.
+A delegate denied name read and lacking field-write grants therefore cannot
+perform ownership administration. This conflicts with ADR034/038's intended
+entity/record administrative boundary and the assign-only masked UI scenario.
+The earlier mocked UI test did not prove this end-to-end server behavior.
+
+`TestIndependentR5cMaskedDelegateAccessChanges` isolates seven live role/record
+cases. Five controls pass: missing preview.write, missing row.assign, a record
+outside OWNER read scope, NONE entity write scope, and a fully field-authorized
+assigner. The masked assign-only case and a paired case containing a malformed
+hidden business field fail with 403 instead of 200. Missing row.share never
+permits a share listing or share mutation; denied/successful operations retain
+exact stored header witnesses. The malformed value exists only in a newly
+created test record and was installed with a transaction-local trusted fixture
+identity, never in customer data. It ensures the eventual administrative path
+need not decode an unreadable business value.
+
+Fix this using a typed-header read under the exact entity read/write DataScopes,
+plus trusted owner row guards and the existing assign/share capability, SQL port,
+CAS, recipient/binding fences and transaction/audit behavior. Do not grant hidden
+field access or all field writes to make the browser pass. Preserve denial for
+non-owners, NONE scope, missing administrative capabilities and revoked roles.
+
+| Re-review command | Result |
+| --- | --- |
+| `npm --prefix apps/web test -- --run src/administration/Administration.review.test.tsx` | PASS 12/12; 3.59 seconds |
+| `npm --prefix apps/web run typecheck`; `npm --prefix apps/web run lint` | PASS |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestIndependentR5c' ./tests/integration` before adding the new administration matrix | PASS 6.165 seconds; original findings' Go probes closed |
+| `npm --prefix apps/web run test:e2e -- administration.review.spec.ts` with explicit live preview.write grant after denial control | FAIL: transfer still denied 403; 8.6-second scenario. Query, masked record, core ownership header and 390-pixel ownership-panel assertions pass before this failure |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestIndependentR5cMaskedDelegateAccessChanges$' ./tests/integration` first isolated matrix | FAIL: masked assign-only 403; 2.928 seconds |
+| Same Go command while strengthening malformed-field fixture | FAIL: masked assign-only 403, then fixture setup rejected an unscoped UPDATE with trusted actor required; 3.209 seconds. Fixture corrected using transaction-local trusted identity |
+| Same Go command on final seven-case matrix | FAIL: masked assign-only and malformed hidden-value cases 403; five controls pass; 3.772 seconds |
+
+The ownership panel's 390-pixel overflow assertion is now executed and passes.
+The actual transfer, loss of OWNER access, narrow team and sharing panel checks
+remain NOT VERIFIED because R5C-UI-03 stops the browser earlier. Root's full-suite
+run also exposed the initial missing-preview.write fixture: its failure is
+retained in the implementation report. Current independent verdict remains
+**FAIL pending R5C-UI-03 correction and re-verification**. No production source
+was edited by the reviewer; no workloads remain running at handoff.
