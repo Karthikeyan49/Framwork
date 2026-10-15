@@ -85,7 +85,23 @@ func (s Store) Get(ctx context.Context, q postgres.Executor, a tenant.Access, id
 		}
 		x.History = append(x.History, h)
 	}
-	return x.Instance, rows.Err()
+	if e = rows.Err(); e != nil {
+		return Instance{}, e
+	}
+	// Bounded reconciliation evidence: no request bodies, keys or responses.
+	trows, e := q.QueryContext(ctx, `SELECT step_key,tool_ref,tool_version,mode,state,attempts,outcome_class,http_status,simulated FROM runtime.tool_invocations WHERE tenant_id=$1::uuid AND instance_id=$2::uuid ORDER BY step_key LIMIT 100`, a.TenantID(), id)
+	if e != nil {
+		return Instance{}, e
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var t ToolStatus
+		if e = trows.Scan(&t.StepKey, &t.ToolRef, &t.ToolVersion, &t.Mode, &t.State, &t.Attempts, &t.Class, &t.HTTPStatus, &t.Simulated); e != nil {
+			return Instance{}, e
+		}
+		x.Tools = append(x.Tools, t)
+	}
+	return x.Instance, trows.Err()
 }
 func (s Store) Start(ctx context.Context, q postgres.Executor, a tenant.Access, r Start) (Instance, error) {
 	if r.DatasetID == "" {

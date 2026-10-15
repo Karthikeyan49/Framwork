@@ -42,6 +42,7 @@ type State struct {
 	ApprovalRoles     []string           `json:"approval_roles,omitempty"`
 	TimerMS           int                `json:"timer_ms,omitempty"`
 	ApprovalTimeoutMS int                `json:"approval_timeout_ms,omitempty"`
+	ToolHash          string             `json:"tool_hash,omitempty"`
 }
 type Plan struct {
 	DSLVersion   string        `json:"dsl_version"`

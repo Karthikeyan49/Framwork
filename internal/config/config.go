@@ -34,6 +34,11 @@ type Config struct {
 	AuthIssuer            string
 	AuthAudience          string
 	AuthJWKSFile          string
+	// Trusted M10 tool registry configuration; values are paths, never secrets.
+	ToolCatalogFile   string
+	ToolSecretsDir    string
+	ToolCAFile        string
+	ToolAllowInternal bool
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -76,6 +81,22 @@ func Load(getenv func(string) string) (Config, error) {
 	case "development", "test", "production":
 	default:
 		return c, fmt.Errorf("APP_ENV must be development, test, or production")
+	}
+	c.ToolCatalogFile, c.ToolSecretsDir, c.ToolCAFile = getenv("TOOL_CATALOG_FILE"), getenv("TOOL_SECRETS_DIR"), getenv("TOOL_CA_FILE")
+	switch getenv("TOOL_ALLOW_INTERNAL") {
+	case "", "false":
+	case "true":
+		c.ToolAllowInternal = true
+	default:
+		return c, fmt.Errorf("TOOL_ALLOW_INTERNAL must be true or false")
+	}
+	if c.ToolAllowInternal && c.Environment == "production" {
+		return c, fmt.Errorf("TOOL_ALLOW_INTERNAL is restricted to development/test network policies")
+	}
+	for _, p := range []string{c.ToolCatalogFile, c.ToolSecretsDir, c.ToolCAFile} {
+		if p != "" && (len(p) > 4096 || strings.ContainsRune(p, 0)) {
+			return c, fmt.Errorf("tool configuration paths are invalid")
+		}
 	}
 	c.AuthIssuer = getenv("AUTH_ISSUER")
 	c.AuthAudience = getenv("AUTH_AUDIENCE")

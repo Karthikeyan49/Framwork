@@ -81,13 +81,14 @@ type Retry struct {
 	MaxBackoffMS     int `json:"max_backoff_ms"`
 }
 type Activity struct {
-	ToolRef              string `json:"tool_ref,omitempty"`
-	LocalRef             string `json:"local_ref,omitempty"`
-	Version              string `json:"version,omitempty"`
-	TimeoutMS            int    `json:"timeout_ms"`
-	Retry                Retry  `json:"retry"`
-	CompensationToolRef  string `json:"compensation_tool_ref,omitempty"`
-	CompensationLocalRef string `json:"compensation_local_ref,omitempty"`
+	ToolRef              string            `json:"tool_ref,omitempty"`
+	LocalRef             string            `json:"local_ref,omitempty"`
+	Version              string            `json:"version,omitempty"`
+	TimeoutMS            int               `json:"timeout_ms"`
+	Retry                Retry             `json:"retry"`
+	CompensationToolRef  string            `json:"compensation_tool_ref,omitempty"`
+	CompensationLocalRef string            `json:"compensation_local_ref,omitempty"`
+	Inputs               map[string]string `json:"inputs,omitempty"`
 }
 type Transition struct {
 	To        string      `json:"to"`

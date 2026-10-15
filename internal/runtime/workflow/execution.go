@@ -43,7 +43,22 @@ func (f activityFailure) Unwrap() error { return f.err }
 func (w Worker) Claim(ctx context.Context) (jobs.WorkflowLease, bool, error) {
 	return jobs.AssignedWorkflow(ctx, w.DB)
 }
+
+// Step advances one leased instance. A tool step commits its attempt intent,
+// sends outside any transaction, records the fenced outcome and continues.
 func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
+	for i := 0; i < 3; i++ {
+		var dispatch *toolDispatch
+		if err := w.step(ctx, lease, &dispatch); err != nil || dispatch == nil {
+			return err
+		}
+		if err := w.sendTool(ctx, lease, *dispatch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (w Worker) step(ctx context.Context, lease jobs.WorkflowLease, dispatch **toolDispatch) error {
 	if !w.Store.configured() || w.Store.Activity == nil || lease.Generation < 1 || !tenant.ValidID(lease.Token) {
 		return ErrInvalid
 	}
@@ -140,7 +155,17 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 			if e != nil {
 				return e
 			}
-			if e = w.Store.call(ctx, q, a, &x, call, state, lease); e != nil {
+			if _, tool := toolState(state); tool {
+				d, e := w.Store.toolActivity(ctx, q, a, &x, state, call, now)
+				if e != nil {
+					return e
+				}
+				if d != nil {
+					// Commit only the attempt intent; no state transition yet.
+					*dispatch = d
+					return nil
+				}
+			} else if e = w.Store.call(ctx, q, a, &x, call, state, lease); e != nil {
 				return e
 			}
 			entry.State.WorkflowStep = call.StepKey
@@ -262,6 +287,10 @@ func (s Store) pendingActivity(ctx context.Context, q postgres.Executor, a tenan
 		call.StepKey = x.StateID
 		call.ActivityRef = state.Activity.LocalRef
 		call.Version = state.Activity.Version
+		if t, ok := toolState(state); ok {
+			// The pinned definition hash is part of the request identity.
+			call.ActivityRef = toolActivityRef(t)
+		}
 	}
 	body, _ := json.Marshal(struct{ Instance, Plan, Step, Activity, Input, Output string }{x.ID, x.Pin.PlanHash, call.StepKey, call.ActivityRef, Hash(mustJSON(x.inputs)), Hash(call.OriginalOutput)})
 	call.RequestHash = Hash(body)

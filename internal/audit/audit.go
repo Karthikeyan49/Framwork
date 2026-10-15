@@ -49,6 +49,11 @@ type State struct {
 	AccessOperation      string `json:"access_operation,omitempty"`
 	AccessTeamID         string `json:"access_team_id,omitempty"`
 	TeamVersion          int64  `json:"team_version,omitempty"`
+	ToolRef              string `json:"tool_ref,omitempty"`
+	ToolVersion          string `json:"tool_version,omitempty"`
+	ToolMode             string `json:"tool_mode,omitempty"`
+	ToolAttempt          int64  `json:"tool_attempt,omitempty"`
+	ToolOutcome          string `json:"tool_outcome,omitempty"`
 	MetadataApp          string `json:"metadata_app,omitempty"`
 	MetadataRevision     int64  `json:"metadata_revision,omitempty"`
 	MetadataHash         string `json:"metadata_hash,omitempty"`
@@ -100,6 +105,9 @@ func encodeEntry(e Entry) ([]any, error) {
 	}
 	if (e.State.AccessOperation != "" && e.State.AccessOperation != "owner" && e.State.AccessOperation != "share" && e.State.AccessOperation != "unshare") || len(e.State.AccessTeamID) > 36 || e.State.TeamVersion < 0 || e.State.TeamVersion > 1e9 {
 		return nil, errors.New("invalid record access evidence")
+	}
+	if len(e.State.ToolRef) > 160 || len(e.State.ToolVersion) > 20 || len(e.State.ToolMode) > 16 || e.State.ToolAttempt < 0 || e.State.ToolAttempt > 20 || len(e.State.ToolOutcome) > 40 {
+		return nil, errors.New("invalid tool evidence")
 	}
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")

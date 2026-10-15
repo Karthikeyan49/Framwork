@@ -11,9 +11,9 @@ import (
 
 // R5a adds explicit owner-only role administration to the bootstrap adapter;
 // R5c-a (v5) adds owner/admin record access administration; R5c-b (v6) adds
-// owner/admin team administration.
+// owner/admin team administration; M10 (v7) adds non-viewer tools.invoke.
 // Retained evidence keeps its original version.
-const Version = "m9r-native-v6"
+const Version = "m10-native-v7"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -68,6 +68,11 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			}
 		case "roles.write", "roles.assign":
 			if resource.Type == "role" && role == "owner" {
+				return true
+			}
+		case "tools.invoke":
+			// M10: governed tool sends run only through pinned workflow plans.
+			if role != "viewer" && resource.Type == "workflow" && resource.AppID != "" && resource.EntityID != "" && resource.RecordID != "" && resource.WorkflowID != "" {
 				return true
 			}
 		case "teams.read", "teams.manage":
