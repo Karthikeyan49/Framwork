@@ -258,13 +258,15 @@ regressions at `f1e2e74`. Final full checks/tests/build passed (integration 629.
 and browser 5/5 passed. Full R5/M9R remains PARTIAL.
 [R5d](M9R_R5D_IMPLEMENTATION_REPORT.md) now has independently verified SQL field
 masking, changed-field patches and strict point-input authorization (ADR037),
-including the closed owner-sensitive findings. Final full-suite/build/browser/
-performance verification is still running; retain its explicit custom-policy
-and conditional-write limits.
-Remaining R5 product slices: administration UI for the R5c APIs; R5d field
-masking/partial writes and inference controls. Provider/login UX stays
-a separate R5 identity deliverable. Implement and review these separately before
-promising product policy completeness. R3c/R3d, R6 and R7 remain in this plan.
+including the closed owner-sensitive findings. Final full checks/tests/build
+passed (integration 829.428s), browser 6/6 and the numeric 100k/ten-client gate
+passed (p95 216.415 ms, zero errors). Preserve its explicit custom-policy,
+conditional-write and hidden-size limits. The earlier intermittent workflow
+connection failure remains unconfirmed and tracked for R7 diagnosis.
+Remaining R5 product slices: administration UI for the R5c APIs and separate
+provider/login/clock-skew identity work. Implement and review these separately
+before promising product policy completeness. Remaining R3b types, R3c/R3d,
+R6 and R7 remain in this plan.
 
 Replace fixed-role branching with versioned tenant role/capability definitions
 and central RBAC/ABAC policy. Support `finance_manager` without trusting token
@@ -372,7 +374,8 @@ final commit. Do not relabel deferred R5–R7 services as complete to pass this 
 After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
-**Checkpoint status: R0/R1, R2a/R2b, bounded R4 and governed numeric R3b
-independently verified. Full R2, remaining R3b types/R3c/R3d and R5–R7 are pending.
-The complete foundation
-gate and broader review findings are not accepted as resolved.**
+**Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
+governed numeric R3b, R5a/R5b, R5c server administration, R5d and R5e independently
+verified. Production R2 execution, remaining R3b types/R3c/R3d, R5 administration
+UI/identity and R6–R7 remain open. The complete foundation gate and broader
+review findings are not accepted as resolved.**

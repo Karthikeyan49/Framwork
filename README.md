@@ -30,11 +30,15 @@ fault/capacity review, including a real 100k migration and post-cutover query ga
 now pass independent API/trusted-Go and workload checks. [Worker SQL authority](docs/migration/M9R_R5B_IMPLEMENTATION_REPORT.md)
 also passes bounded review and full regressions: live role/field/record scopes,
 per-row lease fencing and statement policy evaluation. Wider capacity and the
-remaining field/verification/operations work remain open in the ledger.
+remaining product/verification/operations work remain open in the ledger.
 [Governed record/team administration](docs/migration/M9R_R5C_IMPLEMENTATION_REPORT.md)
 has independent evidence. [Configurable workflow approval roles](docs/migration/M9R_R5E_IMPLEMENTATION_REPORT.md)
-now pass independent review and final full checks/build/browser regressions; R5
-administration UI and field masking remain open.
+now pass independent review and final full checks/build/browser regressions.
+[Field visibility and partial writes](docs/migration/M9R_R5D_IMPLEMENTATION_REPORT.md)
+also pass bounded independent review, full checks/tests/build, six browser cases
+and the configured 100k-row query gate. R5 administration UI and identity UX
+remain open. An intermittent workflow connection failure has an unconfirmed
+cause and remains tracked under R7; the failed run is retained in the report.
 The foundation acceptance gate remains open.
 The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
 qualify historical PASS reports and distinguish previews from contract-only and

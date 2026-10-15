@@ -1,8 +1,13 @@
 # R5d — Field visibility and partial writes
 
-Date: 15 October 2026 IST. Status: independent source and fixture review PASS;
-final whole-suite/build/browser/performance verification running. Full R5/M9R remain PARTIAL. M10 is
-paused. Branch: `remediation/m9r-foundation`; starting clean checkpoint `cbf323e`.
+Date: 15 October 2026 IST. **R5d STATUS: PASS within the ADR037 preview contract.**
+Independent source/fixture review and final checks/tests/build/browser/performance
+verification passed. Full R5/M9R remain **PARTIAL**; M10 is paused.
+Branch: `remediation/m9r-foundation`; starting clean checkpoint `cbf323e`.
+
+Historical checkpoints below retain earlier failures and pending states. The
+final verification and acceptance sections record the current result. The
+intermittent connection failure remains an unresolved R7 diagnostic item.
 
 ## Implemented scope
 
@@ -188,8 +193,8 @@ Root focused command actually executed:
 The separate reviewer records its exact four-test command in its report. The
 root full-suite rerun uses the unchanged `make check test build` command and
 15-minute aggregate integration deadline. That rerun was **INTERRUPTED**, not
-passed: the execution server disconnected, then killed the original make,
-Node, Go and integration process group with SIGKILL (recorded exit status 9
+passed: after the execution server disconnected, the original make,
+Node, Go and integration process group terminated with SIGKILL (recorded exit status 9
 in `/proc`). Checks, five script tests and 38 frontend tests had passed, but
 no final integration result was produced and build was NOT RUN. This was not
 reported as an assertion failure or a successful regression run.
@@ -253,12 +258,54 @@ by this slice.
 | `make test-performance` | PASS 61.937s; PostgreSQL 18.6, 100k hot rows plus nine 10k-row tenants, 761-byte average hot record, 128 MB shared buffers / 4 MB work_mem. Ten clients / 100 HTTP samples: p95 216.415 ms, p99 287.217 ms, zero errors; unchanged 750 ms HTTP target. Key/numeric/selective SQL p95 1.741 / 170.995 / 98.441 ms pass their unchanged targets. Governed numeric index required for the HTTP workload. |
 | `make migrate migration-status` | PASS; idempotent reapplication, versions 1–46 applied, no pending migration |
 | `make test-e2e` | PASS 6/6 in 13.6s against the final built API and current frontend: CRUD/CAS/pagination, real lost-response receipt reconciliation, two redaction cases, mobile layout and limited-editor masked patch |
+| `GOFLAGS=-v make check test build` — final confirmation | PASS, saved aggregate exit 0; integration 829.428s. All Go race/unit/security/import-boundary checks, five Node script tests, 38 frontend tests, format/vet/module/lint/type checks, all eight Go binaries and frontend build passed. Architecture source checksums 84/84 and V3 checksums 43/43 passed. |
+| `make check` after completion-document updates; `git diff --check` | PASS; frozen source documents unchanged, format/vet/modules/lint/types and whitespace checks pass |
 
 Performance is evidence for this explicit indexed fixture and host, not an
 unlimited query/aggregate capacity claim. Unindexed plans, other index types,
 uniqueness and general SQL aggregation remain separately tracked R3 work.
 
-The final whole-suite confirmation repeats `GOFLAGS=-v make check test build`
+The final whole-suite confirmation repeated `GOFLAGS=-v make check test build`
 without code changes, saved to ignored `r5d-full-confirm.log` and `.exit`.
-It runs alone after the performance/browser workloads. The failed first durable
-run and all three successful focused approval repetitions remain evidence above.
+It ran alone after the performance/browser workloads. The formerly failing
+approval test passed in 17.57s within that full run. The failed first durable
+run and all three successful focused approval repetitions remain evidence above;
+neither this pass nor the independent triage claims to fix its unknown cause.
+
+## Acceptance and security conclusion
+
+| R5d criterion | Result / evidence |
+| --- | --- |
+| Entity-visible records survive restricted projections; hidden values stay in SQL | PASS; populated owner/team/share/condition, missing/null/required, count/cursor and joined-target tests |
+| Hidden values cannot authorize filter/sort/sum/source-key probes | PASS within conservative scope coverage and opaque 32-header admission; exact native/tenant definitions retain larger page budgets |
+| Owner-dependent field actions receive trusted context | PASS; original patch/projection/predicate exploits and strict rule/workflow alternate path closed, including embedded-engine and target-owner cases |
+| Header decisions and value queries share a certified snapshot | PASS; actual runtime port positive, weak/autocommit/raw/wrapped executor negatives |
+| Partial writes preserve omitted private values and references | PASS; touched-field validation/clear, public-size admission, CAS/concurrent patch, numeric projection and atomic audit/outbox/receipt rollback |
+| Frontend follows field visibility and submits changed fields only | PASS; 38 frontend tests and six browser cases, including limited-editor secret preservation |
+| Immutable formats, legacy strict inputs and storage boundaries preserved | PASS; full legacy/compiler/workflow/RLS/worker/data-generation regressions; migration 46 is additive and data-preserving |
+
+Three demonstrated HIGH findings were fixed and independently reverified.
+The threat model is API-mediated authorization with trusted application/policy
+composition. This is not a proof against compromised API credentials, arbitrary
+policy-author errors or physical/timing side channels. Worker confinement keeps
+its earlier independent boundaries; this slice adds no worker grants.
+Conditional partial writes and conservative hidden-size admission remain
+explicit ADR037 restrictions. Metadata rollback cannot undo business effects.
+
+## Remaining work and Git delivery
+
+R5 still needs record/team administration UI and provider/login/clock-skew work.
+Remaining R3b index types, R3c uniqueness, R3d aggregation/planning, R6 independent
+requirements/verification/promotion authority and R7 operating controls remain
+open. R7 also owns the intermittent connection/deadline diagnosis above.
+Production active-release execution, external tools, AI and portability remain
+their declared later milestones. A bounded R5d PASS does not close those gaps.
+
+Source/review checkpoints through `3466759` and the evidence checkpoint
+`249bc58` were pushed before final confirmation. Completion documentation is
+delivered on the same designated remediation branch after verification. No main
+merge, history rewrite, production deployment or M10 work is included. `.env`,
+private keys, dependencies, binaries, frontend bundles, runner scripts and logs
+remain ignored; commit source, migration, tests, ADR and reports only.
+
+**R5d STATUS: PASS (bounded). Overall R5/M9R: PARTIAL. M10 remains paused.**

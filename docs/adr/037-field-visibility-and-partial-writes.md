@@ -1,6 +1,9 @@
 # ADR037 — Field visibility and partial writes (R5d)
 
-Status: accepted for implementation, 15 October 2026 IST.
+Status: accepted and independently verified within the bounded preview contract,
+15 October 2026 IST. See the [implementation report](../migration/M9R_R5D_IMPLEMENTATION_REPORT.md)
+and [independent review](../verification/M9R_R5D_INDEPENDENT_REVIEW.md) for executed
+evidence, historical failures and restrictions. Overall R5/M9R remain PARTIAL.
 
 ## Decision
 
