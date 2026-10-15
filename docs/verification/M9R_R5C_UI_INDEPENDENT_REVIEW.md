@@ -2,7 +2,8 @@
 
 Date: 15 October 2026 IST. Implementation reviewed: `c993362` on
 `remediation/m9r-foundation`, based on `aa1fa2a`.
-Status: **FAIL — original findings closed at f81d207; R5C-UI-03 requires a fix and independent re-verification**.
+Final status: **PASS on stable source c0df7c2 within the bounded preview contract**.
+The historical FAIL checkpoints and all three corrected findings remain below.
 Full R5/M9R remain PARTIAL; no M10, main merge or production activation.
 
 This review was performed by a separate agent after the implementation was
@@ -163,6 +164,65 @@ The ownership panel's 390-pixel overflow assertion is now executed and passes.
 The actual transfer, loss of OWNER access, narrow team and sharing panel checks
 remain NOT VERIFIED because R5C-UI-03 stops the browser earlier. Root's full-suite
 run also exposed the initial missing-preview.write fixture: its failure is
-retained in the implementation report. Current independent verdict remains
+retained in the implementation report. At that checkpoint the independent verdict was
 **FAIL pending R5C-UI-03 correction and re-verification**. No production source
 was edited by the reviewer; no workloads remain running at handoff.
+
+## Final independent re-review of c0df7c2
+
+Verdict: **PASS within the bounded R5c preview administration contract**.
+All three review findings are corrected and independently re-executed. This
+is not overall M9R completion or production certification. The source remained
+stable during review; the reviewer added only tests and this report.
+
+R5C-UI-03 now uses typed ID/version/owner/team headers under the live entity
+read/write SQL scopes, followed by the trusted-owner row/action guards. No
+business JSON is selected or decoded by this administrative preflight. The
+existing port, expected version, binding fence and transaction boundaries remain.
+The seven-case mutation matrix now passes, including hidden-name delegation,
+malformed hidden-value independence, non-owner and NONE-scope rejection,
+missing-preview.write/row.assign denials, and broad-field positive control.
+Successful replies are also checked for absence of business-value keys.
+
+An additional live-role test grants row.share while explicitly denying all
+business field read/write access. Reading the authorized share facts, granting
+and revoking a read share succeed. Ownership transfer without row.assign fails.
+After the role is deactivated, share-list and mutation requests fail and the
+stored owner/version/share facts remain unchanged. These are real transaction
+and stored-header checks rather than transport mocks.
+
+The independently updated browser fixture keeps the initial missing
+preview.write denial and confirms the stored owner/version remain unchanged.
+It then publishes a role version explicitly granting that capability. The
+field-restricted delegate successfully transfers ownership without row.share,
+teams.read, memberships.read or business field-write grants. The reply reports
+saved version 3, the following OWNER read becomes unavailable, and a direct
+query confirms the old owner sees no records. The privileged read confirms the
+new owner and exact version. Hidden name never appears in the delegate's DOM.
+
+At a 390 by 844 viewport, the selected ownership panel, a newly created team's
+administration panel and the sharing panel each pass a document-width assertion.
+This is bounded narrow-viewport coverage, not a claim about all browsers,
+translations, long names, hierarchy widths or accessibility states.
+
+| Final independent command | Result |
+| --- | --- |
+| `./scripts/go.sh fmt ./tests/integration` | PASS, independent additions formatted |
+| Go integration command shown below | PASS seven top-level tests; 25.903 seconds. Includes the eight-case query and seven-case access matrices, opaque denied-scope masking, share/revocation test, legacy/canonical/SQL-port regressions |
+| `npm --prefix apps/web test -- --run src/administration/Administration.review.test.tsx` | PASS 12/12; 3.37 seconds |
+| `npm --prefix apps/web run typecheck` | PASS |
+| `npm --prefix apps/web run lint` | PASS |
+| `npm --prefix apps/web run test:e2e -- administration.review.spec.ts` | PASS 1/1; 4.4-second scenario, 7.2-second runner |
+
+Exact final Go command:
+
+```sh
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestIndependentR5c|^TestM9RRecordAccess' ./tests/integration
+```
+
+All earlier failures remain above, including review fixture mistakes and the
+original pre-fix behavior. No production source was changed by the reviewer,
+and no test workload remains running at handoff. Root must complete its full
+`make check test build` and browser gate against these stable source changes
+before the milestone completion report. Full R5/M9R remain PARTIAL; identity,
+remaining R3, R6, R7 and the unconfirmed workflow connection failure remain open.

@@ -193,6 +193,17 @@ func TestIndependentR5cMaskedDelegateAccessChanges(t *testing.T) {
 			if w.Code != tc.want {
 				t.Errorf("owner administration expected %d, got %d (body omitted)", tc.want, w.Code)
 			}
+			if w.Code == 200 {
+				var body map[string]json.RawMessage
+				if json.Unmarshal(w.Body.Bytes(), &body) != nil {
+					t.Fatal("malformed administrative result")
+				}
+				for _, forbidden := range []string{"values", "custom_data", "field.contact.name", "field.contact.balance"} {
+					if _, ok := body[forbidden]; ok {
+						t.Fatal("business data in administrative response")
+					}
+				}
+			}
 			var observed data.Access
 			if err := f.operator.QueryRow(`SELECT owner_user_id::text,row_version FROM runtime.records WHERE tenant_id=$1 AND id=$2`, f.tenantA, record.ID).Scan(&observed.OwnerID, &observed.Version); err != nil {
 				t.Fatal("record header witness", err)
@@ -205,5 +216,47 @@ func TestIndependentR5cMaskedDelegateAccessChanges(t *testing.T) {
 				t.Fatal("denial/success did not retain exact witness")
 			}
 		})
+	}
+}
+
+func TestIndependentR5cMaskedShareAdministrationAndRevocation(t *testing.T) {
+	m8Database(t)
+	f, legacy, base, alice, app := m5Fixture(t)
+	record := m5Create(t, legacy, base, alice, "PRIVATE share-only fixture")
+	path := base + "/records/" + record.ID + "/access"
+	r5cChange(t, legacy, path, alice, data.AccessCommand{Operation: "owner", ExpectedVersion: 1, UserID: f.viewer}, 200)
+	h := r5Handler(t, f, audit.Postgres{})
+	root := "/v1/tenants/" + f.tenantA
+	token := f.token(t, f.viewerSubject, nil)
+	owner := policy.DataScope{Kind: "OWNER"}
+	resource := policy.Selector{AppID: app, EntityID: "entity.contact", FieldID: "*"}
+	d := r5Definition("review_masked_sharer", app, owner)
+	d.Grants[1].Actions = []string{"data.entity.read"}
+	d.Grants = append(d.Grants,
+		policy.Grant{Effect: "ALLOW", Actions: []string{"preview.write"}, Resource: policy.Selector{AppID: app, EntityID: "*", FieldID: "*"}},
+		policy.Grant{Effect: "ALLOW", Actions: []string{"data.entity.write"}, Resource: resource, Scope: &owner},
+		policy.Grant{Effect: "ALLOW", Actions: []string{"data.row.write", "data.row.share"}, Resource: resource},
+		policy.Grant{Effect: "DENY", Actions: []string{"data.field.read", "data.field.write"}, Resource: resource},
+	)
+	role := r5Publish(t, h, root+"/roles", alice, 0, d, true, uuid(t))
+	r5Assign(t, h, root, alice, f.viewer, d.Name, 200)
+	current := r5cAccess(t, h, path, token, 200)
+	if current.OwnerID != f.viewer || current.Version != 2 || len(current.Shares) != 0 {
+		t.Fatal("typed sharing headers")
+	}
+	no := false
+	r5cChange(t, h, path, token, data.AccessCommand{Operation: "share", ExpectedVersion: 2, UserID: f.alice, CanWrite: &no}, 200)
+	current = r5cAccess(t, h, path, token, 200)
+	if current.Version != 3 || len(current.Shares) != 1 || current.Shares[0] != (data.Share{UserID: f.alice, CanWrite: false}) {
+		t.Fatal("masked delegate share not stored")
+	}
+	r5cChange(t, h, path, token, data.AccessCommand{Operation: "unshare", ExpectedVersion: 3, UserID: f.alice}, 200)
+	r5cChange(t, h, path, token, data.AccessCommand{Operation: "owner", ExpectedVersion: 4, UserID: f.alice}, 403)
+	r5Publish(t, h, root+"/roles", alice, role.Version, d, false, uuid(t))
+	r5cAccess(t, h, path, token, 403)
+	r5cChange(t, h, path, token, data.AccessCommand{Operation: "share", ExpectedVersion: 4, UserID: f.alice, CanWrite: &no}, 403)
+	current = r5cAccess(t, legacy, path, alice, 200)
+	if current.Version != 4 || current.OwnerID != f.viewer || len(current.Shares) != 0 {
+		t.Fatal("missing assign or revoked role changed facts")
 	}
 }
