@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
@@ -78,7 +79,32 @@ func authorizeAccess(ctx context.Context, q postgres.Executor, s Scope, a tenant
 			return Record{}, err
 		}
 	}
-	existing, err := current(ctx, q, s, a, e, id, resolve...)
+	// Access administration changes typed ownership/share facts only. Enforce
+	// entity scopes in SQL without fetching unrelated (possibly hidden) values
+	// or requiring field read/write authority that the operation never uses.
+	b := builder{args: append(base(s, a, entity), id)}
+	where := recordWhere + " AND r.id=$6"
+	actions := []string{"data.read"}
+	if write {
+		actions = append(actions, "data.write")
+	}
+	for _, action := range actions {
+		scope, er := resolveScope(ctx, resolve, action, Resource{EntityID: entity})
+		if er != nil {
+			return Record{}, er
+		}
+		nodes := 0
+		predicate, er := scopeSQL(ctx, e, scope, a, "r", &b, 0, &nodes)
+		if er != nil {
+			return Record{}, er
+		}
+		where += " AND (" + predicate + ")"
+	}
+	var existing Record
+	err = q.QueryRowContext(ctx, `SELECT r.id::text,r.row_version,r.owner_user_id::text,COALESCE(r.owner_team_id::text,'') FROM runtime.read_records r WHERE `+where, b.args...).Scan(&existing.ID, &existing.Version, &existing.OwnerID, &existing.TeamID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
 	if err != nil {
 		return Record{}, err
 	}
@@ -88,9 +114,6 @@ func authorizeAccess(ctx context.Context, q postgres.Executor, s Scope, a tenant
 	}
 	if write {
 		if err = g.check(ctx, "data.row.write", r); err != nil {
-			return Record{}, err
-		}
-		if err = authorizeExistingWrite(ctx, q, s, a, e, existing, resolve); err != nil {
 			return Record{}, err
 		}
 	}

@@ -13,8 +13,16 @@ migrations, dependencies or IR formats are required. Independent integration
 review exposed unused SQL bind parameters in the existing R5d masked-query
 builder. Correct construction by emitting an entity-write predicate only when
 a writable projected field consumes it, and by resolving a field scope before
-binding an opaque action predicate. Preserve every authorization decision, SQL
-mask, strict-input guard and opaque header budget; add no new authority.
+binding an opaque action predicate. A second delegated integration probe exposed
+access administration using full-record reads and unrelated field-write scopes.
+Replace only that administrative preflight with an exact typed-header read under
+live entity read/write SQL scopes, then the existing trusted-owner row checks.
+ADR034 requires record authority, not access to every business value. Do not fetch
+or validate custom JSON for access administration. Preserve entity/row/admin
+actions, trusted owner context, SQL scopes, forced RLS, CAS and dataset fences.
+Business reads/writes and strict inputs retain their field rules; malformed or
+inaccessible business values cannot veto a separately authorized owner/share
+change. No new authority is provisioned.
 
 Team administration covers create, rename/reparent, direct membership activation
 and deactivation. Use the exact observed team version, or the exact observed

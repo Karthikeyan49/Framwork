@@ -43,6 +43,10 @@ preserves masking, field/row authorization and strict execution-input behavior.
 
 ## Files and architecture
 
+The necessary backend corrections are limited to `internal/runtime/data/visibility.go`
+and the administrative preflight in `access.go`, with independent populated
+integration regressions. No SQL migration or authority grant is added.
+
 New frontend modules under `apps/web/src/administration/`: typed decoders,
 team panel, record access panel, optional member suggestions, recovery provider
 and a small mutation-state hook. `src/api/administration.ts` supplies the bounded
@@ -95,7 +99,18 @@ PASS (6.369s), `make build` PASS. `make test-e2e` was FAIL 8/9
 correctly received a transfer denial because the independent fixture omitted
 the existing required `preview.write` capability. The reviewer will retain
 that negative and explicitly grant the preview mutation capability for the
-transfer positive control. No server authorization will be relaxed.
+transfer positive control. No server authorization was relaxed. Independent follow-up `966ff1c` then
+confirmed the correctly permissioned transfer still failed (browser FAIL 8.6s):
+HIGH R5C-UI-03, the administrative preflight fetched/validated full custom JSON
+and required unrelated field scopes. Its seven-case live-role matrix had five
+passing authorization controls and two failing valid delegates, including a
+malformed-hidden-value fixture.
+
+The correction reads only typed owner/team/version headers through forced RLS
+and live entity read/write SQL scopes, then applies the existing trusted-owner
+row read/write/assign-or-share checks and SQL port/CAS/fences in the same
+transaction. It does not fetch business values or change business field rules.
+ADR034's administrative capability contract stays separate from field editing.
 Logs and runner artifacts remain ignored.
 
 ## Limits, recovery and remaining work
