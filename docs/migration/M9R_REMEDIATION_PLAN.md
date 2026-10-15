@@ -250,10 +250,14 @@ a wider capacity certification. Preserve the exact confinement and lease gates.
 
 [R5c-a](M9R_R5C_IMPLEMENTATION_REPORT.md) (record owner/team/share administration,
 ADR034) passes independent review at 8f8067a and R5c-b team administration (ADR035)
-at 6b50eb7. Remaining R5 product slices: administration UI for the R5c
-APIs; R5d field
-masking/partial writes and inference controls; R5e configurable workflow approval
-role contracts and their immutable-reader compatibility. Provider/login UX stays
+at 6b50eb7. [R5e](M9R_R5E_IMPLEMENTATION_REPORT.md) adds opt-in metadata/IR 1.3
+and Workflow DSL 2.1 tenant approval roles, preserving legacy 1.2 artifacts and
+live membership/head/capability/DataScope checks. Independent review at `44a3979`
+passed; audit-correlation follow-up `d4364a3` passed independent re-review, with
+regressions at `f1e2e74`. Final full checks/tests/build passed (integration 629.247s)
+and browser 5/5 passed. Full R5/M9R remains PARTIAL.
+Remaining R5 product slices: administration UI for the R5c APIs; R5d field
+masking/partial writes and inference controls. Provider/login UX stays
 a separate R5 identity deliverable. Implement and review these separately before
 promising product policy completeness. R3c/R3d, R6 and R7 remain in this plan.
 
