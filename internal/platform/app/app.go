@@ -23,6 +23,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/platform/signin"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
@@ -168,7 +169,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if err != nil {
 		return errors.New("authentication key set unavailable")
 	}
-	auth, err := identity.NewVerifier(c.AuthIssuer, c.AuthAudience, keys)
+	auth, err := identity.NewVerifierWithClockSkew(c.AuthIssuer, c.AuthAudience, keys, c.AuthClockSkew)
 	if err != nil {
 		return err
 	}
@@ -177,14 +178,33 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 		return errors.New("metadata schema initialization failed")
 	}
 	accessAPI := access.API{DB: db, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
+	signIn := signin.API{Development: c.Environment != "production"}
+	var signInStore *cache.Client
+	if c.OIDC != nil {
+		signInStore, err = cache.Open(c.SignInRedisURL)
+		if err != nil {
+			return errors.New("sign-in storage unavailable")
+		}
+		defer signInStore.Close()
+		signIn.Login, err = identity.NewBrowserLogin(*c.OIDC, auth, signInStore)
+		if err != nil {
+			return errors.New("sign-in configuration unavailable")
+		}
+		defer signIn.Login.Close()
+	}
 	identityProbe := func(ctx context.Context) error {
 		return (identity.Store{}).Ready(ctx, db)
 	}
-	handler := httpserver.Handler(httpserver.Options{Logger: logger, Origins: c.CORSOrigins, Register: accessAPI.Register, AllowPOST: accessAPI.AcceptsPOST, ProbeTimeout: c.DependencyTimeout, Probes: map[string]httpserver.Probe{"postgres": func(ctx context.Context) error { return postgres.Ping(ctx, db) }, "redis": redis.Ping, "workflows": func(ctx context.Context) error {
+	handler := httpserver.Handler(httpserver.Options{Logger: logger, Origins: c.CORSOrigins, Register: func(mux *http.ServeMux) { accessAPI.Register(mux); signIn.Register(mux) }, AllowPOST: func(path string) bool { return accessAPI.AcceptsPOST(path) || signIn.AcceptsPOST(path) }, ProbeTimeout: c.DependencyTimeout, Probes: map[string]httpserver.Probe{"postgres": func(ctx context.Context) error { return postgres.Ping(ctx, db) }, "redis": redis.Ping, "workflows": func(ctx context.Context) error {
 		if !c.WorkflowsEnabled {
 			return nil
 		}
 		return workflow.Ready(ctx, db, "framework_app")
+	}, "signin": func(ctx context.Context) error {
+		if signInStore == nil {
+			return nil
+		}
+		return signInStore.ReadyLoginFlows(ctx)
 	}, "policy": func(ctx context.Context) error { return (policy.RoleStore{}).Ready(ctx, db, false) }, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
 	server := httpserver.New(c.HTTPAddr, handler)
 	listener, err := net.Listen("tcp", c.HTTPAddr)

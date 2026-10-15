@@ -24,3 +24,12 @@ test('local provisioning rejects quoted production and preserves the file',()=>{
  }
  }finally{fs.rmSync(temp,{recursive:true,force:true})}
 })
+
+test('only API children receive sign-in configuration and credentials',()=>{
+ const configured={...source,SIGNIN_REDIS_URL:'signin-credential',SIGNIN_PASSWORD:'private-password',OIDC_CLIENT_ID:'web',OIDC_AUTHORIZATION_URL:'https://id.example/authorize',OIDC_TOKEN_URL:'https://id.example/token',OIDC_REDIRECT_URI:'https://web.example/auth/callback',OIDC_SCOPES:'openid',AUTH_CLOCK_SKEW:'30s'}
+ for(const kind of ['api','worker','dispatcher','web']){
+  const env=runtimeEnv(configured,kind)
+  assert.equal(env.SIGNIN_PASSWORD,undefined)
+  for(const key of ['SIGNIN_REDIS_URL','OIDC_CLIENT_ID','OIDC_AUTHORIZATION_URL','OIDC_TOKEN_URL','OIDC_REDIRECT_URI','OIDC_SCOPES','AUTH_CLOCK_SKEW'])assert.equal(env[key],kind==='api'?configured[key]:undefined)
+ }
+})

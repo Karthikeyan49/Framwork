@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/internal/identity"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 )
@@ -34,6 +36,9 @@ type Config struct {
 	AuthIssuer            string
 	AuthAudience          string
 	AuthJWKSFile          string
+	AuthClockSkew         time.Duration
+	OIDC                  *identity.Provider
+	SignInRedisURL        string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -162,6 +167,9 @@ func Load(getenv func(string) string) (Config, error) {
 		if c.Environment == "production" && u.Scheme != "https" {
 			return c, fmt.Errorf("production telemetry requires HTTPS")
 		}
+	}
+	if err := loadLogin(getenv, &c); err != nil {
+		return c, err
 	}
 	return c, nil
 }
