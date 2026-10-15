@@ -161,9 +161,6 @@ type Store struct {
 	// ToolCatalog is trusted operator configuration; plans pin its hashes.
 	Tools       tools.Executor
 	ToolCatalog tools.Catalog
-	// ToolMode derives the effective mode from server-side pins; nil uses the
-	// tool's declared non-production mode.
-	ToolMode func(Pin, tools.Definition) string
 }
 
 func (s Store) configured() bool {

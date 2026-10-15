@@ -21,6 +21,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -40,6 +41,9 @@ type API struct {
 	WorkflowsEnabled bool
 	// Trusted platform configuration, never selected by a request or metadata.
 	CompilerCatalog *compiler.Catalog
+	// ToolCatalog is the operator-owned tool registry (ADR036); it feeds
+	// sandbox evidence and, with the compiler, tool admission.
+	ToolCatalog tools.Catalog
 }
 
 func (a API) catalog() compiler.Catalog {
@@ -65,6 +69,10 @@ func (a API) Register(mux *http.ServeMux) {
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions", a.serve)
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/sandboxes", a.serve)
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/freeze", a.serve)
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/evidence", a.serve)
 		for _, op := range []string{"advance", "activate", "abort", "reverify"} {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}/"+op, a.serve)
 		}
@@ -376,6 +384,12 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {
 			action = "datasets.evolve"
 		}
+		if sandboxPatterns[r.Pattern] {
+			action = "sandbox.read"
+			if r.Method == http.MethodPost {
+				action = "sandbox.manage"
+			}
+		}
 	}
 	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") {
 		resource = "role"
@@ -431,6 +445,8 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			evidence.State.CommandKey = r.PathValue("command")
 			receipt, err = data.CommandReceipt(ctx, tx, access, appID, r.PathValue("command"))
 			result = reply{status: 200, body: receipt}
+		} else if sandboxPatterns[r.Pattern] {
+			result, err = a.sandbox(ctx, tx, r, u, access, &evidence)
 		} else if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {
 			result, err = a.evolution(ctx, tx, r, access, &evidence)
 		} else if strings.Contains(r.URL.Path, "/datasets") {

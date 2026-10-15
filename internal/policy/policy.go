@@ -11,9 +11,10 @@ import (
 
 // R5a adds explicit owner-only role administration to the bootstrap adapter;
 // R5c-a (v5) adds owner/admin record access administration; R5c-b (v6) adds
-// owner/admin team administration; M10 (v7) adds non-viewer tools.invoke.
+// owner/admin team administration; M10 (v7) adds non-viewer tools.invoke; M11 (v8)
+// adds sandbox.read (all roles) and owner/admin sandbox.manage.
 // Retained evidence keeps its original version.
-const Version = "m10-native-v7"
+const Version = "m11-native-v8"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -68,6 +69,14 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			}
 		case "roles.write", "roles.assign":
 			if resource.Type == "role" && role == "owner" {
+				return true
+			}
+		case "sandbox.read":
+			if resource.Type == "preview" && resource.AppID != "" {
+				return true
+			}
+		case "sandbox.manage":
+			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
 				return true
 			}
 		case "tools.invoke":

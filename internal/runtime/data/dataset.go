@@ -25,6 +25,16 @@ type Dataset struct {
 	State            string `json:"state"`
 	VerifiedRows     int64  `json:"verified_rows"`
 	ManifestHash     string `json:"manifest_hash"`
+	// Sandbox is server-derived (ADR037); it is never accepted from a request.
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+}
+
+// Sandbox describes the isolation posture of a synthetic sandbox dataset.
+type Sandbox struct {
+	DataMode     string `json:"data_mode"`
+	ToolCeiling  string `json:"tool_ceiling"`
+	State        string `json:"state"`
+	EvidenceHash string `json:"evidence_hash,omitempty"`
 }
 
 type DatasetStore struct{}
@@ -33,6 +43,22 @@ type DatasetStore struct{}
 // seals writes until every record is verified in bounded durable batches. EMPTY
 // uses an independent anchor, even for the same source/compiler/app.
 func (DatasetStore) Create(ctx context.Context, q postgres.Executor, a tenant.Access, p compiler.Program, revision int64, workspace, mode string) (Dataset, error) {
+	return createDataset(ctx, q, a, p, revision, workspace, mode, "preview", "")
+}
+
+// CreateSandbox creates an independent, empty synthetic dataset. Only EMPTY is
+// possible: a sandbox never adopts a preview or legacy namespace. The tool
+// ceiling can only reduce what each tool's own declared sandbox mode allows.
+func (DatasetStore) CreateSandbox(ctx context.Context, q postgres.Executor, a tenant.Access, p compiler.Program, revision int64, workspace, ceiling string) (Dataset, error) {
+	switch ceiling {
+	case "BLOCK", "SIMULATE", "READ_ONLY", "REROUTE", "TEST_ACCOUNT":
+	default:
+		return Dataset{}, ErrInvalid
+	}
+	return createDataset(ctx, q, a, p, revision, workspace, "EMPTY", "sandbox", ceiling)
+}
+
+func createDataset(ctx context.Context, q postgres.Executor, a tenant.Access, p compiler.Program, revision int64, workspace, mode, environment, ceiling string) (Dataset, error) {
 	var d Dataset
 	if !tenant.ValidID(workspace) || !p.Valid() || revision < 1 || revision > 1e9 || (mode != "ADOPT" && mode != "EMPTY") {
 		return d, ErrInvalid
@@ -43,11 +69,11 @@ func (DatasetStore) Create(ctx context.Context, q postgres.Executor, a tenant.Ac
 	}
 	// A caller-retained workspace UUID is also the create reconciliation key.
 	// A lost COMMIT reply cannot create a second dataset on an exact retry.
-	var existingID, existingHash string
+	var existingID, existingHash, existingEnvironment string
 	var existingRevision int64
-	err = q.QueryRowContext(ctx, `SELECT d.id::text,b.ir_hash,b.metadata_revision FROM runtime.datasets d JOIN runtime.dataset_bindings b ON b.tenant_id=d.tenant_id AND b.app_id=d.app_id AND b.dataset_id=d.id AND b.version=1 WHERE d.tenant_id=$1 AND d.app_id=$2 AND d.workspace_id=$3`, a.TenantID(), p.IR().Application.AppID, workspace).Scan(&existingID, &existingHash, &existingRevision)
+	err = q.QueryRowContext(ctx, `SELECT d.id::text,b.ir_hash,b.metadata_revision,d.environment FROM runtime.datasets d JOIN runtime.dataset_bindings b ON b.tenant_id=d.tenant_id AND b.app_id=d.app_id AND b.dataset_id=d.id AND b.version=1 WHERE d.tenant_id=$1 AND d.app_id=$2 AND d.workspace_id=$3`, a.TenantID(), p.IR().Application.AppID, workspace).Scan(&existingID, &existingHash, &existingRevision, &existingEnvironment)
 	if err == nil {
-		if existingHash != p.Hash() || existingRevision != revision {
+		if existingHash != p.Hash() || existingRevision != revision || existingEnvironment != environment {
 			return d, ErrConflict
 		}
 		var adopted bool
@@ -57,7 +83,11 @@ func (DatasetStore) Create(ctx context.Context, q postgres.Executor, a tenant.Ac
 		if adopted != (mode == "ADOPT") {
 			return d, ErrConflict
 		}
-		return (DatasetStore{}).Get(ctx, q, a, p.IR().Application.AppID, existingID)
+		existing, getErr := (DatasetStore{}).Get(ctx, q, a, p.IR().Application.AppID, existingID)
+		if getErr == nil && environment == "sandbox" && (existing.Sandbox == nil || existing.Sandbox.ToolCeiling != ceiling) {
+			return d, ErrConflict
+		}
+		return existing, getErr
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return d, err
@@ -96,11 +126,16 @@ func (DatasetStore) Create(ctx context.Context, q postgres.Executor, a tenant.Ac
 			return d, ErrNotFound
 		}
 	}
-	if _, err = q.ExecContext(ctx, `INSERT INTO runtime.datasets(tenant_id,app_id,id,workspace_id,anchor_revision,anchor_hash,schema_hash,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, a.TenantID(), p.IR().Application.AppID, id, workspace, anchorRevision, anchorHash, schema, state); err != nil {
+	if _, err = q.ExecContext(ctx, `INSERT INTO runtime.datasets(tenant_id,app_id,id,workspace_id,anchor_revision,anchor_hash,schema_hash,state,environment) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, a.TenantID(), p.IR().Application.AppID, id, workspace, anchorRevision, anchorHash, schema, state, environment); err != nil {
 		return d, err
 	}
 	if err = insertBinding(ctx, q, a, p, revision, id, 1, schema); err != nil {
 		return d, err
+	}
+	if environment == "sandbox" {
+		if _, err = q.ExecContext(ctx, `SELECT runtime.register_sandbox($1,$2,$3,$4)`, a.TenantID(), p.IR().Application.AppID, id, ceiling); err != nil {
+			return d, err
+		}
 	}
 	return (DatasetStore{}).Get(ctx, q, a, p.IR().Application.AppID, id)
 }
@@ -123,7 +158,46 @@ func (DatasetStore) Get(ctx context.Context, q postgres.Executor, a tenant.Acces
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound
 	}
-	return d, err
+	if err != nil || d.Environment != "sandbox" {
+		return d, err
+	}
+	sb := Sandbox{}
+	err = q.QueryRowContext(ctx, `SELECT s.data_mode,s.tool_ceiling,s.state,coalesce(e.body_hash,'') FROM runtime.sandboxes s LEFT JOIN runtime.sandbox_evidence e ON e.tenant_id=s.tenant_id AND e.app_id=s.app_id AND e.dataset_id=s.dataset_id WHERE s.tenant_id=$1 AND s.app_id=$2 AND s.dataset_id=$3`, a.TenantID(), app, id).Scan(&sb.DataMode, &sb.ToolCeiling, &sb.State, &sb.EvidenceHash)
+	if err != nil {
+		return d, err
+	}
+	d.Sandbox = &sb
+	return d, nil
+}
+
+// SandboxEvidence is the immutable freeze record bound to exact inputs.
+type SandboxEvidence struct {
+	Hash string          `json:"hash"`
+	Body json.RawMessage `json:"body"`
+}
+
+// FreezeSandbox seals the sandbox and records immutable evidence. The catalog
+// and policy hashes are server-computed by the caller (never request fields).
+func (DatasetStore) FreezeSandbox(ctx context.Context, q postgres.Executor, a tenant.Access, app, id, catalogHash, policyHash string) (SandboxEvidence, error) {
+	if !tenant.ValidID(id) || len(catalogHash) != 64 || len(policyHash) != 64 {
+		return SandboxEvidence{}, ErrInvalid
+	}
+	var hash string
+	if err := q.QueryRowContext(ctx, `SELECT runtime.freeze_sandbox($1,$2,$3,$4,$5)`, a.TenantID(), app, id, catalogHash, policyHash).Scan(&hash); err != nil {
+		return SandboxEvidence{}, err
+	}
+	return (DatasetStore{}).Evidence(ctx, q, a, app, id)
+}
+func (DatasetStore) Evidence(ctx context.Context, q postgres.Executor, a tenant.Access, app, id string) (SandboxEvidence, error) {
+	var e SandboxEvidence
+	if !tenant.ValidID(id) {
+		return e, ErrInvalid
+	}
+	err := q.QueryRowContext(ctx, `SELECT body_hash,body FROM runtime.sandbox_evidence WHERE tenant_id=$1 AND app_id=$2 AND dataset_id=$3`, a.TenantID(), app, id).Scan(&e.Hash, &e.Body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return e, ErrNotFound
+	}
+	return e, err
 }
 
 // Bind currently permits identical storage contracts. Optional-addition reader

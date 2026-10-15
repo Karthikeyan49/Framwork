@@ -52,12 +52,19 @@ func toolState(s State) (toolActivityState, bool) {
 	return toolActivityState{s.Activity.ToolRef, s.Activity.Version, s.ToolHash}, true
 }
 
-func (s Store) toolMode(pin Pin, d tools.Definition) string {
-	if s.ToolMode != nil {
-		return s.ToolMode(pin, d)
+// toolMode derives the effective non-production mode from server-owned facts:
+// the tool's declared behavior and the leased job's dataset environment/ceiling
+// (control.worker_environment). Requests, metadata and AI never supply it.
+func (s Store) toolMode(ctx context.Context, q postgres.Executor, d tools.Definition) (string, error) {
+	var environment string
+	var ceiling sql.NullString
+	if err := q.QueryRowContext(ctx, `SELECT environment,tool_ceiling FROM control.worker_environment()`).Scan(&environment, &ceiling); err != nil {
+		return "", err
 	}
-	// Preview executions never reach a production endpoint (ADR036 #9).
-	return d.Sandbox.Mode
+	if environment == "sandbox" && !ceiling.Valid {
+		return tools.ModeBlock, nil
+	}
+	return tools.EffectiveMode(d, ceiling.String), nil
 }
 
 func loadToolLedger(ctx context.Context, q postgres.Executor, a tenant.Access, instance, step string) (toolLedger, bool, error) {
@@ -223,7 +230,10 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 	if err != nil {
 		return nil, err
 	}
-	mode := s.toolMode(x.Pin, def)
+	mode, err := s.toolMode(ctx, q, def)
+	if err != nil {
+		return nil, err
+	}
 	var attempt, remaining int
 	var key string
 	err = q.QueryRowContext(ctx, `SELECT attempt,idempotency_key,remaining_ms FROM control.tool_begin($1,$2,$3,$4,$5,$6,$7,$8)`, call.StepKey, t.ref, t.version, t.hash, call.RequestHash, mode, kind, def.Approval == "REQUIRED").Scan(&attempt, &key, &remaining)
