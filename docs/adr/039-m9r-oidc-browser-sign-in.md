@@ -1,7 +1,10 @@
 # ADR039 — OIDC browser sign-in and bounded clock tolerance
 
-Status: accepted for implementation after independent read-only design review,
-15 October 2026 IST. Executable review remains required.
+Status: accepted, 15 October 2026 UTC. Independent design review and executable
+adversarial re-verification passed on `01aeb34`; evidence at `4b337a4` closes
+R5F-IR-01. See [review](../verification/M9R_R5F_INDEPENDENT_REVIEW.md) and
+[implementation report](../migration/M9R_R5F_IMPLEMENTATION_REPORT.md) for
+final whole-repository verification and remaining deployment boundaries.
 Scope: R5f, provider-independent browser login; M9R remains PARTIAL. No M10,
 main merge, production activation, SAML, SCIM or provider-specific deployment.
 

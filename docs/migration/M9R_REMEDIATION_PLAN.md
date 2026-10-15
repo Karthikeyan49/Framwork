@@ -269,8 +269,15 @@ frontend 86/86) and browser 9/9. Three demonstrated review findings are closed.
 Preserve actor-owned recovery, observable-target review and typed-header access
 administration without unrelated business values. The initial full-run worker
 statement timeout remains an R7 capacity issue despite passing reruns.
-Remaining R5 product work: provider/login/clock-skew identity. Role-definition
-editing remains API-only; enterprise UI remains separate from the R5c controls.
+[R5f provider sign-in and clock tolerance](M9R_R5F_IMPLEMENTATION_REPORT.md)
+(ADR039) now passes independent executable review: pinned OIDC/PKCE, live DB
+authority, dedicated one-time Redis flows, StrictMode-safe browser completion
+and stale-connection guards. The MEDIUM concurrent-cookie finding is closed by
+executed regression. Final full checks/tests/build pass (179 integration tests
+in 605.921s, frontend 94/94). External provider/client deployment, MFA assurance
+and production gateway validation remain required; a local fixture is not SSO
+deployment evidence. Role-definition editing remains API-only; enterprise UI
+remains separate from the R5c controls. Overall R5/M9R remains PARTIAL.
 Implement and review remaining work before promising product policy completeness.
 Remaining R3b types, R3c/R3d, R6 and R7 remain in this plan.
 
@@ -355,7 +362,7 @@ data residency/retention and deployment owners must approve the chosen tier.
 
 | Capability | Proposed owner / gate |
 |---|---|
-| SSO/OIDC/SAML and configurable clock skew | Identity workstream alongside R5; required provider flows before enterprise production; SAML only when required |
+| SSO/OIDC/SAML and configurable clock skew | R5f implements and independently verifies the bounded OIDC/PKCE adapter and clock tolerance. External IdP/client deployment and production gateway/MFA verification remain an identity release gate; SAML only when required |
 | Search and localization | Product/platform workstream before the first ERP Domain Pack release at M16; scope languages and search authorization explicitly |
 | Residency, backup/restore and audit retention | Operations/security M15, with database prerequisites in R2/R7; production gate, not an optional future note |
 | Import/export and portability format | M17; publish a versioned manifest, hash/compatibility rules and import round-trip tests before claiming portability |
@@ -386,6 +393,7 @@ start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
 governed numeric R3b, R5a/R5b, R5c server and preview UI administration, R5d and
-R5e independently verified. Production R2 execution, remaining R3b types/R3c/R3d,
-R5 identity/provider UX and R6–R7 remain open. Role-definition UI remains separate.
+R5e and bounded R5f sign-in independently verified. Production R2 execution,
+remaining R3b types/R3c/R3d, external identity deployment and R6–R7 remain open.
+Role-definition UI remains separate.
 The complete foundation gate and broader review findings are not accepted as resolved.**

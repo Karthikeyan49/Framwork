@@ -50,6 +50,10 @@ belongs to `internal/platform/app`.
 - ADR014–016: RS256 identity, operator IAM, transaction scope, strict authoring,
   immutable draft revisions. Token role/tenant claims do not grant membership.
   Schema-valid source is not executable.
+  ADR039 adds optional public-client OIDC/PKCE with pinned ID/API tokens, bounded
+  clock tolerance and API-only Redis flows. Consume before exchange, never retry
+  an uncertain exchange, and never clear a newer flow's shared cookie. Preserve
+  early callback scrubbing and exact-connection 401 clearing; no implicit grants.
 - ADR017–020: compiler, preview data/UI and V3 contracts. Preserve legacy adapters;
   preview isolation is not a production persistence model. Field policy applies
   to returned, filtered, joined and modified data.

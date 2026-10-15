@@ -39,8 +39,8 @@ also pass bounded independent review, full checks/tests/build, six browser cases
 and the configured 100k-row query gate. The [record/team administration UI](docs/migration/M9R_R5C_UI_IMPLEMENTATION_REPORT.md)
 now passes independent review, full checks/tests/build and nine browser cases.
 [Provider sign-in and clock tolerance](docs/migration/M9R_R5F_IMPLEMENTATION_REPORT.md)
-are under verification; external provider deployment and role-definition editing
-remain separate work (role administration is API-only).
+now pass bounded independent review and full checks/tests/build. External provider
+deployment remains unverified; role-definition editing remains API-only.
 An intermittent workflow connection failure and a worker-policy statement-timeout
 capacity failure remain tracked under R7; failed runs are retained in the reports.
 The foundation acceptance gate remains open.
@@ -116,7 +116,10 @@ Operational API:
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /healthz` | 200 while process is serving; independent of PG/Redis/collector |
-| `GET /readyz` | 200 if PostgreSQL/Redis and identity/tenant/audit/metadata/data schema contracts pass; 503 otherwise |
+| `GET /readyz` | 200 if PostgreSQL/Redis and identity/tenant/audit/metadata/data schema contracts pass, including sign-in Redis confinement when configured; 503 otherwise |
+| `GET /v1/auth/provider` | Public enabled/development-entry descriptor; no provider secrets |
+| `POST /v1/auth/login/start` | Configured origin only: one browser-bound, rate-limited PKCE flow |
+| `POST /v1/auth/login/complete` | Exact origin/cookie/state: consume once, validate provider tokens, return only the API bearer token |
 | `GET /v1/session` | Verified active user and at most 100 active memberships |
 | `GET /v1/tenants/{id}/access` | Verified active membership and a recorded policy decision |
 | `GET /v1/tenants/{id}/members` | At most 100 members, authorized owner/admin only |
