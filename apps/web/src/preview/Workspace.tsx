@@ -35,13 +35,15 @@ export function formValues(
   inputs: Record<string, string>,
   initial?: Row,
 ) {
-  const values: Record<string, unknown> = { ...initial?.values };
+  const values: Record<string, unknown> = {};
   for (const field of entity.fields) {
     if (field.core_id) {
       delete values[field.id];
       continue;
     }
+    if (initial?.field_access && !initial.field_access.writable.includes(field.id)) continue;
     if (!Object.hasOwn(inputs, field.id)) continue;
+    if (initial && inputs[field.id] === (inputsFor(initial)[field.id] ?? "")) continue;
     const text = inputs[field.id];
     if (text === "") {
       if (field.required) throw new Error(`${field.label} is required.`);
@@ -435,7 +437,7 @@ function EntityPage({
     }
     return false;
   }
-  async function command(operation: "create" | "update" | "delete") {
+  async function command(operation: "create" | "patch" | "delete") {
     if (!preview.can_write || saving || busy || needsReload) return;
     let values: Record<string, unknown>;
     try {
@@ -443,6 +445,10 @@ function EntityPage({
         operation === "delete" ? {} : formValues(entity, inputs, selected);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Check the field values.");
+      return;
+    }
+    if (operation === "patch" && Object.keys(values).length === 0) {
+      setNotice("No editable changes.");
       return;
     }
     writes.current?.abort();
@@ -559,7 +565,7 @@ function EntityPage({
           key={key}
           onSubmit={(e) => {
             e.preventDefault();
-            void command(selected ? "update" : "create");
+            void command(selected ? "patch" : "create");
           }}
         >
           <h3>{selected ? "Edit record" : "New record"}</h3>
@@ -599,7 +605,7 @@ function EntityPage({
               {rows.map((r) => (
                 <tr key={r.id}>
                   {entity.fields.map((f) => (
-                    <td key={f.id}>{display(r.values[f.id])}</td>
+                    <td key={f.id}>{r.field_access?.masked.includes(f.id) ? "Restricted" : display(r.values[f.id])}</td>
                   ))}
                   <td>
                     <button
@@ -638,7 +644,7 @@ function EntityPage({
                 {entity.fields.map((f) => (
                   <div key={f.id}>
                     <dt>{f.label}</dt>
-                    <dd>{display(selected.values[f.id])}</dd>
+                    <dd>{selected.field_access?.masked.includes(f.id) ? "Restricted" : display(selected.values[f.id])}</dd>
                   </div>
                 ))}
               </dl>
@@ -683,12 +689,15 @@ function EntityPage({
     if (c.type === "status_badge")
       return (
         <p key={key} className="badge">
-          {c.label ?? f.label}: {display(selected?.values[f.id])}
+          {c.label ?? f.label}: {selected?.field_access?.masked.includes(f.id) ? "Restricted" : display(selected?.values[f.id])}
         </p>
       );
+    if (selected?.field_access?.masked.includes(f.id))
+      return <p key={key}>{c.label ?? f.label}: Restricted</p>;
     const value = inputs[f.id] ?? "";
     const disabled =
-      !preview.can_write || f.core_id || saving || busy || needsReload;
+      !preview.can_write || f.core_id || saving || busy || needsReload ||
+      Boolean(selected?.field_access && !selected.field_access.writable.includes(f.id));
     const set = (value: string) =>
       setInputs((old) => ({ ...old, [f.id]: value }));
     const id = `input-${key}`;

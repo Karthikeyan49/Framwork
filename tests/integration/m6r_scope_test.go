@@ -138,8 +138,8 @@ func TestM6RSQLDataScopeOwnershipTeamsHierarchySharesAndConditions(t *testing.T)
 		t.Fatal("read share became write share", w.Code)
 	}
 	restricted = m5Handler(t, f, scopedPolicy{"field_none"}, audit.Postgres{}, true)
-	if p := m5Page(t, m5Call(restricted, base+"/query", alice, m5Query())); len(p.Records) != 0 {
-		t.Fatal("field scope bypass")
+	if p := m5Page(t, m5Call(restricted, base+"/query", alice, m5Query())); len(p.Records) != 2 || p.Records[0].FieldAccess == nil || len(p.Records[0].FieldAccess.Masked) != 1 {
+		t.Fatal("field scope must mask without filtering entity-visible rows")
 	}
 	if w := m5Call(restricted, base+"/commands", alice, data.Command{Operation: "create", Values: m5Values("Forbidden")}); w.Code != 403 {
 		t.Fatal("create field scope bypass", w.Code)

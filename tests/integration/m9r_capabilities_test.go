@@ -167,7 +167,11 @@ func TestM9RCapabilitiesPublicAPISQLScopesAndRevocation(t *testing.T) {
 	definition = r5Definition("finance_manager", app, policy.DataScope{Kind: "ALL"})
 	definition.Grants = append(definition.Grants, policy.Grant{Effect: "DENY", Actions: []string{"data.field.read"}, Resource: policy.Selector{AppID: app, EntityID: "entity.contact", FieldID: "field.contact.name"}}, policy.Grant{Effect: "DENY", Actions: []string{"data.field.read"}, Resource: policy.Selector{AppID: app, EntityID: "entity.contact", FieldID: "field.contact.balance"}})
 	version = r5Publish(t, h, roleRoot+"/roles", alice, version.Version, definition, true, uuid(t))
-	for _, q := range []data.Query{query, {Projection: []string{"field.contact.id"}, Limit: 100, Filter: &data.Filter{Op: "contains", Field: "field.contact.name", Value: json.RawMessage(`"Hidden"`)}}, {Projection: []string{"field.contact.id"}, Limit: 100, Sort: &data.Sort{Field: "field.contact.name"}}, {Projection: []string{"field.contact.id", "field.contact.balance"}, Limit: 100, Aggregate: &data.Aggregate{Op: "sum", Field: "field.contact.balance"}}} {
+	masked := m5Page(t, m5Call(h, base+"/query", bob, query))
+	if len(masked.Records) != 4 || masked.Records[0].FieldAccess == nil || len(masked.Records[0].FieldAccess.Masked) != 2 {
+		t.Fatal("field deny masking")
+	}
+	for _, q := range []data.Query{{Projection: []string{"field.contact.id"}, Limit: 100, Filter: &data.Filter{Op: "contains", Field: "field.contact.name", Value: json.RawMessage(`"Hidden"`)}}, {Projection: []string{"field.contact.id"}, Limit: 100, Sort: &data.Sort{Field: "field.contact.name"}}, {Projection: []string{"field.contact.id", "field.contact.balance"}, Limit: 100, Aggregate: &data.Aggregate{Op: "sum", Field: "field.contact.balance"}}} {
 		if w := m5Call(h, base+"/query", alice, q); w.Code != 200 {
 			t.Fatal("deny fixture invalid", w.Code, w.Body.String())
 		}

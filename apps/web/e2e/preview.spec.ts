@@ -328,3 +328,45 @@ test("long metadata headings and record badges stay inside a mobile viewport", a
     ),
   ).toBe(true);
 });
+
+test("limited editor sees masked records and patches a public field without replacing secrets", async ({ page, request: rawRequest }) => {
+  const request = redactedRequests(rawRequest);
+  const tenant = randomUUID();
+  const key = randomUUID().replaceAll("-", "");
+  const app = `app.mask_${key}`;
+  const owner = provision(tenant, `mask-owner-${key}`, "owner");
+  const editor = provision(tenant, `mask-editor-${key}`, "viewer");
+  const headers = { Authorization: `Bearer ${owner}` };
+  const apiRoot = `http://127.0.0.1:8080/v1/tenants/${tenant}`;
+  const metadata = JSON.parse(fs.readFileSync(path.join(root, "contracts/examples/contacts-draft-v1.json"), "utf8"));
+  metadata.app_id = app;
+  expect((await request.post(`${apiRoot}/metadata/${app}/versions`, { headers, data: { expected_revision: 0, document: metadata } })).status()).toBe(201);
+  const base = `${apiRoot}/preview/${app}/versions/1/entities/entity.contact`;
+  const created = await request.post(`${base}/commands`, { headers, data: { operation: "create", values: { "field.contact.name": "PRIVATE browser secret", "field.contact.balance": { amount: "12.30", currency: "USD" }, "field.contact.status": "active" } } });
+  expect(created.status()).toBe(200);
+  const record = await created.json();
+  const members = await (await request.get(`${apiRoot}/members`, { headers })).json();
+  const user = members.members.find((m: { role: string }) => m.role === "viewer").user_id;
+  const resource = { app_id: app, entity_id: "entity.contact", field_id: "*" };
+  const definition = { schema_version: "tenant-capabilities-v1", name: "limited_editor", grants: [
+    { effect: "ALLOW", actions: ["tenant.access"], resource: { app_id: "*", entity_id: "*", field_id: "*" } },
+    { effect: "ALLOW", actions: ["preview.read", "preview.write", "commands.reconcile"], resource: { ...resource, entity_id: "*" } },
+    { effect: "ALLOW", actions: ["data.row.read", "data.row.write"], resource },
+    { effect: "ALLOW", actions: ["data.entity.read", "data.entity.write", "data.field.read", "data.field.write"], resource, scope: { kind: "ALL" } },
+    ...["field.contact.name", "field.contact.balance"].map((field_id) => ({ effect: "DENY", actions: ["data.field.read", "data.field.write"], resource: { ...resource, field_id } })),
+  ] };
+  expect((await request.post(`${apiRoot}/roles`, { headers, data: { operation_id: randomUUID(), expected_version: 0, active: true, definition } })).status()).toBe(200);
+  expect((await request.post(`${apiRoot}/members/${user}/role`, { headers, data: { role: "limited_editor", expected_role: "viewer" } })).status()).toBe(200);
+  await connect(page, editor, tenant, app);
+  await expect(page.getByText("PRIVATE browser secret", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open record" }).click();
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Name: Restricted", { exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Status", exact: true }).selectOption("inactive");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Record saved · version 2.")).toBeVisible();
+  const stored = await (await request.post(`${base}/query`, { headers, data: { record_id: record.id, projection: ["field.contact.name", "field.contact.balance", "field.contact.status"], limit: 1 } })).json();
+  expect(stored.records[0].values["field.contact.name"]).toBe("PRIVATE browser secret");
+  expect(stored.records[0].values["field.contact.balance"]).toEqual({ amount: "12.3", currency: "USD" });
+  expect(stored.records[0].values["field.contact.status"]).toBe("inactive");
+});

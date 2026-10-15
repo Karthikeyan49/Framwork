@@ -23,3 +23,11 @@ active binding writes; old bindings read the retained source and current ACLs.
 Event sequencing retains the origin anchor while evidence retains execution IR.
 Different storage schemas and new workflow/data-pin combinations are rejected;
 full shadow schema evolution and R4 lock/retry/idempotency work remain pending.
+
+R5d (ADR037) separates the interactive `QueryVisible` port from strict execution
+inputs. SQL masks projected fields without filtering entity-visible rows;
+field predicates require coverage of the entity scope. `patch` merges changed
+values under CAS and preserves untouched inaccessible fields and reference
+links. CONDITION write scopes and unsafe hidden-size reservations fail closed.
+Existing `update` remains replacement. No worker port uses visible queries or
+patch; workflow/rule inputs remain strict.

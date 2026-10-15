@@ -161,6 +161,18 @@ func project(r Record, ids []string) Record {
 		}
 	}
 	r.Values = out
+	if r.FieldAccess != nil {
+		a := &FieldAccess{Masked: []string{}, Writable: []string{}}
+		for _, id := range ids {
+			if slices.Contains(r.FieldAccess.Masked, id) {
+				a.Masked = append(a.Masked, id)
+			}
+			if slices.Contains(r.FieldAccess.Writable, id) {
+				a.Writable = append(a.Writable, id)
+			}
+		}
+		r.FieldAccess = a
+	}
 	return r
 }
 func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard, resolve ...ScopeResolver) (Page, error) {
@@ -183,13 +195,15 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	seen := map[string]bool{}
 	projected := map[string]bool{}
 	for _, id := range query.Projection {
-		if _, ok := field(e, id); !ok || seen[id] {
+		if _, ok := field(e, id); !ok || projected[id] {
 			return Page{}, ErrInvalid
 		}
-		seen[id] = true
+		seen[id] = !st.visible
 		projected[id] = true
-		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: id}); err != nil {
-			return Page{}, err
+		if !st.visible {
+			if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: id}); err != nil {
+				return Page{}, err
+			}
 		}
 	}
 	b := builder{args: base(s, a, entity)}
@@ -210,9 +224,25 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		return Page{}, err
 	}
 	where += " AND (" + scopePredicate + ")"
+	predicateGuard := g
+	if st.visible {
+		predicateGuard = func(ctx context.Context, action string, r Resource) error {
+			if er := g.check(ctx, action, r); er != nil {
+				return er
+			}
+			fs, er := resolveScope(ctx, resolve, "data.read", r)
+			if er != nil {
+				return er
+			}
+			if !coversEntity(fs, accessScope) {
+				return ErrDenied
+			}
+			return nil
+		}
+	}
 	if query.Filter != nil {
 		nodes := 0
-		condition, err := filterSQL(ctx, e, *query.Filter, &b, g, 0, &nodes)
+		condition, err := filterSQL(ctx, e, *query.Filter, &b, predicateGuard, 0, &nodes)
 		if err != nil {
 			return Page{}, err
 		}
@@ -238,7 +268,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		if !ok {
 			return Page{}, ErrInvalid
 		}
-		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: sf.ID}); err != nil {
+		if err = predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: sf.ID}); err != nil {
 			return Page{}, err
 		}
 		desc = query.Sort.Desc
@@ -316,15 +346,19 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		if err = g.check(ctx, "data.row.read", Resource{EntityID: target.ID}); err != nil {
 			return Page{}, err
 		}
-		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: relation.FromField}); err != nil {
+		if err = predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: relation.FromField}); err != nil {
 			return Page{}, err
 		}
+		joinSeen := map[string]bool{}
 		for _, id := range query.Join.Projection {
-			if _, ok := field(target, id); !ok {
+			if _, ok := field(target, id); !ok || joinSeen[id] {
 				return Page{}, ErrInvalid
 			}
-			if err = g.check(ctx, "data.field.read", Resource{EntityID: target.ID, FieldID: id}); err != nil {
-				return Page{}, err
+			joinSeen[id] = true
+			if !st.visible {
+				if err = g.check(ctx, "data.field.read", Resource{EntityID: target.ID, FieldID: id}); err != nil {
+					return Page{}, err
+				}
 			}
 		}
 		joinSQL = ` LEFT JOIN ` + st.recordsTable() + ` j ON j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
@@ -338,19 +372,28 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 			return Page{}, er
 		}
 		joinSQL += " AND (" + jp + ")"
-		for _, id := range query.Join.Projection {
-			fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID, FieldID: id})
-			if er != nil {
-				return Page{}, er
+		if !st.visible {
+			for _, id := range query.Join.Projection {
+				fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID, FieldID: id})
+				if er != nil {
+					return Page{}, er
+				}
+				nodes := 0
+				pred, er := scopeSQL(ctx, target, fs, a, "j", &b, 0, &nodes)
+				if er != nil {
+					return Page{}, er
+				}
+				joinSQL += " AND (" + pred + ")"
 			}
-			nodes := 0
-			pred, er := scopeSQL(ctx, target, fs, a, "j", &b, 0, &nodes)
-			if er != nil {
-				return Page{}, er
-			}
-			joinSQL += " AND (" + pred + ")"
 		}
-		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,j.custom_data`
+		joinedData := "j.custom_data"
+		if st.visible {
+			joinedData, er = visibleJSON(ctx, target, query.Join.Projection, a, "j", &b, g, resolve)
+			if er != nil {
+				return Page{}, er
+			}
+		}
+		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + joinedData
 	}
 	if query.Aggregate != nil {
 		if query.After != "" || query.Sort != nil {
@@ -364,6 +407,12 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 			if !ok || (f.Type != "integer" && f.Type != "decimal" && f.Type != "money") {
 				return Page{}, ErrInvalid
 			}
+			if st.visible {
+				if er := predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: f.ID}); er != nil {
+					return Page{}, er
+				}
+				seen[f.ID] = true
+			}
 			if !projected[f.ID] {
 				return Page{}, ErrInvalid
 			}
@@ -373,14 +422,22 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		}
 	}
 	keys := []string{}
-	for key := range seen {
-		keys = append(keys, key)
+	for key, used := range seen {
+		if used {
+			keys = append(keys, key)
+		}
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
 		fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity, FieldID: key})
 		if er != nil {
 			return Page{}, er
+		}
+		if st.visible {
+			if !coversEntity(fs, accessScope) {
+				return Page{}, ErrDenied
+			}
+			continue
 		}
 		n := 0
 		fp, er := scopeSQL(ctx, e, fs, a, "r", &b, 0, &n)
@@ -389,11 +446,22 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		}
 		where += " AND (" + fp + ")"
 	}
+	readIDs := append([]string(nil), query.Projection...)
+	if query.Sort != nil && !slices.Contains(readIDs, sf.ID) {
+		readIDs = append(readIDs, sf.ID)
+	}
+	selectedData := "r.custom_data"
+	if st.visible {
+		selectedData, err = visibleJSON(ctx, e, readIDs, a, "r", &b, g, resolve)
+		if err != nil {
+			return Page{}, err
+		}
+	}
 	order := "ASC"
 	if desc {
 		order = "DESC"
 	}
-	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + indexJoin + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + indexJoin + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
 	if query.Sort != nil && !sf.CoreID && !st.workerSource {
 		// Bound the sort tuple to ID/key before fetching wide JSONB records. Both
 		// stages share one statement/snapshot and forced RLS; entity/field/row
@@ -401,7 +469,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		// fetch is constrained to the same namespace and those selected IDs.
 		limit := fmt.Sprintf("$%d", len(b.args))
 		statement = `WITH selected_page AS MATERIALIZED (SELECT r.id,` + sortExpr + ` AS sort_value FROM ` + st.recordsTable() + ` r` + indexJoin + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + limit + `)
- SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN ` + st.recordsTable() + ` r ON r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
+ SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN ` + st.recordsTable() + ` r ON r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
 	}
 	rows, err := q.QueryContext(ctx, statement, b.args...)
 	if err != nil {
@@ -429,14 +497,24 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				}
 			}
 		}
-		if err = readValues(readEntity, &r, raw); err != nil {
+		if st.visible {
+			err = readVisibleValues(e, readIDs, &r, raw)
+		} else {
+			err = readValues(readEntity, &r, raw)
+		}
+		if err != nil {
 			return Page{}, err
 		}
 		if query.Join != nil {
 			r.Related = map[string]*Record{query.Join.Relationship: nil}
 			if jid.Valid {
 				joined := Record{ID: jid.String, Version: version.Int64, CreatedBy: owner.String, CreatedAt: created.Time, UpdatedAt: updated.Time}
-				if err = readValues(target, &joined, joinedRaw); err != nil {
+				if st.visible {
+					err = readVisibleValues(target, query.Join.Projection, &joined, joinedRaw)
+				} else {
+					err = readValues(target, &joined, joinedRaw)
+				}
+				if err != nil {
 					return Page{}, err
 				}
 				joined = project(joined, query.Join.Projection)

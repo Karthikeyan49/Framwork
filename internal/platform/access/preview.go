@@ -226,7 +226,11 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 	if strings.HasSuffix(r.URL.Path, "/query") {
 		var query data.Query
 		if err = readDataCommand(r, &query); err == nil {
-			result, err = (data.Store{}).Query(ctx, q, scope, access, entity, query, guard, resolve)
+			before := *evidence
+			result, err = (data.Store{}).QueryVisible(ctx, q, scope, access, entity, query, guard, resolve)
+			if err == nil {
+				*evidence = before
+			}
 		}
 	} else {
 		var command data.Command
@@ -235,7 +239,11 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 				evidence.State.CommandKey = command.Key
 			}
 			var record data.Record
+			before := *evidence
 			record, err = (data.Store{}).Command(ctx, q, scope, access, entity, command, guard, resolve)
+			if err == nil {
+				*evidence = before
+			}
 			result = record
 			evidence.State.RecordID = record.ID
 			evidence.State.RecordVersion = record.Version
@@ -245,7 +253,7 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 				if e != nil {
 					return reply{}, e
 				}
-				eventType := map[string]string{"create": "record.created", "update": "record.updated", "delete": "record.deleted"}[command.Operation]
+				eventType := map[string]string{"create": "record.created", "update": "record.updated", "patch": "record.updated", "delete": "record.deleted"}[command.Operation]
 				entry := *evidence
 				entry.Action = eventType
 				entry.Resource = "record"

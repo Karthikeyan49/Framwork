@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-type Store struct{ legacy, workerSource bool }
+type Store struct{ legacy, workerSource, visible bool }
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	var valid bool
@@ -132,6 +132,9 @@ func (Store) Command(ctx context.Context, q postgres.Executor, s Scope, a tenant
 	return receiptedCommand(ctx, q, s, a, entity, c, g, resolve...)
 }
 func command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, c Command, g Guard, resolve ...ScopeResolver) (Record, error) {
+	if c.Operation == "patch" {
+		return patch(ctx, q, s, a, entity, c, g, resolve...)
+	}
 	e, err := plan(s, a, entity)
 	if err != nil {
 		return Record{}, err

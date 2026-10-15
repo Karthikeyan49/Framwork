@@ -40,6 +40,7 @@ export interface Preview {
   };
 }
 export interface Row {
+  field_access?: { masked: string[]; writable: string[] };
   id: string;
   version: number;
   values: Record<string, unknown>;
@@ -248,6 +249,15 @@ export function decodeRow(v: unknown): Row {
     !object(v.values)
   )
     throw new Error("Invalid record");
+  if (v.field_access !== undefined) {
+    const access = v.field_access;
+    if (!object(access) || !Array.isArray(access.masked) || !Array.isArray(access.writable) ||
+      access.masked.length > 32 || access.writable.length > 32 ||
+      [...access.masked, ...access.writable].some((x) => typeof x !== "string") ||
+      new Set(access.masked).size !== access.masked.length || new Set(access.writable).size !== access.writable.length ||
+      access.masked.some((x) => Object.hasOwn(v.values as object, x) || (access.writable as unknown[]).includes(x)))
+      throw new Error("Invalid field access");
+  }
   return v as unknown as Row;
 }
 export function decodeResult(v: unknown): Result {

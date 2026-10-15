@@ -87,16 +87,23 @@ func (g Guard) check(ctx context.Context, action string, r Resource) error {
 }
 
 type Record struct {
-	Replayed  bool               `json:"replayed,omitempty"`
-	ID        string             `json:"id"`
-	Version   int64              `json:"version"`
-	CreatedBy string             `json:"created_by"`
-	OwnerID   string             `json:"owner_user_id,omitempty"`
-	TeamID    string             `json:"owner_team_id,omitempty"`
-	CreatedAt time.Time          `json:"created_at"`
-	UpdatedAt time.Time          `json:"updated_at"`
-	Values    map[string]any     `json:"values"`
-	Related   map[string]*Record `json:"related,omitempty"`
+	Replayed    bool               `json:"replayed,omitempty"`
+	ID          string             `json:"id"`
+	Version     int64              `json:"version"`
+	CreatedBy   string             `json:"created_by"`
+	OwnerID     string             `json:"owner_user_id,omitempty"`
+	TeamID      string             `json:"owner_team_id,omitempty"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	Values      map[string]any     `json:"values"`
+	Related     map[string]*Record `json:"related,omitempty"`
+	FieldAccess *FieldAccess       `json:"field_access,omitempty"`
+}
+
+// FieldAccess describes policy visibility independently of value presence.
+type FieldAccess struct {
+	Masked   []string `json:"masked"`
+	Writable []string `json:"writable"`
 }
 type Filter struct {
 	Op    string          `json:"op"`

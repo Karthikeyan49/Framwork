@@ -80,7 +80,7 @@ describe("versioned approved component contract", () => {
     }
     expect(() => decodePreview(fixture(), "app.contacts", 2)).toThrow();
   });
-  it("preserves exact money and untouched values while excluding immutable IDs", () => {
+  it("submits exact changed money and omits untouched values and immutable IDs", () => {
     const entity = preview().ir.entities[0];
     const values = formValues(
       entity,
@@ -99,7 +99,6 @@ describe("versioned approved component contract", () => {
     );
     expect(values).toEqual({
       "field.contact.name": "Changed",
-      "field.contact.status": "active",
       "field.contact.balance": {
         amount: "0.123456789012345678",
         currency: "USD",
@@ -239,6 +238,7 @@ it("requires explicit reload after a stale update and carries the selected row v
   render(<ApplicationWorkspace token="test-token" tenant={tenant} />);
   await load();
   await userEvent.click(screen.getByRole("button", { name: "Open record" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Name" }), " changed");
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "This record changed",
@@ -248,7 +248,7 @@ it("requires explicit reload after a stale update and carries the selected row v
   );
   expect(calls).toHaveLength(1);
   expect(JSON.parse(String(calls[0][1]?.body))).toMatchObject({
-    operation: "update",
+    operation: "patch",
     id: tenant,
     expected_version: 7,
   });
@@ -479,4 +479,30 @@ it("accepts opt-in M7 IR while retaining renderer version checks", () => {
   expect(() => decodePreview(raw, "app.contacts", 1)).toThrow(
     "Unsupported preview version",
   );
+});
+
+it("renders restricted fields and submits only changed writable fields", async () => {
+  const row = {
+    id: tenant, version: 3,
+    values: { "field.contact.id": tenant, "field.contact.status": "active", "field.contact.joined": "2026-10-15" },
+    field_access: { masked: ["field.contact.name", "field.contact.balance"], writable: ["field.contact.status"] },
+  };
+  const transport = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+    String(url).endsWith("/commands") ? response({ ...row, version: 4 }) :
+    String(url).endsWith("/query") ? response({ records: [row], next: "" }) : response(fixture()),
+  );
+  render(<ApplicationWorkspace token="test-token" tenant={tenant} />);
+  await load();
+  await userEvent.click(screen.getByRole("button", { name: "Open record" }));
+  expect(screen.queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+  expect(screen.getAllByText(/Restricted/).length).toBeGreaterThan(1);
+  expect(screen.getByLabelText("Joined")).toBeDisabled();
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: "Status" }), "inactive");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await screen.findByText("Record saved · version 4.");
+  const command = transport.mock.calls.find(([url]) => String(url).endsWith("/commands"));
+  expect(JSON.parse(String(command?.[1]?.body))).toMatchObject({
+    operation: "patch", id: tenant, expected_version: 3, values: { "field.contact.status": "inactive" },
+  });
+  expect(Object.keys(JSON.parse(String(command?.[1]?.body)).values)).toEqual(["field.contact.status"]);
 });

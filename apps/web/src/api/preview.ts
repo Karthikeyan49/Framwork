@@ -108,7 +108,7 @@ export function previewClient(
     },
     command: async (
       entity: string,
-      operation: "create" | "update" | "delete",
+      operation: "create" | "update" | "patch" | "delete",
       values: Record<string, unknown>,
       row?: Row,
       signal?: AbortSignal,
