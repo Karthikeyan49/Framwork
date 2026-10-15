@@ -6,7 +6,7 @@ import { App } from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 it('routes the application shell without ERP pages', async () => {
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ status: 'ready', dependencies: { postgres: 'ok', redis: 'ok' } })))
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => new Response(JSON.stringify(String(url).endsWith('/auth/provider') ? { enabled: false, manual_token: true } : { status: 'ready', dependencies: { postgres: 'ok', redis: 'ok' } })))
   render(<MemoryRouter><App /></MemoryRouter>)
   expect(screen.getByRole('heading', { name: /One framework/ })).toBeInTheDocument()
   await userEvent.click(screen.getByRole('link', { name: 'Service status' }))
@@ -14,7 +14,8 @@ it('routes the application shell without ERP pages', async () => {
   expect(screen.getAllByText('Connected')).toHaveLength(2)
 })
 it('shows loading, outage, and refresh recovery', async () => {
-  vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('private network detail')).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'not_ready', dependencies: { redis: 'unavailable' } }), { status: 503 }))
+  let statusReads = 0
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => { if (String(url).endsWith('/auth/provider')) return new Response(JSON.stringify({ enabled: false, manual_token: true })); if (statusReads++ === 0) throw new Error('private network detail'); return new Response(JSON.stringify({ status: 'not_ready', dependencies: { redis: 'unavailable' } }), { status: 503 }) })
   render(<MemoryRouter initialEntries={['/status']}><App /></MemoryRouter>)
   expect(screen.getByRole('status')).toHaveTextContent('Checking services')
   expect(await screen.findByRole('alert')).toHaveTextContent('Could not reach the API')

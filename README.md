@@ -38,7 +38,9 @@ now pass independent review and final full checks/build/browser regressions.
 also pass bounded independent review, full checks/tests/build, six browser cases
 and the configured 100k-row query gate. The [record/team administration UI](docs/migration/M9R_R5C_UI_IMPLEMENTATION_REPORT.md)
 now passes independent review, full checks/tests/build and nine browser cases.
-R5 identity/provider UX remains open; role-definition editing remains API-only.
+[Provider sign-in and clock tolerance](docs/migration/M9R_R5F_IMPLEMENTATION_REPORT.md)
+are under verification; external provider deployment and role-definition editing
+remain separate work (role administration is API-only).
 An intermittent workflow connection failure and a worker-policy statement-timeout
 capacity failure remain tracked under R7; failed runs are retained in the reports.
 The foundation acceptance gate remains open.
@@ -259,11 +261,13 @@ For a real provider, bind AUTH_ISSUER, AUTH_AUDIENCE and AUTH_JWKS_FILE explicit
 Provision users by their stable provider subject. The chosen token contract is
 RS256 with typ=at+jwt, issued-at/expiration and a maximum one-hour lifetime;
 provider integration must issue this API-specific contract. Pinned key rotation
-requires an API restart. This milestone does not implement provider redirect login,
-refresh tokens, MFA, password handling or self-service account recovery.
+requires an API restart. The optional R5f browser adapter below supports provider
+redirect login. Refresh tokens, provider logout, MFA enforcement, password
+handling and self-service account recovery are outside this implementation.
 
 Operator changes require separate migration credentials and all explicit flags;
-there is no role-grant HTTP endpoint or automatic owner bootstrap. Change role or
+there is no automatic owner bootstrap. Governed role APIs are described in R5a.
+Change bootstrap role or
 revoke membership using the same command with the explicit desired state. Transfer
 ownership before revoking/demoting the last owner or disabling an owning user.
 Both state and typed audit evidence commit together. The operator reference is
@@ -276,7 +280,50 @@ operator DML; privileged DDL administration and immutable external archival requ
 separate operational controls. Lists are bounded to 100 without pagination in M1.
 
 See [M1 completion report](docs/M1_COMPLETION_REPORT.md) and
-[independent review](docs/M1_INDEPENDENT_REVIEW.md). M3 is complete; stop before M4 until authorized.
+[independent review](docs/M1_INDEPENDENT_REVIEW.md) for historical evidence.
+
+## Optional OIDC browser sign-in (R5f)
+
+Register a public OAuth2/OIDC client with authorization-code flow and S256 PKCE.
+Set `OIDC_CLIENT_ID`, `OIDC_AUTHORIZATION_URL`, `OIDC_TOKEN_URL` and the exact
+`OIDC_REDIRECT_URI=https://<web-origin>/auth/callback`. `OIDC_SCOPES` defaults to
+`openid`; offline access is rejected. Keep issuer, API audience and pinned public
+JWKS configured as above. The provider must issue both an ID token for this client
+and the framework's RS256 `typ=at+jwt` API token, with matching issuer/subject.
+An arbitrary provider's default access-token profile may need configuration.
+No discovery or remote token-controlled key retrieval occurs.
+
+Serve the web app and `/api` gateway on the same HTTPS origin, include that exact
+origin in `CORS_ORIGINS`, and route `/auth/callback` to the SPA. Redact callback
+query strings at every proxy/access-log layer. The app removes them from browser
+history before React runs and sends no-referrer; the incoming request still
+reaches your web server. Use deployment secret management for the API-only
+`SIGNIN_REDIS_URL` (`framework_signin`, verified TLS, DB 0). Provision that Redis
+user with only `~framework:signin:v1:* -@all +ping +get +set +ttl +eval +getdel`.
+Do not reuse the cache, event or worker credential. Development `make env` creates
+random credentials; `make infra-up` adds this user to the local running Redis
+without changing its other users. Leave all `OIDC_*` fields blank to disable.
+
+The console's **Sign in** button becomes primary when configured; token paste is
+labelled development access and hidden by the production API descriptor. Identity
+and memberships must already be provisioned. Provider role/tenant claims never
+grant authority. The five-minute browser-bound flow is single-use; after a lost,
+expired or failed exchange, explicitly start a new sign-in. Valid bearer requests
+do not depend on a live provider. New sign-in fails closed if Redis is unavailable.
+`AUTH_CLOCK_SKEW` defaults to `0s`, accepts whole seconds through `120s`, and never
+extends the one-hour signed lifetime limit. Keep machines synchronized.
+
+Tokens and recovery journals stay in memory. SPA navigation retains the connection;
+disconnect, reload and an observed authenticated 401 clear it. Full-page provider
+navigation clears this tab's pending-operation journal: retain pending operation
+IDs before leaving and reconcile unknown outcomes before another write. The UI
+warns when the journal is nonempty. There is no refresh/session persistence.
+
+`make test-signin-e2e` runs a deliberately selectable local provider fixture on
+loopback port 8090 with the API and browser. It verifies redirects, PKCE, live
+membership, clock tolerance, nonce rejection and revocation. It is test-only and
+must never be deployed as an identity provider. External SSO/MFA deployment,
+SAML/SCIM and provider-side logout remain unverified/separate work. See [ADR039](docs/adr/039-m9r-oidc-browser-sign-in.md).
 
 ## M2 tenant data boundary
 

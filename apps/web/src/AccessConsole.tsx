@@ -1,17 +1,21 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { APIError, createAPIClient, type Session, type TenantAccess } from './api/client'
+import { APIError, createAPIClient, type TenantAccess } from './api/client'
 import { ApplicationWorkspace } from './preview/Workspace'
 import { config } from './config'
 import { RecoveryContext, RecoveryProvider, useRecovery, type AdministrationPort } from './administration/Recovery'
+import { AuthContext, AuthProvider, useAuthentication } from './auth/Session'
+import { ProviderSignIn } from './auth/SignIn'
 import { TeamsPanel } from './administration/TeamsPanel'
 
 export function AccessConsole() {
   const shared = useContext(RecoveryContext)
-  return shared ? <ConnectedAccessConsole /> : <RecoveryProvider><ConnectedAccessConsole /></RecoveryProvider>
+  const authentication = useContext(AuthContext)
+  const console = shared ? <ConnectedAccessConsole /> : <RecoveryProvider><ConnectedAccessConsole /></RecoveryProvider>
+  return authentication ? console : <AuthProvider loadOptions={false}>{console}</AuthProvider>
 }
 function ConnectedAccessConsole() {
   const [input, setInput] = useState('')
-  const [connection, setConnection] = useState<{ token: string; session: Session }>()
+  const { connection, connect: authorize, disconnect: clearConnection, options } = useAuthentication()
   const [selected, setSelected] = useState('')
   const [access, setAccess] = useState<TenantAccess>()
   const [busy, setBusy] = useState(false)
@@ -41,26 +45,26 @@ function ConnectedAccessConsole() {
       if (!controller.signal.aborted) setAccess(value)
     }).catch((e: unknown) => {
       if (controller.signal.aborted) return
-      if (e instanceof APIError && e.status === 401) { setConnection(undefined); setSelected(''); setError('Your access token has expired or was revoked. Connect again.') }
+      if (e instanceof APIError && e.status === 401) { clearConnection(connection); setSelected(''); setError('Your access token has expired or was revoked. Connect again.') }
       else setError('Tenant access was denied or the service is unavailable.')
     })
     return () => controller.abort()
-  }, [connection, selected])
+  }, [connection, selected, clearConnection])
   async function connect() {
     login.current?.abort()
     const controller = new AbortController(); login.current = controller
     const token = input.trim(); setInput(''); setBusy(true); setError('')
     try {
       const session = await createAPIClient(config.apiBaseURL).session(token, controller.signal)
-      if (!controller.signal.aborted) { setConnection({ token, session }); setSelected(''); setAccess(undefined) }
+      if (!controller.signal.aborted) { authorize({ token, session }); setSelected(''); setAccess(undefined) }
     } catch { if (!controller.signal.aborted) setError('Could not authenticate. Check your token and service availability.') }
     finally { if (!controller.signal.aborted) setBusy(false) }
   }
   function disconnect() {
-    login.current?.abort(); setConnection(undefined); setAccess(undefined); setSelected(''); setInput(''); setError(''); setBusy(false)
+    login.current?.abort(); clearConnection(); setAccess(undefined); setSelected(''); setInput(''); setError(''); setBusy(false)
   }
-  return <><p className="eyebrow">Identity and tenant access</p><h1>Your workspace access</h1><p className="intro">Connect with an API access token, then choose an authorized workspace. Tokens stay in memory and are cleared when you disconnect or reload.</p><section className="card">
-    {!connection ? <form onSubmit={(e) => { e.preventDefault(); void connect() }}><label htmlFor="access-token">API access token</label><input id="access-token" type="password" autoComplete="off" value={input} onChange={(e) => setInput(e.target.value)} required disabled={busy}/><button disabled={busy || !input.trim()}>{busy ? 'Connecting…' : 'Connect'}</button></form> : <><h2>{connection.session.user.name}</h2><label htmlFor="tenant-select">Workspace</label><select id="tenant-select" value={selected} disabled={commandBusy} onChange={(e) => { setSelected(e.target.value); setAccess(undefined); setError('') }}><option value="">Choose a workspace</option>{connection.session.tenants.map((t) => <option value={t.id} key={t.id}>{t.name}</option>)}</select>{connection.session.tenants.length === 0 && <p>No active workspace memberships.</p>}<div aria-live="polite">{selected && !access && !error && <p role="status">Checking workspace access…</p>}{access && <><p className="access-summary">Access verified · {access.roles.join(', ')}</p></>}</div><button onClick={disconnect}>Disconnect</button></>}
+  return <><p className="eyebrow">Identity and tenant access</p><h1>Your workspace access</h1><p className="intro">Sign in, then choose an authorized workspace. Tokens stay in memory and are cleared when you disconnect or reload.</p><section className="card">
+    {!connection ? <><ProviderSignIn />{options?.manual_token && <><h2>Development API access</h2><form onSubmit={(e) => { e.preventDefault(); void connect() }}><label htmlFor="access-token">API access token</label><input id="access-token" type="password" autoComplete="off" value={input} onChange={(e) => setInput(e.target.value)} required disabled={busy}/><button disabled={busy || !input.trim()}>{busy ? 'Connecting…' : 'Connect'}</button></form></>}</> : <><h2>{connection.session.user.name}</h2><label htmlFor="tenant-select">Workspace</label><select id="tenant-select" value={selected} disabled={commandBusy} onChange={(e) => { setSelected(e.target.value); setAccess(undefined); setError('') }}><option value="">Choose a workspace</option>{connection.session.tenants.map((t) => <option value={t.id} key={t.id}>{t.name}</option>)}</select>{connection.session.tenants.length === 0 && <p>No active workspace memberships.</p>}<div aria-live="polite">{selected && !access && !error && <p role="status">Checking workspace access…</p>}{access && <><p className="access-summary">Access verified · {access.roles.join(', ')}</p></>}</div><button onClick={disconnect}>Disconnect</button></>}
     {error && <p role="alert">{error}</p>}
   </section>{connection && Object.keys(administration.pending).length > 0 && <section className="card administration" aria-label="Pending administration changes"><h2>Administration changes requiring review</h2><p>These requests may have committed. Return to the original workspace and resource, reload current state and review it before a new change. Keep the IDs before closing this tab.</p><ul>{Object.values(administration.pending).map((entry) => <li key={entry.scope}>{entry.kind} · Workspace <code>{entry.tenant}</code> · Resource <code>{entry.resource}</code>{entry.target && <> · Target <code>{entry.target}</code></>}</li>)}</ul></section>}{connection && Object.keys(pendingCommands).length > 0 && <section className="card" aria-label="Stored command recovery keys">
     <h2>Command recovery keys</h2><p>Open the original application and revision to check its receipt before another write. Keep the key before closing this tab.</p>

@@ -33,3 +33,11 @@ test('only API children receive sign-in configuration and credentials',()=>{
   for(const key of ['SIGNIN_REDIS_URL','OIDC_CLIENT_ID','OIDC_AUTHORIZATION_URL','OIDC_TOKEN_URL','OIDC_REDIRECT_URI','OIDC_SCOPES','AUTH_CLOCK_SKEW'])assert.equal(env[key],kind==='api'?configured[key]:undefined)
  }
 })
+
+test('local sign-in activation refuses production and invalid bindings without invoking docker',()=>{
+ const script=fileURLToPath(new URL('./signin-roles.mjs',import.meta.url))
+ for(const APP_ENV of ['production','development']){
+  const env={PATH:'/nonexistent',APP_ENV};const result=spawnSync(process.execPath,[script],{env,encoding:'utf8'})
+  assert.notEqual(result.status,0);assert.match(result.stderr,/Local sign-in ACL activation failed/);assert.equal(result.stdout,'')
+ }
+})

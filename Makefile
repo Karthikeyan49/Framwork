@@ -13,6 +13,7 @@ env:
 	node scripts/with-env.mjs node scripts/dev-identity.mjs
 infra-up: env
 	$(COMPOSE) up -d --wait --wait-timeout 90
+	node scripts/with-env.mjs node scripts/signin-roles.mjs
 infra-down:
 	$(COMPOSE) down
 migrate: roles-init
@@ -91,3 +92,7 @@ test-events-fuzz:
 .PHONY: test-workflows-fuzz
 test-workflows-fuzz:
 	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzWorkflowRestore$$' -fuzztime=10s -parallel=2 ./internal/runtime/workflow
+
+.PHONY: test-signin-e2e
+test-signin-e2e:
+	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.local/cache/ms-playwright $(NPM) run test:signin-e2e

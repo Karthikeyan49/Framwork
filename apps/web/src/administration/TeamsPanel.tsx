@@ -6,10 +6,12 @@ import type { Team, TeamDetail } from "./contracts";
 import type { AdministrationPort } from "./Recovery";
 import { useChange } from "./useChange";
 import { MemberSuggestions } from "./MemberSuggestions";
+import { useConnectionTransport } from "../auth/Session";
 
 export const teamScope = (tenant: string, id: string) => `team:${tenant}:${id}`;
 export function TeamsPanel({ token, tenant, recovery }: { token: string; tenant: string; recovery: AdministrationPort }) {
-  const client = useMemo(() => administrationClient(config.apiBaseURL, token, tenant), [token, tenant]);
+  const transport = useConnectionTransport(token);
+  const client = useMemo(() => administrationClient(config.apiBaseURL, token, tenant, transport), [token, tenant, transport]);
   const [list, setList] = useState<{ client: typeof client; teams: Team[] }>();
   const [detail, setDetail] = useState<{ client: typeof client; team: TeamDetail }>();
   const [selected, setSelected] = useState("");

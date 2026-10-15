@@ -28,7 +28,7 @@ function descriptor() {
   };
 }
 async function connect() {
-  await userEvent.type(screen.getByLabelText("API access token"), "synthetic-token");
+  await userEvent.type(await screen.findByLabelText("API access token"), "synthetic-token");
   await userEvent.click(screen.getByRole("button", { name: "Connect" }));
   await screen.findByRole("heading", { name: "Owner" });
 }
@@ -47,6 +47,7 @@ it("retains a dispatched key through disconnect and account/workspace switches u
   let committed = false;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     const path = String(url);
+    if (path.endsWith("/auth/provider")) return new Response(JSON.stringify({ enabled: false, manual_token: true }));
     if (path.endsWith("/session")) return response({
       user: { id: actor, name: "Owner" },
       tenants: [{ id: tenant, name: "Workspace A" }, { id: otherTenant, name: "Workspace B" }],
@@ -110,6 +111,7 @@ it("retains owned business command keys across application-route navigation", as
   let key = ""; let writes = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     const path = String(url);
+    if (path.endsWith("/auth/provider")) return new Response(JSON.stringify({ enabled: false, manual_token: true }));
     if (path.endsWith("/session")) return response({ user: { id: owner, name: "Owner" }, tenants: [{ id: tenant, name: "Workspace A" }] });
     if (path.endsWith("/access")) return response({ tenant_id: tenant, roles: ["owner"], decision: { allow: true, decision_id: "d", policy_version: "p" } });
     if (path.endsWith("/query")) return response({ records: [], next: "" });
@@ -126,7 +128,7 @@ it("retains owned business command keys across application-route navigation", as
   await waitFor(() => expect(writes).toBe(1));
   await userEvent.click(screen.getByRole("link", { name: "Overview" }));
   await userEvent.click(screen.getByRole("link", { name: "Workspace access" }));
-  await connect(); expect(screen.getByText(key)).toBeInTheDocument();
+  await screen.findByRole("heading", { name: "Owner" }); expect(screen.getByText(key)).toBeInTheDocument();
   await openWorkspace();
   expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled(); expect(writes).toBe(1);
 });

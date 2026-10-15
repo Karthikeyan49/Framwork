@@ -31,9 +31,25 @@ No implicit user/role provisioning, refresh storage, SAML or SCIM is added.
 - `node --test scripts/runtime-env.test.mjs`: PASS 6/6. Only API subprocesses
   receive provider configuration/sign-in credentials; other process kinds do not.
 
-Follow-up integration adds role isolation and readiness probes. Browser UI,
-real browser provider fixture, independent executable review and final full
-checks/tests/build remain pending. These are not implied by the backend checks.
+Follow-up focused integration including role isolation/readiness: PASS 2.119s.
+Node credential filtering/ACL activation tests: PASS 7/7. Frontend unit tests:
+PASS 94/94, typecheck/lint and `make build`: PASS. Existing `make test-e2e`:
+PASS 9/9 before the final connection-transport additions; repeat required.
+
+`make test-signin-e2e` has now passed 7/7 (8.7s). Prior attempts are retained:
+the first stopped after fixture label lookup timeouts, the second failed 7/7
+because the test provider's form-action CSP blocked its cross-origin callback
+redirect, and the third passed 6/7 but used unsupported `inactive` instead of
+`disabled` in the operator fixture. Fixed the fixture label, allowed only the
+exact loopback callback origin in its CSP, and used the existing CLI enum.
+These were test-fixture corrections, not weakened application validation.
+
+The browser has provider-first sign-in, early callback scrubbing, a completion
+promise shared across StrictMode/remount, connection state above SPA routes,
+and exact-connection 401 clearing in preview/administration transports. Manual
+tokens are a separately labelled development option; disabled production sign-in
+is explicit. Tokens never enter web storage or operation journals. Independent
+executable review and final full checks/tests/build remain pending.
 
 ## Boundaries
 

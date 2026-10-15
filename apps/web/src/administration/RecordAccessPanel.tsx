@@ -7,6 +7,7 @@ import type { RecordAccess } from "./contracts";
 import type { AdministrationPort } from "./Recovery";
 import { useChange } from "./useChange";
 import { MemberSuggestions } from "./MemberSuggestions";
+import { useConnectionTransport } from "../auth/Session";
 
 type Client = ReturnType<typeof previewClient>;
 export const recordScope = (tenant: string, app: string, revision: number, hash: string, entity: string, id: string) => `record:${tenant}:${app}:${revision}:${hash}:${entity}:${id}`;
@@ -21,7 +22,8 @@ export function RecordAccessPanel({ client, token, tenant, entity, record, scope
   client: Client; token: string; tenant: string; entity: Entity; record: string; scope: string; mode: "owner" | "shares";
   recovery: AdministrationPort; onBusy: (busy: boolean) => void; onInvalidated: () => void; onClose: () => void;
 }) {
-  const directory = useMemo(() => administrationClient(config.apiBaseURL, token, tenant), [token, tenant]);
+  const transport = useConnectionTransport(token);
+  const directory = useMemo(() => administrationClient(config.apiBaseURL, token, tenant, transport), [token, tenant, transport]);
   const [loaded, setLoaded] = useState<{ client: Client; view: RecordAccess }>();
   const [owner, setOwner] = useState(""); const [team, setTeam] = useState("");
   const [recipient, setRecipient] = useState(""); const [canWrite, setCanWrite] = useState(false); const [acknowledged, setAcknowledged] = useState(false);

@@ -3,6 +3,7 @@ import { APIError } from "../api/client";
 import { CommandOutcomeUnknown } from "../api/preview";
 import { previewClient } from "../api/preview";
 import { config } from "../config";
+import { useConnectionTransport } from "../auth/Session";
 import { RecordAccessPanel, recordScope } from "../administration/RecordAccessPanel";
 import type { AdministrationPort } from "../administration/Recovery";
 import {
@@ -101,6 +102,7 @@ export function ApplicationWorkspace({
   onPendingCommand?: (scope: string, key: string) => void;
   onCommandBusy?: (key: string, busy: boolean) => void;
 }) {
+  const transport = useConnectionTransport(token);
   const [app, setApp] = useState("app.contacts");
   const [revision, setRevision] = useState("1");
   const [loaded, setLoaded] = useState<{ preview: Preview; client: Client }>();
@@ -153,6 +155,7 @@ export function ApplicationWorkspace({
         tenant,
         app.trim(),
         Number(revision),
+        transport,
       );
       const preview = await client.descriptor(controller.signal);
       if (!controller.signal.aborted) {

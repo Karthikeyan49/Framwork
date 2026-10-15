@@ -34,6 +34,7 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.local/cache/ms-playwright
       - run: make test-e2e
+      - run: make test-signin-e2e
       - name: Collector readiness
         run: curl --fail --retry 10 --retry-connrefused http://127.0.0.1:13133/
       - name: Dependency audit

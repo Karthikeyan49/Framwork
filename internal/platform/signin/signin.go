@@ -44,7 +44,7 @@ func (a API) cookie(value string, age int) *http.Cookie {
 	return &http.Cookie{Name: a.cookieName(), Value: value, Path: "/", MaxAge: age, HttpOnly: true, Secure: a.Login.SecureCookie(), SameSite: http.SameSiteLaxMode}
 }
 func (a API) origin(r *http.Request) bool {
-	return r.Header.Get("Origin") == a.Login.BrowserOrigin() && r.URL.RawQuery == ""
+	return len(r.Header.Values("Origin")) == 1 && r.Header.Get("Origin") == a.Login.BrowserOrigin() && r.URL.RawQuery == ""
 }
 func rejection(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
@@ -58,6 +58,8 @@ func rejection(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 func (a API) start(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	if !a.origin(r) {
 		httpserver.Error(w, r, 403, "origin_denied", "Sign-in origin is not permitted")
 		return
@@ -95,6 +97,8 @@ func readJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	return true
 }
 func (a API) complete(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	if !a.origin(r) {
 		httpserver.Error(w, r, 403, "origin_denied", "Sign-in origin is not permitted")
 		return

@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => {
   envDir: root,
   server: {
     host: '127.0.0.1',
+    headers: { 'Referrer-Policy': 'no-referrer' },
     port: 5173,
     strictPort: true,
     proxy: { '/api': { target, rewrite: (path) => path.replace(/^\/api/, '') } },

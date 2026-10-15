@@ -450,7 +450,8 @@ test("lost administration responses preserve IDs through navigation and are revi
   await page.getByRole("button", { name: "Manage teams", exact: true }).click(); await page.getByLabel("New team name").fill("Recover once"); await page.getByRole("button", { name: "Create team", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("result is uncertain");
   await page.getByRole("link", { name: "Overview", exact: true }).click(); await page.getByRole("link", { name: "Workspace access", exact: true }).click();
-  await enterAccessToken(page, owner); await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Disconnect", exact: true })).toBeVisible();
+  await expect(page.getByLabel("API access token")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Pending administration changes" })).toContainText(creation);
   await page.getByLabel("Workspace", { exact: true }).selectOption(tenant); await page.getByRole("button", { name: "Manage teams", exact: true }).click();
   await expect(page.getByRole("button", { name: "Create team", exact: true })).toBeDisabled(); await page.getByRole("button", { name: `Inspect team ${creation}`, exact: true }).click();

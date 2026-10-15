@@ -9,7 +9,7 @@ const actorA = "33333333-3333-3333-3333-333333333333";
 const actorB = "44444444-4444-4444-4444-444444444444";
 const reply = (v: unknown) => new Response(JSON.stringify(v));
 async function connect() {
-  await userEvent.type(screen.getByLabelText("API access token"), "synthetic-private-token");
+  await userEvent.type(await screen.findByLabelText("API access token"), "synthetic-private-token");
   await userEvent.click(screen.getByRole("button", { name: "Connect" }));
   await screen.findByLabelText("Workspace");
 }
@@ -23,6 +23,7 @@ it("retains only actor-owned administration identities through route, account an
   const storage = vi.spyOn(Storage.prototype, "setItem");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     const path = String(url);
+    if (path.endsWith("/auth/provider")) return new Response(JSON.stringify({ enabled: false, manual_token: true }));
     if (path.endsWith("/session")) return reply({ user: { id: actor, name: "Connected user" }, tenants: [{ id: tenant, name: "A" }, { id: otherTenant, name: "B" }] });
     if (path.endsWith("/access")) return reply({ tenant_id: path.includes(otherTenant) ? otherTenant : tenant, roles: ["owner"], decision: { allow: true, decision_id: "decision", policy_version: "native" } });
     if (options?.method === "POST") {
@@ -43,6 +44,8 @@ it("retains only actor-owned administration identities through route, account an
   expect(pending).toHaveTextContent(creation); expect(pending).not.toHaveTextContent("Private team draft");
   await userEvent.click(screen.getByRole("link", { name: "Overview" }));
   await userEvent.click(screen.getByRole("link", { name: "Workspace access" }));
+  expect(screen.getByRole("region", { name: "Pending administration changes" })).toHaveTextContent(creation);
+  await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
   actor = actorB; await connect();
   expect(screen.queryByRole("region", { name: "Pending administration changes" })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));

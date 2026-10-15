@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: /signin\.spec\.ts$/,
   timeout: 60000,
   workers: 1,
   reporter: "list",
