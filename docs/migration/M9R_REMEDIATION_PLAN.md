@@ -256,6 +256,11 @@ live membership/head/capability/DataScope checks. Independent review at `44a3979
 passed; audit-correlation follow-up `d4364a3` passed independent re-review, with
 regressions at `f1e2e74`. Final full checks/tests/build passed (integration 629.247s)
 and browser 5/5 passed. Full R5/M9R remains PARTIAL.
+[R5d](M9R_R5D_IMPLEMENTATION_REPORT.md) now has independently verified SQL field
+masking, changed-field patches and strict point-input authorization (ADR037),
+including the closed owner-sensitive findings. Final full-suite/build/browser/
+performance verification is still running; retain its explicit custom-policy
+and conditional-write limits.
 Remaining R5 product slices: administration UI for the R5c APIs; R5d field
 masking/partial writes and inference controls. Provider/login UX stays
 a separate R5 identity deliverable. Implement and review these separately before

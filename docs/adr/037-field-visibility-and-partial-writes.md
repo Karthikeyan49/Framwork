@@ -66,13 +66,15 @@ emits `record.updated`; receipt replay returns headers only.
 For patch, reject CONDITION scopes on entity or touched fields: a proposed
 change must not expose a hidden condition through success/failure. OWNER, TEAM,
 SHARE and their combinations remain supported. Until a public field-size
-reservation contract exists, compute patch admission from already-readable values plus a conservative
-public schema reservation for hidden fields (including JSON escaping and keys).
+reservation contract exists, compute patch admission from already-readable
+values plus a conservative public schema reservation for hidden fields
+(including JSON escaping and keys).
 The total must fit 64 KiB. Never inspect actual hidden lengths. Fully readable
 wide schemas retain normal patch editing; schemas with many hidden long fields
 may need strict replacement with full access or a later public per-field size
-contract. Do not introduce a hidden length oracle or increase the storage budget. Writable hints reflect
-these bounds and are advisory; every command rechecks live policy.
+contract. Do not introduce a hidden length oracle or increase the storage budget.
+Writable hints reflect these bounds and are advisory; every command rechecks
+live policy.
 
 The UI displays Restricted distinctly from an empty value, disables masked or
 non-writable fields and submits only changed, writable fields with patch. A

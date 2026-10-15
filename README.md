@@ -402,12 +402,25 @@ source revision and IR hash; a new revision begins a separate preview dataset.
 
 Preview API: `GET /v1/tenants/{tenant}/preview/{app}/versions/{revision}`; entity queries
 and commands are POST under that path at `/entities/{entity}/query` and `/commands`.
-Commands use operation create/update/delete, typed values and expected_version for
-update/delete. Viewer is read-only; server policy governs every operation. Query
-projection32, page100, typed filters, one declared join and bounded aggregates apply.
-Queries authorize the unfiltered candidate dataset before predicates; any denied
-record/used field rejects the whole query. Preview ceiling1,000 candidates and the
-3-second transaction budget are conservative limits, not production scale claims.
+Commands accept create/update/patch/delete, typed values and `expected_version`
+for mutations of an existing record. `update` replaces the values; `patch` changes
+only supplied fields and preserves omitted fields. Null clears an optional field.
+Partial writes require read/write permission on touched fields and reject unsafe
+conditional-write or hidden-size admission. The editor sends changed fields only.
+
+Entity DataScope selects rows. Interactive projections omit restricted values and
+return `field_access.masked`/`writable` lists; the UI displays Restricted. Masking
+does not remove an entity-visible row or change its count. Filter/sort/sum/source
+join keys must be readable across the entity-visible set. Strict rule/workflow
+point reads check trusted record/owner headers before selecting declared inputs.
+They reject inaccessible inputs rather than treating masks as nulls.
+
+Projection32, page100, typed filters, one declared join, bounded aggregate inputs
+and the 3-second transaction budget remain. Opaque Go action policies have a
+32-header preflight budget and require a certified runtime snapshot. Exact native
+and tenant-defined SQL policies retain their normal query budgets. Indexed
+100k-row workloads have separate measured evidence; unindexed plans may exceed
+the unchanged statement budget. See [ADR037](docs/adr/037-field-visibility-and-partial-writes.md).
 
 `make browser-install` uses installed Chromium or installs Playwright-managed Chromium
 (no security checks disabled). After `make build`, with infrastructure running and
@@ -419,10 +432,10 @@ traces/video/screenshots are off. Generated dependencies/builds/artifacts stay i
 
 Decisions: [ADR017](docs/adr/017-m4-compiler-ir.md),
 [ADR018](docs/adr/018-m5-preview-data-runtime.md),
-[ADR019](docs/adr/019-m6-compiled-ui-renderer.md). Completion and independent review
-reports are under docs/M4*, M5*, M6*. Workflows/tools/sandbox/promotion,
-released schema migrations, AI builder and full scale/security certification remain
-their later milestones. Do not start M9 without a new user task.
+[ADR019](docs/adr/019-m6-compiled-ui-renderer.md). Historical completion reports are
+under docs/M4*, M5*, M6*; current contracts and evidence are in the M9R ledger.
+Workflow foundations now exist. Production promotion, external tools, AI and
+full scale/security certification remain later work. M10 stays paused.
 
 ## V3 migration and recovery
 

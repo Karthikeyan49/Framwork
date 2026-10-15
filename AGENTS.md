@@ -53,6 +53,9 @@ belongs to `internal/platform/app`.
 - ADR017–020: compiler, preview data/UI and V3 contracts. Preserve legacy adapters;
   preview isolation is not a production persistence model. Field policy applies
   to returned, filtered, joined and modified data.
+  ADR037: interactive queries use SQL masking; strict point inputs check trusted
+  record/owner headers. Preserve snapshot proofs, opaque-policy budgets and
+  omitted-field semantics in partial patches.
 - ADR021: pure DSL2 has no ambient clock/network/filesystem/DB/tool access.
   Preserve exact fixed-point money, rounding, pinned calendar/timezone data,
   budgets and declared legacy IR compatibility. Rules never authorize effects.

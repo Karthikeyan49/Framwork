@@ -1,7 +1,7 @@
 # R5d — Field visibility and partial writes
 
-Date: 15 October 2026 IST. Status: implementation checkpoint; independent review
-and final whole-suite verification pending. Full R5/M9R remain PARTIAL. M10 is
+Date: 15 October 2026 IST. Status: independent source and fixture review PASS;
+final whole-suite/build/browser/performance verification running. Full R5/M9R remain PARTIAL. M10 is
 paused. Branch: `remediation/m9r-foundation`; starting clean checkpoint `cbf323e`.
 
 ## Implemented scope
@@ -143,11 +143,122 @@ These are hard denials, without masked nulls passed to execution. Private worker
 sources continue using their exact lease-confined function. This strengthens
 runtime authorization without changing/recompiling immutable IR or plans.
 
-The first broad post-fix command ran155.114s: the rule regression and other
+The first broad post-fix command ran 155.114s: the rule regression and other
 selected tests passed; the workflow test still failed its incorrect Name-denial
 expectation. Its fixture/interpretation correction is recorded explicitly above.
 
 On the final strict-point source, `make check` passed and
 `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestIndependentR5dStrictRule|^TestM9RField|^TestM7' ./tests/integration`
-passed22.191s. Policy/data unit tests also passed. Independent corrected workflow,
+passed 22.191s. Policy/data unit tests also passed. Independent corrected workflow,
 join and snapshot proofs, then the final full suite, are still required.
+
+## Independent closure and full-suite fixture correction
+
+The separate reviewer passed the bounded R5d source at `a4d6054`, with regression
+tests/report committed as `acef7f8`. All three demonstrated HIGH findings are
+closed. Twenty focused race-enabled integration tests passed in 41.567s and
+eight frontend decoder tests passed in 1.50s. The review explicitly withdraws
+the incorrect Name/workflow interpretation and verifies the actual Status
+negative plus the unrelated hidden-Name positive. See the
+[independent report](../verification/M9R_R5D_INDEPENDENT_REVIEW.md) for exact
+commands, populated negative fixtures and threat-model limits.
+
+The first final `make check test build` run **FAILED**: checks, Go race units,
+five script tests and 38 frontend tests passed, but the integration suite failed
+after 773.184s at `TestM9RNumericIndexDataScopeEquivalence`. Build was **NOT RUN
+in that invocation**, because make stopped at the integration failure. The test
+used an opaque Go callback to sort/page a 78-row universe, beyond the new
+32-header custom-callback admission contract. No runtime limit or negative
+assertion was relaxed to make it pass.
+
+Fixture-only commit `ea6d20e` replaces that callback with real live tenant role
+definitions, preserving all 78 records, four scope modes and exact before/after
+index equivalence. Root's focused numeric/opaque-budget command passed in
+8.999s. Independent commit `3466759` further requires exact populated counts:
+39 actual-owned rows, 39 shared foreign-owned rows, one condition-matching row
+and 78 rows with Name absent and explicitly masked for field DENY. It also
+requires visible Name in the allowed modes. Four independent focused race
+tests passed in 11.370s, including unchanged opaque-universe admission and
+owner-sensitive hidden-predicate denials. Runtime source remains `a4d6054`.
+
+Root focused command actually executed:
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9RNumericIndexDataScopeEquivalence$|^TestM9RFieldOpaqueHeaderBudget' ./tests/integration`
+
+The separate reviewer records its exact four-test command in its report. The
+root full-suite rerun uses the unchanged `make check test build` command and
+15-minute aggregate integration deadline. That rerun was **INTERRUPTED**, not
+passed: the execution server disconnected, then killed the original make,
+Node, Go and integration process group with SIGKILL (recorded exit status 9
+in `/proc`). Checks, five script tests and 38 frontend tests had passed, but
+no final integration result was produced and build was NOT RUN. This was not
+reported as an assertion failure or a successful regression run.
+
+Verification was restarted as `GOFLAGS=-v make check test build` in an ignored
+detached wrapper (`nohup setsid sh .local/reports/r5d-verify.sh`) that saves the
+aggregate exit status. Verbose output adds per-test progress only; assertions,
+test selection and query/statement/request/integration deadlines are unchanged.
+Its outcome and subsequent browser, performance and migration-idempotence
+results must be recorded before this report declares bounded R5d completion.
+Generated logs/scripts under `.local/` remain ignored; no credentials or
+customer payloads are committed.
+
+The first durable verbose run completed with exit **2 / FAIL** (integration
+813.914s). All R5d cases and the corrected numeric-scope fixture passed, but
+`TestM9RWorkflowApprovalReviewFieldCapabilityAndReceiptRevocation` failed with
+`driver: bad connection` while advancing its fixture to WAITING_APPROVAL.
+Build was NOT RUN after that failure. No assertion or application behavior was
+changed in response. The exact focused command
+`node scripts/with-env.mjs ./scripts/go.sh test -v -race -tags=integration -timeout=5m -count=3 -run '^TestM9RWorkflowApprovalReviewFieldCapabilityAndReceiptRevocation$' ./tests/integration`
+passed all three repetitions in 52.466s. The cause of the one connection failure
+is unconfirmed; a repeat pass is not a claimed connection-reliability fix. It
+remains operational evidence for R7, and a clean full rerun is required.
+
+A separate read-only reviewer confirmed the evidence limit: `m.until` propagates
+`m.worker.Once` errors without identifying dispatcher claim, assigned-work
+lookup or Step/WithJob. The fixture failed before its revocation assertions.
+Connection invalidation, backend/transport loss and existing 3-second
+transaction/idle budgets under load are possible explanations, not established
+causes. The three repeat passes show nondeterminism, not a fix. No new tests,
+database calls or source edits were performed during that triage. R7 owns
+sanitized stage/connection/deadline diagnostics and reliability follow-up.
+
+## Changed areas and dependency impact
+
+| Area | Files / purpose |
+| --- | --- |
+| Runtime | `internal/runtime/data/{visibility,field_actions,patch}.go`, model/query/store and unit contracts: SQL visibility, trusted header admission, explicit partial update |
+| Policy / transaction composition | `internal/policy/query.go`, `internal/platform/postgres/transaction.go`, `internal/platform/access/preview.go`: closed policy/snapshot proofs and live-engine wiring |
+| Web | `apps/web/src/api/preview.ts`, `src/preview/contracts.ts`, `src/preview/Workspace.tsx` and tests: typed hints, restricted display, changed-field patch and decoder checks |
+| Database | `db/migrations/00046_m9r_field_patch_receipts.sql`: allow typed patch receipts, preserve all existing data/receipts |
+| Verification | Root and independent field-access integration tests, populated historic projection/scope/index fixtures, six browser scenarios |
+| Architecture / delivery | ADR037, this report, independent report, root README/AGENTS and current finding/plan status |
+
+No Go/npm module, lockfile or external service was added. Existing Go standard
+library, PostgreSQL JSONB/transactions, policy contracts and React components
+provide the implementation. No compiler/schema/IR version upgrade, immutable
+artifact rewrite or customer metadata-triggered DDL is introduced.
+
+Browser execution covers a limited editor editing a public field while a secret
+stays masked and unchanged, alongside existing CRUD/CAS/pagination, lost-response
+reconciliation, credential redaction and mobile-layout scenarios. This is the
+preview editor; the separate record/team administration UI is not implemented
+by this slice.
+
+## Final verification evidence
+
+| Command actually executed | Result |
+| --- | --- |
+| `make build` | PASS; all eight Go binaries and production frontend bundle |
+| `make test-performance` | PASS 61.937s; PostgreSQL 18.6, 100k hot rows plus nine 10k-row tenants, 761-byte average hot record, 128 MB shared buffers / 4 MB work_mem. Ten clients / 100 HTTP samples: p95 216.415 ms, p99 287.217 ms, zero errors; unchanged 750 ms HTTP target. Key/numeric/selective SQL p95 1.741 / 170.995 / 98.441 ms pass their unchanged targets. Governed numeric index required for the HTTP workload. |
+| `make migrate migration-status` | PASS; idempotent reapplication, versions 1–46 applied, no pending migration |
+| `make test-e2e` | PASS 6/6 in 13.6s against the final built API and current frontend: CRUD/CAS/pagination, real lost-response receipt reconciliation, two redaction cases, mobile layout and limited-editor masked patch |
+
+Performance is evidence for this explicit indexed fixture and host, not an
+unlimited query/aggregate capacity claim. Unindexed plans, other index types,
+uniqueness and general SQL aggregation remain separately tracked R3 work.
+
+The final whole-suite confirmation repeats `GOFLAGS=-v make check test build`
+without code changes, saved to ignored `r5d-full-confirm.log` and `.exit`.
+It runs alone after the performance/browser workloads. The failed first durable
+run and all three successful focused approval repetitions remain evidence above.
