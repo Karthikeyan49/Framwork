@@ -3,6 +3,7 @@ import { NavLink, Outlet, Route, Routes } from 'react-router-dom'
 import { createAPIClient, type Readiness } from './api/client'
 import { config } from './config'
 import { AccessConsole } from './AccessConsole'
+import { RecoveryProvider } from './administration/Recovery'
 
 type Status = { kind: 'loading' } | { kind: 'error' } | { kind: 'loaded'; value: Readiness }
 
@@ -33,5 +34,5 @@ export function ServiceStatus() {
 }
 
 export function App() {
-  return <Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="access" element={<AccessConsole />} /><Route path="status" element={<ServiceStatus />} /><Route path="*" element={<><h1>Page not found</h1><NavLink to="/">Return to overview</NavLink></>} /></Route></Routes>
+  return <RecoveryProvider><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="access" element={<AccessConsole />} /><Route path="status" element={<ServiceStatus />} /><Route path="*" element={<><h1>Page not found</h1><NavLink to="/">Return to overview</NavLink></>} /></Route></Routes></RecoveryProvider>
 }

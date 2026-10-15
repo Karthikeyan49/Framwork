@@ -1,3 +1,5 @@
+import { MemoryRouter } from "react-router-dom";
+import { App } from "./App";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
@@ -102,4 +104,29 @@ it("retains a dispatched key through disconnect and account/workspace switches u
   await waitFor(() => expect(screen.getByRole("button", { name: "Create record" })).toBeEnabled());
   expect(screen.queryByText(key)).not.toBeInTheDocument();
   expect(writes).toBe(1);
+});
+
+it("retains owned business command keys across application-route navigation", async () => {
+  let key = ""; let writes = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
+    const path = String(url);
+    if (path.endsWith("/session")) return response({ user: { id: owner, name: "Owner" }, tenants: [{ id: tenant, name: "Workspace A" }] });
+    if (path.endsWith("/access")) return response({ tenant_id: tenant, roles: ["owner"], decision: { allow: true, decision_id: "d", policy_version: "p" } });
+    if (path.endsWith("/query")) return response({ records: [], next: "" });
+    if (path.endsWith("/commands")) {
+      writes++; key = JSON.parse(String(options?.body)).command_key;
+      return new Promise<Response>((_resolve, reject) => options?.signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError"))));
+    }
+    return response(descriptor());
+  });
+  render(<MemoryRouter initialEntries={["/access"]}><App /></MemoryRouter>);
+  await connect(); await openWorkspace();
+  await userEvent.type(screen.getByLabelText("Name"), "Pending route change");
+  await userEvent.click(screen.getByRole("button", { name: "Create record" }));
+  await waitFor(() => expect(writes).toBe(1));
+  await userEvent.click(screen.getByRole("link", { name: "Overview" }));
+  await userEvent.click(screen.getByRole("link", { name: "Workspace access" }));
+  await connect(); expect(screen.getByText(key)).toBeInTheDocument();
+  await openWorkspace();
+  expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled(); expect(writes).toBe(1);
 });

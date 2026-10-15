@@ -8,3 +8,5 @@ input, select { font: inherit; padding: .75rem; border: 1px solid #b8c5cd; borde
 .preview {min-width:0;overflow-wrap:anywhere}.preview section,.preview form,.preview label,.preview .badge {min-width:0;max-width:100%;overflow-wrap:anywhere}.preview button{max-width:100%;overflow-wrap:anywhere}.preview dl{grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr))}
 
 .access-summary { overflow-wrap: anywhere; }
+
+.administration{margin:24px 0;min-width:0;overflow-wrap:anywhere}.administration form{margin:24px 0}.administration li{margin:12px 0}.administration code{overflow-wrap:anywhere}.administration .check{display:flex;align-items:flex-start;gap:10px;font-weight:400}.administration .check input{width:auto;margin-top:8px;flex-shrink:0}.administration .member-suggestions{margin-top:24px}.administration button{max-width:100%;overflow-wrap:anywhere}

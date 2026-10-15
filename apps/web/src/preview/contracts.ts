@@ -40,6 +40,8 @@ export interface Preview {
   };
 }
 export interface Row {
+  owner_user_id?: string;
+  owner_team_id?: string;
   field_access?: { masked: string[]; writable: string[] };
   id: string;
   version: number;
@@ -246,7 +248,9 @@ export function decodeRow(v: unknown): Row {
     !uuid(v.id) ||
     !Number.isSafeInteger(v.version) ||
     Number(v.version) < 1 ||
-    !object(v.values)
+    !object(v.values) ||
+    v.owner_user_id !== undefined && !uuid(v.owner_user_id) ||
+    v.owner_team_id !== undefined && !uuid(v.owner_team_id)
   )
     throw new Error("Invalid record");
   if (v.field_access !== undefined) {

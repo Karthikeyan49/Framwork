@@ -3,6 +3,8 @@ import { APIError } from "../api/client";
 import { CommandOutcomeUnknown } from "../api/preview";
 import { previewClient } from "../api/preview";
 import { config } from "../config";
+import { RecordAccessPanel, recordScope } from "../administration/RecordAccessPanel";
+import type { AdministrationPort } from "../administration/Recovery";
 import {
   display,
   object,
@@ -90,9 +92,11 @@ export function ApplicationWorkspace({
   pendingCommands: retainedCommands,
   onPendingCommand,
   onCommandBusy,
+  administration,
 }: {
   token: string;
   tenant: string;
+  administration?: AdministrationPort;
   pendingCommands?: Record<string, string>;
   onPendingCommand?: (scope: string, key: string) => void;
   onCommandBusy?: (key: string, busy: boolean) => void;
@@ -243,6 +247,9 @@ export function ApplicationWorkspace({
               pendingCommand={pendingCommands[writeKey] ?? ""}
               setPendingCommand={setPendingCommand}
               onCommandBusy={onCommandBusy}
+              administration={administration}
+              token={token}
+              tenant={tenant}
             />
           ) : (
             <p>This application has no pages.</p>
@@ -338,6 +345,9 @@ function RelationPicker({
   );
 }
 function EntityPage({
+  administration,
+  token,
+  tenant,
   onCommandBusy,
   pendingCommand,
   setPendingCommand,
@@ -348,6 +358,9 @@ function EntityPage({
   preview,
   client,
 }: {
+  administration?: AdministrationPort;
+  token: string;
+  tenant: string;
   onCommandBusy?: (key: string, busy: boolean) => void;
   pendingCommand: string;
   setPendingCommand: (key: string) => void;
@@ -361,12 +374,15 @@ function EntityPage({
   const entity = preview.ir.entities.find(
     (e) => e.id === page.page.entity_ref,
   )!;
-  const needsReload = writeBlocked || Boolean(pendingCommand);
   const setNeedsReload = blockWrite;
   const [reloadEpoch, setReloadEpoch] = useState(0);
   const [rows, setRows] = useState<Row[]>([]);
   const [next, setNext] = useState("");
   const [selected, setSelected] = useState<Row>();
+  const [adminMode, setAdminMode] = useState<"owner" | "shares">();
+  const [adminBusy, setAdminBusy] = useState(false);
+  const accessScope = selected ? recordScope(tenant, preview.ir.application.app_id, preview.revision, preview.ir_hash, entity.id, selected.id) : "";
+  const needsReload = writeBlocked || Boolean(pendingCommand) || Boolean(administration?.pending[accessScope]);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -774,7 +790,7 @@ function EntityPage({
       <div className="actions">
         <button
           type="button"
-          disabled={busy || saving}
+          disabled={busy || saving || adminBusy}
           onClick={() => void load()}
         >
           Reload records
@@ -797,6 +813,15 @@ function EntityPage({
           writing again.
         </p>
       )}
+      {adminMode && selected && administration ? <RecordAccessPanel
+        key={selected.id + ":" + adminMode}
+        client={client} token={token} tenant={tenant} entity={entity} record={selected.id}
+        scope={accessScope} mode={adminMode} recovery={administration}
+        onBusy={(pending) => { setAdminBusy(pending); onWritePending(pending); }}
+        onInvalidated={() => { setNeedsReload(true); setRows([]); setInputs({}); setConfirmDelete(false); setSelected((row) => row ? { ...row, values: {} } : row); }}
+        onClose={() => { setAdminMode(undefined); void load(); }}
+      /> : <>
+      {selected && administration && <div className="actions"><button type="button" disabled={busy || saving} onClick={() => setAdminMode("owner")}>Manage ownership</button><button type="button" disabled={busy || saving} onClick={() => setAdminMode("shares")}>Manage sharing</button></div>}
       {rows.length > 0 && !hasTable(page.page.components) && (
         <label>
           Open record
@@ -815,6 +840,7 @@ function EntityPage({
         </label>
       )}
       {page.page.components.map((c, i) => render(c, String(i)))}
+      </>}
     </section>
   );
 }
