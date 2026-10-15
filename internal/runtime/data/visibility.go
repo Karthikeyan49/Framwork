@@ -204,3 +204,18 @@ func readVisibleValues(e compiler.Entity, ids []string, r *Record, raw []byte) e
 	}
 	return nil
 }
+
+// Strict point inputs fetch only declared fields after trusted action checks.
+// Core ID is supplied from its typed header by readValues, not duplicated JSONB.
+func projectedJSON(e compiler.Entity, ids []string, alias string, b *builder) string {
+	parts := []string{"'{}'::jsonb"}
+	for _, id := range ids {
+		f, _ := field(e, id)
+		if f.CoreID {
+			continue
+		}
+		k := b.bind(id) + "::text"
+		parts = append(parts, "CASE WHEN "+alias+".custom_data ? "+k+" THEN jsonb_build_object("+k+","+alias+".custom_data->"+k+") ELSE '{}'::jsonb END")
+	}
+	return "(" + strings.Join(parts, " || ") + ")"
+}

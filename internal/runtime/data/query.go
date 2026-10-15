@@ -192,7 +192,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > 2048 || len(query.Projection) == 0 || len(query.Projection) > 32 {
 		return Page{}, ErrBudget
 	}
-	if st.visible && !st.sqlFields {
+	if st.visible && !st.sqlFields || !st.visible && query.RecordID != "" {
 		if !postgres.RuntimeSnapshot(q) {
 			return Page{}, ErrDenied
 		}
@@ -212,7 +212,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		}
 		seen[id] = !st.visible
 		projected[id] = true
-		if !st.visible {
+		if !st.visible && query.RecordID == "" {
 			if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: id}); err != nil {
 				return Page{}, err
 			}
@@ -237,6 +237,16 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	}
 	where += " AND (" + scopePredicate + ")"
 	predicateGuard := g
+	if !st.visible && query.RecordID != "" {
+		var found bool
+		predicateGuard, found, err = checkPointInputActions(ctx, q, st, s, e, query, where, b, g)
+		if err != nil {
+			return Page{}, err
+		}
+		if !found {
+			return Page{Records: []Record{}}, nil
+		}
+	}
 	if st.visible {
 		predicateGuard = func(ctx context.Context, action string, r Resource) error {
 			if st.sqlFields {
@@ -383,7 +393,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				return Page{}, ErrInvalid
 			}
 			joinSeen[id] = true
-			if !st.visible {
+			if !st.visible && query.RecordID == "" {
 				if err = g.check(ctx, "data.field.read", Resource{EntityID: target.ID, FieldID: id}); err != nil {
 					return Page{}, err
 				}
@@ -476,11 +486,23 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if desc {
 		order = "DESC"
 	}
+	if !st.visible && query.RecordID != "" && query.Join != nil {
+		if _, er := projectActions(ctx, q, st, e, target, query, readIDs, where, indexJoin, joinSQL, sortExpr, order, b, g, true); er != nil {
+			return Page{}, er
+		}
+	}
 	selectedData := "r.custom_data"
+	if !st.visible && query.RecordID != "" {
+		selectedData = projectedJSON(e, readIDs, "r", &b)
+		if query.Join != nil {
+			joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + projectedJSON(target, query.Join.Projection, "j", &b)
+		}
+	}
+
 	if st.visible {
 		var actions fieldActions
 		if !st.sqlFields {
-			actions, err = projectActions(ctx, q, st, e, target, query, readIDs, where, indexJoin, joinSQL, sortExpr, order, b, g)
+			actions, err = projectActions(ctx, q, st, e, target, query, readIDs, where, indexJoin, joinSQL, sortExpr, order, b, g, false)
 			if err != nil {
 				return Page{}, err
 			}
@@ -526,10 +548,10 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 			return Page{}, err
 		}
 		readEntity := e
-		if st.workerSource {
+		if st.workerSource || !st.visible && query.RecordID != "" {
 			readEntity.Fields = nil
 			for _, f := range e.Fields {
-				if f.CoreID || slices.Contains(query.Projection, f.ID) {
+				if f.CoreID || slices.Contains(readIDs, f.ID) {
 					readEntity.Fields = append(readEntity.Fields, f)
 				}
 			}
@@ -549,7 +571,16 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				if st.visible {
 					err = readVisibleValues(target, query.Join.Projection, &joined, joinedRaw)
 				} else {
-					err = readValues(target, &joined, joinedRaw)
+					joinedEntity := target
+					if query.RecordID != "" {
+						joinedEntity.Fields = nil
+						for _, f := range target.Fields {
+							if f.CoreID || slices.Contains(query.Join.Projection, f.ID) {
+								joinedEntity.Fields = append(joinedEntity.Fields, f)
+							}
+						}
+					}
+					err = readValues(joinedEntity, &joined, joinedRaw)
 				}
 				if err != nil {
 					return Page{}, err

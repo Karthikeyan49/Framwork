@@ -133,7 +133,7 @@ func checkPredicateActions(ctx context.Context, q postgres.Executor, st Store, e
 	}
 	return nil
 }
-func projectActions(ctx context.Context, q postgres.Executor, st Store, e, target compiler.Entity, query Query, readIDs []string, where, indexJoin, joinSQL, sortExpr, order string, b builder, g Guard) (fieldActions, error) {
+func projectActions(ctx context.Context, q postgres.Executor, st Store, e, target compiler.Entity, query Query, readIDs []string, where, indexJoin, joinSQL, sortExpr, order string, b builder, g Guard, strict bool) (fieldActions, error) {
 	d := fieldActions{}
 	cols := `NULL::text,NULL::text`
 	if query.Join != nil {
@@ -171,7 +171,10 @@ func projectActions(ctx context.Context, q postgres.Executor, st Store, e, targe
 		if er := g.check(ctx, "data.row.read", resource); er != nil {
 			return er
 		}
-		rowWrite := g.check(ctx, "data.row.write", resource)
+		rowWrite := error(ErrDenied)
+		if !strict {
+			rowWrite = g.check(ctx, "data.row.write", resource)
+		}
 		if rowWrite != nil && !errors.Is(rowWrite, ErrDenied) {
 			return rowWrite
 		}
@@ -179,7 +182,7 @@ func projectActions(ctx context.Context, q postgres.Executor, st Store, e, targe
 			resource.FieldID = fid
 			er := g.check(ctx, "data.field.read", resource)
 			if er != nil {
-				if errors.Is(er, ErrDenied) {
+				if !strict && errors.Is(er, ErrDenied) {
 					continue
 				}
 				return er
@@ -214,4 +217,42 @@ func projectActions(ctx context.Context, q postgres.Executor, st Store, e, targe
 		}
 	}
 	return d, nil
+}
+
+// Internal execution inputs retain strict rejection semantics. Check the exact
+// record's trusted context before fetching any custom values, including fields
+// used by point predicates. The worker adapter supplies only its private source
+// function here; this helper never selects a generic table on its behalf.
+func checkPointInputActions(ctx context.Context, q postgres.Executor, st Store, s Scope, e compiler.Entity, query Query, where string, b builder, g Guard) (Guard, bool, error) {
+	var id, owner string
+	err := q.QueryRowContext(ctx, `SELECT r.id::text,r.owner_user_id::text FROM `+st.recordsTable()+` r WHERE `+where, b.args...).Scan(&id, &owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return g, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	trusted := Guard(func(ctx context.Context, action string, r Resource) error {
+		r.RecordID = id
+		r.OwnerID = owner
+		return g.check(ctx, action, r)
+	})
+	if err = trusted.check(ctx, "data.row.read", Resource{EntityID: e.ID}); err != nil {
+		return nil, false, err
+	}
+	ids, err := predicateFields(s, e, query)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, fid := range query.Projection {
+		if !slices.Contains(ids, fid) {
+			ids = append(ids, fid)
+		}
+	}
+	for _, fid := range ids {
+		if err = trusted.check(ctx, "data.field.read", Resource{EntityID: e.ID, FieldID: fid}); err != nil {
+			return nil, false, err
+		}
+	}
+	return trusted, true, nil
 }

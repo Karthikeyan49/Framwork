@@ -120,3 +120,34 @@ Unknown executor wrappers/raw transactions are rejected by the opaque port.
 `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9RField|^TestIndependentR5d|^TestIndependentM6RFieldScope|^TestM5RecordSpecificField|^TestM9RCustomSortPage' ./tests/integration`
 passed in 41.176s. Independent second review and final whole-suite run remain
 pending at this checkpoint.
+
+## Alternate input-path review
+
+Root requested owner-dependent action checks through rules/workflows as well as
+interactive reads. At `c96c534`, the reviewer executed a valid HIGH rule oracle:
+interactive masking hid balance, but strict rule evaluation still consumed it
+and returned a result. The test/report checkpoint is `d9140d3`.
+
+An initial workflow probe denied Name and observed a successful start/binding.
+That interpretation was withdrawn after inspecting actual executable FieldIDs:
+the fixture workflow consumes Status, not Name. It did not demonstrate an
+unauthorized workflow capture. The corrected independent verification must deny
+the consumed Status field and verify zero bindings, and separately permit the
+unrelated hidden Name while asserting it is absent from the snapshot.
+
+Strict point reads now load the trusted record header before field decisions,
+cover all projected and predicate fields, and require the certified runtime
+snapshot. They select only declared JSONB fields and core/cursor necessities.
+Strict point joins preflight the target owner before target value selection.
+These are hard denials, without masked nulls passed to execution. Private worker
+sources continue using their exact lease-confined function. This strengthens
+runtime authorization without changing/recompiling immutable IR or plans.
+
+The first broad post-fix command ran155.114s: the rule regression and other
+selected tests passed; the workflow test still failed its incorrect Name-denial
+expectation. Its fixture/interpretation correction is recorded explicitly above.
+
+On the final strict-point source, `make check` passed and
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestIndependentR5dStrictRule|^TestM9RField|^TestM7' ./tests/integration`
+passed22.191s. Policy/data unit tests also passed. Independent corrected workflow,
+join and snapshot proofs, then the final full suite, are still required.

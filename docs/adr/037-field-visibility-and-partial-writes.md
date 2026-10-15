@@ -12,9 +12,14 @@ Mask membership describes the policy decision, independently of property
 presence. Intrinsic record ID, version, ownership and timestamps remain visible
 headers of an authorized row. Metadata/schema labels are not secret values.
 
-The existing strict query port remains unchanged for rules, workflows, worker
-source capabilities, legacy adapters and internal integrity operations. They
-must reject inaccessible inputs rather than evaluating a redacted null.
+Rules, workflows, worker source capabilities and legacy adapters retain strict
+input semantics: reject inaccessible inputs instead of evaluating redacted null.
+Strict point reads preflight the requested/predicate fields with trusted record
+ID/owner in the certified snapshot, before fetching custom values. They fetch
+only declared fields plus core/cursor necessities. Strict point joins check the
+target's trusted owner before fetching target values. The worker adapter keeps
+its private source function and exact lease confinement. Unrelated hidden fields
+are excluded from input payloads and do not require gratuitous authorization.
 
 Action callbacks also receive trusted row ID/owner context. For interactive
 reads, opaque Go engines use a header-only preflight and bounded ID-array SQL
