@@ -35,6 +35,8 @@ type activityFailure struct {
 	err             error
 	instanceVersion int64
 	step            string
+	// abandon settles an unrecorded tool send as UNKNOWN in the failure transaction.
+	abandon bool
 }
 
 func (f activityFailure) Error() string { return "workflow local activity aborted" }
@@ -343,11 +345,11 @@ func (s Store) call(ctx context.Context, q postgres.Executor, a tenant.Access, x
 	}
 	cancel()
 	if e != nil {
-		return activityFailure{e, x.Version, call.StepKey}
+		return activityFailure{err: e, instanceVersion: x.Version, step: call.StepKey}
 	}
 	canonical, e := canonicalOutput(out)
 	if e != nil {
-		return activityFailure{Permanent(), x.Version, call.StepKey}
+		return activityFailure{err: Permanent(), instanceVersion: x.Version, step: call.StepKey}
 	}
 	if e = checkLease(ctx, q, a, *x, lease); e != nil {
 		return e
@@ -383,6 +385,12 @@ func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f a
 		entry, e := w.Store.Authorize(ctx, q, a, "workflows.execute", x.Pin, x.inputs.Fields)
 		if e != nil {
 			return e
+		}
+		if f.abandon {
+			var settled bool
+			if e = q.QueryRowContext(ctx, `SELECT control.tool_abandon($1)`, f.step).Scan(&settled); e != nil {
+				return e
+			}
 		}
 		var now time.Time
 		if e = q.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); e != nil {

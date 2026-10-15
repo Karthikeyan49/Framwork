@@ -176,7 +176,7 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	fail := func(e error) error { return activityFailure{e, x.Version, call.StepKey} }
+	fail := func(e error) error { return activityFailure{err: e, instanceVersion: x.Version, step: call.StepKey} }
 	def, ok := s.ToolCatalog.Lookup(t.ref, t.version, t.hash)
 	if !ok || !def.AllowsTenant(a.TenantID()) || s.Tools == nil {
 		// A removed/changed/unlicensed tool fails closed before any I/O.
@@ -187,17 +187,10 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 		return nil, err
 	}
 	if found && l.state == "SENDING" {
-		var abandoned bool
-		if err = q.QueryRowContext(ctx, `SELECT control.tool_abandon($1)`, call.StepKey).Scan(&abandoned); err != nil {
-			var pe *pgconn.PgError
-			if errors.As(err, &pe) && pe.Code == "55000" {
-				return nil, ErrLease
-			}
-			return nil, err
-		}
-		if l, found, err = loadToolLedger(ctx, q, a, x.ID, call.StepKey); err != nil {
-			return nil, err
-		}
+		// A send whose outcome was never recorded is UNKNOWN. The abandonment must
+		// commit on its own (this transaction ends in a recorded failure), so the
+		// failure path settles it before any resend is considered.
+		return nil, activityFailure{err: Retryable(), instanceVersion: x.Version, step: call.StepKey, abandon: true}
 	}
 	if found && l.state == "SUCCEEDED" {
 		out, e := canonicalOutput(l.response)

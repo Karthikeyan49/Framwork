@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
@@ -30,6 +31,28 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
+
+// newToolGateway composes the governed outbound gateway from operator paths.
+// Secrets stay in files outside the database and metadata; the process proxy
+// environment is ignored by the gateway itself.
+func newToolGateway(c config.Config) (*tools.Gateway, error) {
+	options := tools.GatewayOptions{AllowInternal: c.ToolAllowInternal}
+	if c.ToolSecretsDir != "" {
+		options.Secrets = tools.FileSecrets{Dir: c.ToolSecretsDir}
+	}
+	if c.ToolCAFile != "" {
+		pem, err := os.ReadFile(c.ToolCAFile)
+		if err != nil {
+			return nil, errors.New("tool certificate authority unavailable")
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, errors.New("tool certificate authority invalid")
+		}
+		options.RootCAs = pool
+	}
+	return tools.NewGateway(options)
+}
 
 // loadToolCatalog reads the operator-owned registry (ADR036). No path means no
 // tools; an unreadable or invalid file stops startup rather than registering a
@@ -128,7 +151,19 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 				}
 				return (identity.Store{}).ResolveWorker(ctx, q, id)
 			})
-			logger.Info("workflow execution started", "mode", "preview")
+			toolCatalog, e := loadToolCatalog(c)
+			if e != nil {
+				return e
+			}
+			store.ToolCatalog = toolCatalog
+			if toolCatalog.Len() > 0 {
+				gateway, e := newToolGateway(c)
+				if e != nil {
+					return e
+				}
+				store.Tools = gateway
+			}
+			logger.Info("workflow execution started", "mode", "preview", "tools", toolCatalog.Len())
 			wg.Go(func() { (workflow.Worker{DB: db, Store: store}).Run(jobCtx, logger) })
 		}
 		if !c.EventsEnabled {
