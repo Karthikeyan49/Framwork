@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/config"
 	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
@@ -27,7 +28,31 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
+
+// loadToolCatalog reads the operator-owned registry (ADR036). No path means no
+// tools; an unreadable or invalid file stops startup rather than registering a
+// partial catalog. Tenants, requests and metadata can never alter it.
+func loadToolCatalog(c config.Config) (tools.Catalog, error) {
+	if c.ToolCatalogFile == "" {
+		return tools.EmptyCatalog(), nil
+	}
+	file, err := os.Open(c.ToolCatalogFile)
+	if err != nil {
+		return tools.Catalog{}, errors.New("tool catalog unavailable")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, tools.MaxCatalogBytes+1))
+	_ = file.Close()
+	if err != nil || len(raw) > tools.MaxCatalogBytes {
+		return tools.Catalog{}, errors.New("tool catalog unavailable")
+	}
+	catalog, err := tools.LoadCatalog(raw)
+	if err != nil {
+		return tools.Catalog{}, errors.New("tool catalog invalid")
+	}
+	return catalog, nil
+}
 
 func Run(ctx context.Context, service string, c config.Config, logger *slog.Logger) error {
 	telemetry, err := observability.Start(ctx, service, c.Environment, c.OTelEndpoint, logger)
@@ -176,7 +201,13 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if err != nil {
 		return errors.New("metadata schema initialization failed")
 	}
-	accessAPI := access.API{DB: db, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
+	toolCatalog, err := loadToolCatalog(c)
+	if err != nil {
+		return err
+	}
+	platformCatalog := compiler.PlatformCatalog()
+	platformCatalog.ToolCatalog = toolCatalog
+	accessAPI := access.API{CompilerCatalog: &platformCatalog, ToolCatalog: toolCatalog, DB: db, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
 	identityProbe := func(ctx context.Context) error {
 		return (identity.Store{}).Ready(ctx, db)
 	}
