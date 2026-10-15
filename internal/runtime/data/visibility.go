@@ -72,11 +72,8 @@ func fieldPredicate(ctx context.Context, e compiler.Entity, a tenant.Access, ali
 		}
 	}
 	actionPredicate := "TRUE"
-	if actions != nil {
-		actionPredicate = actions.predicate(e.ID, id, action, alias, b)
-		if actionPredicate == "FALSE" {
-			return "FALSE", nil
-		}
+	if actions != nil && len(actions[actionKey(e.ID, id, action)]) == 0 {
+		return "FALSE", nil
 	}
 	scope, err := resolveScope(ctx, resolve, action, r)
 	if err != nil {
@@ -87,7 +84,15 @@ func fieldPredicate(ctx context.Context, e compiler.Entity, a tenant.Access, ali
 	}
 	n := 0
 	predicate, err := scopeSQL(ctx, e, scope, a, alias, b, 0, &n)
-	return "(" + actionPredicate + ") AND (" + predicate + ")", err
+	if err != nil {
+		return "", err
+	}
+	// A denied scope returns a constant mask above. Do not bind an opaque
+	// action's IDs until its expression is actually used in the final SQL.
+	if actions != nil {
+		actionPredicate = actions.predicate(e.ID, id, action, alias, b)
+	}
+	return "(" + actionPredicate + ") AND (" + predicate + ")", nil
 }
 
 // Mask in SQL, never fetch full JSONB and redact it after crossing the port.
@@ -105,19 +110,13 @@ func visibleJSON(ctx context.Context, e compiler.Entity, ids []string, a tenant.
 		return "", er
 	}
 	patchable = patchable && err == nil && !hasCondition(entityRead) && !hasCondition(entityWrite)
-	ep := "FALSE"
+	ep := ""
 	if patchable {
 		if er = g.check(ctx, "data.entity.write", Resource{EntityID: e.ID}); er != nil {
 			if !errors.Is(er, ErrDenied) {
 				return "", er
 			}
 			patchable = false
-		} else {
-			n := 0
-			ep, er = scopeSQL(ctx, e, entityWrite, a, alias, b, 0, &n)
-			if er != nil {
-				return "", er
-			}
 		}
 	}
 	for _, id := range ids {
@@ -148,6 +147,15 @@ func visibleJSON(ctx context.Context, e compiler.Entity, ids []string, a tenant.
 				wp, er := fieldPredicate(ctx, e, a, alias, b, g, resolve, "data.write", id, actions)
 				if er != nil {
 					return "", er
+				}
+				// Core-only and read-only projections have no writable consumer.
+				// Bind the entity write scope only when this expression will use it.
+				if ep == "" {
+					n := 0
+					ep, er = scopeSQL(ctx, e, entityWrite, a, alias, b, 0, &n)
+					if er != nil {
+						return "", er
+					}
 				}
 				writable = append(writable, "CASE WHEN COALESCE(("+pred+") AND ("+wp+") AND ("+ep+"),false) THEN jsonb_build_array("+k+") ELSE '[]'::jsonb END")
 			}

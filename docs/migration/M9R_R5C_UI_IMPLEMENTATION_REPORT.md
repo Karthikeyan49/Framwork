@@ -9,7 +9,9 @@ Full R5/M9R remain PARTIAL. No M10, main merge or production activation.
 
 [ADR038](../adr/038-m9r-administration-ui.md) was written before implementation.
 The UI consumes ADR034/035's existing governed APIs without new backend grants,
-migrations, dependencies, immutable formats or business runtime behavior.
+migrations, dependencies or immutable formats. Independent review also exposed
+an existing R5d query-construction bug for scoped delegates; the narrow correction
+preserves masking, field/row authorization and strict execution-input behavior.
 
 - A verified workspace has a team administration panel: bounded hierarchy,
   create/rename/reparent, team versions, retained active/inactive direct
@@ -31,7 +33,8 @@ migrations, dependencies, immutable formats or business runtime behavior.
 - POST errors with uncertain outcomes are never automatically repeated.
   Dispatched and unknown states are distinct. Fresh reads plus explicit review
   permit a new intent; they do not establish the original request's outcome.
-  Ownership-only reads cannot release an unresolved share change.
+  Ownership-only reads cannot release an unresolved share change. A truncated
+  share window cannot release a pending change whose recipient is not shown.
 - A payload-free, actor-owned recovery provider above routing preserves admin
   resource IDs/conflict witnesses and existing business-command keys across
   route/workspace/account changes. Tokens, names, values and share lists are
@@ -70,8 +73,30 @@ No test-only response is claimed as proof of a database effect.
 | `make test-e2e` after state refinement | PASS 8/8 in 22.5s; logs exposed duplicate sibling React keys for team/preview panels. Fixed with distinct keys and added regression assertions rather than ignoring the warning |
 | `npm --prefix apps/web run typecheck`; `npm --prefix apps/web run lint`; `npm --prefix apps/web test`; `make test-e2e` on the stable source | PASS: 74 frontend tests in 8.25s; 8 browser tests in 22.9s; duplicate-key assertions pass |
 
-Final stable-source browser/unit results, independent review and the full
-repository gate follow after execution. Logs and runner artifacts remain ignored.
+Independent first review at `dbe3c64` reproduced two findings, retained in the
+[independent report](../verification/M9R_R5C_UI_INDEPENDENT_REVIEW.md):
+
+- HIGH R5C-UI-01: unused SQL bind parameters caused valid OWNER-scoped
+  delegates' core-only/no-field-write reads and opaque action-allowed/scope-denied
+  reads to return 503. Lazily emit the entity-write scope only when consumed;
+  resolve field scope before binding opaque action IDs. No grants were broadened.
+- MEDIUM R5C-UI-02: an unknown unshare could be reviewed without observing its
+  recipient in a truncated list. Keep the resource blocked in that case.
+
+The first independent component run was FAIL 7/8; the populated Go role matrix
+failed 3/8 subcases plus the opaque denial probe. The delegated browser stopped
+on 503 before its transfer/mobile assertions. These failures remain recorded;
+post-fix re-review and final repository verification follow after execution.
+
+Implementer post-fix checks: typecheck/lint PASS, frontend 82/82 PASS (12.01s),
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestIndependentR5c' ./tests/integration`
+PASS (6.369s), `make build` PASS. `make test-e2e` was FAIL 8/9
+(30.9s): the delegated case passed query/header/masking and 390px checks, then
+correctly received a transfer denial because the independent fixture omitted
+the existing required `preview.write` capability. The reviewer will retain
+that negative and explicitly grant the preview mutation capability for the
+transfer positive control. No server authorization will be relaxed.
+Logs and runner artifacts remain ignored.
 
 ## Limits, recovery and remaining work
 

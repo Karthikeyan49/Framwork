@@ -9,7 +9,12 @@ Keep ADR034/035 APIs as the authority. Add a workspace team panel and separate
 ownership/sharing panels for a selected preview record. Do not infer capabilities
 from role names or token claims. Read denial hides the corresponding data;
 every mutation still receives live server authorization. No new grants, database
-migrations, dependencies, IR formats or business runtime behavior are required.
+migrations, dependencies or IR formats are required. Independent integration
+review exposed unused SQL bind parameters in the existing R5d masked-query
+builder. Correct construction by emitting an entity-write predicate only when
+a writable projected field consumes it, and by resolving a field scope before
+binding an opaque action predicate. Preserve every authorization decision, SQL
+mask, strict-input guard and opaque header budget; add no new authority.
 
 Team administration covers create, rename/reparent, direct membership activation
 and deactivation. Use the exact observed team version, or the exact observed
@@ -42,7 +47,10 @@ this journal; warn before unload while an administration outcome is pending.
 An uncertain outcome blocks another change on that resource. Fresh authorized
 reads enable an explicit review of current state before a new intent; they do
 not prove which request caused that state. A failed/missing/denied read cannot
-clear the gate. Pending creation IDs remain inspectable; another creation is
+clear the gate. A pending share recipient absent from a truncated list is not
+observable and cannot release the gate: retain it until a complete authorized
+read, a read displaying that target, or a separately designed operator-resolution
+mechanism exists. An owner header cannot establish share state. Pending creation IDs remain inspectable; another creation is
 blocked until review. Membership active-state witnesses retain ADR035's ABA
 limits; this UI does not invent durable receipts or exactly-once guarantees.
 

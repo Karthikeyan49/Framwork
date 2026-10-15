@@ -32,6 +32,8 @@ export function RecordAccessPanel({ client, token, tenant, entity, record, scope
   const pending = recovery.pending[scope];
   const disabled = loading || change.busy || !!pending;
   const reviewMatches = !pending || pending.kind === "record.owner" || mode === "shares";
+  const shareTargetObservable = !pending || pending.kind === "record.owner" ||
+    !!view && uuid(pending.target) && (!view.shares_truncated || view.shares.some((share) => share.user_id === pending.target));
   function accept(value: RecordAccess) {
     setLoaded({ client, view: value }); setOwner(value.owner_user_id); setTeam(value.owner_team_id); setRecipient(""); setCanWrite(false); setAcknowledged(false); setReviewable(true);
   }
@@ -73,7 +75,7 @@ export function RecordAccessPanel({ client, token, tenant, entity, record, scope
     <div className="actions"><button type="button" disabled={change.busy || loading} onClick={() => void reload()}>Reload record access</button><button type="button" disabled={change.busy} onClick={onClose}>Back to records</button></div>
     {loading && <p role="status">Loading record access…</p>}
     {error && <p role="alert">{error}</p>}{change.error && <p role="alert">{change.error}</p>}{notice && <p role="status">{notice}</p>}
-    {pending && <section>{pending.status === "dispatched" ? <p role="status">An access change is in progress. Wait for its result before another change.</p> : <p role="alert">An access change has an uncertain outcome. Review the current state before a new change. If access is unavailable, ask an authorized administrator to inspect it.</p>}{!reviewMatches && <p>Open record sharing to review this share change.</p>}<button type="button" disabled={!view || !reviewable || !reviewMatches || pending.status === "dispatched" || loading || change.busy} onClick={() => { recovery.remember(scope); setNotice("Current state reviewed. The earlier request's outcome is not proven; make a new change only if needed."); }}>Use reviewed record state</button></section>}
+    {pending && <section>{pending.status === "dispatched" ? <p role="status">An access change is in progress. Wait for its result before another change.</p> : <p role="alert">An access change has an uncertain outcome. Review the current state before a new change. If access is unavailable, ask an authorized administrator to inspect it.</p>}{!reviewMatches && <p>Open record sharing to review this share change.</p>}{reviewMatches && view && !shareTargetObservable && <p>The pending recipient is outside this share window. Keep the change blocked until an authorized read shows that recipient or returns a complete list; ask an authorized administrator for help.</p>}<button type="button" disabled={!view || !reviewable || !reviewMatches || !shareTargetObservable || pending.status === "dispatched" || loading || change.busy} onClick={() => { recovery.remember(scope); setNotice("Current state reviewed. The earlier request's outcome is not proven; make a new change only if needed."); }}>Use reviewed record state</button></section>}
     {view && <><p>Version {view.version} · Owner <code>{view.owner_user_id}</code> · Team <code>{view.owner_team_id || "None"}</code></p>
       {mode === "owner" ? <form aria-label="Change record ownership" onSubmit={(e) => { e.preventDefault(); void submit("owner", owner); }}>
         <label>Owner user ID<input required pattern="[0-9a-f-]{36}" value={owner} disabled={disabled} onChange={(e) => { setOwner(e.target.value); setAcknowledged(false); }} /></label>
