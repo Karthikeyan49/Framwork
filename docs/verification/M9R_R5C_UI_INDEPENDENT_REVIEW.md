@@ -226,3 +226,50 @@ and no test workload remains running at handoff. Root must complete its full
 `make check test build` and browser gate against these stable source changes
 before the milestone completion report. Full R5/M9R remain PARTIAL; identity,
 remaining R3, R6, R7 and the unconfirmed workflow connection failure remain open.
+
+## Aggregate harness review and worker capacity follow-up
+
+The reviewer inspected commit `c139253` read-only while the implementing agent
+owned the database/CPU for further verification. The harness change passes
+source review: Makefile raises only the aggregate integration process deadline
+from 15 to 20 minutes, and the encompassing CI job from 20 to 35 minutes.
+ADR038 records the expanded suite's 177 top-level tests and the first run's
+cumulative duration. Test selection, assertions, statement/lock limits,
+workflow clocks/leases and authorization budgets are unchanged. This adjustment
+can accommodate more serial tests; it does not fix a worker query timeout.
+No test or performance workload was executed by the reviewer in this follow-up.
+
+The following results were supplied by the implementing agent and are **root
+execution evidence**, not independent reviewer executions:
+
+| Root-provided execution | Result |
+| --- | --- |
+| First full `make check test build` | FAIL. Worker policy test's EXPLAIN ANALYZE was canceled with SQLSTATE 57014 under the unchanged 2000 ms SQL statement limit. Its preceding 96-receipt query completed in approximately 1657 ms. Separately, the cumulative Go process reached its 900.080-second deadline after 162 tests passed, while the next test had run approximately 12 seconds. Build was not reached in that invocation |
+| Isolated unchanged worker-policy regression, three executions | PASS 3/3, 16.066 seconds total. First-query times were 1107.686, 1007.408 and 1171.343 ms; the existing EXPLAIN authorization-loop and lease-expiry assertions also completed |
+
+These are two distinct first-run failures: the worker statement exceeded its
+runtime budget, and the suite exceeded its cumulative runner deadline. The
+successful isolated executions do not erase either failure or establish that
+worker capacity is now resolved. The next complete run remains required.
+
+The existing R5b independent review had measured the same bounded 96-receipt,
+seven-grant/63-node policy query at 1933.184 ms, only approximately 67 ms below
+its unchanged 2000 ms statement limit; root's earlier R5b run measured
+1470.337 ms. This historical margin and the new EXPLAIN timeout identify a real
+capacity/reliability concern. The worker SQL/functions and this test were not
+changed by the R5c UI fixes. The observations do not establish an authorization
+bypass, a newly introduced UI regression, or a specific host/database cause.
+EXPLAIN adds execution instrumentation, and the current evidence is insufficient
+to assign causality to instrumentation, accumulated fixtures or host load.
+
+Retain this failed statement and the historical narrow margin in operational
+follow-up. Preserve the 2-second statement limit, live-policy execution checks,
+per-row lease freshness and populated negative fixtures. Repeated isolated PASS
+and an eventual complete-suite PASS can verify the current run; they are not a
+sustained worker SLO or a broader-capacity claim. Overall R7 remains pending,
+including this worker capacity risk and the separately unconfirmed earlier
+workflow connection failure. The bounded three-finding R5c review PASS above
+remains distinct from root's full repository completion gate.
+
+This follow-up changes this report only. No source or test edits, migrations,
+permissions, runtime budgets or concurrent reviewer workloads were introduced.
