@@ -63,6 +63,8 @@ No new Go or npm dependency. No UI change.
 | Go unit tests `./cmd/... ./internal/... ./tests/...` with `-race` | PASS |
 | Full `go test -race -tags=integration ./tests/integration` (978.6 s) | One FAIL of the whole suite: `TestM9RRecordAccessCanonicalDatasetGeneration` (stale policy-version assertion in a binary built before `bf70752` was merged); the merged test plus `TestM12*` then PASS (31.7 s). A final full run on the review-fixed tree is still required |
 | `make build` | PASS |
+| `make test-e2e` | PASS, 5 tests (20.8 s) |
+| Migrations 1–48 applied to a freshly created isolated database (new compose project, empty volume) | PASS — confirms the committed migration 48 (including the sandbox-freezer check added after the first local apply) applies from scratch; TestM12*, TestM8* (except the Redis-restart test, which is coupled to the main compose project) and TestM11* then PASS on it (147.9 s) |
 
 Evidence gap: the pre-fix exploit (a hand-built PASS bundle inserted by
 `framework_app`) was removed with the M6R test that exercised it; it was not
