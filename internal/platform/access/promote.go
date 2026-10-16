@@ -1,17 +1,21 @@
 package access
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/risk"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
@@ -88,6 +92,42 @@ func invalidPromotion() reply {
 
 func hashMismatch() reply {
 	return denied(400, "hash_mismatch", "The body artifact_hash must equal the candidate of the route")
+}
+
+// readPromotionRequest is readDatasetRequest (one JSON object, application/json,
+// no unknown or duplicate keys, bounded size) plus exact key spelling:
+// encoding/json matches keys case-insensitively, so "Artifact_Hash" would
+// otherwise alias a field and slip past the duplicate-key check. Every key of
+// these bodies is lowercase.
+func readPromotionRequest(r *http.Request, dest any) error {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+	if err != nil || len(raw) > 1<<20 {
+		return data.ErrInvalid
+	}
+	value, err := metadata.DecodeJSON(raw)
+	if err != nil || !lowercaseKeys(value) {
+		return data.ErrInvalid
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	return readDatasetRequest(r, dest)
+}
+
+func lowercaseKeys(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			if key != strings.ToLower(key) || !lowercaseKeys(child) {
+				return false
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if !lowercaseKeys(child) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // authority is what separation of duties is decided on: the database-stamped
@@ -371,7 +411,7 @@ func separationRefused(role string) reply {
 func (a API) approveCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
 	hash := r.PathValue("candidate")
 	var body approveRequest
-	if readDatasetRequest(r, &body) != nil {
+	if readPromotionRequest(r, &body) != nil {
 		return invalidPromotion(), nil
 	}
 	if body.ArtifactHash != hash {
@@ -419,7 +459,7 @@ func (a API) approveCandidate(ctx context.Context, q postgres.Executor, r *http.
 func (a API) rejectCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
 	hash := r.PathValue("candidate")
 	var body rejectRequest
-	if readDatasetRequest(r, &body) != nil || !promotion.RejectReason(body.Reason).Valid() || !promotion.ValidNote(body.Note) {
+	if readPromotionRequest(r, &body) != nil || !promotion.RejectReason(body.Reason).Valid() || !promotion.ValidNote(body.Note) {
 		return invalidPromotion(), nil
 	}
 	if body.ArtifactHash != hash {
@@ -452,7 +492,7 @@ func (a API) rejectCandidate(ctx context.Context, q postgres.Executor, r *http.R
 func (a API) activateCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
 	hash := r.PathValue("candidate")
 	var body activateRequest
-	if readDatasetRequest(r, &body) != nil || body.ExpectedBase == nil || body.ExpectedGeneration == nil {
+	if readPromotionRequest(r, &body) != nil || body.ExpectedBase == nil || body.ExpectedGeneration == nil {
 		return invalidPromotion(), nil
 	}
 	base, generation := *body.ExpectedBase, *body.ExpectedGeneration
@@ -501,7 +541,7 @@ func (a API) activateCandidate(ctx context.Context, q postgres.Executor, r *http
 
 func (a API) rollbackRelease(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
 	var body rollbackRequest
-	if readDatasetRequest(r, &body) != nil || body.ExpectedGeneration == nil || !promotion.ValidHash(body.Target) || !promotion.ValidHash(body.ExpectedCurrent) ||
+	if readPromotionRequest(r, &body) != nil || body.ExpectedGeneration == nil || !promotion.ValidHash(body.Target) || !promotion.ValidHash(body.ExpectedCurrent) ||
 		*body.ExpectedGeneration < 1 || *body.ExpectedGeneration >= promotion.MaxGeneration || body.Plan != nil && !promotion.ValidHash(body.Plan.PlanHash) {
 		return invalidPromotion(), nil
 	}
