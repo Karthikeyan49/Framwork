@@ -159,8 +159,15 @@ func classify(err error) error {
 
 var appIDPattern = regexp.MustCompile(`^app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 
+// validScope requires a resolved tenant and actor and a well-formed application
+// id. The ports derive tenant and actor themselves; this only keeps malformed
+// requests away from SQL.
 func validScope(a tenant.Access, app string) bool {
-	return tenant.ValidID(a.TenantID()) && tenant.ValidID(a.ActorID()) && len(app) <= 160 && appIDPattern.MatchString(app)
+	return validScopeOf(a.TenantID(), a.ActorID(), app)
+}
+
+func validScopeOf(tenantID, actorID, app string) bool {
+	return tenant.ValidID(tenantID) && tenant.ValidID(actorID) && len(app) <= 160 && appIDPattern.MatchString(app)
 }
 
 // ValidNote reports whether a rejection note is acceptable: valid UTF-8, at most
@@ -178,13 +185,29 @@ func ValidNote(note string) bool {
 	return true
 }
 
-// validExpectation accepts the empty pointer ("" at generation 0, a first
-// release) or an exact hash at a positive generation.
-func validExpectation(hash string, generation int64) bool {
-	if hash == "" {
-		return generation == 0
+// activationArgs accepts an exact hash over the empty pointer ("" at generation
+// 0, a first release) or over an exact base hash at a generation that can still
+// advance.
+func activationArgs(hash, expectedBase string, expectedGeneration int64) bool {
+	if !ValidHash(hash) {
+		return false
 	}
-	return ValidHash(hash) && generation >= 1 && generation <= MaxGeneration
+	if expectedBase == "" {
+		return expectedGeneration == 0
+	}
+	return ValidHash(expectedBase) && expectedGeneration >= 1 && expectedGeneration < MaxGeneration
+}
+
+// rollbackArgs checks the shape of a rollback request. A plan that requires
+// recovery is refused whatever the class of the current release.
+func rollbackArgs(target, expectedCurrent string, expectedGeneration int64, plan RollbackPlan) error {
+	if !ValidHash(target) || !ValidHash(expectedCurrent) || target == expectedCurrent || expectedGeneration < 1 || expectedGeneration >= MaxGeneration || plan.PlanHash != "" && !ValidHash(plan.PlanHash) {
+		return ErrInvalid
+	}
+	if plan.RecoveryRequired {
+		return ErrRecoveryRequired
+	}
+	return nil
 }
 
 // ApproveRelease records the caller's approval of the exact hash through
@@ -224,7 +247,7 @@ func (Store) RejectRelease(ctx context.Context, q postgres.Executor, a tenant.Ac
 // expectedGeneration are the pointer the caller read ("" and 0 for a first
 // release); the port also requires them to equal the candidate's bound base.
 func (Store) ActivateRelease(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash, expectedBase string, expectedGeneration int64) (generation int64, err error) {
-	if !validScope(a, app) || !ValidHash(hash) || !validExpectation(expectedBase, expectedGeneration) || expectedGeneration >= MaxGeneration {
+	if !validScope(a, app) || !activationArgs(hash, expectedBase, expectedGeneration) {
 		return 0, ErrInvalid
 	}
 	if err := q.QueryRowContext(ctx, `SELECT control.activate_release($1,$2,$3,$4)`, app, hash, expectedBase, expectedGeneration).Scan(&generation); err != nil {
@@ -248,14 +271,11 @@ func (p RollbackPlan) Acknowledged() bool {
 // unless the current release is POINTER_SAFE, an acknowledged plan with a hash.
 // A plan that requires recovery is refused here, whatever the class.
 func (Store) RollbackRelease(ctx context.Context, q postgres.Executor, a tenant.Access, app, target, expectedCurrent string, expectedGeneration int64, plan RollbackPlan) (generation int64, err error) {
-	if !validScope(a, app) || !ValidHash(target) || !ValidHash(expectedCurrent) || target == expectedCurrent || expectedGeneration < 1 || expectedGeneration >= MaxGeneration {
+	if !validScope(a, app) {
 		return 0, ErrInvalid
 	}
-	if plan.PlanHash != "" && !ValidHash(plan.PlanHash) {
-		return 0, ErrInvalid
-	}
-	if plan.RecoveryRequired {
-		return 0, ErrRecoveryRequired
+	if err := rollbackArgs(target, expectedCurrent, expectedGeneration, plan); err != nil {
+		return 0, err
 	}
 	if err := q.QueryRowContext(ctx, `SELECT control.rollback_release($1,$2,$3,$4,$5,$6)`, app, target, expectedCurrent, expectedGeneration, plan.PlanHash, plan.Acknowledged()).Scan(&generation); err != nil {
 		return 0, classify(err)
