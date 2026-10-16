@@ -107,7 +107,9 @@ BEGIN
     OR c->>'idempotency_mode'='NONE' AND c->>'side_effect' IN('NONE','READ'))) THEN
    RAISE EXCEPTION 'unknown tool outcome outstanding; reconcile before resending' USING ERRCODE='TL003';
   END IF;
-  IF inv.attempts>=20 THEN RAISE EXCEPTION 'tool attempt budget exhausted' USING ERRCODE='55000';END IF;
+  -- M10R-03: a distinct code, so the runtime settles the step (DEAD, or
+  -- RECONCILE while unknown) instead of retrying a database refusal forever.
+  IF inv.attempts>=20 THEN RAISE EXCEPTION 'tool attempt budget exhausted' USING ERRCODE='TL004';END IF;
   n:=inv.attempts+1;
   UPDATE runtime.tool_invocations v SET state='SENDING',attempts=n,unknown_outstanding=outstanding,updated_at=clock_timestamp() WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step;
  END IF;

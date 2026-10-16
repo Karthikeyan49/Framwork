@@ -21,6 +21,7 @@ func itemFields() []rules.Field {
 		{ID: "field.item.note", Type: rules.Type{Kind: "string"}},
 	}
 }
+
 var testToolContract = ToolContract{SideEffect: "READ", Approval: "NONE", IdempotencyMode: "NONE", RetryMode: "SAFE_RETRY", TimeoutMS: 1000}
 
 func itemResolver(hash string) ToolResolver {
@@ -98,7 +99,9 @@ func TestToolActivitiesRequireAResolverThatKnowsThem(t *testing.T) {
 	if _, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, nil); e == nil {
 		t.Fatal("nil resolver admitted a tool")
 	}
-	denied := func(string, string) (ToolResolution, bool) { return ToolResolution{Hash: testToolHash, Contract: testToolContract}, false }
+	denied := func(string, string) (ToolResolution, bool) {
+		return ToolResolution{Hash: testToolHash, Contract: testToolContract}, false
+	}
 	if _, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, denied); e == nil {
 		t.Fatal("unresolved tool admitted")
 	}

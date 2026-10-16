@@ -68,6 +68,7 @@ type Lookup struct {
 
 // MaxSettleMS bounds a declared provider settle interval.
 const MaxSettleMS = 600000
+
 type Connector struct {
 	Endpoint
 	Method            string  `json:"method"` // GET, POST, PUT
