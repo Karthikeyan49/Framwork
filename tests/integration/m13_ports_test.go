@@ -585,6 +585,7 @@ func TestM13PortsActivationCompareAndSet(t *testing.T) {
 		t.Fatal("first activation", first)
 	}
 	wantState(t, "racing first activation", second, "40001", "55000", "55P03")
+	t.Logf("racing first activation: loser SQLSTATE %s", sqlState(second))
 	if h, g := p.pointer(t); h != a || g != 1 {
 		t.Fatal("pointer after the first-release race", h == a, g)
 	}
@@ -612,6 +613,7 @@ func TestM13PortsActivationCompareAndSet(t *testing.T) {
 		t.Fatal("first activation over a base", first)
 	}
 	wantState(t, "racing activation over a base", second, "40001", "55000", "55P03")
+	t.Logf("racing activation over a base: loser SQLSTATE %s", sqlState(second))
 	if h, g := p.pointer(t); h != c || g != 2 {
 		t.Fatal("pointer after the base race", h == c, g)
 	}
