@@ -126,6 +126,7 @@ func scalarReady(ctx context.Context, db *sql.DB) error {
 	err = db.QueryRowContext(ctx, `SELECT (SELECT count(*)=3 AND bool_and(tgenabled='O') FROM pg_trigger WHERE
  (tgrelid,tgname) IN(('runtime.records'::regclass,'record_scalar_projection'),('runtime.scalar_indexes'::regclass,'retain_scalar_indexes'),('runtime.scalar_projections'::regclass,'retain_scalar_projections')))
  AND (SELECT count(*)=5 AND bool_and(indisvalid AND indisready) FROM pg_index WHERE indrelid='runtime.scalar_projections'::regclass AND indexrelid IN('runtime.scalar_text_asc'::regclass,'runtime.scalar_text_desc'::regclass,'runtime.scalar_date_asc'::regclass,'runtime.scalar_date_desc'::regclass,'runtime.scalar_text_overflow'::regclass))
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='runtime.scalar_indexes'::regclass AND conname='scalar_indexes_custom_field' AND contype='c' AND convalidated)
  AND (SELECT datcollversion IS NOT DISTINCT FROM pg_database_collation_actual_version(oid) FROM pg_database WHERE datname=current_database())`).Scan(&valid)
 	if err != nil || !valid {
 		return ErrUnavailable

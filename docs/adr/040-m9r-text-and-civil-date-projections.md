@@ -28,6 +28,13 @@ binaries. Cascading FKs remove projections on delete. Do not add a dataset-wide
 write counter. Keep epoch fencing, checkpoint/audit atomicity and lost-response
 reconciliation. Never delete source records or old index evidence to recover.
 
+Independent review found that SQL registration admitted the reserved intrinsic
+record identifier even though Go rejected it. Forward migration 00048 must
+reject that identifier before registration and enforce the same invariant with
+a registry CHECK constraint. Existing incompatible registrations block migration;
+installation never deletes witnesses or records to repair them. The intrinsic
+ID remains stored in the typed record column, outside custom JSONB projections.
+
 ## Text size and ordering
 
 The existing text contract accepts 4096 UTF-8 bytes. A full text B-tree key can
