@@ -21,17 +21,21 @@ package integration
 //     raw ports accepting exactly these.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/risk"
 	"github.com/Karthikeyan49/Framwork/internal/tools"
@@ -260,4 +264,374 @@ func TestM13AdversarialCompromisedAPIForgedCandidate(t *testing.T) {
 	// The routes still refuse to present or build on the unverifiable release.
 	m13Code(t, "active forged release", e.httpActive(e.viewer), 409, "candidate_failed_verification")
 	e.checkHistory()
+}
+
+// ------------------------------------------------- 2. rogue approver matrix
+
+// m13Rogues adds the ineligible approvers: frank (admin demoted to viewer),
+// gina (membership deactivated), hank (user disabled) and ivan (role member).
+func m13Rogues(e *m13Env) {
+	for _, name := range []string{"frank", "gina", "hank"} {
+		e.member(name, "admin")
+	}
+	e.member("ivan", "member")
+	e.setRole(e.person("frank").id, "viewer")
+	e.setMemberActive(e.person("gina").id, false)
+	e.setUserActive(e.person("hank").id, false)
+}
+
+func m13Relabel(label string) func(*metadata.Document) {
+	return func(d *metadata.Document) {
+		for i := range d.Definitions {
+			if d.Definitions[i].ID == "entity.order" {
+				d.Definitions[i].Label = label
+			}
+		}
+	}
+}
+
+// Requester carol, acceptance author bob and sandbox freezer alice each try to
+// approve their own candidate at every level, together with a demoted, a
+// removed, a disabled, a member-role and a viewer approver, through the raw port
+// (the database alone) and through HTTP (policy + Go separation + port).
+func TestM13AdversarialRogueApproverMatrix(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	m13Rogues(e)
+	order := []string{"carol", "bob", "alice", "viewer", "frank", "gina", "hank", "ivan", "dave"}
+	// Database floor (ADR039 section 3): LOW/MEDIUM none; HIGH requester and
+	// acceptance author; CRITICAL also the freezer. Non-members, viewers and
+	// disabled users never. A member-role user passes the database floor; only
+	// the Go policy (owner/admin) refuses it.
+	excluded := map[string]map[string]string{
+		"LOW": {}, "MEDIUM": {},
+		"HIGH":     {"carol": "requester", "bob": "acceptance_author"},
+		"CRITICAL": {"carol": "requester", "bob": "acceptance_author", "alice": "sandbox_freezer"},
+	}
+	ineligible := map[string]bool{"viewer": true, "frank": true, "gina": true, "hank": true}
+	for _, level := range []string{"LOW", "MEDIUM", "HIGH", "CRITICAL"} {
+		hash, err := e.stageLevel(level)
+		if err != nil {
+			t.Fatal(level, err)
+		}
+		want := []string{}
+		for _, name := range order {
+			p := e.person(name)
+			n, err := e.approvePort(p.subject, hash)
+			role, barred := excluded[level][name]
+			switch {
+			case ineligible[name]:
+				if m13Refused(t, level+" port: "+name, err, "42501"); m13Detail(err) != "" {
+					t.Errorf("%s port: %s got a separation detail %q", level, name, m13Detail(err))
+				}
+			case barred:
+				if m13Refused(t, level+" port: "+name, err, "42501"); m13Detail(err) != role {
+					t.Errorf("%s port: %s detail %q, want %q", level, name, m13Detail(err), role)
+				}
+			default:
+				want = append(want, p.id)
+				if err != nil || n != len(want) {
+					t.Errorf("%s port: %s approval = %d, %v (want count %d)", level, name, n, err, len(want))
+				}
+			}
+		}
+		slices.Sort(want)
+		if got := e.approvalsOf(hash); !slices.Equal(got, want) {
+			t.Errorf("%s approvals %v, want %v", level, got, want)
+		}
+		// HTTP refuses the doctored body for everyone before any separation logic.
+		if level != "HIGH" {
+			m13Code(t, level+" doctored via HTTP", e.httpApprove(e.erin.token, hash), 409, "candidate_failed_verification")
+		}
+	}
+
+	// HTTP on the real HIGH template.
+	before := e.state()
+	leak := []string{e.carol.id, e.f.bob, e.f.alice}
+	for _, c := range []struct {
+		name   string
+		status int
+		code   string
+		role   string
+	}{
+		{"carol", 403, "separation_of_duties", "requester"},
+		{"bob", 403, "separation_of_duties", "acceptance_author"},
+		{"viewer", 403, "forbidden", ""},
+		{"frank", 403, "forbidden", ""},
+		{"gina", 403, "forbidden", ""},
+		{"hank", 401, "unauthenticated", ""},
+		{"ivan", 403, "forbidden", ""},
+	} {
+		w := e.httpApprove(e.person(c.name).token, tmpl.hash)
+		r := m13Code(t, "HTTP HIGH approve by "+c.name, w, c.status, c.code)
+		if c.role != "" && !strings.Contains(r.Message, c.role) {
+			t.Errorf("separation reply for %s must name the role %q: %s", c.name, c.role, r.Message)
+		}
+		for _, id := range leak {
+			if strings.Contains(w.Body.String(), id) {
+				t.Errorf("refusal for %s leaks an actor id: %s", c.name, w.Body.String())
+			}
+		}
+		// Activation is a separate action: rogues are refused by policy, the
+		// admin parties reach the quorum check.
+		activation, code := 403, "forbidden"
+		switch c.name {
+		case "hank":
+			activation, code = 401, "unauthenticated"
+		case "carol", "bob":
+			activation, code = 409, "approval_quorum_not_met"
+		}
+		m13Code(t, "HTTP HIGH activate by "+c.name, e.httpActivate(e.person(c.name).token, tmpl.hash, "", 0), activation, code)
+	}
+	e.unchanged("rogue HTTP approvals", before)
+	// Note: requester and acceptance author are not activators by policy, but
+	// carol (admin) may activate once an independent approval exists.
+	m13Code(t, "HTTP HIGH activation without approval", e.httpActivate(e.carol.token, tmpl.hash, "", 0), 409, "approval_quorum_not_met")
+	if r := m13Code(t, "freezer approves HIGH", e.httpApprove(e.alice, tmpl.hash), 201); r.ApprovalsRequired != 1 || r.Status != "APPROVED" {
+		t.Errorf("approved HIGH view: %+v", r)
+	}
+	m13Code(t, "independent approval", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	m13Code(t, "requester activates an independently approved HIGH candidate", e.httpActivate(e.carol.token, tmpl.hash, "", 0), 200)
+
+	// HTTP on a real LOW candidate (label-only second release): no exclusions.
+	low, _ := e.build("500", m13Relabel("Purchase order"), e.carol)
+	if r := m13Decode(e.httpCandidate(e.viewer, low)); r.RiskLevel != "LOW" {
+		t.Fatalf("precondition: the label-only release rates LOW, got %+v", r)
+	}
+	for _, c := range []struct {
+		name   string
+		status int
+	}{{"viewer", 403}, {"frank", 403}, {"gina", 403}, {"hank", 401}, {"ivan", 403}, {"carol", 201}, {"bob", 201}} {
+		m13Code(t, "HTTP LOW approve by "+c.name, e.httpApprove(e.person(c.name).token, low), c.status)
+	}
+	if got := e.approvalsOf(low); len(got) != 2 {
+		t.Errorf("LOW approvals: %v", got)
+	}
+	m13Code(t, "requester activates a self-approved LOW candidate", e.httpActivate(e.carol.token, low, tmpl.hash, 1), 200)
+	if hash, gen, _ := e.activePointer(); hash != low || gen != 2 {
+		t.Fatalf("pointer %s@%d", hash, gen)
+	}
+	e.checkHistory()
+}
+
+// Quorum is re-counted at activation from live, eligible approvers: an approval
+// of a since demoted, removed or disabled approver no longer counts, and
+// excluded parties never count, through the port and through HTTP.
+func TestM13AdversarialQuorumCountsOnlyLiveEligibleApprovers(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	// HTTP: the real HIGH template approved only by a since-demoted approver.
+	tmpl := e.template()
+	m13Code(t, "approve", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	e.setRole(e.dave.id, "viewer")
+	before := e.state()
+	m13Code(t, "activation counting a demoted approver", e.httpActivate(e.erin.token, tmpl.hash, "", 0), 409)
+	e.unchanged("activation with a demoted approver", before)
+	e.setRole(e.dave.id, "admin")
+	m13Code(t, "activation after the approver is restored", e.httpActivate(e.erin.token, tmpl.hash, "", 0), 200)
+
+	// Ports: a CRITICAL candidate on the live pointer.
+	x, err := e.stageLevel("CRITICAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"carol", "bob", "alice"} {
+		_, err := e.approvePort(e.person(name).subject, x)
+		m13Refused(t, "CRITICAL excluded party "+name, err, "42501")
+	}
+	if n, err := e.approvePort(e.dave.subject, x); err != nil || n != 1 {
+		t.Fatal("dave approves", n, err)
+	}
+	_, err = e.activatePort(e.carol.subject, x, tmpl.hash, 1)
+	m13Refused(t, "CRITICAL with one approval", err, "55000")
+	if n, err := e.approvePort(e.erin.subject, x); err != nil || n != 2 {
+		t.Fatal("erin approves", n, err)
+	}
+	before = e.state()
+	for _, c := range []struct {
+		name        string
+		spoil, mend func()
+	}{
+		{"approver demoted to viewer", func() { e.setRole(e.erin.id, "viewer") }, func() { e.setRole(e.erin.id, "admin") }},
+		{"approver membership removed", func() { e.setMemberActive(e.dave.id, false) }, func() { e.setMemberActive(e.dave.id, true) }},
+		{"approver user disabled", func() { e.setUserActive(e.dave.id, false) }, func() { e.setUserActive(e.dave.id, true) }},
+	} {
+		c.spoil()
+		_, err := e.activatePort(e.carol.subject, x, tmpl.hash, 1)
+		m13Refused(t, "CRITICAL activation after "+c.name, err, "55000")
+		c.mend()
+	}
+	_, err = e.activatePort(e.person("viewer").subject, x, tmpl.hash, 1)
+	m13Refused(t, "viewer activates", err, "42501")
+	e.unchanged("refused quorum activations", before)
+	if g, err := e.activatePort(e.carol.subject, x, tmpl.hash, 1); err != nil || g != 2 {
+		t.Fatal("CRITICAL activation with two live independent approvals", g, err)
+	}
+	h := e.checkHistory()
+	if len(h) != 2 || h[1].kind != "ACTIVATE" || h[1].riskLevel != "CRITICAL" || h[1].actor != e.carol.id || h[1].previous != tmpl.hash || h[0].actor != e.erin.id {
+		t.Fatalf("history %+v", h)
+	}
+}
+
+// --------------------------------------------------- 3. legacy path closed
+
+// execIn runs one statement as subject (direct identity binding) and commits.
+func (e *m13Env) execIn(subject, query string, args ...any) error {
+	return postgres.WithRuntime(context.Background(), e.f.db, func(ctx context.Context, q postgres.Executor) error {
+		if err := e.bindDirect(ctx, q, subject, e.f.tenantA); err != nil {
+			return err
+		}
+		_, err := q.ExecContext(ctx, query, args...)
+		return err
+	})
+}
+
+// The M6R write paths are gone: the runtime role has no DML or TRUNCATE on any
+// release authority table (even for its own HIGH candidate, the review finding
+// that the requester could self-approve through direct SQL), the operator cannot
+// change or hand-write authority rows, the worker drift guard covers the tables
+// and a 1.0.0 bundle (no candidate row) can no longer be approved or activated.
+func TestM13AdversarialLegacyWritePathsAreClosed(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	if _, err := e.approvePort(e.dave.subject, tmpl.hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.activatePort(e.dave.subject, tmpl.hash, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.rejectPort(e.erin.subject, tmpl.hash, "OTHER", "kept for the immutability probes"); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := e.stageLevel("HIGH")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := []string{"control.release_approvals", "control.active_releases", "control.release_rejections", "control.release_history"}
+	for _, table := range tables {
+		for _, privilege := range []string{"INSERT", "UPDATE", "DELETE", "TRUNCATE"} {
+			var has bool
+			if err := e.f.operator.QueryRow(`SELECT has_table_privilege('framework_app',$1,$2)`, table, privilege).Scan(&has); err != nil || has {
+				t.Errorf("framework_app has %s on %s (%v)", privilege, table, err)
+			}
+		}
+		var column bool
+		if err := e.f.operator.QueryRow(`SELECT has_any_column_privilege('framework_app',$1,'INSERT') OR has_any_column_privilege('framework_app',$1,'UPDATE')`, table).Scan(&column); err != nil || column {
+			t.Errorf("framework_app keeps a column write privilege on %s (%v)", table, err)
+		}
+	}
+	before := e.state()
+	a, app := e.f.tenantA, e.app
+	for name, c := range map[string]struct {
+		subject, query string
+		args           []any
+	}{
+		"requester self-approval (M6R insert)": {e.carol.subject, `INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash) VALUES($1,$2,$3)`, []any{a, app, pending}},
+		"approval with an actor id":            {e.dave.subject, `INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash,actor_id) VALUES($1,$2,$3,$4)`, []any{a, app, pending, e.dave.id}},
+		"pointer update (M6R activate)":        {e.dave.subject, `UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2`, []any{a, app, pending}},
+		"pointer insert":                       {e.dave.subject, `INSERT INTO control.active_releases(tenant_id,app_id,artifact_hash,generation) VALUES($1,$2,$3,9)`, []any{a, app, pending}},
+		"pointer delete":                       {e.dave.subject, `DELETE FROM control.active_releases WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"history insert":                       {e.dave.subject, `INSERT INTO control.release_history(tenant_id,app_id,seq,kind,artifact_hash,previous_hash,generation,risk_level,storage_class) VALUES($1,$2,2,'ACTIVATE',$3,'',2,'LOW','EQUAL')`, []any{a, app, pending}},
+		"history delete":                       {e.dave.subject, `DELETE FROM control.release_history WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"history update":                       {e.dave.subject, `UPDATE control.release_history SET actor_id=$3 WHERE tenant_id=$1 AND app_id=$2`, []any{a, app, e.dave.id}},
+		"rejection delete":                     {e.dave.subject, `DELETE FROM control.release_rejections WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"rejection insert":                     {e.dave.subject, `INSERT INTO control.release_rejections(tenant_id,app_id,artifact_hash,reason) VALUES($1,$2,$3,'OTHER')`, []any{a, app, pending}},
+		"approval delete":                      {e.dave.subject, `DELETE FROM control.release_approvals WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"truncate approvals":                   {e.dave.subject, `TRUNCATE control.release_approvals`, nil},
+		"truncate pointer":                     {e.dave.subject, `TRUNCATE control.active_releases`, nil},
+		"truncate history":                     {e.dave.subject, `TRUNCATE control.release_history`, nil},
+		"truncate rejections":                  {e.dave.subject, `TRUNCATE control.release_rejections`, nil},
+		"internal approval counter":            {e.dave.subject, `SELECT control.release_approval_count($1,$2,$3)`, []any{a, app, pending}},
+	} {
+		m13Refused(t, "framework_app "+name, e.execIn(c.subject, c.query, c.args...), "42501")
+	}
+	_, err = e.approvePort(e.carol.subject, pending)
+	m13Refused(t, "requester self-approval through the port", err, "42501")
+	e.unchanged("direct runtime DML", before)
+
+	// The operator cannot rewrite or hand-write authority either.
+	for _, statement := range []string{
+		`UPDATE control.release_approvals SET approved_at=approved_at WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.release_approvals WHERE tenant_id=$1 AND app_id=$2`,
+		`UPDATE control.release_history SET plan_hash=NULL WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.release_history WHERE tenant_id=$1 AND app_id=$2`,
+		`UPDATE control.release_rejections SET note='' WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.release_rejections WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.active_releases WHERE tenant_id=$1 AND app_id=$2`,
+	} {
+		if _, err := e.f.operator.Exec(statement, a, app); err == nil {
+			t.Errorf("operator changed release authority: %s", statement)
+		}
+	}
+	if _, err := e.f.operator.Exec(`INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash,actor_id) VALUES($1,$2,$3,$4)`, a, app, pending, e.dave.id); err == nil {
+		t.Error("operator hand-wrote an approval")
+	}
+	// A hand-written pointer move (no history row) fails at commit.
+	if _, err := e.f.operator.Exec(`UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2`, a, app, pending); err == nil {
+		t.Error("operator moved the pointer without history")
+	}
+	for _, table := range tables {
+		tx, err := e.f.operator.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(`TRUNCATE ` + table + ` CASCADE`); err == nil {
+			t.Errorf("operator TRUNCATE %s succeeded", table)
+		}
+		_ = tx.Rollback()
+	}
+	e.unchanged("operator writes", before)
+
+	// Workers hold nothing; the drift guard trips on any column grant.
+	worker, err := postgres.Open(os.Getenv("WORKER_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Close()
+	var safe bool
+	if err = worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe); err != nil || !safe {
+		t.Fatal("worker grants unsafe before the probe", err)
+	}
+	for _, table := range tables {
+		if _, err = e.f.operator.Exec(`GRANT SELECT(app_id) ON ` + table + ` TO framework_worker`); err != nil {
+			t.Fatal(err)
+		}
+		scanErr := worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe)
+		if _, err = e.f.operator.Exec(`REVOKE SELECT(app_id) ON ` + table + ` FROM framework_worker`); err != nil {
+			t.Fatal(err)
+		}
+		if scanErr != nil || safe {
+			t.Errorf("worker drift guard missed a column grant on %s (%v)", table, scanErr)
+		}
+	}
+
+	// An M6R-shaped 1.0.0 bundle has no candidate row: it is never approvable.
+	legacy := []byte(`{"Version":"1.0.0","AppID":"` + app + `","RequesterID":"` + e.carol.id + `","HighRisk":false,"IRHash":"` + strings.Repeat("a", 64) + `"}`)
+	legacyHash := promotion.Hash(legacy)
+	if _, err = e.f.operator.Exec(`INSERT INTO control.release_bundles(tenant_id,app_id,artifact_hash,body,created_by) VALUES($1,$2,$3,$4,$5)`, a, app, legacyHash, legacy, e.carol.id); err != nil {
+		t.Fatal("seed a 1.0.0 bundle row", err)
+	}
+	_, err = e.approvePort(e.dave.subject, legacyHash)
+	m13Refused(t, "approve a 1.0.0 bundle", err, "P0002")
+	_, err = e.rejectPort(e.dave.subject, legacyHash, "OTHER", "")
+	m13Refused(t, "reject a 1.0.0 bundle", err, "P0002")
+	current, generation, _ := e.activePointer()
+	_, err = e.activatePort(e.dave.subject, legacyHash, current, generation)
+	m13Refused(t, "activate a 1.0.0 bundle", err, "P0002")
+	_, err = e.rollbackPort(e.dave.subject, legacyHash, current, generation, strings.Repeat("c", 64), true)
+	m13Refused(t, "roll back to a never-activated 1.0.0 bundle", err, "55000")
+	// Through HTTP the body does not restore as a candidate (Go refuses before
+	// the port): 409 candidate_failed_verification; a 404 would be as safe.
+	for what, w := range map[string]*httptest.ResponseRecorder{
+		"approve":  e.httpApprove(e.dave.token, legacyHash),
+		"reject":   e.httpReject(e.dave.token, legacyHash, "OTHER", ""),
+		"activate": e.httpActivate(e.dave.token, legacyHash, current, generation),
+	} {
+		if r := m13Decode(w); !(w.Code == 404 || w.Code == 409 && r.Code == "candidate_failed_verification") {
+			t.Errorf("HTTP %s a 1.0.0 bundle: %d %s", what, w.Code, m13Trim(w.Body.String()))
+		}
+	}
+	e.unchanged("1.0.0 bundle decisions", before)
 }
