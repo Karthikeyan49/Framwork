@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-var indexesPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(versions/[0-9]+|datasets/[0-9a-f-]{36}/bindings/[0-9]+)/entities/entity\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/indexes/field\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(register|build)$`)
+var indexesPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(versions/[0-9]+|datasets/[0-9a-f-]{36}/bindings/[0-9]+)/entities/entity\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(indexes|search-indexes)/field\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(register|build)$`)
 
 func indexReply(index data.NumericIndex, err error) (reply, error) {
 	if err == nil {
@@ -57,8 +57,15 @@ func indexRequest(ctx context.Context, q postgres.Executor, r *http.Request, sco
 		return indexReply(data.NumericIndex{}, err)
 	}
 	store := data.Store{}
+	search := strings.Contains(r.Pattern, "/search-indexes/")
 	if r.Method == http.MethodGet {
-		index, err := store.FieldIndex(ctx, q, scope, access, entity, id)
+		var index data.FieldIndex
+		var err error
+		if search {
+			index, err = store.SearchIndex(ctx, q, scope, access, entity, id)
+		} else {
+			index, err = store.FieldIndex(ctx, q, scope, access, entity, id)
+		}
 		return indexReply(index, err)
 	}
 	if strings.HasSuffix(r.URL.Path, "/register") {
@@ -66,7 +73,13 @@ func indexRequest(ctx context.Context, q postgres.Executor, r *http.Request, sco
 		if readDataCommand(r, &body) != nil {
 			return indexReply(data.NumericIndex{}, data.ErrInvalid)
 		}
-		index, err := store.RegisterFieldIndex(ctx, q, scope, access, entity, id)
+		var index data.FieldIndex
+		var err error
+		if search {
+			index, err = store.RegisterSearchIndex(ctx, q, scope, access, entity, id)
+		} else {
+			index, err = store.RegisterFieldIndex(ctx, q, scope, access, entity, id)
+		}
 		return indexReply(index, err)
 	}
 	var body struct {
@@ -75,6 +88,12 @@ func indexRequest(ctx context.Context, q postgres.Executor, r *http.Request, sco
 	if readDataCommand(r, &body) != nil {
 		return indexReply(data.NumericIndex{}, data.ErrInvalid)
 	}
-	index, err := store.BuildFieldIndex(ctx, q, scope, access, entity, id, body.ExpectedCheckpoint)
+	var index data.FieldIndex
+	var err error
+	if search {
+		index, err = store.BuildSearchIndex(ctx, q, scope, access, entity, id, body.ExpectedCheckpoint)
+	} else {
+		index, err = store.BuildFieldIndex(ctx, q, scope, access, entity, id, body.ExpectedCheckpoint)
+	}
 	return indexReply(index, err)
 }

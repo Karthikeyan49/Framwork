@@ -132,6 +132,7 @@ type Query struct {
 	After      string     `json:"after,omitempty"`
 	Join       *Join      `json:"join,omitempty"`
 	Aggregate  *Aggregate `json:"aggregate,omitempty"`
+	Search     *Search    `json:"search,omitempty"`
 }
 type Page struct {
 	Records   []Record         `json:"records"`

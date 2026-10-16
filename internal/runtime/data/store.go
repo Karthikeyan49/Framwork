@@ -44,7 +44,10 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	return scalarReady(ctx, db)
+	if err = scalarReady(ctx, db); err != nil {
+		return err
+	}
+	return searchReady(ctx, db)
 }
 func base(s Scope, a tenant.Access, entity string) []any {
 	return []any{a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash(), entity}

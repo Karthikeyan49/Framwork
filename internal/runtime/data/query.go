@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
@@ -178,7 +179,23 @@ func project(r Record, ids []string) Record {
 	}
 	return r
 }
-func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard, resolve ...ScopeResolver) (Page, error) {
+func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard, resolve ...ScopeResolver) (page Page, resultErr error) {
+	if query.Search != nil && postgres.RuntimeSnapshot(q) {
+		if _, err := q.ExecContext(ctx, `SELECT set_config('app.search_text','',true)`); err != nil {
+			return Page{}, err
+		}
+		defer func() {
+			// SQL-aborted transactions cannot execute cleanup; WithRuntime rolls
+			// them back and clears its leased connection independently.
+			var state interface{ SQLState() string }
+			if errors.As(resultErr, &state) {
+				return
+			}
+			if _, clearErr := q.ExecContext(ctx, `SELECT set_config('app.search_text','',true)`); clearErr != nil && resultErr == nil {
+				page, resultErr = Page{}, ErrUnavailable
+			}
+		}()
+	}
 	e, err := plan(s, a, entity)
 	if err != nil {
 		return Page{}, err
@@ -303,6 +320,26 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	sortExpr, sortType := "r.id", "uuid"
 	indexJoin := ""
 	scalarFrom, scalarPredicate := "", ""
+	searchFrom := ""
+	if query.Search != nil {
+		if st.workerSource {
+			return Page{}, ErrDenied
+		}
+		if !validSearch(*query.Search) || query.Sort != nil || query.Aggregate != nil {
+			return Page{}, ErrInvalid
+		}
+		searchPlan, er := st.prepareSearch(ctx, q, s, a, entity, *query.Search, predicateGuard, &b)
+		if er != nil {
+			return Page{}, er
+		}
+		seen[searchPlan.field] = true
+		indexJoin, searchFrom = searchPlan.join, searchPlan.from
+		where += searchPlan.predicate
+		if searchFrom != "" {
+			sortExpr = "sp.id"
+			span.SetAttributes(attribute.String("query_index", "search-simple-v1"))
+		}
+	}
 	desc := false
 	if query.Sort != nil {
 		var ok bool
@@ -395,6 +432,9 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 			// projection so skipped keys do not fetch business records.
 			cursorID = "si.id"
 		}
+		if searchFrom != "" {
+			cursorID = "sp.id"
+		}
 		value, err := metadata.DecodeJSON(c.Value)
 		if err != nil {
 			return Page{}, ErrInvalid
@@ -453,7 +493,10 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				}
 			}
 		}
-		joinSQL = ` LEFT JOIN ` + st.recordsTable() + ` j ON j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
+		// Fence the canonical view's target lookup to this source row. Flattening
+		// it into the outer join can scan the entire target dataset before a
+		// selective authorized page, including when the source uses a GIN index.
+		joinSQL = ` LEFT JOIN LATERAL (SELECT j.* FROM ` + st.recordsTable() + ` j WHERE j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
 		targetScope, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID})
 		if er != nil {
 			return Page{}, er
@@ -478,6 +521,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				joinSQL += " AND (" + pred + ")"
 			}
 		}
+		joinSQL += " OFFSET 0) j ON true"
 		joinedData := "j.custom_data"
 		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + joinedData
 	}
@@ -575,7 +619,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	}
 
 	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + indexJoin + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
-	if query.Sort != nil && !sf.CoreID && !st.workerSource {
+	if (query.Sort != nil && !sf.CoreID || searchFrom != "") && !st.workerSource {
 		// Bound the sort tuple to ID/key before fetching wide JSONB records. Both
 		// stages share one statement/snapshot and forced RLS; entity/field/row
 		// DataScope and cursor predicates select the page before LIMIT. The outer
@@ -584,6 +628,9 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		pageFrom, pageWhere, pageID := st.recordsTable()+" r"+indexJoin, where, "r.id"
 		if scalarFrom != "" {
 			pageFrom, pageWhere, pageID = scalarFrom, where+" AND "+scalarPredicate, "si.id"
+		}
+		if searchFrom != "" {
+			pageFrom, pageID = searchFrom, "sp.id"
 		}
 		statement = `WITH selected_page AS MATERIALIZED (SELECT ` + pageID + ` AS id,` + sortExpr + ` AS sort_value FROM ` + pageFrom + ` WHERE ` + pageWhere + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,` + pageID + ` ASC LIMIT ` + limit + `)
  SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN LATERAL (SELECT r.* FROM ` + st.recordsTable() + ` r WHERE r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id OFFSET 0) r ON true` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
@@ -667,7 +714,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if hasMore && query.Aggregate != nil {
 		return Page{}, ErrBudget
 	}
-	page := Page{Records: records, Next: ""}
+	page = Page{Records: records, Next: ""}
 	// The cursor is generated only when an extra result was observed.
 	if hasMore && query.Aggregate == nil {
 		value, _ := json.Marshal(lastValue)

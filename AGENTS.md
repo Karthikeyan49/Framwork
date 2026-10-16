@@ -69,6 +69,10 @@ belongs to `internal/platform/app`.
   unrounded UTC bounds and existing SQL microsecond rounding; preserve raw JSON
   and cursor values even when the physical key rounds beyond year 9999.
   Retained-binary tests require a checksum-pinned artifact; report default SKIPs.
+  ADR043 adds fixed plain full-text search with independent tenant RLS plus an
+  additional restrictive query-match policy. Search text is never authority.
+  Preserve parser witnesses, entry/exit context cleanup, shared quotas, search
+  field authorization and correlated source/target live-view point fetches.
 - ADR038: access administration reads typed headers under live entity/row
   authority, never unrelated business values. Preserve actor-owned recovery
   across SPA routes; unknown outcomes and unobservable truncated-list targets

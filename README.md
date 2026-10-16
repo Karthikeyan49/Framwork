@@ -30,7 +30,9 @@ retained older API binary passes selected CRUD against the extended schema.
 [Datetime and boolean indexes](docs/migration/M9R_R3B_DATETIME_BOOL_IMPLEMENTATION_REPORT.md)
 now pass independent fault, retained-binary and 100k-row capacity review. Timestamp
 ordering preserves the existing PostgreSQL microsecond precision and raw business
-values. Search indexes, uniqueness and aggregates remain separate work.
+values. [Full-text search](docs/migration/M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md)
+is the current bounded API slice under qualification; uniqueness and aggregates
+remain separate work.
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
@@ -504,9 +506,9 @@ reference, datetime and boolean indexes through
 `GET .../entities/{entity}/indexes/{field}`, `POST .../register` with `{}`, and
 `POST .../build` with `{"expected_checkpoint":N}`. The prefix can be the preview
 revision or an existing dataset binding. Run `make migrate` through migration
-00050 before using this binary. Registration derives the field contract from
+00051 before using this binary. Registration derives the field contract from
 stored metadata; intrinsic IDs are excluded. Quotas are eight fields per entity
-and 32 per physical namespace, shared across numeric and scalar types.
+and 32 per physical namespace, shared across numeric, scalar and search indexes.
 
 Build checkpoints copy and then independently verify at most 1000 rows. On an
 unknown POST result, inspect GET before continuing; never discard checkpoints to
@@ -526,6 +528,26 @@ microsecond rounding, while JSON values/cursors retain their original normalized
 nanoseconds. Boolean keys preserve false/true/null and accept no truthy strings.
 See [ADR042](docs/adr/042-m9r-datetime-and-boolean-projections.md) and run
 `make test-native-performance` for the datetime/boolean reference workload.
+
+Full-text search uses `search: {"field":"field.contact.memo0","text":"blue orchard"}`
+on an existing query, with ID-ordered pages, optional typed filters and one declared
+join. It uses fixed PostgreSQL `simple` plain AND-of-words semantics; the existing
+literal substring `contains` filter is unchanged. Sort/aggregate combinations,
+intrinsic IDs and non-string search fields are rejected. Text is bounded to 256
+UTF-8 bytes and sixteen parsed operands; standard PostgreSQL punctuation/long-word
+behavior applies. Source strings retain their 4096-byte contract.
+
+Owner/admin manage separate `.../entities/{entity}/search-indexes/{field}` GET,
+`POST .../register` with `{}` and `POST .../build` with `{"expected_checkpoint":N}`.
+The existing live manager, source binding, shared quota and 1000-row checkpoint
+protocol apply. Inspect GET after an unknown POST outcome. Unregistered/incomplete
+indexes use bounded source fallback; READY indexes use fixed GIN projections with
+the same live entity/field/record authorization. Parser/configuration/server/locale
+witness drift fails closed and needs reviewed forward repair/rebuild. No tenant
+DDL or caller configuration/tsquery syntax is accepted. This slice adds no search
+UI, ranking, language selection or arbitrary broad-term capacity guarantee.
+See [ADR043](docs/adr/043-m9r-governed-full-text-search.md) and
+`make test-search-performance` for the selective-search reference floor.
 
 `make browser-install` uses installed Chromium or installs Playwright-managed Chromium
 (no security checks disabled). After `make build`, with infrastructure running and

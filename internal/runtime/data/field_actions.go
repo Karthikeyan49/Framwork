@@ -72,6 +72,11 @@ func predicateFields(s Scope, e compiler.Entity, query Query) ([]string, error) 
 			return nil, err
 		}
 	}
+	if query.Search != nil {
+		if err := add(query.Search.Field); err != nil {
+			return nil, err
+		}
+	}
 	if query.Aggregate != nil && query.Aggregate.Op == "sum" {
 		if err := add(query.Aggregate.Field); err != nil {
 			return nil, err

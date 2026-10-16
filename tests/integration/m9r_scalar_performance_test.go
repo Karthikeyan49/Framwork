@@ -29,13 +29,14 @@ import (
 // Observe below the transaction port, without wrapping away RuntimeSnapshot's
 // proof. SQL/arguments stay in fixture memory and are never printed in logs.
 type scalarQueryTrace struct {
-	mu    sync.Mutex
-	query string
-	args  []any
+	mu           sync.Mutex
+	query        string
+	args         []any
+	lastSQLState string
 }
 
 func (o *scalarQueryTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
-	if strings.HasPrefix(d.SQL, "WITH selected_page AS MATERIALIZED") && strings.Contains(d.SQL, "runtime.scalar_projections") {
+	if strings.HasPrefix(d.SQL, "WITH selected_page AS MATERIALIZED") && (strings.Contains(d.SQL, "runtime.scalar_projections") || strings.Contains(d.SQL, "runtime.search_projections")) {
 		o.mu.Lock()
 		o.query = d.SQL
 		o.args = append([]any(nil), d.Args...)
@@ -43,7 +44,14 @@ func (o *scalarQueryTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d p
 	}
 	return ctx
 }
-func (*scalarQueryTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+func (o *scalarQueryTrace) TraceQueryEnd(_ context.Context, _ *pgx.Conn, d pgx.TraceQueryEndData) {
+	var state interface{ SQLState() string }
+	if errors.As(d.Err, &state) {
+		o.mu.Lock()
+		o.lastSQLState = state.SQLState()
+		o.mu.Unlock()
+	}
+}
 func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 	runM9RScalarIndexPerformanceFloor(t, "text")
 }

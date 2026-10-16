@@ -27,7 +27,7 @@ type WorkerSourceAdapter struct{}
 type workerReadKey struct{}
 
 func (WorkerSourceAdapter) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e string, v Query, g Guard, resolve ...ScopeResolver) (Page, error) {
-	if v.RecordID == "" || v.Limit != 1 || v.Filter != nil || v.Sort != nil || v.Join != nil || v.Aggregate != nil || v.After != "" {
+	if v.RecordID == "" || v.Limit != 1 || v.Filter != nil || v.Sort != nil || v.Join != nil || v.Aggregate != nil || v.After != "" || v.Search != nil {
 		return Page{}, ErrDenied
 	}
 	return (Store{workerSource: true}).Query(context.WithValue(ctx, workerReadKey{}, true), q, s, a, e, v, g, resolve...)
