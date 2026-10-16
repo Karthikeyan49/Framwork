@@ -30,6 +30,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
@@ -634,4 +635,301 @@ func TestM13AdversarialLegacyWritePathsAreClosed(t *testing.T) {
 		}
 	}
 	e.unchanged("1.0.0 bundle decisions", before)
+}
+
+// ----------------------------------------------------------------- 4. races
+
+const m13Iterations = 20
+
+// m13Race starts every fn at the same barrier, each on its own connection
+// (each port call opens its own runtime transaction), and returns their errors.
+func m13Race(fns ...func() error) []error {
+	var ready, done sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, len(fns))
+	for i, fn := range fns {
+		ready.Add(1)
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			ready.Done()
+			<-start
+			errs[i] = fn()
+		}()
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	return errs
+}
+
+// m13LostRace is how a losing racer may fail (ADR039 section 8; CONTRACT_CHANGES
+// m13-db 6): the CAS/state refusal, a serialization or deadlock abort, or the
+// runtime lock timeout. All map to 409 without retry.
+var m13LostRace = []string{"55000", "40001", "40P01", "55P03"}
+
+func m13CountRows(e *m13Env, table string) int {
+	e.t.Helper()
+	var n int
+	if err := e.f.operator.QueryRow(`SELECT count(*) FROM `+table+` WHERE tenant_id=$1 AND app_id=$2`, e.f.tenantA, e.app).Scan(&n); err != nil {
+		e.t.Fatal(err)
+	}
+	return n
+}
+
+// N parallel approvals by the same actor record one row; every caller either
+// gets the count 1 or loses the race with a 409-class SQLSTATE.
+func TestM13AdversarialRaceSameActorApprovals(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	for i := 0; i < m13Iterations; i++ {
+		hash, err := e.stageLevel("LOW")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fns := make([]func() error, 8)
+		counts := make([]int, len(fns))
+		for j := range fns {
+			fns[j] = func() error {
+				var err error
+				counts[j], err = e.approvePort(e.dave.subject, hash)
+				return err
+			}
+		}
+		wins := 0
+		for j, err := range m13Race(fns...) {
+			switch {
+			case err == nil && counts[j] == 1:
+				wins++
+			case err == nil:
+				t.Errorf("iteration %d: idempotent approval returned count %d", i, counts[j])
+			default:
+				m13Refused(t, "losing parallel approval", err, m13LostRace...)
+			}
+		}
+		if got := e.approvalsOf(hash); wins == 0 || len(got) != 1 || got[0] != e.dave.id {
+			t.Fatalf("iteration %d: %d successes, approvals %v", i, wins, got)
+		}
+	}
+	// The same race through HTTP on the real template: one row, at most one 201.
+	tmpl := e.template()
+	fns := make([]func() error, 8)
+	codes := make([]int, len(fns))
+	for j := range fns {
+		fns[j] = func() error { codes[j] = e.httpApprove(e.dave.token, tmpl.hash).Code; return nil }
+	}
+	m13Race(fns...)
+	created := 0
+	for _, c := range codes {
+		if c == 201 {
+			created++
+		} else if c != 200 && c != 409 {
+			t.Errorf("parallel HTTP approval: %d", c)
+		}
+	}
+	if got := e.approvalsOf(tmpl.hash); created > 1 || len(got) != 1 {
+		t.Fatalf("parallel HTTP approvals: %v created, rows %v", codes, got)
+	}
+}
+
+// Two activations of two different approved candidates on the same base:
+// exactly one wins per round, the pointer is the winner and history stays a
+// dense chain. Round 1 is the first-release insert path, later rounds the CAS
+// update path.
+func TestM13AdversarialRaceTwoActivationsOnOneBase(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	for i := 0; i < m13Iterations; i++ {
+		base, generation, _ := e.activePointer()
+		hashes := make([]string, 2)
+		for j := range hashes {
+			h, err := e.stageLevel("LOW")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = e.approvePort(e.dave.subject, h); err != nil {
+				t.Fatal(err)
+			}
+			hashes[j] = h
+		}
+		got := make([]int64, 2)
+		errs := m13Race(
+			func() (err error) { got[0], err = e.activatePort(e.dave.subject, hashes[0], base, generation); return },
+			func() (err error) { got[1], err = e.activatePort(e.erin.subject, hashes[1], base, generation); return },
+		)
+		winner := -1
+		for j, err := range errs {
+			if err == nil {
+				if winner >= 0 || got[j] != generation+1 {
+					t.Fatalf("round %d: second winner or wrong generation %v %v", i, got, errs)
+				}
+				winner = j
+			} else {
+				m13Refused(t, "losing activation", err, m13LostRace...)
+			}
+		}
+		if winner < 0 {
+			t.Fatalf("round %d: no activation won: %v", i, errs)
+		}
+		if hash, g, _ := e.activePointer(); hash != hashes[winner] || g != generation+1 {
+			t.Fatalf("round %d: pointer %s@%d, winner %s", i, hash, g, hashes[winner])
+		}
+	}
+	if rows := e.checkHistory(); len(rows) != m13Iterations || rows[len(rows)-1].generation != m13Iterations {
+		t.Fatalf("history rows %d", len(rows))
+	}
+	if n := m13CountRows(e, "control.release_approvals"); n != 2*m13Iterations {
+		t.Fatalf("approval rows %d", n)
+	}
+}
+
+// An approval racing the activation that needs it: activation either sees the
+// committed second approval or refuses the quorum; it never activates on one.
+// A racing approval by an excluded party can never complete the quorum.
+func TestM13AdversarialRaceApproveVersusActivate(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	for i := 0; i < m13Iterations; i++ {
+		base, generation, _ := e.activePointer()
+		x, err := e.stageLevel("CRITICAL")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = e.approvePort(e.dave.subject, x); err != nil {
+			t.Fatal(err)
+		}
+		// The excluded requester races the activation: always refused.
+		errs := m13Race(
+			func() error { _, err := e.approvePort(e.carol.subject, x); return err },
+			func() error { _, err := e.activatePort(e.erin.subject, x, base, generation); return err },
+		)
+		m13Refused(t, "excluded racing approval", errs[0], "42501")
+		m13Refused(t, "activation racing an excluded approval", errs[1], append([]string{"55000"}, m13LostRace...)...)
+		// An eligible approver races the activation.
+		var activated int64
+		errs = m13Race(
+			func() error { _, err := e.approvePort(e.erin.subject, x); return err },
+			func() (err error) { activated, err = e.activatePort(e.carol.subject, x, base, generation); return },
+		)
+		approvals := e.approvalsOf(x)
+		if errs[1] == nil {
+			if activated != generation+1 || errs[0] != nil || len(approvals) != 2 {
+				t.Fatalf("round %d: activated %d with approvals %v (approve err %v)", i, activated, approvals, errs[0])
+			}
+			continue
+		}
+		m13Refused(t, "activation racing an eligible approval", errs[1], append([]string{"55000"}, m13LostRace...)...)
+		if errs[0] != nil {
+			m13Refused(t, "approval racing an activation", errs[0], m13LostRace...)
+			if _, err = e.approvePort(e.erin.subject, x); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if g, err := e.activatePort(e.carol.subject, x, base, generation); err != nil || g != generation+1 {
+			t.Fatalf("round %d: sequential activation after the race: %d %v", i, g, err)
+		}
+	}
+	e.checkHistory()
+}
+
+// A rollback racing an activation on the same pointer: exactly one moves it.
+func TestM13AdversarialRaceRollbackVersusActivate(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	plan := strings.Repeat("c", 64)
+	for k := 0; k < 2; k++ {
+		base, generation, _ := e.activePointer()
+		h, err := e.stageLevel("LOW")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = e.approvePort(e.dave.subject, h); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = e.activatePort(e.dave.subject, h, base, generation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rollbacks, activations := 0, 0
+	for i := 0; i < m13Iterations; i++ {
+		rows := e.historyRows()
+		current, generation, _ := e.activePointer()
+		target := rows[len(rows)-1].previous
+		next, err := e.stageLevel("LOW")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = e.approvePort(e.dave.subject, next); err != nil {
+			t.Fatal(err)
+		}
+		got := make([]int64, 2)
+		errs := m13Race(
+			func() (err error) {
+				got[0], err = e.rollbackPort(e.erin.subject, target, current, generation, plan, true)
+				return
+			},
+			func() (err error) { got[1], err = e.activatePort(e.dave.subject, next, current, generation); return },
+		)
+		won := ""
+		for j, err := range errs {
+			if err != nil {
+				m13Refused(t, "losing pointer move", err, m13LostRace...)
+				continue
+			}
+			if won != "" || got[j] != generation+1 {
+				t.Fatalf("round %d: two pointer moves or a wrong generation: %v %v", i, got, errs)
+			}
+			won = []string{target, next}[j]
+			if j == 0 {
+				rollbacks++
+			} else {
+				activations++
+			}
+		}
+		if hash, g, _ := e.activePointer(); won == "" || hash != won || g != generation+1 {
+			t.Fatalf("round %d: pointer %s@%d after %v", i, hash, g, errs)
+		}
+	}
+	rows := e.checkHistory()
+	if len(rows) != 2+m13Iterations {
+		t.Fatalf("history rows %d", len(rows))
+	}
+	t.Logf("rollback won %d rounds, activation won %d", rollbacks, activations)
+}
+
+// A rejection racing an approval: whatever the order, the hash ends rejected and
+// can never be activated, even holding the approval.
+func TestM13AdversarialRaceRejectVersusApprove(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	approved := 0
+	for i := 0; i < m13Iterations; i++ {
+		base, generation, _ := e.activePointer()
+		x, err := e.stageLevel("LOW")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var recorded bool
+		errs := m13Race(
+			func() (err error) {
+				recorded, err = e.rejectPort(e.f.bobSubject, x, "RISK_UNACCEPTABLE", "race")
+				return
+			},
+			func() error { _, err := e.approvePort(e.dave.subject, x); return err },
+		)
+		if errs[0] != nil || !recorded {
+			t.Fatalf("round %d: the veto failed: %v", i, errs[0])
+		}
+		if errs[1] == nil {
+			approved++
+		} else {
+			m13Refused(t, "approval racing a rejection", errs[1], m13LostRace...)
+		}
+		_, err = e.activatePort(e.erin.subject, x, base, generation)
+		m13Refused(t, "activation of a rejected hash", err, "55000")
+	}
+	if n := m13CountRows(e, "control.release_history"); n != 0 {
+		t.Fatalf("a rejected hash was activated: %d history rows", n)
+	}
+	t.Logf("approval committed before the rejection in %d of %d rounds", approved, m13Iterations)
 }
