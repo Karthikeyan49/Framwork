@@ -151,7 +151,9 @@ func TestM9RNumericIndexPermissionsAndWitnesses(t *testing.T) {
 	f, h, base, token, app := m5Fixture(t)
 	m5Create(t, h, base, token, "Index protected")
 	path := base + "/indexes/field.contact.balance"
-	for _, id := range []string{"field.contact.status", "field.contact.id", "field.contact.missing"} {
+	// Enum fields are now supported by the shared index API. Intrinsic and
+	// unknown fields still fail; choice tests exercise real unsupported booleans.
+	for _, id := range []string{"field.contact.id", "field.contact.missing"} {
 		w := m5Call(h, base+"/indexes/"+id+"/register", token, struct{}{})
 		if w.Code != 400 {
 			t.Fatal("unsupported field", id, w.Code)

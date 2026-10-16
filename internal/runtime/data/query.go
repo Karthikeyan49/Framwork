@@ -329,7 +329,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				span.SetAttributes(attribute.String("query_index", "numeric-v1"))
 			}
 		}
-		if !st.workerSource && !st.legacy && (sf.Type == "string" || sf.Type == "date") && !sf.CoreID && postgres.RuntimeSnapshot(q) {
+		if !st.workerSource && !st.legacy && scalarType(sf.Type) && !sf.CoreID && postgres.RuntimeSnapshot(q) {
 			index, indexErr := scalarIndex(ctx, q, s, a, entity, sf.ID)
 			if indexErr != nil && indexErr != ErrNotFound {
 				return Page{}, indexErr
@@ -341,10 +341,17 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				}
 				if usable {
 					scalarPredicate = `si.tenant_id=$1 AND si.app_id=$2 AND si.metadata_revision=$3 AND si.ir_hash=$4 AND si.entity_id=$5 AND si.field_id=` + b.bind(sf.ID)
-					if sf.Type == "string" {
+					switch sf.Type {
+					case "string":
 						scalarPredicate += ` AND si.field_type='string' AND NOT si.overflow`
 						sortExpr, sortType = "si.value_text", "text"
-					} else {
+					case "enum":
+						scalarPredicate += ` AND si.field_type='enum'`
+						sortExpr, sortType = "si.value_text", "text"
+					case "reference":
+						scalarPredicate += ` AND si.field_type='reference'`
+						sortExpr, sortType = "si.value_text", "text"
+					case "date":
 						scalarPredicate += ` AND si.field_type='date'`
 						sortExpr, sortType = "si.value_date", "date"
 					}

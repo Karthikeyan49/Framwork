@@ -45,9 +45,21 @@ func (o *scalarQueryTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d p
 }
 func (*scalarQueryTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
+	runM9RScalarIndexPerformanceFloor(t, false)
+}
+func TestM9RChoiceIndexPerformanceFloor(t *testing.T) {
+	runM9RScalarIndexPerformanceFloor(t, true)
+}
+func runM9RScalarIndexPerformanceFloor(t *testing.T, choice bool) {
 	m8Database(t)
 	requireM9RReferencePostgres(t)
-	f, h, base, token, app := scalarFixture(t, 1)
+	fixture := func(t *testing.T) (*iamFixture, http.Handler, string, string, string) { return scalarFixture(t, 1) }
+	fields := []string{"field.contact.memo0", "field.contact.joined"}
+	if choice {
+		fixture = choiceFixture
+		fields = []string{"field.contact.status", "field.contact.parent"}
+	}
+	f, h, base, token, app := fixture(t)
 	scope := scalarScope(t, h, base, token)
 	hash := scope.Hash()
 	ctx := context.Background()
@@ -69,10 +81,12 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 		_, err = f.operator.Exec(`INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,2,$3)`, id, app, hash)
 		scalarSQL(t, err)
 		_, err = f.operator.Exec(`INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,created_by,updated_by,owner_user_id)
- SELECT $1,$2,2,$3,'entity.contact',gen_random_uuid(),jsonb_build_object('field.contact.name',lpad(i::text,8,'0')||repeat(' scalar reference text',18),
- 'field.contact.memo0',CASE WHEN i%101=0 THEN NULL ELSE (ARRAY['Alpha','alpha','Å','தமிழ்','ß','Ω'])[1+i%6]||lpad((i%50000)::text,8,'0') END,
+ SELECT $1,$2,2,$3,'entity.contact',CASE WHEN $7::boolean THEN md5(i::text)::uuid ELSE gen_random_uuid() END,jsonb_build_object('field.contact.name',lpad(i::text,8,'0')||repeat(' scalar reference text',18),
  'field.contact.joined',CASE WHEN i%103=0 THEN NULL ELSE to_char(date '1000-01-01'+(i%12000),'YYYY-MM-DD') END,
- 'field.contact.status',CASE WHEN i%997=0 THEN 'inactive' ELSE 'active' END,'field.contact.balance',jsonb_build_object('amount',i::text,'currency','USD')),$4,$4,CASE WHEN i%2=0 THEN $4::uuid ELSE $5::uuid END FROM generate_series(1,$6::int)i`, id, app, hash, owner, f.viewer, count)
+ 'field.contact.status',CASE WHEN $7::boolean AND i%103=0 THEN NULL WHEN i%997=0 THEN 'inactive' ELSE 'active' END,'field.contact.balance',jsonb_build_object('amount',i::text,'currency','USD'))
+ ||CASE WHEN $7::boolean THEN jsonb_build_object('field.contact.parent',CASE WHEN i%107=0 THEN NULL ELSE md5((i%256+1)::text)::uuid::text END)
+ ELSE jsonb_build_object('field.contact.memo0',CASE WHEN i%101=0 THEN NULL ELSE (ARRAY['Alpha','alpha','Å','தமிழ்','ß','Ω'])[1+i%6]||lpad((i%50000)::text,8,'0') END) END,
+ $4,$4,CASE WHEN i%2=0 THEN $4::uuid ELSE $5::uuid END FROM generate_series(1,$6::int)i`, id, app, hash, owner, f.viewer, count, choice)
 		scalarSQL(t, err)
 	}
 	var width int
@@ -93,7 +107,7 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 	h = r5Handler(t, f, audit.Postgres{})
 	f.db = original
 	buildStart := time.Now()
-	for _, field := range []string{"field.contact.memo0", "field.contact.joined"} {
+	for _, field := range fields {
 		index := m9rIndexReady(t, h, base+"/indexes/"+field, token)
 		if index.ScannedRows != 100000 || index.VerifiedRows != 100000 {
 			t.Fatal("scalar capacity coverage")
@@ -106,7 +120,7 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 	server := httptest.NewServer(h)
 	defer server.Close()
 	principal, _ := f.verifier.Verify(token)
-	for _, field := range []string{"field.contact.memo0", "field.contact.joined"} {
+	for _, field := range fields {
 		for _, desc := range []bool{false, true} {
 			label := "text"
 			expr := "custom_data->>'field.contact.memo0'"
@@ -115,6 +129,12 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 				label = "date"
 				expr = "(custom_data->>'field.contact.joined')::date"
 				indexName = "scalar_date_asc"
+			}
+			if field == "field.contact.status" {
+				label, expr, indexName = "enum", "custom_data->>'field.contact.status'", "scalar_enum_asc"
+			}
+			if field == "field.contact.parent" {
+				label, expr, indexName = "reference", "custom_data->>'field.contact.parent'", "scalar_reference_asc"
 			}
 			direction := "ASC"
 			if desc {
@@ -136,7 +156,15 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 				t.Fatal("scalar reference oracle size")
 			}
 			query := m5Query()
-			query.Projection = append(query.Projection, "field.contact.memo0", "field.contact.joined")
+			for _, id := range fields {
+				found := false
+				for _, projected := range query.Projection {
+					found = found || projected == id
+				}
+				if !found {
+					query.Projection = append(query.Projection, id)
+				}
+			}
 			query.Limit = 100
 			query.Sort = &data.Sort{Field: field, Desc: desc}
 			for _, offset := range []int{0, 100, 50000} {
