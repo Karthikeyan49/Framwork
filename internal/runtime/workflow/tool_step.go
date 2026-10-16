@@ -32,11 +32,21 @@ type toolDispatch struct {
 }
 
 type toolLedger struct {
-	state, class, lastKind string
-	retryable              bool
-	attempts               int
-	firstSent              time.Time
-	response               []byte
+	state, class, lastKind, requestHash string
+	retryable                           bool
+	attempts                            int
+	firstSent                           time.Time
+	response                            []byte
+}
+
+// ToolContractOf derives the database-enforced contract pinned beside a
+// definition hash (ADR036 Amendment A1).
+func ToolContractOf(d tools.Definition) ToolContract {
+	c := ToolContract{SideEffect: d.SideEffect, Approval: d.Approval, IdempotencyMode: d.Delivery.IdempotencyMode, RetryMode: d.Delivery.RetryMode, ReplayWindowMS: d.Delivery.ReplayWindowMS, TimeoutMS: d.Connector.TimeoutMS}
+	if d.Connector.Lookup != nil {
+		c.SettleMS = d.Connector.Lookup.SettleMS
+	}
+	return c
 }
 
 func toolActivityRef(a toolActivityState) string {
@@ -69,7 +79,7 @@ func (s Store) toolMode(ctx context.Context, q postgres.Executor, d tools.Defini
 
 func loadToolLedger(ctx context.Context, q postgres.Executor, a tenant.Access, instance, step string) (toolLedger, bool, error) {
 	var l toolLedger
-	err := q.QueryRowContext(ctx, `SELECT v.state,v.outcome_class,v.retryable,v.attempts,v.first_sent_at,v.response,coalesce((SELECT t.kind FROM runtime.tool_attempts t WHERE t.tenant_id=v.tenant_id AND t.instance_id=v.instance_id AND t.step_key=v.step_key ORDER BY t.attempt DESC LIMIT 1),'') FROM runtime.tool_invocations v WHERE v.tenant_id=$1 AND v.instance_id=$2 AND v.step_key=$3`, a.TenantID(), instance, step).Scan(&l.state, &l.class, &l.retryable, &l.attempts, &l.firstSent, &l.response, &l.lastKind)
+	err := q.QueryRowContext(ctx, `SELECT v.state,v.outcome_class,v.retryable,v.attempts,v.first_sent_at,v.response,v.request_hash,coalesce((SELECT t.kind FROM runtime.tool_attempts t WHERE t.tenant_id=v.tenant_id AND t.instance_id=v.instance_id AND t.step_key=v.step_key ORDER BY t.attempt DESC LIMIT 1),'') FROM runtime.tool_invocations v WHERE v.tenant_id=$1 AND v.instance_id=$2 AND v.step_key=$3`, a.TenantID(), instance, step).Scan(&l.state, &l.class, &l.retryable, &l.attempts, &l.firstSent, &l.response, &l.requestHash, &l.lastKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return l, false, nil
 	}
@@ -178,6 +188,11 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 	}
 	fail := func(e error) error { return activityFailure{err: e, instanceVersion: x.Version, step: call.StepKey} }
 	def, ok := s.ToolCatalog.Lookup(t.ref, t.version, t.hash)
+	if ok && state.ToolContract != nil && ToolContractOf(def) != *state.ToolContract {
+		// The pinned contract is derived from the pinned definition; any
+		// disagreement is an integrity failure, never a reason to send.
+		ok = false
+	}
 	if !ok || !def.AllowsTenant(a.TenantID()) || s.Tools == nil {
 		// A removed/changed/unlicensed tool fails closed before any I/O.
 		return nil, fail(Permanent())
@@ -193,6 +208,10 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 		return nil, activityFailure{err: Retryable(), instanceVersion: x.Version, step: call.StepKey, abandon: true}
 	}
 	if found && l.state == "SUCCEEDED" {
+		// The settled ledger must belong to this exact step request (M10R-02).
+		if l.requestHash != call.RequestHash {
+			return nil, fail(Permanent())
+		}
 		out, e := canonicalOutput(l.response)
 		if e != nil {
 			return nil, fail(Unknown())

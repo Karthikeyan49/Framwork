@@ -21,9 +21,11 @@ func itemFields() []rules.Field {
 		{ID: "field.item.note", Type: rules.Type{Kind: "string"}},
 	}
 }
+var testToolContract = ToolContract{SideEffect: "READ", Approval: "NONE", IdempotencyMode: "NONE", RetryMode: "SAFE_RETRY", TimeoutMS: 1000}
+
 func itemResolver(hash string) ToolResolver {
-	return func(ref, version string) (string, bool) {
-		return hash, ref == "tool.vendor_lookup" && version == "1.0.0"
+	return func(ref, version string) (ToolResolution, bool) {
+		return ToolResolution{Hash: hash, Contract: testToolContract}, ref == "tool.vendor_lookup" && version == "1.0.0"
 	}
 }
 func toolActivity() *metadata.Activity {
@@ -62,7 +64,7 @@ func TestToolPlanPinsHashAndUsesDSL210(t *testing.T) {
 	p := toolProgram(t)
 	plan := p.Plan()
 	call, _ := p.State("state.call")
-	if plan.DSLVersion != ToolDSLVersion || ToolDSLVersion != "2.1.0" || !p.HasTools() || !call.IsTool() || call.ToolHash != testToolHash {
+	if plan.DSLVersion != ToolDSLVersion || ToolDSLVersion != "2.2.0" || call.ToolContract == nil || *call.ToolContract != testToolContract || !p.HasTools() || !call.IsTool() || call.ToolHash != testToolHash {
 		t.Fatal("tool plan is not pinned", plan.DSLVersion, call.ToolHash)
 	}
 	if call.Activity.LocalRef != "" || call.Activity.TimeoutMS != 0 || !reflect.DeepEqual(call.Activity.Inputs, map[string]string{"vendor_id": "field.item.id"}) {
@@ -96,7 +98,7 @@ func TestToolActivitiesRequireAResolverThatKnowsThem(t *testing.T) {
 	if _, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, nil); e == nil {
 		t.Fatal("nil resolver admitted a tool")
 	}
-	denied := func(string, string) (string, bool) { return testToolHash, false }
+	denied := func(string, string) (ToolResolution, bool) { return ToolResolution{Hash: testToolHash, Contract: testToolContract}, false }
 	if _, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, denied); e == nil {
 		t.Fatal("unresolved tool admitted")
 	}
@@ -107,7 +109,10 @@ func TestToolActivitiesRequireAResolverThatKnowsThem(t *testing.T) {
 	}
 	// A tool-free workflow never consults the resolver and stays DSL 2.0.0.
 	consulted := false
-	free := func(string, string) (string, bool) { consulted = true; return testToolHash, true }
+	free := func(string, string) (ToolResolution, bool) {
+		consulted = true
+		return ToolResolution{Hash: testToolHash, Contract: testToolContract}, true
+	}
 	plain := testPlanWorkflow()
 	p, e := CompileDefinitionWithTools("workflow.item", plain, []rules.Field{{ID: "field.item.id", Type: rules.Type{Kind: "string"}, Required: true}}, nil, free)
 	if e != nil || consulted || p.Plan().DSLVersion != Version || p.HasTools() {
@@ -300,7 +305,8 @@ func TestMatchesDefinitionComparesToolPlansWithoutAHash(t *testing.T) {
 		"became local": func(w *metadata.Workflow) {
 			w.States[1].Activity = &metadata.Activity{LocalRef: "local.noop", Version: ActivityVersion, TimeoutMS: 500, Retry: toolActivity().Retry}
 		},
-		"authored dsl 2.1.0":  func(w *metadata.Workflow) { w.DSLVersion = ToolDSLVersion },
+		"authored dsl 2.2.0":  func(w *metadata.Workflow) { w.DSLVersion = ToolDSLVersion },
+		"authored dsl 2.1.0":  func(w *metadata.Workflow) { w.DSLVersion = LegacyToolDSLVersion },
 		"timeout on the tool": func(w *metadata.Workflow) { w.States[1].Activity.TimeoutMS = 500 },
 	}
 	for name, mutate := range cases {
@@ -328,5 +334,65 @@ func TestMatchesDefinitionComparesToolPlansWithoutAHash(t *testing.T) {
 	}
 	if !testPlan(t).MatchesDefinition("workflow.item", testPlanWorkflow(), []rules.Field{{ID: "field.item.id", Type: rules.Type{Kind: "string"}, Required: true}}) {
 		t.Fatal("tool-free comparison regressed")
+	}
+}
+
+// legacyToolPlan is a DSL 2.1.0 tool plan produced by the M10 compiler before
+// ADR036 Amendment A1 (captured from toolProgram at a9d4d66). Stored plans
+// must keep restoring byte-for-byte and still match their authored source.
+const legacyToolPlan = `{"dsl_version":"2.1.0","id":"workflow.item","entity_id":"entity.item","version":"1.0.0","trigger":"manual","timeout_ms":60000,"initial_state":"state.start","fields":[{"id":"field.item.id","type":{"kind":"string"},"required":true},{"id":"field.item.note","type":{"kind":"string"},"required":false},{"id":"field.item.qty","type":{"kind":"integer"},"required":false}],"states":[{"id":"state.call","type":"activity","transitions":[{"to":"state.done","on":"always"}],"activity":{"tool_ref":"tool.vendor_lookup","version":"1.0.0","inputs":{"vendor_id":"field.item.id"},"retry":{"max_attempts":2,"initial_backoff_ms":100,"max_backoff_ms":1000}},"tool_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},{"id":"state.done","type":"complete","transitions":[]},{"id":"state.start","type":"start","transitions":[{"to":"state.call","on":"always"}]}]}`
+const legacyToolPlanHash = "146aba5d07a63abbe11269d64c997ef127fb832b8cdfce5e030741383d35fd7a"
+
+func TestLegacyToolPlanRestoresByteForByte(t *testing.T) {
+	p, e := Restore([]byte(legacyToolPlan), legacyToolPlanHash)
+	if e != nil || p.Hash() != legacyToolPlanHash || string(p.JSON()) != legacyToolPlan || p.Plan().DSLVersion != LegacyToolDSLVersion || !p.HasTools() {
+		t.Fatal("stored DSL 2.1.0 plan no longer restores", e)
+	}
+	if call, _ := p.State("state.call"); call.ToolContract != nil || call.ToolHash != testToolHash {
+		t.Fatal("legacy plan gained a contract", call.ToolContract)
+	}
+	if !p.MatchesDefinition("workflow.item", toolWorkflow(), itemFields()) {
+		t.Fatal("legacy plan no longer matches its source")
+	}
+	// The current compiler pins the contract under DSL 2.2.0 instead.
+	current := toolProgram(t)
+	if current.Plan().DSLVersion != ToolDSLVersion || current.Hash() == legacyToolPlanHash || !current.MatchesDefinition("workflow.item", toolWorkflow(), itemFields()) {
+		t.Fatal("current tool plan", current.Plan().DSLVersion)
+	}
+	// A legacy plan cannot carry a contract and a current plan requires one.
+	plan := p.Plan()
+	contract := testToolContract
+	planState(&plan, "state.call").ToolContract = &contract
+	if restorePlan(plan) == nil {
+		t.Fatal("DSL 2.1.0 accepted a tool contract")
+	}
+	plan = current.Plan()
+	planState(&plan, "state.call").ToolContract = nil
+	if restorePlan(plan) == nil {
+		t.Fatal("DSL 2.2.0 accepted a tool state without a contract")
+	}
+	for name, mutate := range map[string]func(*ToolContract){
+		"write without approval": func(c *ToolContract) { c.SideEffect, c.Approval = "WRITE", "NONE" },
+		"unknown idempotency":    func(c *ToolContract) { c.IdempotencyMode = "MAYBE" },
+		"keyed without window":   func(c *ToolContract) { c.IdempotencyMode = "NATIVE_KEY" },
+		"window without key":     func(c *ToolContract) { c.ReplayWindowMS = 1000 },
+		"settle without lookup":  func(c *ToolContract) { c.SettleMS = 1000 },
+		"settle too long":        func(c *ToolContract) { c.IdempotencyMode, c.SettleMS = "LOOKUP_BY_REFERENCE", MaxSettleMS+1 },
+		"timeout zero":           func(c *ToolContract) { c.TimeoutMS = 0 },
+		"timeout too long":       func(c *ToolContract) { c.TimeoutMS = 2001 },
+	} {
+		plan = current.Plan()
+		bad := testToolContract
+		mutate(&bad)
+		planState(&plan, "state.call").ToolContract = &bad
+		if restorePlan(plan) == nil {
+			t.Fatal("invalid contract accepted:", name)
+		}
+	}
+	// A local activity never carries a contract.
+	local := testPlan(t).Plan()
+	planState(&local, "state.start").ToolContract = &contract
+	if restorePlan(local) == nil {
+		t.Fatal("contract accepted on a non-tool state")
 	}
 }

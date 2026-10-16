@@ -58,7 +58,16 @@ type Endpoint struct {
 type Lookup struct {
 	Method string `json:"method"` // GET
 	Path   string `json:"path"`   // must contain exactly one {key}
+	// SettleMS is the provider's declared settle interval: how long after the
+	// original send's deadline a write can still become visible. A 404 lookup
+	// proves absence only when it starts after send start + timeout + SettleMS;
+	// without a declaration a lookup can find an effect but never prove absence
+	// (ADR036 Amendment A4). Omitted when zero, so existing hashes are unchanged.
+	SettleMS int `json:"settle_ms,omitempty"`
 }
+
+// MaxSettleMS bounds a declared provider settle interval.
+const MaxSettleMS = 600000
 type Connector struct {
 	Endpoint
 	Method            string  `json:"method"` // GET, POST, PUT
@@ -246,7 +255,7 @@ func validateDefinition(d Definition) (Definition, error) {
 	if c.Method != "GET" && c.Method != "POST" && c.Method != "PUT" || (d.SideEffect != "WRITE") != (c.Method == "GET") {
 		return d, bad
 	}
-	if c.Lookup != nil && (c.Lookup.Method != "GET" || !validTemplate(c.Lookup.Path, map[string]bool{"key": true}, true)) {
+	if c.Lookup != nil && (c.Lookup.Method != "GET" || !validTemplate(c.Lookup.Path, map[string]bool{"key": true}, true) || c.Lookup.SettleMS < 0 || c.Lookup.SettleMS > MaxSettleMS) {
 		return d, bad
 	}
 	if len(d.Input) > MaxFields || len(d.Output) < 1 || len(d.Output) > MaxFields {
