@@ -48,7 +48,10 @@ and said M11 must open it; `runtime.datasets` allowed only `preview`.
    any attempt on a frozen sandbox. LIVE does not exist in M10/M11.
 4. **Credentials.** The ceiling can only reduce a tool's declared sandbox mode.
    Sandbox modes use only the tool's sandbox endpoint and sandbox secret
-   reference; the catalog forbids equal production/sandbox hosts and secrets.
+   reference; the catalog forbids a sandbox endpoint on any production host of the catalog
+   (on any port) and a sandbox credential equal to any production credential, and
+   only TEST_ACCOUNT carries a credential (REROUTE and READ_ONLY send none, also when a
+   ceiling narrowed a TEST_ACCOUNT tool).
    The gateway in a sandbox never resolves the production reference (tested with
    a recording resolver).
 5. **Freeze and evidence.** `runtime.freeze_sandbox` (owner/admin, `sandbox.manage`)
@@ -59,7 +62,8 @@ and said M11 must open it; `runtime.datasets` allowed only `preview`.
    server's tool-catalog hash and a hash of the deciding policy version. It then
    marks the sandbox and dataset FROZEN: record writes, workflow starts and tool
    sends are refused, evolution is impossible, and FROZEN cannot be left. The
-   catalog and policy hashes are computed by the server, not request fields.
+   catalog and policy hashes are computed by the server, not request fields (the
+   definer port itself takes them as arguments from its API-role caller).
    Evidence is an input to M12; it contains no PASS, risk or approval claim.
 6. **Contracts.** `sandbox.Context` and bundle 1.0.0 bytes are unchanged
    (stored bundles must still restore). New fields live in the versioned
