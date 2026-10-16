@@ -21,11 +21,13 @@ package integration
 //     raw ports accepting exactly these.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -33,6 +35,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/risk"
 	"github.com/Karthikeyan49/Framwork/internal/tools"
@@ -469,4 +472,166 @@ func TestM13AdversarialQuorumCountsOnlyLiveEligibleApprovers(t *testing.T) {
 	if len(h) != 2 || h[1].kind != "ACTIVATE" || h[1].riskLevel != "CRITICAL" || h[1].actor != e.carol.id || h[1].previous != tmpl.hash || h[0].actor != e.erin.id {
 		t.Fatalf("history %+v", h)
 	}
+}
+
+// --------------------------------------------------- 3. legacy path closed
+
+// execIn runs one statement as subject (direct identity binding) and commits.
+func (e *m13Env) execIn(subject, query string, args ...any) error {
+	return postgres.WithRuntime(context.Background(), e.f.db, func(ctx context.Context, q postgres.Executor) error {
+		if err := e.bindDirect(ctx, q, subject, e.f.tenantA); err != nil {
+			return err
+		}
+		_, err := q.ExecContext(ctx, query, args...)
+		return err
+	})
+}
+
+// The M6R write paths are gone: the runtime role has no DML or TRUNCATE on any
+// release authority table (even for its own HIGH candidate, the review finding
+// that the requester could self-approve through direct SQL), the operator cannot
+// change or hand-write authority rows, the worker drift guard covers the tables
+// and a 1.0.0 bundle (no candidate row) can no longer be approved or activated.
+func TestM13AdversarialLegacyWritePathsAreClosed(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	if _, err := e.approvePort(e.dave.subject, tmpl.hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.activatePort(e.dave.subject, tmpl.hash, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.rejectPort(e.erin.subject, tmpl.hash, "OTHER", "kept for the immutability probes"); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := e.stageLevel("HIGH")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := []string{"control.release_approvals", "control.active_releases", "control.release_rejections", "control.release_history"}
+	for _, table := range tables {
+		for _, privilege := range []string{"INSERT", "UPDATE", "DELETE", "TRUNCATE"} {
+			var has bool
+			if err := e.f.operator.QueryRow(`SELECT has_table_privilege('framework_app',$1,$2)`, table, privilege).Scan(&has); err != nil || has {
+				t.Errorf("framework_app has %s on %s (%v)", privilege, table, err)
+			}
+		}
+		var column bool
+		if err := e.f.operator.QueryRow(`SELECT has_any_column_privilege('framework_app',$1,'INSERT') OR has_any_column_privilege('framework_app',$1,'UPDATE')`, table).Scan(&column); err != nil || column {
+			t.Errorf("framework_app keeps a column write privilege on %s (%v)", table, err)
+		}
+	}
+	before := e.state()
+	a, app := e.f.tenantA, e.app
+	for name, c := range map[string]struct {
+		subject, query string
+		args           []any
+	}{
+		"requester self-approval (M6R insert)": {e.carol.subject, `INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash) VALUES($1,$2,$3)`, []any{a, app, pending}},
+		"approval with an actor id":            {e.dave.subject, `INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash,actor_id) VALUES($1,$2,$3,$4)`, []any{a, app, pending, e.dave.id}},
+		"pointer update (M6R activate)":        {e.dave.subject, `UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2`, []any{a, app, pending}},
+		"pointer insert":                       {e.dave.subject, `INSERT INTO control.active_releases(tenant_id,app_id,artifact_hash,generation) VALUES($1,$2,$3,9)`, []any{a, app, pending}},
+		"pointer delete":                       {e.dave.subject, `DELETE FROM control.active_releases WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"history insert":                       {e.dave.subject, `INSERT INTO control.release_history(tenant_id,app_id,seq,kind,artifact_hash,previous_hash,generation,risk_level,storage_class) VALUES($1,$2,2,'ACTIVATE',$3,'',2,'LOW','EQUAL')`, []any{a, app, pending}},
+		"history delete":                       {e.dave.subject, `DELETE FROM control.release_history WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"history update":                       {e.dave.subject, `UPDATE control.release_history SET actor_id=$3 WHERE tenant_id=$1 AND app_id=$2`, []any{a, app, e.dave.id}},
+		"rejection delete":                     {e.dave.subject, `DELETE FROM control.release_rejections WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"rejection insert":                     {e.dave.subject, `INSERT INTO control.release_rejections(tenant_id,app_id,artifact_hash,reason) VALUES($1,$2,$3,'OTHER')`, []any{a, app, pending}},
+		"approval delete":                      {e.dave.subject, `DELETE FROM control.release_approvals WHERE tenant_id=$1 AND app_id=$2`, []any{a, app}},
+		"truncate approvals":                   {e.dave.subject, `TRUNCATE control.release_approvals`, nil},
+		"truncate pointer":                     {e.dave.subject, `TRUNCATE control.active_releases`, nil},
+		"truncate history":                     {e.dave.subject, `TRUNCATE control.release_history`, nil},
+		"truncate rejections":                  {e.dave.subject, `TRUNCATE control.release_rejections`, nil},
+		"internal approval counter":            {e.dave.subject, `SELECT control.release_approval_count($1,$2,$3)`, []any{a, app, pending}},
+	} {
+		m13Refused(t, "framework_app "+name, e.execIn(c.subject, c.query, c.args...), "42501")
+	}
+	_, err = e.approvePort(e.carol.subject, pending)
+	m13Refused(t, "requester self-approval through the port", err, "42501")
+	e.unchanged("direct runtime DML", before)
+
+	// The operator cannot rewrite or hand-write authority either.
+	for _, statement := range []string{
+		`UPDATE control.release_approvals SET approved_at=approved_at WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.release_approvals WHERE tenant_id=$1 AND app_id=$2`,
+		`UPDATE control.release_history SET plan_hash=NULL WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.release_history WHERE tenant_id=$1 AND app_id=$2`,
+		`UPDATE control.release_rejections SET note='' WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.release_rejections WHERE tenant_id=$1 AND app_id=$2`,
+		`DELETE FROM control.active_releases WHERE tenant_id=$1 AND app_id=$2`,
+	} {
+		if _, err := e.f.operator.Exec(statement, a, app); err == nil {
+			t.Errorf("operator changed release authority: %s", statement)
+		}
+	}
+	if _, err := e.f.operator.Exec(`INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash,actor_id) VALUES($1,$2,$3,$4)`, a, app, pending, e.dave.id); err == nil {
+		t.Error("operator hand-wrote an approval")
+	}
+	// A hand-written pointer move (no history row) fails at commit.
+	if _, err := e.f.operator.Exec(`UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2`, a, app, pending); err == nil {
+		t.Error("operator moved the pointer without history")
+	}
+	for _, table := range tables {
+		tx, err := e.f.operator.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(`TRUNCATE ` + table + ` CASCADE`); err == nil {
+			t.Errorf("operator TRUNCATE %s succeeded", table)
+		}
+		_ = tx.Rollback()
+	}
+	e.unchanged("operator writes", before)
+
+	// Workers hold nothing; the drift guard trips on any column grant.
+	worker, err := postgres.Open(os.Getenv("WORKER_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Close()
+	var safe bool
+	if err = worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe); err != nil || !safe {
+		t.Fatal("worker grants unsafe before the probe", err)
+	}
+	for _, table := range tables {
+		if _, err = e.f.operator.Exec(`GRANT SELECT(app_id) ON ` + table + ` TO framework_worker`); err != nil {
+			t.Fatal(err)
+		}
+		scanErr := worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe)
+		if _, err = e.f.operator.Exec(`REVOKE SELECT(app_id) ON ` + table + ` FROM framework_worker`); err != nil {
+			t.Fatal(err)
+		}
+		if scanErr != nil || safe {
+			t.Errorf("worker drift guard missed a column grant on %s (%v)", table, scanErr)
+		}
+	}
+
+	// An M6R-shaped 1.0.0 bundle has no candidate row: it is never approvable.
+	legacy := []byte(`{"Version":"1.0.0","AppID":"` + app + `","RequesterID":"` + e.carol.id + `","HighRisk":false,"IRHash":"` + strings.Repeat("a", 64) + `"}`)
+	legacyHash := promotion.Hash(legacy)
+	if _, err = e.f.operator.Exec(`INSERT INTO control.release_bundles(tenant_id,app_id,artifact_hash,body,created_by) VALUES($1,$2,$3,$4,$5)`, a, app, legacyHash, legacy, e.carol.id); err != nil {
+		t.Fatal("seed a 1.0.0 bundle row", err)
+	}
+	_, err = e.approvePort(e.dave.subject, legacyHash)
+	m13Refused(t, "approve a 1.0.0 bundle", err, "P0002")
+	_, err = e.rejectPort(e.dave.subject, legacyHash, "OTHER", "")
+	m13Refused(t, "reject a 1.0.0 bundle", err, "P0002")
+	current, generation, _ := e.activePointer()
+	_, err = e.activatePort(e.dave.subject, legacyHash, current, generation)
+	m13Refused(t, "activate a 1.0.0 bundle", err, "P0002")
+	_, err = e.rollbackPort(e.dave.subject, legacyHash, current, generation, strings.Repeat("c", 64), true)
+	m13Refused(t, "roll back to a never-activated 1.0.0 bundle", err, "55000")
+	// Through HTTP the body does not restore as a candidate (Go refuses before
+	// the port): 409 candidate_failed_verification; a 404 would be as safe.
+	for what, w := range map[string]*httptest.ResponseRecorder{
+		"approve":  e.httpApprove(e.dave.token, legacyHash),
+		"reject":   e.httpReject(e.dave.token, legacyHash, "OTHER", ""),
+		"activate": e.httpActivate(e.dave.token, legacyHash, current, generation),
+	} {
+		if r := m13Decode(w); !(w.Code == 404 || w.Code == 409 && r.Code == "candidate_failed_verification") {
+			t.Errorf("HTTP %s a 1.0.0 bundle: %d %s", what, w.Code, m13Trim(w.Body.String()))
+		}
+	}
+	e.unchanged("1.0.0 bundle decisions", before)
 }
