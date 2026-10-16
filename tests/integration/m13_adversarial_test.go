@@ -1283,3 +1283,166 @@ func TestM13AdversarialCrossTenantAndCrossApplication(t *testing.T) {
 	m13Refused(t, "tenant-A hash under another application", e.portIn(e.dave.subject, e.f.tenantA, &n, `SELECT control.approve_release($1,$2)`, "app.other_x", tmpl.hash), "P0002")
 	e.unchanged("cross-tenant and cross-application requests", before)
 }
+
+// RESIDUAL (not listed in ADR039 Consequences): the ports take the actor from
+// identity GUCs that the API process sets (AGENTS.md: GUCs are not
+// credentials). A compromised API process that has seen another member's
+// issuer/subject binds them and approves and activates the requester's HIGH
+// candidate "as" that member, with no token of theirs.
+func TestM13AdversarialCompromisedAPIBindsAnotherMembersIdentity(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template() // requested by carol
+	// The process serves only carol's request but binds dave's identity GUCs.
+	if n, err := e.approvePort(e.dave.subject, tmpl.hash); err != nil || n != 1 {
+		t.Fatalf("RESIDUAL changed: impersonated approval refused (%d, %v)", n, err)
+	}
+	if g, err := e.activatePort(e.dave.subject, tmpl.hash, "", 0); err != nil || g != 1 {
+		t.Fatalf("RESIDUAL changed: impersonated activation refused (%d, %v)", g, err)
+	}
+	h := e.checkHistory()
+	if len(h) != 1 || h[0].actor != e.dave.id {
+		t.Fatalf("history %+v", h)
+	}
+	t.Log("RESIDUAL: a process binding another active member's identity GUCs approved and activated a HIGH candidate; the database floors bind honest identity binding only")
+}
+
+// ---------------------------------------------- 9. replay and idempotency
+
+// Approve and reject are idempotent per actor; a replayed activation or
+// rollback after success is a 409 and leaves the pointer alone.
+func TestM13AdversarialReplayAndIdempotency(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	first := m13Code(t, "approve", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	second := m13Code(t, "approve again", e.httpApprove(e.dave.token, tmpl.hash), 200)
+	if len(first.Approvals) != 1 || len(second.Approvals) != 1 {
+		t.Errorf("approval views: %d then %d approvals", len(first.Approvals), len(second.Approvals))
+	}
+	for i := 0; i < 2; i++ {
+		if n, err := e.approvePort(e.dave.subject, tmpl.hash); err != nil || n != 1 {
+			t.Errorf("port re-approval %d: %d %v", i, n, err)
+		}
+	}
+	if a := e.approvalsOf(tmpl.hash); len(a) != 1 {
+		t.Fatalf("approvals %v", a)
+	}
+	m13Code(t, "activate", e.httpActivate(e.dave.token, tmpl.hash, "", 0), 200)
+	before := e.state()
+	m13Reasons(t, "replayed activation", m13Code(t, "replay activation", e.httpActivate(e.dave.token, tmpl.hash, "", 0), 409, "candidate_stale"), "BASE_CHANGED", "SCHEMA_CHANGED")
+	m13Code(t, "re-apply the active release on itself", e.httpActivate(e.dave.token, tmpl.hash, tmpl.hash, 1), 409, "candidate_stale")
+	for _, c := range []struct {
+		base string
+		gen  int64
+	}{{"", 0}, {tmpl.hash, 1}} {
+		_, err := e.activatePort(e.dave.subject, tmpl.hash, c.base, c.gen)
+		m13Refused(t, "replayed port activation", err, "55000")
+	}
+	e.unchanged("replayed activation", before)
+
+	y, _ := e.build("500", m13Relabel("Order Y"), e.carol)
+	m13Code(t, "reject", e.httpReject(e.erin.token, y, "SUPERSEDED", "replaced"), 201)
+	m13Code(t, "reject again", e.httpReject(e.erin.token, y, "WITHDRAWN", "second thoughts"), 200)
+	if created, err := e.rejectPort(e.erin.subject, y, "OTHER", ""); err != nil || created {
+		t.Errorf("port re-rejection: %v %v", created, err)
+	}
+	if created, err := e.rejectPort(e.dave.subject, y, "OTHER", ""); err != nil || !created {
+		t.Errorf("a second actor's rejection: %v %v", created, err)
+	}
+	if r := e.rejectionsOf(y); len(r) != 2 {
+		t.Fatalf("rejections %v", r)
+	}
+	var reason string
+	if err := e.f.operator.QueryRow(`SELECT reason FROM control.release_rejections WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3 AND actor_id=$4`, e.f.tenantA, e.app, y, e.erin.id).Scan(&reason); err != nil || reason != "SUPERSEDED" {
+		t.Errorf("a replayed rejection rewrote the first reason: %q %v", reason, err)
+	}
+	if e.auditCount("release.approval_replayed") < 1 || e.auditCount("release.rejection_replayed") < 1 {
+		t.Error("replays must be audited as replays")
+	}
+}
+
+// ----------------------------------- 10. replacement end-to-end (HTTP only)
+
+// Replaces the deleted M6R-store flow of TestM12ApprovalActivationStaleness
+// AndRollbackOnBuilderCandidates through the ADR039 routes only: build, approve,
+// activate, a second release on the active base, rollback, and staleness of a
+// candidate built on the replaced base.
+func TestM13AdversarialEndToEndReleaseFlowOverHTTP(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	r1, _ := e.build("500", nil, e.carol)
+	if r := m13Code(t, "R1 detail", e.httpCandidate(e.viewer, r1), 200); r.Status != "STAGED" || r.ApprovalsRequired != 1 || r.Stale == nil || *r.Stale || r.RiskLevel != "HIGH" {
+		t.Fatalf("R1 %+v", r)
+	}
+	m13Code(t, "no active release yet", e.httpActive(e.viewer), 404, "not_found")
+	m13Code(t, "requester cannot approve R1", e.httpApprove(e.carol.token, r1), 403, "separation_of_duties")
+	if r := m13Code(t, "approve R1", e.httpApprove(e.dave.token, r1), 201); r.Status != "APPROVED" {
+		t.Fatalf("approved R1 %+v", r)
+	}
+	if r := m13Code(t, "activate R1", e.httpActivate(e.dave.token, r1, "", 0), 200); r.ArtifactHash != r1 || r.Generation != 1 {
+		t.Fatalf("activated R1 %+v", r)
+	}
+	if r := m13Code(t, "active R1", e.httpActive(e.viewer), 200); r.ArtifactHash != r1 || r.Generation != 1 {
+		t.Fatalf("active %+v", r)
+	}
+	// Release 2 evolves from the active release (threshold change: HIGH, EQUAL).
+	r2, _ := e.build("600", nil, e.carol)
+	var d2 struct {
+		Base    string `json:"base_release"`
+		Gen     int64  `json:"base_generation"`
+		Storage string `json:"storage_class"`
+		High    bool   `json:"high_risk"`
+	}
+	if w := e.httpCandidate(e.viewer, r2); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &d2) != nil || d2.Base != r1 || d2.Gen != 1 || d2.Storage != "EQUAL" || !d2.High {
+		t.Fatalf("R2 %d %s", w.Code, m13Trim(w.Body.String()))
+	}
+	m13Code(t, "approve R2", e.httpApprove(e.erin.token, r2), 201)
+	m13Code(t, "activate R2 on a wrong base", e.httpActivate(e.erin.token, r2, "", 0), 409, "base_changed")
+	if r := m13Code(t, "activate R2", e.httpActivate(e.erin.token, r2, r1, 1), 200); r.Generation != 2 {
+		t.Fatalf("activated R2 %+v", r)
+	}
+	if r := m13Decode(e.httpCandidate(e.viewer, r1)); r.Status != "SUPERSEDED" {
+		t.Errorf("R1 after R2: %s", r.Status)
+	}
+	// A third candidate is built on R2; the rollback to R1 makes it stale.
+	r3, _ := e.build("500", m13Relabel("Order three"), e.carol)
+	m13Code(t, "approve R3", e.httpApprove(e.dave.token, r3), 201)
+	if r := m13Code(t, "roll back to R1", e.httpRollback(e.erin.token, r1, r2, 2, m13SafePlan()), 200); r.ArtifactHash != r1 || r.Generation != 3 {
+		t.Fatalf("rollback %+v", r)
+	}
+	if r := m13Code(t, "R3 after the rollback", e.httpCandidate(e.viewer, r3), 200); r.Stale == nil || !*r.Stale || !slices.Contains(r.Reasons, "BASE_CHANGED") {
+		t.Fatalf("R3 must be stale after the rollback: %+v", r)
+	}
+	m13Code(t, "activate R3 after the rollback", e.httpActivate(e.dave.token, r3, r2, 2), 409, "candidate_stale")
+	for hash, want := range map[string]string{r1: "ACTIVE", r2: "SUPERSEDED", r3: "APPROVED"} {
+		if r := m13Decode(e.httpCandidate(e.viewer, hash)); r.Status != want {
+			t.Errorf("status of %s: %s, want %s", hash[:8], r.Status, want)
+		}
+	}
+	var history struct {
+		History []struct {
+			Seq        int64  `json:"seq"`
+			Kind       string `json:"kind"`
+			Hash       string `json:"artifact_hash"`
+			Generation int64  `json:"generation"`
+		} `json:"history"`
+	}
+	if w := e.httpHistory(e.viewer); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &history) != nil || len(history.History) != 3 {
+		t.Fatalf("history %d %s", w.Code, m13Trim(w.Body.String()))
+	}
+	for i, want := range []struct {
+		kind, hash string
+		gen        int64
+	}{{"ROLLBACK", r1, 3}, {"ACTIVATE", r2, 2}, {"ACTIVATE", r1, 1}} {
+		if h := history.History[i]; h.Kind != want.kind || h.Hash != want.hash || h.Generation != want.gen || h.Seq != want.gen {
+			t.Errorf("history[%d] = %+v, want %+v (newest first)", i, h, want)
+		}
+	}
+	e.checkHistory()
+	for action, want := range map[string]int{"release.approved": 3, "release.activated": 2, "release.rolled_back": 1} {
+		if n := e.auditCount(action); n != want {
+			t.Errorf("audit %s: %d, want %d", action, n, want)
+		}
+	}
+}
