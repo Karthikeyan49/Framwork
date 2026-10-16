@@ -565,3 +565,41 @@ func m13RequireStack(t *testing.T, e *m13Env, routes bool) {
 		t.Skipf("ADR039 routes are not registered yet (GET releases/active: %d): merge claude/m13-api", w.Code)
 	}
 }
+
+// TestM13FixtureStagesDoctoredCandidates checks the fixture itself against the
+// M12 stage port: the template is a real HIGH candidate with three distinct
+// parties, doctored levels stage with a consistent index row, and the database
+// still refuses an acceptance author as requester.
+func TestM13FixtureStagesDoctoredCandidates(t *testing.T) {
+	e := m13Setup(t)
+	tmpl := e.template()
+	var level, requester, author, freezer string
+	var high bool
+	row := func(hash string) {
+		t.Helper()
+		if err := e.f.operator.QueryRow(`SELECT risk_level,high_risk,requester_id::text,acceptance_author::text,sandbox_frozen_by::text FROM control.release_candidates WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3`,
+			e.f.tenantA, e.app, hash).Scan(&level, &high, &requester, &author, &freezer); err != nil {
+			t.Fatal("candidate row", err)
+		}
+	}
+	row(tmpl.hash)
+	if level != "HIGH" || !high || requester != e.carol.id || author != e.f.bob || freezer != e.f.alice {
+		t.Fatalf("template parties: %s %v %s %s %s", level, high, requester, author, freezer)
+	}
+	for _, want := range []string{"LOW", "MEDIUM", "HIGH", "CRITICAL"} {
+		hash, err := e.stageLevel(want)
+		if err != nil {
+			t.Fatalf("stage %s: %v", want, err)
+		}
+		row(hash)
+		if hash == tmpl.hash || level != want || high != (want == "HIGH" || want == "CRITICAL") || requester != e.carol.id {
+			t.Fatalf("doctored %s: %s %v %s", want, level, high, requester)
+		}
+	}
+	if _, err := e.stageLevelAs(e.person("bob"), "LOW"); sqlState(err) != "42501" {
+		t.Fatalf("acceptance author staged as requester: %v", err)
+	}
+	if hash, _, ok := e.activePointer(); ok {
+		t.Fatal("nothing is active yet", hash)
+	}
+}
