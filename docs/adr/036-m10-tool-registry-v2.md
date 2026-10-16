@@ -51,10 +51,13 @@ may run inside a runtime transaction (ADR023, ADR028).
    tool activity (ADR033 parity), in addition to `workflows.activity`.
 4. **Ledger.** `runtime.tool_invocations` (one row per instance/step: pinned ref,
    version, hash, deterministic key, request hash, state, attempts, first send,
-   external ref, bounded validated response) and immutable
-   `runtime.tool_attempts`. The worker writes only through SECURITY DEFINER ports
-   bound to the exact authenticated lease and the live SQL policy decision,
-   using PostgreSQL time and an explicit transition graph. No bodies, headers or
+   bounded validated response; the reference used for reconciliation is the
+   deterministic key) and `runtime.tool_attempts` (each attempt row is finished
+   once by `tool_finish`/`tool_abandon`, then immutable). The worker writes only
+   through SECURITY DEFINER ports bound to the exact authenticated lease;
+   `tool_begin` and `tool_abandon` also re-evaluate the live SQL policy decision,
+   `tool_finish` checks the lease only, and `tool_reconcile` is an API-role port.
+   They use PostgreSQL time and an explicit transition graph. No bodies, headers or
    secrets are stored in attempts; the ledger never stores credentials.
 5. **Execution protocol.** A tool step uses three short transactions:
    (a) authorize `workflows.activity` + `tools.invoke`, verify approval
@@ -65,8 +68,8 @@ may run inside a runtime transaction (ADR023, ADR028).
    A crash or lost lease between (a) and (c) leaves `SENDING`, which the next
    lease treats as UNKNOWN. A late outcome from a stale lease is rejected.
 6. **Outcome and reconciliation.** 2xx with a valid typed body is SUCCESS. A
-   request provably never transmitted (resolution, dial, policy, local limit) is
-   FAILED retryable; provider 4xx is FAILED permanent; 429 is FAILED retryable;
+   request provably never transmitted (resolution, dial, local rate limit) is
+   FAILED retryable; a policy or mode denial is FAILED permanent (`blocked`); provider 4xx is FAILED permanent; 429 is FAILED retryable;
    timeouts, 5xx/408/409, broken transport after write and invalid responses are
    UNKNOWN. UNKNOWN routing follows the declared capability: NATIVE_KEY and
    DEDUPE_WINDOW resend with the same key only within the replay window and
@@ -83,10 +86,11 @@ may run inside a runtime transaction (ADR023, ADR028).
    (system roots, optional operator CA file), no proxy, no redirects, no
    compression, header/body limits, path parameters escaped per segment, fixed
    host header, JSON bodies built from typed inputs only. Every resolved address
-   is validated at dial time: loopback, RFC1918, link-local and cloud metadata,
-   CGNAT, unspecified, multicast, broadcast, IPv6 ULA/link-local and IPv4-mapped
-   forms are refused unless the definition is `internal` **and** the process
-   enables internal networks (rejected in production). Credentials are resolved
+   is validated at dial time: loopback, RFC1918, link-local, CGNAT, IPv6
+   ULA/link-local and IPv4-mapped forms are refused unless the definition is
+   `internal` **and** the process enables internal networks (rejected in
+   production); cloud metadata, unspecified, multicast and broadcast addresses stay
+   refused even then. Credentials are resolved
    at send time from operator-provisioned secret files and injected as a bearer
    header; they never appear in logs, traces, audit, ledger or errors.
 9. **Modes.** The runtime selects LIVE only for production releases (M13; not
@@ -112,7 +116,8 @@ response (ADR024 residual); high-risk effects stay out of scope.
 Unit tests cover catalog validation, SSRF/redirect/limit/secret handling and
 decision rules; integration tests cover each idempotency mode under duplicate
 delivery, timeout, crash after send, delayed/late response, unknown outcome and
-reconciliation, approval/freshness, policy revocation and raw worker SQL
-denial. Migration 45 is additive and forward-only. Recover by removing a tool
+reconciliation, approval/freshness and raw worker SQL denial. Policy revocation
+mid-flight is implemented (`tools.invoke` in the SQL decision) but not covered by an
+integration test yet. Migration 45 is additive and forward-only. Recover by removing a tool
 from the catalog (pinned plans fail closed without I/O) or revoking
 `tools.invoke`; never delete ledger/attempt evidence.

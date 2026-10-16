@@ -43,13 +43,13 @@ No new Go or npm dependency.
 | `make test-e2e` at `bf70752` | PASS, 5 tests |
 | Targeted M10/M11 integration tests (idempotency modes, crash after send, late response, lease fencing, approval freshness, sandbox isolation, ceiling forgery) | PASS |
 | Full integration run before `bf70752` | FAIL: `m9r_record_access_test` pinned the policy version string; the assertion was made milestone-agnostic (`bf70752`), then PASS |
-| Independent adversarial reviews of M10 and M11 | NOT RUN (the review agents were stopped before reporting) |
+| Independent adversarial reviews | PARTIAL. M10 ledger/protocol review (docs/verification/M10_INDEPENDENT_REVIEW.md, in progress): M10R-01..05 found (2 HIGH: a compromised worker can skip the approval gate inside its own lease; a transient lookup failure turns an UNKNOWN write into a blind resend; 3 MEDIUM) — fixes are NOT merged yet. Gateway review (GATEWAY_INDEPENDENT_REVIEW.md, in progress): F1–F9 found; F1–F4 fixed on this branch, F5–F9 (LOW) open. M11 sandbox review: NOT RUN to completion (no findings recorded) |
 
 ## Known gaps and residuals
 
-- Independent two-agent review has not happened for either milestone; do not
-  treat these slices as reviewed. Run reviews on `review/m10` and `review/m11`
-  (both at `bf70752`) before merge.
+- Independent two-agent review is incomplete (see the table above): the M10 findings
+  M10R-01..05 are open until the fix branch is merged, and the M11 review has not
+  produced results. Do not treat these slices as reviewed.
 - Tools longer than about 2 s need lease renewal (not built). Provider callbacks,
   compensation tools, financial/destructive tools and provider breadth are
   deferred (M13/M17).
