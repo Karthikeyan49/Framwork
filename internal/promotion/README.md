@@ -8,10 +8,14 @@ Two bundle formats share one hash-bound restore path:
 - **2.0.0 (M12, [ADR038](../../docs/adr/038-m12-candidate-release-builder.md))** — built
   only by `BuildCandidate` from server-derived inputs: the stored source revision,
   the trusted compiler's IR, a stored requirement set and acceptance spec, a frozen
-  sandbox evidence, and the active base. `Restore` recomputes the diff, storage
-  class, risk facts and assessment, requirement coverage and the verifier report from
-  the stored bytes and rejects any difference (about fifty tamper mutations are
-  tested). `Rejection` carries the verifier report or assessment for FAIL/BLOCKED
+  sandbox evidence, and the active base. `Restore` recomputes everything that does
+  not depend on the base — risk facts and assessment from the stored diff,
+  requirement coverage, the verifier report, dependency hashes — and rejects any
+  difference (about fifty tamper mutations are tested). The diff, storage class and
+  evolution plan depend on the base release, so `Restore` checks them only
+  structurally; `Candidate.VerifyWithBase` (called by `Store.LoadCandidate` with the
+  candidate's own base release) recomputes them. Decide on a candidate only after
+  loading it through `LoadCandidate`. `Rejection` carries the verifier report or assessment for FAIL/BLOCKED
   or risk-blocked builds; nothing is stored for them.
 
 `dependencies.go` derives tool pins, the whole-tenant policy bundle hash and the
@@ -20,7 +24,9 @@ and is never persisted. `release_store.go` reads/writes requirement sets,
 acceptance specs and candidates only through SECURITY DEFINER ports that stamp
 the authenticated actor; `Store.Stage` calls `control.stage_candidate`, which
 binds the body to the stored rows, enforces build-time separation of duties and
-writes bundle plus index together.
+writes bundle plus index together. The DB cannot recompute the verifier, so
+`LoadCandidate` recomputation (Restore plus the base verification) is the
+backstop.
 
 ## Approval and promotion (M13, [ADR039](../../docs/adr/039-m13-approval-and-promotion.md))
 
@@ -51,12 +57,14 @@ contains driver text.
 
 **Who may call them:** only an API handler that has (1) an ALLOW from
 `policy.Decide` for `releases.approve` (approve and reject), `releases.activate`
-or `releases.rollback`, (2) loaded the candidate with `LoadCandidate` (full
-`Restore` recomputation) and (3) found `Staleness` empty and, for activation,
+or `releases.rollback`, (2) loaded the candidate only through `LoadCandidate`
+(`Restore` plus `VerifyWithBase` against the candidate's own base release; never
+a body taken from the request or read around it) and (3) found `Staleness` empty
+and, for activation,
 the bundle's own `Separation` satisfied by `risk.CheckSeparation`, all in the
 same REPEATABLE READ transaction that then appends the audit entry. The
 wrappers do not audit. The database cannot recompute the verifier, the policy
-bundle hash or tool pins; `Restore` and `Staleness` in Go remain the only
+bundle hash or tool pins; `LoadCandidate` and `Staleness` in Go remain the only
 backstop against a self-consistent forged body staged by a compromised API
 (ADR039 residual).
 

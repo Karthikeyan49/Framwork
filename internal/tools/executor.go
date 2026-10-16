@@ -218,19 +218,25 @@ func (g *Gateway) execute(ctx context.Context, r Request, a *attempt) Result {
 }
 
 // effectiveEndpoint selects the destination and credential for a mode.
-// Sandbox modes only ever use the sandbox endpoint and its own secret_ref;
-// the production secret_ref is never consulted.
+// Sandbox modes only ever use the sandbox endpoint; only TEST_ACCOUNT sends its
+// own sandbox secret_ref (REROUTE and READ_ONLY send no credential, also when a
+// sandbox ceiling narrowed a TEST_ACCOUNT tool). The production secret_ref is
+// never consulted.
 func effectiveEndpoint(def Definition, mode string) (Endpoint, bool) {
 	production := def.Connector.Endpoint
 	if mode == ModeLive {
 		return production, true
 	}
 	s := def.Sandbox.Endpoint
-	if s == nil || s.Host == production.Host && s.Port == production.Port || s.SecretRef != "" && s.SecretRef == production.SecretRef {
+	if s == nil || s.Host == production.Host || s.SecretRef != "" && s.SecretRef == production.SecretRef {
 		return Endpoint{}, false
 	}
+	endpoint := *s
 	switch mode {
 	case ModeReroute:
+		// A ceiling narrowed a TEST_ACCOUNT tool to REROUTE: the endpoint stays, the
+		// test-account credential does not.
+		endpoint.SecretRef = ""
 	case ModeTestAccount:
 		if s.SecretRef == "" {
 			return Endpoint{}, false
@@ -239,10 +245,11 @@ func effectiveEndpoint(def Definition, mode string) (Endpoint, bool) {
 		if def.SideEffect != "NONE" && def.SideEffect != "READ" {
 			return Endpoint{}, false
 		}
+		endpoint.SecretRef = ""
 	default:
 		return Endpoint{}, false
 	}
-	return *s, true
+	return endpoint, true
 }
 
 func effectiveTimeout(definitionMS int, requested time.Duration) time.Duration {

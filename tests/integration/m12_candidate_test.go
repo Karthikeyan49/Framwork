@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
@@ -24,7 +25,10 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
+	"github.com/Karthikeyan49/Framwork/internal/risk"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
+	"github.com/Karthikeyan49/Framwork/internal/verification"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -530,5 +534,95 @@ func TestM12WrongBehaviorIsRejectedWithEvidence(t *testing.T) {
 	var staged int
 	if err := e.f.operator.QueryRow(`SELECT count(*) FROM control.release_candidates WHERE tenant_id=$1 AND app_id=$2`, e.f.tenantA, e.app).Scan(&staged); err != nil || staged != 0 {
 		t.Fatal("a rejected candidate was staged", staged, err)
+	}
+}
+
+// A compromised API process can stage a self-consistent body: the database binds only what it
+// knows, so a shrunk diff with recomputed facts, risk and verifier report is accepted by
+// control.stage_candidate. The loading path must still refuse it by recomputing the diff from
+// the candidate's own base release (independent-review finding M12-F1).
+func TestM12CoordinatedForgeryIsRefusedWhenLoaded(t *testing.T) {
+	e := m12Setup(t)
+	art := e.prepare("500", 0, 0, e.alice, e.bob)
+	honest := viewOf(t, e.candidate(e.alice, art), 201)
+	if !honest.HighRisk {
+		t.Fatal("precondition: the honest first release rates HIGH")
+	}
+	var raw []byte
+	if err := e.f.operator.QueryRow(`SELECT body FROM control.release_bundles WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3`, e.f.tenantA, e.app, honest.ArtifactHash).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var b promotion.BundleV2
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatal(err)
+	}
+	d, err := compiler.ParseDiff(b.Diff.JSON, b.Diff.Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range d.Changes {
+		kept := []string{}
+		for _, aspect := range d.Changes[i].Aspects {
+			if aspect != compiler.AspectApprovalGate {
+				kept = append(kept, aspect)
+			}
+		}
+		d.Changes[i].Aspects = kept
+	}
+	d.MoneyConditions, d.ApprovalGates = []compiler.MoneyConditionChange{}, []compiler.ApprovalGateChange{}
+	program, err := compiler.Restore(b.IR.JSON, b.IR.Hash, compiler.SupportedIRVersions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := risk.Normalize(promotion.ReduceFacts(promotion.FactsInput{Diff: d, Storage: b.Storage, TargetPins: promotion.ToolPins(program.IR()), Definitions: map[string]tools.Definition{}, TenantID: b.TenantID, Volume: b.Risk.Facts.Volume}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := risk.Evaluate(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.HighRisk() {
+		t.Fatalf("the forgery did not lower the risk (%s), so the test proves nothing", assessment.Level)
+	}
+	b.Diff.JSON, b.Diff.Hash = d.JSON(), d.Hash()
+	b.Risk = promotion.RiskV2{PolicyVersion: assessment.PolicyVersion, PolicyHash: assessment.PolicyHash, Level: assessment.Level.String(), Reasons: assessment.Reasons, FactsHash: assessment.FactsHash,
+		Facts: facts, Separation: assessment.Separation, Rollback: assessment.Rollback}
+	b.HighRisk = assessment.HighRisk()
+	set, _, _, err := intent.ParseRequirementSet(b.Requirements.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _, _, err := intent.ParseAcceptanceSpec(b.Acceptance.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verification.Verify(verification.Input{Program: program, Requirements: set, Acceptance: spec, StorageClass: b.Storage.Class, Changed: promotion.ChangedFor(d, b.Storage),
+		Tools: tools.EmptyCatalog(), TenantID: b.TenantID, SandboxEvidenceHash: b.Sandbox.EvidenceHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Verification.Report, b.Verification.ReportHash, b.Verification.Outcome = report.JSON(), report.Hash(), report.Outcome
+	body, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgedHash := promotion.Hash(body)
+	if _, err = promotion.Restore(body, forgedHash, compiler.SupportedIRVersions()); err != nil {
+		t.Logf("Restore alone already refuses the forgery (%v); the loading path must still refuse it", err)
+	}
+	// The database cannot see the difference: every fact it binds is true.
+	if err = e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, _ tenant.Access) error {
+		var staged bool
+		return q.QueryRowContext(ctx, `SELECT control.stage_candidate($1,$2,$3)`, e.app, forgedHash, body).Scan(&staged)
+	}); err != nil {
+		t.Fatalf("the database port is expected to accept a self-consistent body: %v", err)
+	}
+	w := e.get("/candidates/"+forgedHash, e.alice)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "candidate_failed_verification") {
+		t.Fatalf("a forged candidate must be refused when loaded: %d %s", w.Code, w.Body.String())
+	}
+	if w = e.get("/candidates/"+honest.ArtifactHash, e.alice); w.Code != 200 {
+		t.Fatalf("the honest candidate must still load: %d %s", w.Code, w.Body.String())
 	}
 }
