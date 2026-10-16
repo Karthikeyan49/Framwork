@@ -928,6 +928,24 @@ func TestM13PortsTablesAreAppendOnlyIsolatedAndHygienic(t *testing.T) {
 			t.Error("worker drift guard missed a column grant on", table, scanErr)
 		}
 	}
+	// REFERENCES and TRIGGER grants (table and column level) also trip the guard.
+	for _, grant := range []string{"REFERENCES", "TRIGGER", "REFERENCES(app_id)"} {
+		for _, table := range []string{"control.release_history", "control.release_bundles"} {
+			if _, err := p.f.operator.Exec(`GRANT ` + grant + ` ON ` + table + ` TO framework_worker`); err != nil {
+				t.Fatal(err)
+			}
+			scanErr := worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe)
+			if _, err := p.f.operator.Exec(`REVOKE ` + grant + ` ON ` + table + ` FROM framework_worker`); err != nil {
+				t.Fatal(err)
+			}
+			if scanErr != nil || safe {
+				t.Error("worker drift guard missed", grant, "on", table, scanErr)
+			}
+		}
+	}
+	if err := worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe); err != nil || !safe {
+		t.Fatal("worker grants must be safe again after the revokes", safe, err)
+	}
 	// No runtime role holds a direct write privilege on any release authority table.
 	for _, table := range tables {
 		for _, role := range []string{"public", "framework_app", "framework_worker", "framework_dispatcher"} {
