@@ -17,6 +17,8 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/db/migrations"
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
@@ -45,7 +47,7 @@ type scalarReviewDiagnosticTrace struct {
 func (o *scalarReviewDiagnosticTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
 	stage := "other"
 	switch {
-	case strings.HasPrefix(d.SQL, "WITH selected_page AS MATERIALIZED") && strings.Contains(d.SQL, "JOIN runtime.scalar_projections"):
+	case strings.HasPrefix(d.SQL, "WITH selected_page AS MATERIALIZED") && strings.Contains(d.SQL, "runtime.scalar_projections"):
 		stage = "indexed_page"
 	case strings.HasPrefix(d.SQL, "WITH selected_page AS MATERIALIZED"), strings.HasPrefix(d.SQL, "SELECT r.id::text"):
 		stage = "unindexed_page"
@@ -651,6 +653,66 @@ func TestM9RScalarReviewOrderingWithSafeDriverDiagnostics(t *testing.T) {
 		m9rIndexReady(t, h, base+"/indexes/"+field, token)
 		if !reflect.DeepEqual(beforeAsc, collect(field, false, "after_"+field)) || !reflect.DeepEqual(beforeDesc, collect(field, true, "after_"+field)) {
 			t.Fatal("review traced ordering changed after index")
+		}
+	}
+}
+
+func TestM9RScalarReviewIndexedRetiredGenerationsUseLiveCanonicalACL(t *testing.T) {
+	m8Database(t)
+	f, h, base, token, app := m5Fixture(t)
+	scalarReviewTarget(t, f)
+	first := m5Create(t, h, base, token, "Zulu owned")
+	second := m5Create(t, h, base, token, "Alpha other")
+	r5cChange(t, h, base+"/records/"+second.ID+"/access", token, recordOwner(f.viewer, ""), 200)
+	m9rIndexReady(t, h, base+"/indexes/field.contact.name", token)
+	root := "/v1/tenants/" + f.tenantA + "/preview/" + app
+	_, path := shadowAdopt(t, h, token, root)
+	raw, err := os.ReadFile("../../contracts/examples/contacts-draft-v1.json")
+	if err != nil {
+		t.Fatal("review canonical source unavailable")
+	}
+	target := shadowSource(t, h, token, f.tenantA, app, 2, raw, func(d *metadata.Document) { addCount(d, "integer", false) })
+	ready := shadowReady(t, h, token, path, shadowPrepare(t, h, token, path, 1, target, compiler.EvolutionIntent{}))
+	shadowStep(t, h, token, path, ready, "activate")
+	current, retired := path+"/bindings/2/entities/entity.contact", path+"/bindings/1/entities/entity.contact"
+	m9rIndexReady(t, h, current+"/indexes/field.contact.name", token)
+	owners := m5Handler(t, f, scopedPolicy{mode: "owner"}, audit.Postgres{}, true)
+	shares := m5Handler(t, f, scopedPolicy{mode: "share"}, audit.Postgres{}, true)
+	query := data.Query{Projection: []string{"field.contact.id", "field.contact.name"}, Limit: 1, Sort: &data.Sort{Field: "field.contact.name"}}
+	for _, b := range []string{current, retired} {
+		page := m5Page(t, m5Call(owners, b+"/query", token, query))
+		if len(page.Records) != 1 || page.Records[0].ID != first.ID || page.Next != "" {
+			t.Fatal("review indexed ownership was applied after limit")
+		}
+	}
+	access := r5cChange(t, h, current+"/records/"+first.ID+"/access", token, recordOwner(f.viewer, ""), 200)
+	for _, b := range []string{current, retired} {
+		if page := m5Page(t, m5Call(owners, b+"/query", token, query)); len(page.Records) != 0 {
+			t.Fatal("review indexed retired source retained old owner")
+		}
+	}
+	no := false
+	access = r5cChange(t, h, current+"/records/"+first.ID+"/access", token, data.AccessCommand{Operation: "share", ExpectedVersion: access.Version, UserID: f.alice, CanWrite: &no}, 200)
+	for _, b := range []string{current, retired} {
+		page := m5Page(t, m5Call(shares, b+"/query", token, query))
+		if len(page.Records) != 1 || page.Records[0].ID != first.ID {
+			t.Fatal("review indexed retired share did not use live canonical ACL")
+		}
+	}
+	access = r5cChange(t, h, current+"/records/"+first.ID+"/access", token, data.AccessCommand{Operation: "unshare", ExpectedVersion: access.Version, UserID: f.alice}, 200)
+	for _, b := range []string{current, retired} {
+		if page := m5Page(t, m5Call(shares, b+"/query", token, query)); len(page.Records) != 0 {
+			t.Fatal("review indexed retired source retained revoked share")
+		}
+	}
+	if response := m5Call(h, current+"/commands", token, data.Command{Operation: "delete", ID: first.ID, ExpectedVersion: access.Version}); response.Code != 200 {
+		t.Fatal("review canonical tombstone", response.Code)
+	}
+	viewer := f.token(t, f.viewerSubject, nil)
+	for _, b := range []string{current, retired} {
+		page := m5Page(t, m5Call(owners, b+"/query", viewer, query))
+		if len(page.Records) != 1 || page.Records[0].ID != second.ID || page.Next != "" {
+			t.Fatal("review retained scalar projection resurrected canonical tombstone")
 		}
 	}
 }
