@@ -191,9 +191,9 @@ func TestM9RChoiceIndexTypedContractsAndWitnesses(t *testing.T) {
 	for _, field := range []string{"field.contact.status", "field.contact.parent"} {
 		m9rIndexReady(t, h, base+"/indexes/"+field, token)
 	}
-	if w := m5Call(h, base+"/indexes/field.contact.enabled/register", token, struct{}{}); w.Code != 400 {
-		t.Fatal("unsupported boolean index admitted", w.Code)
-	}
+	// Migration 50 adds governed native bool projections; the legacy four-argument
+	// choice converter above remains closed to that new physical representation.
+	m9rIndexReady(t, h, base+"/indexes/field.contact.enabled", token)
 	// Operator-injected valid but different options cannot replace compiled IR.
 	_, err := f.operator.Exec(`UPDATE runtime.scalar_indexes SET enum_values='["changed"]' WHERE tenant_id=$1 AND app_id=$2 AND field_id='field.contact.status'`, f.tenantA, app)
 	scalarSQL(t, err)

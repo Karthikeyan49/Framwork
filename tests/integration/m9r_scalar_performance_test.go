@@ -45,12 +45,17 @@ func (o *scalarQueryTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d p
 }
 func (*scalarQueryTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
-	runM9RScalarIndexPerformanceFloor(t, false)
+	runM9RScalarIndexPerformanceFloor(t, "text")
 }
 func TestM9RChoiceIndexPerformanceFloor(t *testing.T) {
-	runM9RScalarIndexPerformanceFloor(t, true)
+	runM9RScalarIndexPerformanceFloor(t, "choice")
 }
-func runM9RScalarIndexPerformanceFloor(t *testing.T, choice bool) {
+func TestM9RNativeIndexPerformanceFloor(t *testing.T) {
+	runM9RScalarIndexPerformanceFloor(t, "native")
+}
+func runM9RScalarIndexPerformanceFloor(t *testing.T, mode string) {
+	choice := mode == "choice"
+	native := mode == "native"
 	m8Database(t)
 	requireM9RReferencePostgres(t)
 	fixture := func(t *testing.T) (*iamFixture, http.Handler, string, string, string) { return scalarFixture(t, 1) }
@@ -58,6 +63,10 @@ func runM9RScalarIndexPerformanceFloor(t *testing.T, choice bool) {
 	if choice {
 		fixture = choiceFixture
 		fields = []string{"field.contact.status", "field.contact.parent"}
+	}
+	if native {
+		fixture = nativeFixture
+		fields = nativeFields
 	}
 	f, h, base, token, app := fixture(t)
 	scope := scalarScope(t, h, base, token)
@@ -85,8 +94,10 @@ func runM9RScalarIndexPerformanceFloor(t *testing.T, choice bool) {
  'field.contact.joined',CASE WHEN i%103=0 THEN NULL ELSE to_char(date '1000-01-01'+(i%12000),'YYYY-MM-DD') END,
  'field.contact.status',CASE WHEN $7::boolean AND i%103=0 THEN NULL WHEN i%997=0 THEN 'inactive' ELSE 'active' END,'field.contact.balance',jsonb_build_object('amount',i::text,'currency','USD'))
  ||CASE WHEN $7::boolean THEN jsonb_build_object('field.contact.parent',CASE WHEN i%107=0 THEN NULL ELSE md5((i%256+1)::text)::uuid::text END)
- ELSE jsonb_build_object('field.contact.memo0',CASE WHEN i%101=0 THEN NULL ELSE (ARRAY['Alpha','alpha','Å','தமிழ்','ß','Ω'])[1+i%6]||lpad((i%50000)::text,8,'0') END) END,
- $4,$4,CASE WHEN i%2=0 THEN $4::uuid ELSE $5::uuid END FROM generate_series(1,$6::int)i`, id, app, hash, owner, f.viewer, count, choice)
+ ELSE jsonb_build_object('field.contact.memo0',CASE WHEN i%101=0 THEN NULL ELSE (ARRAY['Alpha','alpha','Å','தமிழ்','ß','Ω'])[1+i%6]||lpad((i%50000)::text,8,'0') END) END
+ || CASE WHEN $8::boolean THEN jsonb_build_object('field.contact.occurred',CASE WHEN i%103=0 THEN NULL ELSE to_char((timestamptz '2024-02-29T00:00:00Z'+(i%12000)*interval '1 second') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,
+ 'field.contact.enabled',CASE WHEN i%107=0 THEN NULL ELSE i%2=0 END) ELSE '{}'::jsonb END,
+ $4,$4,CASE WHEN i%2=0 THEN $4::uuid ELSE $5::uuid END FROM generate_series(1,$6::int)i`, id, app, hash, owner, f.viewer, count, choice || native, native)
 		scalarSQL(t, err)
 	}
 	var width int
@@ -135,6 +146,12 @@ func runM9RScalarIndexPerformanceFloor(t *testing.T, choice bool) {
 			}
 			if field == "field.contact.parent" {
 				label, expr, indexName = "reference", "custom_data->>'field.contact.parent'", "scalar_reference_asc"
+			}
+			if field == nativeFields[0] {
+				label, expr, indexName = "datetime", "(custom_data->>'field.contact.occurred')::timestamptz", "scalar_datetime_asc"
+			}
+			if field == nativeFields[1] {
+				label, expr, indexName = "bool", "(custom_data->>'field.contact.enabled')::boolean", "scalar_bool_asc"
 			}
 			direction := "ASC"
 			if desc {

@@ -35,7 +35,7 @@ test-unit:
 # Aggregate suite deadline; individual runtime/query/lock budgets are unchanged.
 test-integration:
 	node scripts/with-env.mjs $(GO) test -race -tags=integration -timeout=20m -count=1 ./tests/integration
-.PHONY: test-performance test-write-performance test-scalar-performance test-choice-performance
+.PHONY: test-performance test-write-performance test-scalar-performance test-choice-performance test-native-performance
 test-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -count=1 -run '^TestM9RMembershipPerformanceFloor$$' -v ./tests/integration
 test-write-performance:
@@ -44,6 +44,8 @@ test-scalar-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RScalarIndexPerformanceFloor$$' -v ./tests/integration
 test-choice-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RChoiceIndexPerformanceFloor$$' -v ./tests/integration
+test-native-performance:
+	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RNativeIndexPerformanceFloor$$' -v ./tests/integration
 test: test-unit test-integration
 check: docs-verify
 	./scripts/check-format.sh

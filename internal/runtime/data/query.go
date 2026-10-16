@@ -354,6 +354,12 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 					case "date":
 						scalarPredicate += ` AND si.field_type='date'`
 						sortExpr, sortType = "si.value_date", "date"
+					case "datetime":
+						scalarPredicate += ` AND si.field_type='datetime'`
+						sortExpr, sortType = "si.value_instant", "timestamptz"
+					case "bool":
+						scalarPredicate += ` AND si.field_type='bool'`
+						sortExpr, sortType = "si.value_boolean", "boolean"
 					}
 					indexJoin = ` JOIN runtime.scalar_projections si ON ` + scalarPredicate + ` AND si.id=r.id AND si.source_version=r.row_version`
 					// Prevent the live ACL view from being flattened into a dataset
