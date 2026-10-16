@@ -32,6 +32,7 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/risk"
 	"github.com/Karthikeyan49/Framwork/internal/tools"
@@ -260,4 +261,212 @@ func TestM13AdversarialCompromisedAPIForgedCandidate(t *testing.T) {
 	// The routes still refuse to present or build on the unverifiable release.
 	m13Code(t, "active forged release", e.httpActive(e.viewer), 409, "candidate_failed_verification")
 	e.checkHistory()
+}
+
+// ------------------------------------------------- 2. rogue approver matrix
+
+// m13Rogues adds the ineligible approvers: frank (admin demoted to viewer),
+// gina (membership deactivated), hank (user disabled) and ivan (role member).
+func m13Rogues(e *m13Env) {
+	for _, name := range []string{"frank", "gina", "hank"} {
+		e.member(name, "admin")
+	}
+	e.member("ivan", "member")
+	e.setRole(e.person("frank").id, "viewer")
+	e.setMemberActive(e.person("gina").id, false)
+	e.setUserActive(e.person("hank").id, false)
+}
+
+func m13Relabel(label string) func(*metadata.Document) {
+	return func(d *metadata.Document) {
+		for i := range d.Definitions {
+			if d.Definitions[i].ID == "entity.order" {
+				d.Definitions[i].Label = label
+			}
+		}
+	}
+}
+
+// Requester carol, acceptance author bob and sandbox freezer alice each try to
+// approve their own candidate at every level, together with a demoted, a
+// removed, a disabled, a member-role and a viewer approver, through the raw port
+// (the database alone) and through HTTP (policy + Go separation + port).
+func TestM13AdversarialRogueApproverMatrix(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	m13Rogues(e)
+	order := []string{"carol", "bob", "alice", "viewer", "frank", "gina", "hank", "ivan", "dave"}
+	// Database floor (ADR039 section 3): LOW/MEDIUM none; HIGH requester and
+	// acceptance author; CRITICAL also the freezer. Non-members, viewers and
+	// disabled users never. A member-role user passes the database floor; only
+	// the Go policy (owner/admin) refuses it.
+	excluded := map[string]map[string]string{
+		"LOW": {}, "MEDIUM": {},
+		"HIGH":     {"carol": "requester", "bob": "acceptance_author"},
+		"CRITICAL": {"carol": "requester", "bob": "acceptance_author", "alice": "sandbox_freezer"},
+	}
+	ineligible := map[string]bool{"viewer": true, "frank": true, "gina": true, "hank": true}
+	for _, level := range []string{"LOW", "MEDIUM", "HIGH", "CRITICAL"} {
+		hash, err := e.stageLevel(level)
+		if err != nil {
+			t.Fatal(level, err)
+		}
+		want := []string{}
+		for _, name := range order {
+			p := e.person(name)
+			n, err := e.approvePort(p.subject, hash)
+			role, barred := excluded[level][name]
+			switch {
+			case ineligible[name]:
+				if m13Refused(t, level+" port: "+name, err, "42501"); m13Detail(err) != "" {
+					t.Errorf("%s port: %s got a separation detail %q", level, name, m13Detail(err))
+				}
+			case barred:
+				if m13Refused(t, level+" port: "+name, err, "42501"); m13Detail(err) != role {
+					t.Errorf("%s port: %s detail %q, want %q", level, name, m13Detail(err), role)
+				}
+			default:
+				want = append(want, p.id)
+				if err != nil || n != len(want) {
+					t.Errorf("%s port: %s approval = %d, %v (want count %d)", level, name, n, err, len(want))
+				}
+			}
+		}
+		slices.Sort(want)
+		if got := e.approvalsOf(hash); !slices.Equal(got, want) {
+			t.Errorf("%s approvals %v, want %v", level, got, want)
+		}
+		// HTTP refuses the doctored body for everyone before any separation logic.
+		if level != "HIGH" {
+			m13Code(t, level+" doctored via HTTP", e.httpApprove(e.erin.token, hash), 409, "candidate_failed_verification")
+		}
+	}
+
+	// HTTP on the real HIGH template.
+	before := e.state()
+	leak := []string{e.carol.id, e.f.bob, e.f.alice}
+	for _, c := range []struct {
+		name   string
+		status int
+		code   string
+		role   string
+	}{
+		{"carol", 403, "separation_of_duties", "requester"},
+		{"bob", 403, "separation_of_duties", "acceptance_author"},
+		{"viewer", 403, "forbidden", ""},
+		{"frank", 403, "forbidden", ""},
+		{"gina", 403, "forbidden", ""},
+		{"hank", 401, "unauthenticated", ""},
+		{"ivan", 403, "forbidden", ""},
+	} {
+		w := e.httpApprove(e.person(c.name).token, tmpl.hash)
+		r := m13Code(t, "HTTP HIGH approve by "+c.name, w, c.status, c.code)
+		if c.role != "" && !strings.Contains(r.Message, c.role) {
+			t.Errorf("separation reply for %s must name the role %q: %s", c.name, c.role, r.Message)
+		}
+		for _, id := range leak {
+			if strings.Contains(w.Body.String(), id) {
+				t.Errorf("refusal for %s leaks an actor id: %s", c.name, w.Body.String())
+			}
+		}
+		// Activation is a separate action: rogues are refused by policy, the
+		// admin parties reach the quorum check.
+		activation, code := 403, "forbidden"
+		switch c.name {
+		case "hank":
+			activation, code = 401, "unauthenticated"
+		case "carol", "bob":
+			activation, code = 409, "approval_quorum_not_met"
+		}
+		m13Code(t, "HTTP HIGH activate by "+c.name, e.httpActivate(e.person(c.name).token, tmpl.hash, "", 0), activation, code)
+	}
+	e.unchanged("rogue HTTP approvals", before)
+	// Note: requester and acceptance author are not activators by policy, but
+	// carol (admin) may activate once an independent approval exists.
+	m13Code(t, "HTTP HIGH activation without approval", e.httpActivate(e.carol.token, tmpl.hash, "", 0), 409, "approval_quorum_not_met")
+	if r := m13Code(t, "freezer approves HIGH", e.httpApprove(e.alice, tmpl.hash), 201); r.ApprovalsRequired != 1 || r.Status != "APPROVED" {
+		t.Errorf("approved HIGH view: %+v", r)
+	}
+	m13Code(t, "independent approval", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	m13Code(t, "requester activates an independently approved HIGH candidate", e.httpActivate(e.carol.token, tmpl.hash, "", 0), 200)
+
+	// HTTP on a real LOW candidate (label-only second release): no exclusions.
+	low, _ := e.build("500", m13Relabel("Purchase order"), e.carol)
+	if r := m13Decode(e.httpCandidate(e.viewer, low)); r.RiskLevel != "LOW" {
+		t.Fatalf("precondition: the label-only release rates LOW, got %+v", r)
+	}
+	for _, c := range []struct {
+		name   string
+		status int
+	}{{"viewer", 403}, {"frank", 403}, {"gina", 403}, {"hank", 401}, {"ivan", 403}, {"carol", 201}, {"bob", 201}} {
+		m13Code(t, "HTTP LOW approve by "+c.name, e.httpApprove(e.person(c.name).token, low), c.status)
+	}
+	if got := e.approvalsOf(low); len(got) != 2 {
+		t.Errorf("LOW approvals: %v", got)
+	}
+	m13Code(t, "requester activates a self-approved LOW candidate", e.httpActivate(e.carol.token, low, tmpl.hash, 1), 200)
+	if hash, gen, _ := e.activePointer(); hash != low || gen != 2 {
+		t.Fatalf("pointer %s@%d", hash, gen)
+	}
+	e.checkHistory()
+}
+
+// Quorum is re-counted at activation from live, eligible approvers: an approval
+// of a since demoted, removed or disabled approver no longer counts, and
+// excluded parties never count, through the port and through HTTP.
+func TestM13AdversarialQuorumCountsOnlyLiveEligibleApprovers(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	// HTTP: the real HIGH template approved only by a since-demoted approver.
+	tmpl := e.template()
+	m13Code(t, "approve", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	e.setRole(e.dave.id, "viewer")
+	before := e.state()
+	m13Code(t, "activation counting a demoted approver", e.httpActivate(e.erin.token, tmpl.hash, "", 0), 409)
+	e.unchanged("activation with a demoted approver", before)
+	e.setRole(e.dave.id, "admin")
+	m13Code(t, "activation after the approver is restored", e.httpActivate(e.erin.token, tmpl.hash, "", 0), 200)
+
+	// Ports: a CRITICAL candidate on the live pointer.
+	x, err := e.stageLevel("CRITICAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"carol", "bob", "alice"} {
+		_, err := e.approvePort(e.person(name).subject, x)
+		m13Refused(t, "CRITICAL excluded party "+name, err, "42501")
+	}
+	if n, err := e.approvePort(e.dave.subject, x); err != nil || n != 1 {
+		t.Fatal("dave approves", n, err)
+	}
+	_, err = e.activatePort(e.carol.subject, x, tmpl.hash, 1)
+	m13Refused(t, "CRITICAL with one approval", err, "55000")
+	if n, err := e.approvePort(e.erin.subject, x); err != nil || n != 2 {
+		t.Fatal("erin approves", n, err)
+	}
+	before = e.state()
+	for _, c := range []struct {
+		name        string
+		spoil, mend func()
+	}{
+		{"approver demoted to viewer", func() { e.setRole(e.erin.id, "viewer") }, func() { e.setRole(e.erin.id, "admin") }},
+		{"approver membership removed", func() { e.setMemberActive(e.dave.id, false) }, func() { e.setMemberActive(e.dave.id, true) }},
+		{"approver user disabled", func() { e.setUserActive(e.dave.id, false) }, func() { e.setUserActive(e.dave.id, true) }},
+	} {
+		c.spoil()
+		_, err := e.activatePort(e.carol.subject, x, tmpl.hash, 1)
+		m13Refused(t, "CRITICAL activation after "+c.name, err, "55000")
+		c.mend()
+	}
+	_, err = e.activatePort(e.person("viewer").subject, x, tmpl.hash, 1)
+	m13Refused(t, "viewer activates", err, "42501")
+	e.unchanged("refused quorum activations", before)
+	if g, err := e.activatePort(e.carol.subject, x, tmpl.hash, 1); err != nil || g != 2 {
+		t.Fatal("CRITICAL activation with two live independent approvals", g, err)
+	}
+	h := e.checkHistory()
+	if len(h) != 2 || h[1].kind != "ACTIVATE" || h[1].riskLevel != "CRITICAL" || h[1].actor != e.carol.id || h[1].previous != tmpl.hash || h[0].actor != e.erin.id {
+		t.Fatalf("history %+v", h)
+	}
 }
