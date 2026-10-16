@@ -238,6 +238,59 @@ UI. These depend on the open foundation items and on independent review of
 M10–M13, so they are a later, separately authorised slice ("M13c"). Until it
 exists an activated release is an auditable pointer and nothing serves it.
 
+## Amendments recorded at implementation (2026-10-16)
+
+These supersede the matching sentences above where they differ.
+
+1. **Candidates are loaded only through `Store.LoadCandidate` (§1 step 2).** `Restore`
+   cannot recompute the diff, storage class or evolution plan (they depend on the base
+   release); the independent review finding M12-F1 showed a self-consistent forged body
+   restores. `LoadCandidate` therefore also runs `Candidate.VerifyWithBase` against the
+   candidate's own base release, and every M13 handler loads through it. A failure is a 409
+   `candidate_failed_verification`; a 1.0.0 bundle (no candidate row) is a 404.
+2. **Extra database guards (migration 49, §2).** Beyond the ADR: `control.active_releases`
+   refuses DELETE and TRUNCATE; an UPDATE must change the hash and raise the generation by
+   exactly one; a deferred constraint trigger refuses, at commit, any pointer INSERT/UPDATE
+   without the matching `release_history` row; `release_history` must extend its previous
+   entry (seq, generation and previous hash step by one); INSERTs into
+   `release_approvals`, `release_rejections` and `release_history` are refused unless they
+   come from a `framework_app` session running inside a port with the authenticated actor.
+   A fixture can therefore no longer write a pointer or an approval as the operator.
+3. **Storage class source (§4).** `release_candidates` has no storage class column, so
+   activation reads the lower-case `Storage.class` key of the stored body and refuses
+   anything unreadable. A rollback history row copies risk level and storage class from the
+   target's latest history row.
+4. **Separation signalling.** A separation violation is `42501` with DETAIL exactly
+   `requester`, `acceptance_author` or `sandbox_freezer`; the API maps that to 403
+   `separation_of_duties` and names the excluded role, never an actor id. Racing
+   activations under REPEATABLE READ may lose with `40001` (also 409).
+5. **Worker drift guard.** `control.worker_grants_safe()` now tests
+   `SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER` on the listed tables (the M12 DB
+   review found REFERENCES/TRIGGER grants went unnoticed) and lists the four release
+   authority tables.
+6. **Ports read the jsonb view.** `stage_candidate` (migration 48) and the activation and
+   rollback ports read the stored body through `jsonb`, where the last of duplicate keys
+   wins. The database does not enforce canonical JSON; `Restore` (canonical re-encoding) is
+   the backstop and runs before any decision reaches a port. A compromised API process can
+   still stage and drive a self-consistent forged body through the raw ports: the adversarial
+   suite records exactly which of its attacks the database stops and which only Go stops.
+7. **API details (§7).** Statuses: approve 201 (200 for the same actor again), reject 201
+   (200 when already rejected), activate and rollback 200 with a release view. Additional 409
+   codes from Go pre-checks: `candidate_rejected`, `approval_quorum_not_met`, `base_changed`,
+   `release_changed`, `no_active_release`, `rollback_target_is_current`,
+   `rollback_target_not_released`, `rollback_plan_required`, `recovery_required`; 400:
+   `hash_mismatch`. A supplied rollback plan must be fully acknowledged even for a
+   POINTER_SAFE release. Body keys must be spelled exactly in lower case. Idempotent replays
+   are audited as `release.approval_replayed` / `release.rejection_replayed`; refusals as
+   `releases.<action>.rejected`.
+8. **Go store.** The rejection type is `promotion.ReleaseRejection` (`Rejection` is the M12
+   build-rejection error). Store methods return typed errors (`ErrConflict`, `ErrForbidden`,
+   `ErrInvalid`, `ErrNotFound`, `ErrRecoveryRequired`, wrapping `*PortError` so the SQLSTATE
+   stays reachable) and do not write audit; the handler's evidence entry does, in the same
+   transaction.
+9. **Decoder hardening found on the way.** `metadata.DecodeJSON` now rejects keys that differ
+   only by Unicode case folding (they previously decoded to the last spelling).
+
 ## Consequences
 
 Approval and promotion authority no longer rests on the API process alone: a
