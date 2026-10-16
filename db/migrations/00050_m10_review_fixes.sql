@@ -27,12 +27,23 @@ CREATE FUNCTION control.tool_request_hash(i uuid,plan_hash text,inputs bytea,ste
 $$;
 -- +goose StatementEnd
 
+-- M10R-01: "an unknown outcome is outstanding" is durable ledger state. NULL
+-- marks a row written before this migration (no backfill under forced RLS);
+-- its value is derived conservatively from the retained attempts and then
+-- materialized by the next port that touches the row.
+ALTER TABLE runtime.tool_invocations ADD COLUMN unknown_outstanding boolean;
+-- +goose StatementBegin
+CREATE FUNCTION control.tool_outstanding(t uuid,i uuid,step text) RETURNS boolean LANGUAGE sql STABLE SET search_path=pg_catalog,pg_temp AS $$
+ SELECT coalesce(v.unknown_outstanding,v.state IN('UNKNOWN','SENDING') OR v.state NOT IN('SUCCEEDED','APPLIED','NOT_APPLIED') AND EXISTS(SELECT 1 FROM runtime.tool_attempts a WHERE a.tenant_id=v.tenant_id AND a.instance_id=v.instance_id AND a.step_key=v.step_key AND (a.outcome='UNKNOWN_REQUIRES_RECONCILIATION' OR a.finished_at IS NULL)))
+ FROM runtime.tool_invocations v WHERE v.tenant_id=t AND v.instance_id=i AND v.step_key=step
+$$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION control.tool_begin(step text,ref text,ver text,h text,rh text,m text,k text,needs_approval boolean)
 RETURNS TABLE(attempt integer,idempotency_key text,remaining_ms integer)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
 #variable_conflict use_column
-DECLARE l record;sb record;x runtime.workflow_instances%ROWTYPE;b runtime.workflow_bindings%ROWTYPE;plan jsonb;st jsonb;inv runtime.tool_invocations%ROWTYPE;n integer;current_version bigint;tool_key text;need boolean;
+DECLARE l record;sb record;x runtime.workflow_instances%ROWTYPE;b runtime.workflow_bindings%ROWTYPE;plan jsonb;st jsonb;c jsonb;inv runtime.tool_invocations%ROWTYPE;n integer;current_version bigint;tool_key text;need boolean;outstanding boolean;
 BEGIN
  SELECT * INTO l FROM control.tool_lease();
  IF NOT FOUND OR NOT coalesce((SELECT d.allowed FROM control.worker_policy_decision() d),false) THEN RAISE EXCEPTION 'exact tool lease and live capability required' USING ERRCODE='42501';END IF;
@@ -72,18 +83,103 @@ BEGIN
  SELECT * INTO inv FROM runtime.tool_invocations v WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step FOR UPDATE;
  IF NOT FOUND THEN
   IF k<>'SEND' THEN RAISE EXCEPTION 'lookup requires a prior send' USING ERRCODE='55000';END IF;
-  INSERT INTO runtime.tool_invocations(tenant_id,instance_id,step_key,tool_ref,tool_version,tool_hash,idempotency_key,request_hash,mode,state,attempts)
-   VALUES(l.tenant_id,l.job_id,step,ref,ver,h,tool_key,rh,m,'SENDING',1);
+  INSERT INTO runtime.tool_invocations(tenant_id,instance_id,step_key,tool_ref,tool_version,tool_hash,idempotency_key,request_hash,mode,state,attempts,unknown_outstanding)
+   VALUES(l.tenant_id,l.job_id,step,ref,ver,h,tool_key,rh,m,'SENDING',1,false);
   n:=1;
  ELSE
   IF ROW(inv.tool_ref,inv.tool_version,inv.tool_hash,inv.request_hash,inv.mode) IS DISTINCT FROM ROW(ref,ver,h,rh,m) THEN RAISE EXCEPTION 'tool attempt witness changed' USING ERRCODE='55000';END IF;
-  IF NOT (inv.state='UNKNOWN' OR k='SEND' AND (inv.state='NOT_APPLIED' OR inv.state='FAILED' AND inv.retryable)) THEN RAISE EXCEPTION 'tool attempt not permitted from this state' USING ERRCODE='55000';END IF;
+  -- M10R-01: while an unknown outcome is outstanding only these may follow:
+  -- a lookup (LOOKUP_BY_REFERENCE; also any stored legacy plan, a lookup is a
+  -- read), an in-window keyed resend whose deadline also ends inside the
+  -- replay window, a safe read retry, or (after a lookup proved absence or an
+  -- operator NOT_APPLIED, which clear it) a fresh send. A legacy plan has no
+  -- pinned capability, so it never resends after an unknown outcome.
+  outstanding:=control.tool_outstanding(l.tenant_id,l.job_id,step);
+  c:=st->'tool_contract';
+  IF inv.state='SENDING' OR inv.state IN('SUCCEEDED','APPLIED') THEN RAISE EXCEPTION 'tool attempt not permitted from this state' USING ERRCODE='55000';END IF;
+  IF k='LOOKUP' THEN
+   IF NOT outstanding OR c IS NOT NULL AND c->>'idempotency_mode' IS DISTINCT FROM 'LOOKUP_BY_REFERENCE' THEN RAISE EXCEPTION 'tool lookup not permitted from this state' USING ERRCODE='55000';END IF;
+  ELSIF inv.state='NOT_APPLIED' AND NOT outstanding THEN NULL;
+  ELSIF NOT outstanding THEN
+   IF NOT (inv.state='FAILED' AND inv.retryable) THEN RAISE EXCEPTION 'tool attempt not permitted from this state' USING ERRCODE='55000';END IF;
+  ELSIF NOT (c IS NOT NULL AND c->>'retry_mode'='SAFE_RETRY' AND (
+    c->>'idempotency_mode' IN('NATIVE_KEY','DEDUPE_WINDOW') AND clock_timestamp()+((c->>'timeout_ms')::bigint)*interval '1 millisecond'<inv.first_sent_at+((c->>'replay_window_ms')::bigint)*interval '1 millisecond'
+    OR c->>'idempotency_mode'='NONE' AND c->>'side_effect' IN('NONE','READ'))) THEN
+   RAISE EXCEPTION 'unknown tool outcome outstanding; reconcile before resending' USING ERRCODE='TL003';
+  END IF;
   IF inv.attempts>=20 THEN RAISE EXCEPTION 'tool attempt budget exhausted' USING ERRCODE='55000';END IF;
   n:=inv.attempts+1;
-  UPDATE runtime.tool_invocations v SET state='SENDING',attempts=n,updated_at=clock_timestamp() WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step;
+  UPDATE runtime.tool_invocations v SET state='SENDING',attempts=n,unknown_outstanding=outstanding,updated_at=clock_timestamp() WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step;
  END IF;
  INSERT INTO runtime.tool_attempts(tenant_id,instance_id,step_key,attempt,kind,mode,lease_generation) VALUES(l.tenant_id,l.job_id,step,n,k,m,l.generation);
  RETURN QUERY SELECT n,tool_key,l.remaining_ms;
+END $$;
+-- +goose StatementEnd
+
+-- M10R-01/M10R-04: the invocation state describes the write, not the last
+-- attempt. Any non-success attempt while an unknown outcome is outstanding
+-- (a failed/rejected/rate-limited lookup, a 429 on a keyed resend) leaves the
+-- invocation UNKNOWN; only SUCCESS, a lookup that proved absence or an
+-- operator reconciliation settles it. Attempt rows keep their own outcome.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION control.tool_finish(step text,n integer,outcome_in text,class_in text,retry_in boolean,status_in integer,simulated_in boolean,body bytea) RETURNS text
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
+#variable_conflict use_column
+DECLARE l record;att runtime.tool_attempts%ROWTYPE;inv runtime.tool_invocations%ROWTYPE;next_state text;outstanding boolean;
+BEGIN
+ SELECT * INTO l FROM control.tool_lease();
+ IF NOT FOUND THEN RAISE EXCEPTION 'exact tool lease required' USING ERRCODE='42501';END IF;
+ IF outcome_in NOT IN('SUCCESS','FAILED','UNKNOWN_REQUIRES_RECONCILIATION') OR class_in IS NULL OR class_in IN('','lost','reconciled') OR retry_in IS NULL OR simulated_in IS NULL
+  OR status_in IS NULL OR status_in NOT BETWEEN 0 AND 599 OR (outcome_in='SUCCESS')<>(body IS NOT NULL) OR octet_length(body)>16384 OR (outcome_in='SUCCESS')<>(class_in='ok') THEN
+  RAISE EXCEPTION 'invalid tool outcome' USING ERRCODE='22023';END IF;
+ SELECT * INTO inv FROM runtime.tool_invocations v WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step FOR UPDATE;
+ SELECT * INTO att FROM runtime.tool_attempts a WHERE a.tenant_id=l.tenant_id AND a.instance_id=l.job_id AND a.step_key=step AND a.attempt=n FOR UPDATE;
+ IF inv.state IS DISTINCT FROM 'SENDING' OR inv.attempts<>n OR att.finished_at IS NOT NULL OR att.lease_generation IS DISTINCT FROM l.generation THEN
+  RAISE EXCEPTION 'stale tool outcome rejected' USING ERRCODE='55000';END IF;
+ IF class_in='not_found' AND (att.kind<>'LOOKUP' OR outcome_in<>'FAILED') THEN RAISE EXCEPTION 'invalid lookup outcome' USING ERRCODE='22023';END IF;
+ UPDATE runtime.tool_attempts a SET finished_at=clock_timestamp(),outcome=outcome_in,outcome_class=class_in,http_status=status_in WHERE a.tenant_id=l.tenant_id AND a.instance_id=l.job_id AND a.step_key=step AND a.attempt=n;
+ outstanding:=coalesce(inv.unknown_outstanding,true);
+ IF outcome_in='SUCCESS' THEN next_state:='SUCCEEDED';outstanding:=false;
+ ELSIF att.kind='LOOKUP' AND class_in='not_found' THEN next_state:='NOT_APPLIED';outstanding:=false;
+ ELSIF att.kind='LOOKUP' OR outcome_in<>'FAILED' OR outstanding THEN next_state:='UNKNOWN';outstanding:=true;
+ ELSE next_state:='FAILED';
+ END IF;
+ UPDATE runtime.tool_invocations v SET state=next_state,outcome_class=class_in,retryable=retry_in AND next_state='FAILED',http_status=status_in,simulated=simulated_in,unknown_outstanding=outstanding,
+  response=body,response_hash=CASE WHEN body IS NULL THEN NULL ELSE encode(sha256(body),'hex') END,updated_at=clock_timestamp()
+  WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step;
+ RETURN next_state;
+END $$;
+CREATE OR REPLACE FUNCTION control.tool_abandon(step text) RETURNS boolean
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
+#variable_conflict use_column
+DECLARE l record;inv runtime.tool_invocations%ROWTYPE;att runtime.tool_attempts%ROWTYPE;
+BEGIN
+ SELECT * INTO l FROM control.tool_lease();
+ IF NOT FOUND OR NOT coalesce((SELECT d.allowed FROM control.worker_policy_decision() d),false) THEN RAISE EXCEPTION 'exact tool lease and live capability required' USING ERRCODE='42501';END IF;
+ SELECT * INTO inv FROM runtime.tool_invocations v WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step FOR UPDATE;
+ IF NOT FOUND OR inv.state<>'SENDING' THEN RETURN false;END IF;
+ SELECT * INTO att FROM runtime.tool_attempts a WHERE a.tenant_id=l.tenant_id AND a.instance_id=l.job_id AND a.step_key=step AND a.attempt=inv.attempts FOR UPDATE;
+ IF att.finished_at IS NOT NULL OR NOT (att.lease_generation<l.generation OR att.started_at<clock_timestamp()-interval '3 seconds') THEN RAISE EXCEPTION 'tool attempt may still be in flight' USING ERRCODE='55000';END IF;
+ UPDATE runtime.tool_attempts a SET finished_at=clock_timestamp(),outcome='UNKNOWN_REQUIRES_RECONCILIATION',outcome_class='lost' WHERE a.tenant_id=l.tenant_id AND a.instance_id=l.job_id AND a.step_key=step AND a.attempt=inv.attempts;
+ UPDATE runtime.tool_invocations v SET state='UNKNOWN',outcome_class='lost',retryable=false,unknown_outstanding=true,updated_at=clock_timestamp() WHERE v.tenant_id=l.tenant_id AND v.instance_id=l.job_id AND v.step_key=step;
+ RETURN true;
+END $$;
+CREATE OR REPLACE FUNCTION control.tool_reconcile(t uuid,i uuid,step text,applied boolean) RETURNS boolean
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
+#variable_conflict use_column
+DECLARE inv runtime.tool_invocations%ROWTYPE;
+BEGIN
+ IF session_user<>'framework_app' OR t IS DISTINCT FROM iam.current_tenant_id() OR NOT iam.tenant_matches_scope(t) OR applied IS NULL
+  OR NOT EXISTS(SELECT 1 FROM iam.memberships m WHERE m.tenant_id=t AND m.user_id=iam.authenticated_actor() AND m.active AND m.role<>'viewer') THEN
+  RAISE EXCEPTION 'tenant reconciler required' USING ERRCODE='42501';END IF;
+ IF NOT EXISTS(SELECT 1 FROM runtime.workflow_instances w WHERE w.tenant_id=t AND w.id=i AND w.status='RECONCILE' AND w.state_id=step) THEN RETURN false;END IF;
+ SELECT * INTO inv FROM runtime.tool_invocations v WHERE v.tenant_id=t AND v.instance_id=i AND v.step_key=step FOR UPDATE;
+ IF NOT FOUND THEN RETURN false;END IF;
+ IF inv.state NOT IN('UNKNOWN','SENDING','FAILED') THEN RAISE EXCEPTION 'tool invocation already settled' USING ERRCODE='55000';END IF;
+ UPDATE runtime.tool_attempts a SET finished_at=clock_timestamp(),outcome='UNKNOWN_REQUIRES_RECONCILIATION',outcome_class='reconciled' WHERE a.tenant_id=t AND a.instance_id=i AND a.step_key=step AND a.finished_at IS NULL;
+ UPDATE runtime.tool_invocations v SET state=CASE WHEN applied THEN 'APPLIED' ELSE 'NOT_APPLIED' END,outcome_class='reconciled',retryable=false,unknown_outstanding=false,updated_at=clock_timestamp()
+  WHERE v.tenant_id=t AND v.instance_id=i AND v.step_key=step;
+ RETURN true;
 END $$;
 -- +goose StatementEnd
 
@@ -127,13 +223,14 @@ CREATE TRIGGER guard_tool_receipt BEFORE INSERT ON runtime.workflow_receipts FOR
 
 -- +goose StatementBegin
 DO $$ DECLARE f regprocedure;BEGIN
- FOR f IN SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE (n.nspname='control' AND p.proname IN('tool_approval_gated','tool_request_hash','tool_begin')) OR (n.nspname='runtime' AND p.proname IN('guard_worker_transition','guard_tool_receipt')) LOOP
+ FOR f IN SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE (n.nspname='control' AND p.proname IN('tool_approval_gated','tool_request_hash','tool_outstanding','tool_begin','tool_finish','tool_abandon','tool_reconcile')) OR (n.nspname='runtime' AND p.proname IN('guard_worker_transition','guard_tool_receipt')) LOOP
  EXECUTE format('ALTER FUNCTION %s OWNER TO framework_schema_owner',f);
  EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,framework_app,framework_worker,framework_dispatcher',f);
  END LOOP;
 END $$;
 -- +goose StatementEnd
-GRANT EXECUTE ON FUNCTION control.tool_begin(text,text,text,text,text,text,text,boolean) TO framework_worker;
+GRANT EXECUTE ON FUNCTION control.tool_begin(text,text,text,text,text,text,text,boolean),control.tool_finish(text,integer,text,text,boolean,integer,boolean,bytea),control.tool_abandon(text) TO framework_worker;
+GRANT EXECUTE ON FUNCTION control.tool_reconcile(uuid,uuid,text,boolean) TO framework_app;
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN RAISE EXCEPTION 'retain tool ledger evidence; forward recovery only';END $$;

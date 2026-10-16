@@ -33,7 +33,9 @@ type toolDispatch struct {
 
 type toolLedger struct {
 	state, class, lastKind, requestHash string
-	retryable                           bool
+	// outstanding: some send's outcome is still unknown (M10R-01). Only a
+	// success, a lookup that proved absence or an operator decision clears it.
+	retryable, outstanding bool
 	attempts                            int
 	firstSent                           time.Time
 	response                            []byte
@@ -79,60 +81,73 @@ func (s Store) toolMode(ctx context.Context, q postgres.Executor, d tools.Defini
 
 func loadToolLedger(ctx context.Context, q postgres.Executor, a tenant.Access, instance, step string) (toolLedger, bool, error) {
 	var l toolLedger
-	err := q.QueryRowContext(ctx, `SELECT v.state,v.outcome_class,v.retryable,v.attempts,v.first_sent_at,v.response,v.request_hash,coalesce((SELECT t.kind FROM runtime.tool_attempts t WHERE t.tenant_id=v.tenant_id AND t.instance_id=v.instance_id AND t.step_key=v.step_key ORDER BY t.attempt DESC LIMIT 1),'') FROM runtime.tool_invocations v WHERE v.tenant_id=$1 AND v.instance_id=$2 AND v.step_key=$3`, a.TenantID(), instance, step).Scan(&l.state, &l.class, &l.retryable, &l.attempts, &l.firstSent, &l.response, &l.requestHash, &l.lastKind)
+	err := q.QueryRowContext(ctx, `SELECT v.state,v.outcome_class,v.retryable,v.attempts,v.first_sent_at,v.response,v.request_hash,coalesce(v.unknown_outstanding,v.state IN('UNKNOWN','SENDING') OR v.state NOT IN('SUCCEEDED','APPLIED','NOT_APPLIED') AND EXISTS(SELECT 1 FROM runtime.tool_attempts u WHERE u.tenant_id=v.tenant_id AND u.instance_id=v.instance_id AND u.step_key=v.step_key AND (u.outcome='UNKNOWN_REQUIRES_RECONCILIATION' OR u.finished_at IS NULL))),coalesce((SELECT t.kind FROM runtime.tool_attempts t WHERE t.tenant_id=v.tenant_id AND t.instance_id=v.instance_id AND t.step_key=v.step_key ORDER BY t.attempt DESC LIMIT 1),'') FROM runtime.tool_invocations v WHERE v.tenant_id=$1 AND v.instance_id=$2 AND v.step_key=$3`, a.TenantID(), instance, step).Scan(&l.state, &l.class, &l.retryable, &l.attempts, &l.firstSent, &l.response, &l.requestHash, &l.outstanding, &l.lastKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return l, false, nil
 	}
 	return l, err == nil, err
 }
 
-// decideTool applies the declared delivery capability to the durable ledger.
-// It never resends an unknown outcome unless the provider declared a replay
-// window or a lookup proved absence; fresh failures back off first.
-func decideTool(d tools.Definition, l toolLedger, found bool, x stored, maxAttempts int, now time.Time) (string, error) {
-	if !found || l.state == "NOT_APPLIED" {
+// decideTool applies the pinned delivery capability to the durable ledger.
+// While an unknown outcome is outstanding it never resends unless the
+// capability permits it: a lookup (LOOKUP_BY_REFERENCE), an in-window keyed
+// resend whose deadline also ends inside the replay window (NATIVE_KEY,
+// DEDUPE_WINDOW) or a safe read retry; a failed lookup is retried as a lookup
+// (M10R-01). The database enforces the same admission (control.tool_begin).
+func decideTool(c ToolContract, l toolLedger, found bool, x stored, maxAttempts int, now time.Time) (string, error) {
+	if !found || l.state == "NOT_APPLIED" && !l.outstanding {
 		return tools.KindSend, nil
 	}
 	due := x.Status == "RETRY_WAIT"
 	exhausted := x.Attempt+1 >= maxAttempts
-	switch l.state {
-	case "FAILED":
-		if !l.retryable || d.Delivery.RetryMode == "NEVER" {
+	if !l.outstanding {
+		if l.state != "FAILED" {
+			return "", ErrInvalid
+		}
+		if !l.retryable || c.RetryMode == "NEVER" {
 			return "", Permanent()
 		}
 		if !due {
 			return "", Retryable()
 		}
 		return tools.KindSend, nil
-	case "UNKNOWN":
-		backoff := func(kind string) (string, error) {
-			if due {
-				return kind, nil
-			}
-			if exhausted {
-				return "", Unknown()
-			}
-			return "", Retryable()
+	}
+	if l.state != "UNKNOWN" && l.state != "FAILED" {
+		return "", ErrInvalid
+	}
+	backoff := func(kind string) (string, error) {
+		if due {
+			return kind, nil
 		}
-		switch d.Delivery.IdempotencyMode {
-		case "LOOKUP_BY_REFERENCE":
-			if l.lastKind == tools.KindSend {
-				return tools.KindLookup, nil
-			}
-			return backoff(tools.KindLookup)
-		case "NATIVE_KEY", "DEDUPE_WINDOW":
-			if d.Delivery.RetryMode != "SAFE_RETRY" || now.Sub(l.firstSent) >= time.Duration(d.Delivery.ReplayWindowMS)*time.Millisecond {
-				return "", Unknown()
-			}
-			return backoff(tools.KindSend)
-		default:
-			if (d.SideEffect == "NONE" || d.SideEffect == "READ") && d.Delivery.RetryMode == "SAFE_RETRY" {
-				return backoff(tools.KindSend)
-			}
+		if exhausted {
 			return "", Unknown()
 		}
+		return "", Retryable()
 	}
-	return "", ErrInvalid
+	switch c.IdempotencyMode {
+	case "LOOKUP_BY_REFERENCE":
+		if l.lastKind == tools.KindSend {
+			return tools.KindLookup, nil
+		}
+		return backoff(tools.KindLookup)
+	case "NATIVE_KEY", "DEDUPE_WINDOW":
+		if !inReplayWindow(c, l, now) {
+			return "", Unknown()
+		}
+		return backoff(tools.KindSend)
+	default:
+		if (c.SideEffect == "NONE" || c.SideEffect == "READ") && c.RetryMode == "SAFE_RETRY" {
+			return backoff(tools.KindSend)
+		}
+		return "", Unknown()
+	}
+}
+
+// inReplayWindow admits a keyed resend only when its whole send deadline ends
+// inside the provider's replay window measured from the first send (C6).
+func inReplayWindow(c ToolContract, l toolLedger, now time.Time) bool {
+	window := time.Duration(c.ReplayWindowMS) * time.Millisecond
+	return c.RetryMode == "SAFE_RETRY" && window > 0 && now.Add(time.Duration(c.TimeoutMS)*time.Millisecond).Before(l.firstSent.Add(window))
 }
 
 func toolInputs(d tools.Definition, a map[string]string, snapshot Snapshot) (map[string]any, error) {
@@ -226,7 +241,11 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 	if state.Activity != nil && state.Activity.Retry.MaxAttempts > 0 {
 		maxAttempts = state.Activity.Retry.MaxAttempts
 	}
-	kind, decision := decideTool(def, l, found, *x, maxAttempts, now)
+	contract := ToolContractOf(def)
+	if state.ToolContract != nil {
+		contract = *state.ToolContract
+	}
+	kind, decision := decideTool(contract, l, found, *x, maxAttempts, now)
 	if decision != nil {
 		return nil, fail(decision)
 	}
@@ -251,6 +270,10 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 	if errors.As(err, &pe) && (pe.Code == "TL001" || pe.Code == "TL002") {
 		// Missing approval evidence or a changed approved record: no send.
 		return nil, fail(Permanent())
+	}
+	if errors.As(err, &pe) && pe.Code == "TL003" {
+		// The database refused a resend while an unknown outcome is outstanding.
+		return nil, fail(Unknown())
 	}
 	if err != nil {
 		return nil, err
