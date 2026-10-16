@@ -143,6 +143,9 @@ type cursor struct {
 	Fingerprint string          `json:"fingerprint"`
 }
 
+// Includes worst-case JSON escaping of the existing 4096-byte string contract.
+const maxCursorBytes = 32 << 10
+
 func fingerprint(s Scope, a tenant.Access, e string, q Query) string {
 	q.After = ""
 	raw, _ := json.Marshal(q)
@@ -189,7 +192,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if err = g.check(ctx, "data.row.read", Resource{EntityID: entity}); err != nil {
 		return Page{}, err
 	}
-	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > 2048 || len(query.Projection) == 0 || len(query.Projection) > 32 {
+	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > base64.RawURLEncoding.EncodedLen(maxCursorBytes) || len(query.Projection) == 0 || len(query.Projection) > 32 {
 		return Page{}, ErrBudget
 	}
 	if st.visible && !st.sqlFields || !st.visible && query.RecordID != "" {
@@ -325,6 +328,29 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 				span.SetAttributes(attribute.String("query_index", "numeric-v1"))
 			}
 		}
+		if !st.workerSource && !st.legacy && (sf.Type == "string" || sf.Type == "date") && !sf.CoreID && postgres.RuntimeSnapshot(q) {
+			index, indexErr := scalarIndex(ctx, q, s, a, entity, sf.ID)
+			if indexErr != nil && indexErr != ErrNotFound {
+				return Page{}, indexErr
+			}
+			if indexErr == nil && index.State == "READY" {
+				usable, indexErr := scalarSortUsable(ctx, q, s, a, entity, sf)
+				if indexErr != nil {
+					return Page{}, indexErr
+				}
+				if usable {
+					indexJoin = ` JOIN runtime.scalar_projections si ON si.tenant_id=$1 AND si.app_id=$2 AND si.metadata_revision=$3 AND si.ir_hash=$4 AND si.entity_id=$5 AND si.field_id=` + b.bind(sf.ID) + ` AND si.id=r.id AND si.source_version=r.row_version`
+					if sf.Type == "string" {
+						indexJoin += ` AND si.field_type='string' AND NOT si.overflow`
+						sortExpr, sortType = "si.value_text", "text"
+					} else {
+						indexJoin += ` AND si.field_type='date'`
+						sortExpr, sortType = "si.value_date", "date"
+					}
+					span.SetAttributes(attribute.String("query_index", "scalar-v1-"+sf.Type))
+				}
+			}
+		}
 		if indexJoin == "" {
 			sortExpr, sortType = physical(sf, "r", &b)
 		}
@@ -332,8 +358,11 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	fp := fingerprint(s, a, entity, query)
 	span.SetAttributes(attribute.String("query_fingerprint", fp))
 	if query.After != "" {
+		if len(query.After) > base64.RawURLEncoding.EncodedLen(maxCursorBytes) {
+			return Page{}, ErrInvalid
+		}
 		raw, err := base64.RawURLEncoding.DecodeString(query.After)
-		if err != nil || len(raw) > 1024 {
+		if err != nil || len(raw) > maxCursorBytes {
 			return Page{}, ErrInvalid
 		}
 		var c cursor

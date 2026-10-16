@@ -270,7 +270,7 @@ export function decodeResult(v: unknown): Result {
     !Array.isArray(v.records) ||
     v.records.length > 100 ||
     typeof v.next !== "string" ||
-    v.next.length > 2048
+    v.next.length > 43691
   )
     throw new Error("Invalid records");
   return { records: v.records.map(decodeRow), next: v.next };

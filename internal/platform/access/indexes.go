@@ -58,7 +58,7 @@ func indexRequest(ctx context.Context, q postgres.Executor, r *http.Request, sco
 	}
 	store := data.Store{}
 	if r.Method == http.MethodGet {
-		index, err := store.NumericIndex(ctx, q, scope, access, entity, id)
+		index, err := store.FieldIndex(ctx, q, scope, access, entity, id)
 		return indexReply(index, err)
 	}
 	if strings.HasSuffix(r.URL.Path, "/register") {
@@ -66,7 +66,7 @@ func indexRequest(ctx context.Context, q postgres.Executor, r *http.Request, sco
 		if readDataCommand(r, &body) != nil {
 			return indexReply(data.NumericIndex{}, data.ErrInvalid)
 		}
-		index, err := store.RegisterNumericIndex(ctx, q, scope, access, entity, id)
+		index, err := store.RegisterFieldIndex(ctx, q, scope, access, entity, id)
 		return indexReply(index, err)
 	}
 	var body struct {
@@ -75,6 +75,6 @@ func indexRequest(ctx context.Context, q postgres.Executor, r *http.Request, sco
 	if readDataCommand(r, &body) != nil {
 		return indexReply(data.NumericIndex{}, data.ErrInvalid)
 	}
-	index, err := store.BuildNumericIndex(ctx, q, scope, access, entity, id, body.ExpectedCheckpoint)
+	index, err := store.BuildFieldIndex(ctx, q, scope, access, entity, id, body.ExpectedCheckpoint)
 	return indexReply(index, err)
 }

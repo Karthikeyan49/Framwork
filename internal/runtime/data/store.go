@@ -41,7 +41,10 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	_, err = db.ExecContext(ctx, `SELECT i.schema_hash,i.state,i.checkpoint,i.verified_rows,p.value_number,p.source_version FROM runtime.numeric_indexes i JOIN runtime.numeric_projections p USING(tenant_id,app_id,metadata_revision,ir_hash,entity_id,field_id) LIMIT 0`)
-	return err
+	if err != nil {
+		return err
+	}
+	return scalarReady(ctx, db)
 }
 func base(s Scope, a tenant.Access, entity string) []any {
 	return []any{a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash(), entity}
