@@ -19,6 +19,10 @@ independent evidence. The earlier current-host HTTP gate failed; governed
 the unchanged 100k-row/ten-client gate in root and independent runs (independent
 p95 96.713 ms, zero errors). This requires a registered and verified numeric
 index; general query planning, uniqueness and aggregates remain separate work.
+[Text and civil-date indexes](docs/migration/M9R_R3B_TEXT_DATE_IMPLEMENTATION_REPORT.md)
+now also pass independent adversarial and 100k-row capacity checks. The review
+closed intrinsic-ID admission and cold-plan record-scan defects; long text keeps
+the bounded JSONB fallback. This does not complete the remaining R3 subgates.
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
@@ -486,6 +490,24 @@ and the 3-second transaction budget remain. Opaque Go action policies have a
 and tenant-defined SQL policies retain their normal query budgets. Indexed
 100k-row workloads have separate measured evidence; unindexed plans may exceed
 the unchanged statement budget. See [ADR037](docs/adr/037-field-visibility-and-partial-writes.md).
+
+Owner/admin can manage integer/decimal/money/string/civil-date indexes through
+`GET .../entities/{entity}/indexes/{field}`, `POST .../register` with `{}`, and
+`POST .../build` with `{"expected_checkpoint":N}`. The prefix can be the preview
+revision or an existing dataset binding. Run `make migrate` through migration
+00048 before using this binary. Registration derives the field contract from
+stored metadata; intrinsic IDs are excluded. Quotas are eight fields per entity
+and 32 per physical namespace, shared across numeric and scalar types.
+
+Build checkpoints copy and then independently verify at most 1000 rows. On an
+unknown POST result, inspect GET before continuing; never discard checkpoints to
+retry. A READY index is maintained with subsequent record writes/deletes. Strings
+over 512 UTF-8 bytes remain accepted through the existing 4096-byte contract, but
+any overflow in the field selects the bounded unindexed query path. Default
+database collation is preserved and drift fails closed. Retained and current
+generation reads still apply live ownership, shares and tombstones. See
+[ADR040](docs/adr/040-m9r-text-and-civil-date-projections.md) and the linked report
+for capacity limits, forward recovery and remaining work.
 
 `make browser-install` uses installed Chromium or installs Playwright-managed Chromium
 (no security checks disabled). After `make build`, with infrastructure running and

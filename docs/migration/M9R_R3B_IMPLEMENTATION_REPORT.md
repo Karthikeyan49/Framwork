@@ -176,12 +176,15 @@ unindexed SQL baseline, and asserts the indexed plan visits authorized101 rows.
 
 ## Remaining scope
 
-Text/date/search projections, uniqueness metadata/concurrent uniqueness, SQL
-aggregates, general join planning and selective-policy performance guarantees
-remain separate R3 subgates. Incompatible schema generations/canonical live ACLs
-and workflow data pins remain full R2 work. Product custom roles, independent
-acceptance authority, rate limiting/operations, production activation and external
-tools are not delivered by this change. No major dependency was introduced.
+This numeric report is historical evidence. The later
+[text/civil-date supplement](M9R_R3B_TEXT_DATE_IMPLEMENTATION_REPORT.md) and
+[independent review](../verification/M9R_R3B_TEXT_DATE_INDEPENDENT_REVIEW.md)
+record those added projection types and the subsequent cold-plan correction.
+R2c and R5 reports own the later generation/access and custom-role capabilities;
+they were not delivered by the original numeric change. Other index types/search,
+uniqueness, SQL aggregates, general join planning, selective-policy guarantees,
+independent acceptance authority, rate limiting/operations, production activation
+and external tools remain separate work. No major dependency was introduced.
 
 Commit migrations, Go/API code, tests and reports. Keep `.env`, credentials,
 dependencies, local logs/profiles, binaries and frontend build outputs ignored.

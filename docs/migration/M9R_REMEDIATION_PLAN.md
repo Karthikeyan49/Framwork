@@ -32,6 +32,14 @@ are explicit.
 [R2 progress](M9R_R2_IMPLEMENTATION_REPORT.md) and
 [R2c closure/evidence](M9R_R2C_IMPLEMENTATION_REPORT.md).
 
+[Text and civil-date R3b](M9R_R3B_TEXT_DATE_IMPLEMENTATION_REPORT.md) now passes
+independent review and the unchanged 100k-row/ten-client capacity gate. Review
+reproduced and closed raw intrinsic-ID admission and cold-plan source-scan
+amplification. The latter requires correlated live-view point fetches, not weaker
+authorization or longer timeouts. Other index types/search, R3c uniqueness and
+R3d aggregates remain separate; final whole-suite evidence is recorded in the
+slice report.
+
 ## Objective and release gate
 
 Preserve working M0–M9 code while closing the reproduced worker authority,
@@ -392,7 +400,7 @@ After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
-governed numeric R3b, R5a/R5b, R5c server and preview UI administration, R5d and
+governed numeric and text/civil-date R3b, R5a/R5b, R5c server and preview UI administration, R5d and
 R5e and bounded R5f sign-in independently verified. Production R2 execution,
 remaining R3b types/R3c/R3d, external identity deployment and R6–R7 remain open.
 Role-definition UI remains separate.

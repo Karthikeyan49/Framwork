@@ -60,6 +60,9 @@ belongs to `internal/platform/app`.
   ADR037: interactive queries use SQL masking; strict point inputs check trusted
   record/owner headers. Preserve snapshot proofs, opaque-policy budgets and
   omitted-field semantics in partial patches.
+  ADR040: governed text/date indexes preserve overflow fallback, snapshot and
+  collation witnesses, intrinsic-ID exclusion and correlated live-view point
+  fetches. Keep policy/filter/cursor predicates before LIMIT and verify cold plans.
 - ADR038: access administration reads typed headers under live entity/row
   authority, never unrelated business values. Preserve actor-owned recovery
   across SPA routes; unknown outcomes and unobservable truncated-list targets
