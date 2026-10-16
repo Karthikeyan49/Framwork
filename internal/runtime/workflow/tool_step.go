@@ -202,16 +202,8 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 		return nil, err
 	}
 	fail := func(e error) error { return activityFailure{err: e, instanceVersion: x.Version, step: call.StepKey} }
-	def, ok := s.ToolCatalog.Lookup(t.ref, t.version, t.hash)
-	if ok && state.ToolContract != nil && ToolContractOf(def) != *state.ToolContract {
-		// The pinned contract is derived from the pinned definition; any
-		// disagreement is an integrity failure, never a reason to send.
-		ok = false
-	}
-	if !ok || !def.AllowsTenant(a.TenantID()) || s.Tools == nil {
-		// A removed/changed/unlicensed tool fails closed before any I/O.
-		return nil, fail(Permanent())
-	}
+	// The ledger is read before the catalog fail-closed check (M10R-04): an
+	// unsettled or settled send is recorded whatever the catalog says now.
 	l, found, err := loadToolLedger(ctx, q, a, x.ID, call.StepKey)
 	if err != nil {
 		return nil, err
@@ -236,6 +228,17 @@ func (s Store) toolActivity(ctx context.Context, q postgres.Executor, a tenant.A
 	if found && l.state == "APPLIED" {
 		// Manual reconciliation writes its receipt in the same transaction.
 		return nil, ErrInvalid
+	}
+	def, ok := s.ToolCatalog.Lookup(t.ref, t.version, t.hash)
+	if ok && state.ToolContract != nil && ToolContractOf(def) != *state.ToolContract {
+		// The pinned contract is derived from the pinned definition; any
+		// disagreement is an integrity failure, never a reason to send.
+		ok = false
+	}
+	if !ok || !def.AllowsTenant(a.TenantID()) || s.Tools == nil {
+		// A removed/changed/unlicensed tool fails closed before any I/O; with an
+		// unknown outcome outstanding the failure path parks it in RECONCILE.
+		return nil, fail(Permanent())
 	}
 	maxAttempts := 3
 	if state.Activity != nil && state.Activity.Retry.MaxAttempts > 0 {

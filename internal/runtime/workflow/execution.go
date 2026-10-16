@@ -412,8 +412,19 @@ func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f a
 			initial = state.Activity.Retry.InitialBackoffMS
 			backoffMax = state.Activity.Retry.MaxBackoffMS
 		}
-		if x.Failure == "unknown" {
+		// M10R-04: a tool step whose earlier send has an unknown outcome never
+		// ends DEAD (unreconcilable); every terminal failure parks in RECONCILE.
+		outstanding := false
+		if _, tool := toolState(state); tool && x.Termination == "" && (x.Failure == "permanent" || x.Attempt >= max) {
+			l, found, e := loadToolLedger(ctx, q, a, x.ID, f.step)
+			if e != nil {
+				return e
+			}
+			outstanding = found && l.outstanding
+		}
+		if x.Failure == "unknown" || outstanding {
 			x.Status = "RECONCILE"
+			x.Failure = "unknown"
 			x.DueAt = now
 		} else if x.Failure == "permanent" || x.Attempt >= max {
 			if x.Termination != "" {
