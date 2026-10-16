@@ -1030,13 +1030,13 @@ func TestM13AdversarialRejectionIsPermanent(t *testing.T) {
 		"unknown reason":    {"artifact_hash": tmpl.hash, "reason": "BECAUSE", "note": ""},
 		"note too long":     {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": strings.Repeat("n", 281)},
 		"control character": {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": "bell\a"},
-		"bidi override":     {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": "abc‮def"},
+		"bidi override":     {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": "abc\u202edef"},
 		"actor claimed":     {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": "", "actor_id": e.dave.id},
 		"another hash":      {"artifact_hash": strings.Repeat("f", 64), "reason": "OTHER", "note": ""},
 	} {
 		m13Code(t, "reject with "+name, e.post("/candidates/"+tmpl.hash+"/reject", e.bob, body), 400)
 	}
-	for name, c := range map[string][2]string{"unknown reason": {"BECAUSE", ""}, "note too long": {"OTHER", strings.Repeat("n", 281)}, "control character": {"OTHER", "a\x01b"}, "line separator": {"OTHER", "a b"}} {
+	for name, c := range map[string][2]string{"unknown reason": {"BECAUSE", ""}, "note too long": {"OTHER", strings.Repeat("n", 281)}, "control character": {"OTHER", "a\x01b"}, "line separator": {"OTHER", "a\u2028b"}} {
 		_, err := e.rejectPort(e.f.bobSubject, tmpl.hash, c[0], c[1])
 		m13Refused(t, "port reject with "+name, err, "22023")
 	}
