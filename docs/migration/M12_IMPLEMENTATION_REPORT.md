@@ -110,7 +110,18 @@ bodies refused with 22023/55000/42501).
 
 ## Independent review
 
-NOT RUN. Review agents for M10–M12 were stopped before reporting. Run
-independent adversarial reviews against `claude/m12-candidate-builder` before any
-merge; at minimum probe `control.stage_candidate` with doctored bodies from a
-second tenant, the replay path, and `Restore` on edited risk/report bytes.
+Status (partial, 2026-10-16). Reports are in `docs/verification/`:
+
+- **M12 database layer** (`M12_DB_INDEPENDENT_REVIEW.md`): PASS WITH FINDINGS. The runtime role could
+  still approve and activate releases directly in SQL (closed by migration 49 of the M13
+  branch, not by M12); the ports read the jsonb view and rely on `Restore` for canonical
+  form; `worker_grants_safe()` misses REFERENCES/TRIGGER grants and unlisted tables
+  (hardening in migration 49).
+- **Deterministic logic** (`M12_VERIFIER_INDEPENDENT_REVIEW.md`, in progress): F1 HIGH
+  (`Restore` accepts a forged diff) — fixed, see above; the byte-level leaf sweep, the
+  randomised verifier mutation testing and the risk monotonicity property tests did not complete.
+- **API/policy/audit review:** not completed (no findings recorded).
+- **Contract-honesty audit** (`CONTRACT_HONESTY_AUDIT.md`, in progress): H1 (same finding) and
+  M1–M9 documentation defects; the certain corrections were applied to ADR036–038, the design appendix and the
+  sandbox README.
+Not run to completion: the API review, the rest of the verifier review, and the foundation finding-status audit.

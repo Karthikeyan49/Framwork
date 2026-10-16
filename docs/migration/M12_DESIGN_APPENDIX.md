@@ -121,7 +121,7 @@ Semantics per category (closed):
   op GT|GTE|LT|LTE|EQ|NEQ, amount (decimal string, currency minor units),
   approver_roles [owner|admin|member|viewer]}`
 - `approval_gate`: `{workflow_id, approver_roles[]}` — every initial→complete path
-  passes an approval state whose roles ⊇ required roles
+  passes an approval state whose roles EQUAL the required roles (set equality, Amendment 3)
 - `tool_effect`: `{tool_ref, max_side_effect NONE|READ|WRITE,
   requires_approval bool, max_sandbox_mode BLOCK|SIMULATE|READ_ONLY|REROUTE|
   TEST_ACCOUNT}` checked against the pinned catalog definition and plan pins
