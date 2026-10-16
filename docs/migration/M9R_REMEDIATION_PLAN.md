@@ -36,7 +36,7 @@ are explicit.
 independent review and the unchanged 100k-row/ten-client capacity gate. Review
 reproduced and closed raw intrinsic-ID admission and cold-plan source-scan
 amplification. The latter requires correlated live-view point fetches, not weaker
-authorization or longer timeouts. Other index types/search, R3c uniqueness and
+authorization or longer timeouts. Additional query work, R3c uniqueness and
 R3d aggregates remain separate; final whole-suite evidence is recorded in the
 slice report.
 
@@ -44,7 +44,7 @@ slice report.
 independent executed review: exact options/target witnesses, Unicode/NULL contracts,
 tenant/worker/field/canonical-access faults, actual dropped COMMIT/concurrent copy,
 maximum enum bounds, retained-binary CRUD and twelve 100k-row capacity cases.
-Search, R3c/R3d and the wider product/operations gates remain open;
+R3c/R3d and the wider product/operations gates remain open;
 final root verification belongs to the linked report.
 
 [Datetime/boolean R3b](M9R_R3B_DATETIME_BOOL_IMPLEMENTATION_REPORT.md) passes
@@ -52,7 +52,22 @@ independent executed review: native typed projections, strict private conversion
 unrounded UTC bounds, existing SQL precision/raw cursors, real commit/concurrency
 faults, live retained-generation authorization, retained API CRUD and all twelve
 100k-row capacity cases. The slice report records final root verification.
-Search indexes, R3c/R3d and broader product/operations gates remain separate.
+R3c/R3d and broader product/operations gates remain separate.
+
+[Governed full-text search R3b](M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md) now
+passes independent executable review at `d61f696`, with final source/review
+`29a61ac`: 55 retained groups, nine new adversarial race groups, actual old-API
+CRUD/cursor compatibility, fresh migrations through 51 and all eight selective
+100k-row capacity cases. The first capacity runs reproduced a target-view join
+timeout; correlated live-view target point lookups fixed it without weakening
+authorization, fixtures or budgets. Final root check/test/build passes 230
+integration tests with zero skips, 96 frontend tests, 9 application plus 7 sign-in
+browser cases and all six numeric/scalar/choice/native/search/write gates.
+Final search worst p95 is 203.519ms with zero errors; the 32-client write gate
+completes 11989 writes, p95 192.061ms, zero errors. Search is fixed simple/plain
+AND, default ID ASC pages and one string field; no search UI/ranking/languages
+or arbitrary broad-term capacity is claimed. Wider R3b, R3c/R3d and R6–R7 remain
+open. No production activation, main merge or M10.
 
 ## Objective and release gate
 
@@ -301,7 +316,7 @@ and production gateway validation remain required; a local fixture is not SSO
 deployment evidence. Role-definition editing remains API-only; enterprise UI
 remains separate from the R5c controls. Overall R5/M9R remains PARTIAL.
 Implement and review remaining work before promising product policy completeness.
-Remaining R3b types, R3c/R3d, R6 and R7 remain in this plan.
+Remaining R3b query/search scope, R3c/R3d, R6 and R7 remain in this plan.
 
 Replace fixed-role branching with versioned tenant role/capability definitions
 and central RBAC/ABAC policy. Support `finance_manager` without trusting token
@@ -414,8 +429,8 @@ After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
-governed numeric, text/civil-date, enum/reference and datetime/boolean R3b, R5a/R5b, R5c server and preview UI administration, R5d and
+governed numeric, text/civil-date, enum/reference, datetime/boolean and bounded full-text search R3b, R5a/R5b, R5c server and preview UI administration, R5d and
 R5e and bounded R5f sign-in independently verified. Production R2 execution,
-R3b search/R3c/R3d, external identity deployment and R6–R7 remain open.
+broader R3b query/search scope, R3c/R3d, external identity deployment and R6–R7 remain open.
 Role-definition UI remains separate.
 The complete foundation gate and broader review findings are not accepted as resolved.**

@@ -31,8 +31,9 @@ retained older API binary passes selected CRUD against the extended schema.
 now pass independent fault, retained-binary and 100k-row capacity review. Timestamp
 ordering preserves the existing PostgreSQL microsecond precision and raw business
 values. [Full-text search](docs/migration/M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md)
-is the current bounded API slice under qualification; uniqueness and aggregates
-remain separate work.
+now passes independent adversarial, retained-binary and 100k-row capacity review,
+plus full backend/frontend/browser and all six capacity gates. This is a bounded
+API capability; uniqueness, aggregates and wider product search remain separate.
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
@@ -507,8 +508,9 @@ reference, datetime and boolean indexes through
 `POST .../build` with `{"expected_checkpoint":N}`. The prefix can be the preview
 revision or an existing dataset binding. Run `make migrate` through migration
 00051 before using this binary. Registration derives the field contract from
-stored metadata; intrinsic IDs are excluded. Quotas are eight fields per entity
-and 32 per physical namespace, shared across numeric, scalar and search indexes.
+stored metadata; intrinsic IDs are excluded. Quotas are eight index registrations
+per entity and 32 per physical namespace, shared across numeric, scalar and search
+indexes. Ordering and search indexes on the same field count as two registrations.
 
 Build checkpoints copy and then independently verify at most 1000 rows. On an
 unknown POST result, inspect GET before continuing; never discard checkpoints to
