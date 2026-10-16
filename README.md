@@ -23,6 +23,11 @@ index; general query planning, uniqueness and aggregates remain separate work.
 now also pass independent adversarial and 100k-row capacity checks. The review
 closed intrinsic-ID admission and cold-plan record-scan defects; long text keeps
 the bounded JSONB fallback. This does not complete the remaining R3 subgates.
+[Enum and reference indexes](docs/migration/M9R_R3B_ENUM_REFERENCE_IMPLEMENTATION_REPORT.md)
+also pass independent fault, compatibility and 100k-row capacity review. Exact
+options/target witnesses preserve existing ordering and authorization; the
+retained older API binary passes selected CRUD against the extended schema.
+Datetime/bool/search indexes, uniqueness and aggregates remain separate work.
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
@@ -491,11 +496,12 @@ and tenant-defined SQL policies retain their normal query budgets. Indexed
 100k-row workloads have separate measured evidence; unindexed plans may exceed
 the unchanged statement budget. See [ADR037](docs/adr/037-field-visibility-and-partial-writes.md).
 
-Owner/admin can manage integer/decimal/money/string/civil-date indexes through
+Owner/admin can manage integer, decimal, money, string, civil-date, enum and
+reference indexes through
 `GET .../entities/{entity}/indexes/{field}`, `POST .../register` with `{}`, and
 `POST .../build` with `{"expected_checkpoint":N}`. The prefix can be the preview
 revision or an existing dataset binding. Run `make migrate` through migration
-00048 before using this binary. Registration derives the field contract from
+00049 before using this binary. Registration derives the field contract from
 stored metadata; intrinsic IDs are excluded. Quotas are eight fields per entity
 and 32 per physical namespace, shared across numeric and scalar types.
 
@@ -508,6 +514,10 @@ database collation is preserved and drift fails closed. Retained and current
 generation reads still apply live ownership, shares and tombstones. See
 [ADR040](docs/adr/040-m9r-text-and-civil-date-projections.md) and the linked report
 for capacity limits, forward recovery and remaining work.
+Enum options match exact declared strings in canonical byte order; query ordering
+still uses database text collation. References retain lowercase UUID text and
+never grant target-record access. See [ADR041](docs/adr/041-m9r-enum-and-reference-projections.md).
+`make test-choice-performance` exercises the enum/reference reference workload.
 
 `make browser-install` uses installed Chromium or installs Playwright-managed Chromium
 (no security checks disabled). After `make build`, with infrastructure running and

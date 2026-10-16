@@ -186,7 +186,10 @@ Fast text capacity requires no overflow anywhere in that physical field. Unindex
 overflow and selective-policy capacity remain uncertified. The executed middle-page
 gate covers only the reference workload above; deeper/wider distributions need
 their own stated evidence.
-No general full-text search, enum/reference/instant index, uniqueness, expanded
+Enum/reference indexes were added and independently verified in the later
+[supplement](M9R_R3B_ENUM_REFERENCE_IMPLEMENTATION_REPORT.md); that capability is
+not evidence from the original text/date slice. No general full-text search,
+datetime/bool index, uniqueness, expanded
 aggregate planner, automatic index inheritance, production release activation,
 external provider certification or complete M9R resolution is implied.
 No new major dependency. Existing R7 connection/worker capacity findings stay open.

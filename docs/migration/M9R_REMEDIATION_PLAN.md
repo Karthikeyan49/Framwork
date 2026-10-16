@@ -40,6 +40,13 @@ authorization or longer timeouts. Other index types/search, R3c uniqueness and
 R3d aggregates remain separate; final whole-suite evidence is recorded in the
 slice report.
 
+[Enum/reference R3b](M9R_R3B_ENUM_REFERENCE_IMPLEMENTATION_REPORT.md) also passes
+independent executed review: exact options/target witnesses, Unicode/NULL contracts,
+tenant/worker/field/canonical-access faults, actual dropped COMMIT/concurrent copy,
+maximum enum bounds, retained-binary CRUD and twelve 100k-row capacity cases.
+Datetime/bool/search, R3c/R3d and the wider product/operations gates remain open;
+final root verification belongs to the linked report.
+
 ## Objective and release gate
 
 Preserve working M0–M9 code while closing the reproduced worker authority,
@@ -400,7 +407,7 @@ After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
-governed numeric and text/civil-date R3b, R5a/R5b, R5c server and preview UI administration, R5d and
+governed numeric, text/civil-date and enum/reference R3b, R5a/R5b, R5c server and preview UI administration, R5d and
 R5e and bounded R5f sign-in independently verified. Production R2 execution,
 remaining R3b types/R3c/R3d, external identity deployment and R6–R7 remain open.
 Role-definition UI remains separate.
