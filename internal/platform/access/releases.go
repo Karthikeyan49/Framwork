@@ -23,9 +23,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Release builder routes (ADR038, M12). They exist only where preview exists and
-// build candidates for review; nothing here approves or activates a release.
-var releasePOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(requirements|acceptance-specs|candidates)$`)
+// Release builder routes (ADR038, M12) and approval/promotion routes (ADR039,
+// M13, promote.go). They exist only where preview exists. The POST allowlist
+// must accept exactly the POST patterns below (promote_test.go compares them).
+var releasePOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(requirements|acceptance-specs|candidates|candidates/[0-9a-f]{64}/(approve|reject|activate)|releases/rollback)$`)
 
 // Exact registered patterns and their actions; a suffix match could capture
 // unrelated routes.
@@ -38,6 +39,12 @@ var releasePatterns = map[string]string{
 	"POST /v1/tenants/{tenant}/preview/{app}/candidates":             "candidates.build",
 	"GET /v1/tenants/{tenant}/preview/{app}/candidates":              "candidates.read",
 	"GET /v1/tenants/{tenant}/preview/{app}/candidates/{candidate}":  "candidates.read",
+	approvePattern:  "releases.approve",
+	rejectPattern:   "releases.approve",
+	activatePattern: "releases.activate",
+	rollbackPattern: "releases.rollback",
+	historyPattern:  "releases.read",
+	activePattern:   "releases.read",
 }
 
 // releaseGate records that the API already holds an ALLOW decision for the
@@ -59,8 +66,19 @@ func releaseReply(err error) (reply, error) {
 		return reply{}, &requestRejection{response: denied(400, "invalid_release_artifact", "Release artifact rejected: "+violation.Code)}
 	case errors.Is(err, promotion.ErrNotFound), errors.Is(err, metadata.ErrNotFound), errors.Is(err, data.ErrNotFound):
 		status, code = 404, "not_found"
+	case errors.Is(err, promotion.ErrRecoveryRequired):
+		status, code = 409, "recovery_required"
 	case errors.Is(err, promotion.ErrGate), errors.Is(err, data.ErrInvalid):
 		status, code = 400, "invalid_release_request"
+	case errors.Is(err, promotion.ErrForbidden):
+		// The approve port names the excluded separation role (a closed code)
+		// in DETAIL; a response never names another actor's id.
+		if errors.As(err, &pg) && (pg.Detail == risk.RoleRequester || pg.Detail == risk.RoleAcceptanceAuthor || pg.Detail == risk.RoleSandboxFreezer) {
+			return reply{}, &requestRejection{response: separationRefused(pg.Detail)}
+		}
+		status, code = 403, "forbidden"
+	case errors.Is(err, promotion.ErrConflict):
+		status, code = 409, "release_conflict"
 	case errors.As(err, &pg):
 		switch pg.Code {
 		case "22023":
@@ -69,6 +87,8 @@ func releaseReply(err error) (reply, error) {
 			status, code = 403, "forbidden"
 		case "55000", "23505", "23503", "40001", "40P01", "55P03":
 			status, code = 409, "release_conflict"
+		case "P0002":
+			status, code = 404, "not_found"
 		}
 	}
 	if status != 0 {
@@ -109,6 +129,18 @@ func (a API) release(ctx context.Context, q postgres.Executor, r *http.Request, 
 		}
 	case "GET /v1/tenants/{tenant}/preview/{app}/candidates/{candidate}":
 		result, err = a.getCandidate(ctx, q, r, access, app, evidence)
+	case approvePattern:
+		result, err = a.approveCandidate(ctx, q, r, access, app, evidence)
+	case rejectPattern:
+		result, err = a.rejectCandidate(ctx, q, r, access, app, evidence)
+	case activatePattern:
+		result, err = a.activateCandidate(ctx, q, r, access, app, evidence)
+	case rollbackPattern:
+		result, err = a.rollbackRelease(ctx, q, r, access, app, evidence)
+	case historyPattern:
+		result, err = a.releaseHistory(ctx, q, access, app)
+	case activePattern:
+		result, err = a.activeRelease(ctx, q, access, app, evidence)
 	default:
 		return denied(404, "not_found", "Unknown release route"), nil
 	}
@@ -226,6 +258,14 @@ type CandidateView struct {
 	VerificationReport  json.RawMessage         `json:"verification_report,omitempty"`
 	Stale               *bool                   `json:"stale,omitempty"`
 	StaleReasons        []promotion.StaleReason `json:"stale_reasons,omitempty"`
+	// Lifecycle (ADR039), derived from the recorded decisions and the pointer on
+	// every read and never stored. ApprovalsRequired is the stricter of the
+	// bundle's separation and the database quorum floor.
+	Status            promotion.Status             `json:"status"`
+	Approvals         []promotion.Decision         `json:"approvals"`
+	ApprovalsRequired int                          `json:"approvals_required"`
+	Rejections        []promotion.ReleaseRejection `json:"rejections"`
+	Active            bool                         `json:"active"`
 }
 
 func viewOf(c promotion.Candidate, staged bool) CandidateView {
@@ -369,30 +409,32 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 	if !staged {
 		status = 200
 	}
-	return reply{status: status, body: viewOf(candidate, staged)}, nil
+	// A replayed build shows the recorded lifecycle of the same hash, so an
+	// identical rebuild of a rejected candidate is visibly still REJECTED.
+	view := viewOf(candidate, staged)
+	if err = a.lifecycle(ctx, q, access, app, &view, authorityOf(b)); err != nil {
+		return reply{}, err
+	}
+	return reply{status: status, body: view}, nil
 }
 
 func (a API) getCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
-	store := promotion.Store{}
-	candidate, row, err := store.LoadCandidate(ctx, q, access, app, r.PathValue("candidate"), compiler.SupportedIRVersions())
-	if errors.Is(err, promotion.ErrGate) {
-		// The stored bytes do not recompute (including against the candidate's own
-		// base release): a decision must never be taken on them. Details are not returned.
-		return denied(409, "candidate_failed_verification", "The stored candidate failed verification"), nil
+	p, refusal, err := a.loadPromotable(ctx, q, access, app, r.PathValue("candidate"), evidence)
+	if refusal != nil || err != nil {
+		return derefReply(refusal), err
 	}
+	view, err := a.promotableView(ctx, q, access, app, p)
 	if err != nil {
 		return reply{}, err
 	}
-	view := viewOf(candidate, true)
-	b, _ := candidate.V2()
-	view.VerificationReport = b.Verification.Report
-	reasons, err := a.staleness(ctx, q, access, app, b)
+	view.VerificationReport = p.bundle.Verification.Report
+	reasons, err := a.staleness(ctx, q, access, app, p.bundle)
 	if err != nil {
 		return reply{}, err
 	}
 	stale := len(reasons) > 0
 	view.Stale, view.StaleReasons = &stale, reasons
-	evidence.State.ArtifactHash, evidence.State.IRHash, evidence.State.RiskLevel = candidate.Hash(), row.IRHash, row.RiskLevel
+	evidence.State.ArtifactHash = p.candidate.Hash()
 	return reply{status: 200, body: view}, nil
 }
 
