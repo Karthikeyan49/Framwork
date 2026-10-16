@@ -933,3 +933,164 @@ func TestM13AdversarialRaceRejectVersusApprove(t *testing.T) {
 	}
 	t.Logf("approval committed before the rejection in %d of %d rounds", approved, m13Iterations)
 }
+
+// ------------------------------------------------------- 5. staleness gates
+
+// publishRole publishes a custom tenant role version as the owner (HTTP).
+func (e *m13Env) publishRole(name string, expected int64, actions ...string) {
+	e.t.Helper()
+	def := map[string]any{"schema_version": "tenant-capabilities-v1", "name": name, "grants": []any{map[string]any{"effect": "ALLOW", "actions": actions,
+		"resource": map[string]string{"app_id": "*", "entity_id": "*", "field_id": "*"}}}}
+	w := m5Call(e.h, "/v1/tenants/"+e.f.tenantA+"/roles", e.alice, map[string]any{"operation_id": uuid(e.t), "expected_version": expected, "active": true, "definition": def})
+	if w.Code/100 != 2 {
+		e.t.Fatal("publish role", w.Code, w.Body.String())
+	}
+}
+
+func m13Reasons(t *testing.T, what string, r m13Reply, want ...string) {
+	t.Helper()
+	if !slices.IsSorted(r.Reasons) || !slices.Equal(r.Reasons, want) {
+		t.Errorf("%s: stale reasons %v, want sorted %v", what, r.Reasons, want)
+	}
+}
+
+// Staleness is re-evaluated inside the approve and the activate transaction: a
+// moved base and a changed stored role head each refuse with 409
+// candidate_stale and the exact sorted reasons, and change nothing. The database
+// re-checks the base itself; it cannot see a policy change (RESIDUAL, shown at
+// the end). Sandbox evidence cannot be unfrozen (immutable), and a tool-catalog
+// change needs a tool-pinned candidate: both NOT COVERED here.
+func TestM13AdversarialStalenessAtApproveAndActivate(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	e.publishRole("auditor", 0, "candidates.read")
+	tmpl := e.template()
+	m13Code(t, "approve R1", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	m13Code(t, "activate R1", e.httpActivate(e.dave.token, tmpl.hash, "", 0), 200)
+	x, _ := e.build("500", m13Relabel("Order X"), e.carol)
+	y, _ := e.build("500", m13Relabel("Order Y"), e.carol)
+	for _, h := range []string{x, y} {
+		m13Code(t, "approve on R1", e.httpApprove(e.dave.token, h), 201)
+	}
+	m13Code(t, "activate Y", e.httpActivate(e.dave.token, y, tmpl.hash, 1), 200)
+
+	// Base moved between approve and activate (and before a second approval).
+	before := e.state()
+	m13Reasons(t, "approve X after the base moved", m13Code(t, "approve stale X", e.httpApprove(e.erin.token, x), 409, "candidate_stale"), "BASE_CHANGED")
+	m13Reasons(t, "activate X on its bound base", m13Code(t, "activate stale X", e.httpActivate(e.dave.token, x, tmpl.hash, 1), 409, "candidate_stale"), "BASE_CHANGED")
+	m13Reasons(t, "activate X on the live pointer", m13Code(t, "activate stale X on Y", e.httpActivate(e.dave.token, x, y, 2), 409, "candidate_stale"), "BASE_CHANGED")
+	_, err := e.approvePort(e.erin.subject, x)
+	m13Refused(t, "port approve of a stale candidate", err, "55000")
+	for _, c := range []struct {
+		base string
+		gen  int64
+	}{{tmpl.hash, 1}, {y, 2}} {
+		_, err = e.activatePort(e.dave.subject, x, c.base, c.gen)
+		m13Refused(t, "port activate of a stale candidate", err, "55000")
+	}
+	e.unchanged("stale base", before)
+	if r := m13Decode(e.httpCandidate(e.viewer, x)); r.Stale == nil || !*r.Stale {
+		t.Errorf("X must read as stale: %+v", r)
+	}
+
+	// A stored role head changes between approve and activate.
+	z, _ := e.build("500", m13Relabel("Order Z"), e.carol)
+	w, _ := e.build("500", m13Relabel("Order W"), e.carol)
+	m13Code(t, "approve Z", e.httpApprove(e.dave.token, z), 201)
+	e.publishRole("auditor", 1, "candidates.read", "releases.read")
+	before = e.state()
+	m13Reasons(t, "activate Z after a role change", m13Code(t, "activate Z", e.httpActivate(e.dave.token, z, y, 2), 409, "candidate_stale"), "POLICY_CHANGED")
+	m13Reasons(t, "approve Z after a role change", m13Code(t, "approve Z", e.httpApprove(e.erin.token, z), 409, "candidate_stale"), "POLICY_CHANGED")
+	m13Reasons(t, "approve W after a role change", m13Code(t, "approve W", e.httpApprove(e.dave.token, w), 409, "candidate_stale"), "POLICY_CHANGED")
+	e.unchanged("stale policy", before)
+
+	// RESIDUAL: the database cannot recompute the policy bundle hash, so a
+	// process that skips Go staleness activates Z through the port.
+	if g, err := e.activatePort(e.dave.subject, z, y, 2); err != nil || g != 3 {
+		t.Fatalf("RESIDUAL changed: the port refused a policy-stale activation (%d, %v)", g, err)
+	}
+	t.Log("RESIDUAL: activate_release accepted a POLICY_CHANGED candidate; only Go staleness refuses it")
+	// Both reasons at once, sorted.
+	m13Reasons(t, "W after base and policy moved", m13Code(t, "activate W", e.httpActivate(e.dave.token, w, y, 2), 409, "candidate_stale"), "BASE_CHANGED", "POLICY_CHANGED")
+	e.checkHistory()
+}
+
+// ------------------------------------------------- 6. rejection permanence
+
+// A rejection is permanent and bound to the exact hash: approve and activate
+// refuse it, an identical rebuild yields the same (still rejected) hash, and
+// only a changed input (here a requirement) yields a new hash that proceeds.
+func TestM13AdversarialRejectionIsPermanent(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	before := e.state()
+	// Malformed rejections are refused at the edge and by the port.
+	for name, body := range map[string]map[string]any{
+		"unknown reason":    {"artifact_hash": tmpl.hash, "reason": "BECAUSE", "note": ""},
+		"note too long":     {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": strings.Repeat("n", 281)},
+		"control character": {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": "bell\a"},
+		"bidi override":     {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": "abc‮def"},
+		"actor claimed":     {"artifact_hash": tmpl.hash, "reason": "OTHER", "note": "", "actor_id": e.dave.id},
+		"another hash":      {"artifact_hash": strings.Repeat("f", 64), "reason": "OTHER", "note": ""},
+	} {
+		m13Code(t, "reject with "+name, e.post("/candidates/"+tmpl.hash+"/reject", e.bob, body), 400)
+	}
+	for name, c := range map[string][2]string{"unknown reason": {"BECAUSE", ""}, "note too long": {"OTHER", strings.Repeat("n", 281)}, "control character": {"OTHER", "a\x01b"}, "line separator": {"OTHER", "a b"}} {
+		_, err := e.rejectPort(e.f.bobSubject, tmpl.hash, c[0], c[1])
+		m13Refused(t, "port reject with "+name, err, "22023")
+	}
+	_, err := e.rejectPort(e.f.viewerSubject, tmpl.hash, "OTHER", "")
+	m13Refused(t, "viewer rejects", err, "42501")
+	e.unchanged("malformed rejections", before)
+
+	// The acceptance author vetoes (no separation applies to a veto).
+	if r := m13Code(t, "acceptance author rejects", e.httpReject(e.bob, tmpl.hash, "REQUIREMENTS_NOT_MET", "threshold disputed"), 201); r.Status != "REJECTED" || len(r.Rejections) != 1 {
+		t.Errorf("rejected view: %+v", r)
+	}
+	m13Code(t, "approve a rejected hash", e.httpApprove(e.dave.token, tmpl.hash), 409, "candidate_rejected")
+	m13Code(t, "activate a rejected hash", e.httpActivate(e.dave.token, tmpl.hash, "", 0), 409, "candidate_rejected")
+	_, err = e.approvePort(e.dave.subject, tmpl.hash)
+	m13Refused(t, "port approve of a rejected hash", err, "55000")
+	_, err = e.activatePort(e.dave.subject, tmpl.hash, "", 0)
+	m13Refused(t, "port activate of a rejected hash", err, "55000")
+	if a := e.approvalsOf(tmpl.hash); len(a) != 0 {
+		t.Fatalf("a rejected hash got approvals %v", a)
+	}
+	// An identical rebuild is the same artifact and stays rejected.
+	again := e.candidate(e.carol.token, tmpl.art)
+	if r := m13Decode(again); again.Code != 200 || r.ArtifactHash != tmpl.hash || r.Status != "REJECTED" {
+		t.Fatalf("identical rebuild: %d %s", again.Code, m13Trim(again.Body.String()))
+	}
+	m13Code(t, "approve the identical rebuild", e.httpApprove(e.dave.token, tmpl.hash), 409, "candidate_rejected")
+
+	// A changed requirement yields a new hash that can proceed.
+	set := thresholdSet(e.app, "500")
+	semantics, _ := json.Marshal(intent.ApprovalThreshold{WorkflowID: "workflow.order.approve", EntityID: "entity.order", FieldID: "field.order.amount", Currency: "USD", Op: "GT", Amount: "500",
+		ApproverRoles: []string{"admin"}, Context: map[string]json.RawMessage{"field.order.note": json.RawMessage(`"urgent"`)}})
+	set.Requirements[0].Semantics = semantics
+	_, head := e.heads()
+	wr := e.requirements(e.alice, set, head)
+	var stored promotion.StoredRequirements
+	if wr.Code != 201 || json.Unmarshal(wr.Body.Bytes(), &stored) != nil {
+		t.Fatal("changed requirement", wr.Code, wr.Body.String())
+	}
+	wa := e.acceptance(e.bob, stored.Version, acceptanceFor(set, "500.01"))
+	var spec promotion.StoredAcceptance
+	if wa.Code != 201 || json.Unmarshal(wa.Body.Bytes(), &spec) != nil {
+		t.Fatal("acceptance for the changed requirement", wa.Code, wa.Body.String())
+	}
+	art := tmpl.art
+	art.requirementsVersion, art.acceptanceID = stored.Version, spec.ID
+	wc := e.candidate(e.carol.token, art)
+	fresh := m13Decode(wc)
+	if wc.Code != 201 || fresh.ArtifactHash == tmpl.hash || fresh.Status != "STAGED" {
+		t.Fatalf("rebuild with a changed requirement: %d %s", wc.Code, m13Trim(wc.Body.String()))
+	}
+	m13Code(t, "approve the new hash", e.httpApprove(e.dave.token, fresh.ArtifactHash), 201)
+	m13Code(t, "activate the new hash", e.httpActivate(e.dave.token, fresh.ArtifactHash, "", 0), 200)
+	if a := e.approvalsOf(tmpl.hash); len(a) != 0 {
+		t.Fatalf("the rejected hash gained approvals %v", a)
+	}
+	e.checkHistory()
+}
