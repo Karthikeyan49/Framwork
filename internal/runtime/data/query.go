@@ -302,6 +302,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	sf := compiler.Field{Type: "string", CoreID: true}
 	sortExpr, sortType := "r.id", "uuid"
 	indexJoin := ""
+	scalarFrom, scalarPredicate := "", ""
 	desc := false
 	if query.Sort != nil {
 		var ok bool
@@ -339,14 +340,19 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 					return Page{}, indexErr
 				}
 				if usable {
-					indexJoin = ` JOIN runtime.scalar_projections si ON si.tenant_id=$1 AND si.app_id=$2 AND si.metadata_revision=$3 AND si.ir_hash=$4 AND si.entity_id=$5 AND si.field_id=` + b.bind(sf.ID) + ` AND si.id=r.id AND si.source_version=r.row_version`
+					scalarPredicate = `si.tenant_id=$1 AND si.app_id=$2 AND si.metadata_revision=$3 AND si.ir_hash=$4 AND si.entity_id=$5 AND si.field_id=` + b.bind(sf.ID)
 					if sf.Type == "string" {
-						indexJoin += ` AND si.field_type='string' AND NOT si.overflow`
+						scalarPredicate += ` AND si.field_type='string' AND NOT si.overflow`
 						sortExpr, sortType = "si.value_text", "text"
 					} else {
-						indexJoin += ` AND si.field_type='date'`
+						scalarPredicate += ` AND si.field_type='date'`
 						sortExpr, sortType = "si.value_date", "date"
 					}
+					indexJoin = ` JOIN runtime.scalar_projections si ON ` + scalarPredicate + ` AND si.id=r.id AND si.source_version=r.row_version`
+					// Prevent the live ACL view from being flattened into a dataset
+					// scan for every projection candidate under cold statistics.
+					// OFFSET 0 keeps namespace/ID/version inside the point lookup.
+					scalarFrom = `runtime.scalar_projections si JOIN LATERAL (SELECT r.* FROM ` + st.recordsTable() + ` r WHERE r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=si.id AND r.row_version=si.source_version OFFSET 0) r ON true`
 					span.SetAttributes(attribute.String("query_index", "scalar-v1-"+sf.Type))
 				}
 			}
@@ -370,12 +376,18 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 			return Page{}, ErrInvalid
 		}
 		idArg := b.bind(c.ID) + "::uuid"
+		cursorID := "r.id"
+		if scalarFrom != "" {
+			// The point lookup proves equality. Keep cursor pruning on the
+			// projection so skipped keys do not fetch business records.
+			cursorID = "si.id"
+		}
 		value, err := metadata.DecodeJSON(c.Value)
 		if err != nil {
 			return Page{}, ErrInvalid
 		}
 		if value == nil {
-			where += " AND (" + sortExpr + " IS NULL AND r.id>" + idArg + ")"
+			where += " AND (" + sortExpr + " IS NULL AND " + cursorID + ">" + idArg + ")"
 		} else {
 			v, err := fieldValue(sf, value)
 			if err != nil {
@@ -386,7 +398,7 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 			if desc {
 				op = "<"
 			}
-			where += " AND (" + sortExpr + op + val + " OR (" + sortExpr + "=" + val + " AND r.id>" + idArg + ") OR " + sortExpr + " IS NULL)"
+			where += " AND (" + sortExpr + op + val + " OR (" + sortExpr + "=" + val + " AND " + cursorID + ">" + idArg + ") OR " + sortExpr + " IS NULL)"
 		}
 	}
 	joinSQL := ""
@@ -556,8 +568,12 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 		// DataScope and cursor predicates select the page before LIMIT. The outer
 		// fetch is constrained to the same namespace and those selected IDs.
 		limit := fmt.Sprintf("$%d", len(b.args))
-		statement = `WITH selected_page AS MATERIALIZED (SELECT r.id,` + sortExpr + ` AS sort_value FROM ` + st.recordsTable() + ` r` + indexJoin + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + limit + `)
- SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN ` + st.recordsTable() + ` r ON r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
+		pageFrom, pageWhere, pageID := st.recordsTable()+" r"+indexJoin, where, "r.id"
+		if scalarFrom != "" {
+			pageFrom, pageWhere, pageID = scalarFrom, where+" AND "+scalarPredicate, "si.id"
+		}
+		statement = `WITH selected_page AS MATERIALIZED (SELECT ` + pageID + ` AS id,` + sortExpr + ` AS sort_value FROM ` + pageFrom + ` WHERE ` + pageWhere + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,` + pageID + ` ASC LIMIT ` + limit + `)
+ SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN LATERAL (SELECT r.* FROM ` + st.recordsTable() + ` r WHERE r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id OFFSET 0) r ON true` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
 	}
 	rows, err := q.QueryContext(ctx, statement, b.args...)
 	if err != nil {

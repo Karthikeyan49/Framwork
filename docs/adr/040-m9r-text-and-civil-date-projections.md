@@ -59,6 +59,19 @@ the unindexed path. In the certified path, a concurrent long insert is either
 invisible to both the probe and page or visible to both. Row/field DataScope,
 filters, cursor predicates and source-version joins remain before LIMIT.
 
+Independent execution also exposed a cold-statistics plan that flattened the
+security-invoker record view and scanned the dataset for each candidate ID.
+Drive scalar pages from the projection and use a correlated LATERAL record
+lookup with namespace, ID and source version inside an OFFSET 0 planning
+barrier. Use the identical projection ID for cursor comparisons and ties so
+projection-only cursor predicates can run before record fetches. Fetch the
+selected page through a second correlated point lookup, also preserving the
+live record view. Keep every authorization/filter predicate before LIMIT; do
+not replace the view with raw records, disable planner strategies or raise
+timeouts. Apply the outer point lookup to the existing custom-field page path
+too. Verify cold, unanalysed fixtures as well as the stated warm capacity gate;
+JIT was not the reproduced cause and its configuration remains unchanged.
+
 ## Civil dates and cursors
 
 Dates retain Gregorian years 1–9999 and exact YYYY-MM-DD validation using explicit

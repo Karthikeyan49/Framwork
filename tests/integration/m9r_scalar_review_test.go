@@ -4,8 +4,10 @@ package integration
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/db/migrations"
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
@@ -22,6 +25,88 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 )
+
+type scalarReviewTraceKey struct{}
+type scalarReviewTraceStart struct {
+	stage string
+	at    time.Time
+}
+type scalarReviewDiagnosticTrace struct {
+	t               *testing.T
+	mu              sync.Mutex
+	maximum         map[string]time.Duration
+	phase           string
+	statement       string
+	args            []any
+	failedStatement string
+	failedArgs      []any
+}
+
+func (o *scalarReviewDiagnosticTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
+	stage := "other"
+	switch {
+	case strings.HasPrefix(d.SQL, "WITH selected_page AS MATERIALIZED") && strings.Contains(d.SQL, "JOIN runtime.scalar_projections"):
+		stage = "indexed_page"
+	case strings.HasPrefix(d.SQL, "WITH selected_page AS MATERIALIZED"), strings.HasPrefix(d.SQL, "SELECT r.id::text"):
+		stage = "unindexed_page"
+	case strings.Contains(d.SQL, "scalar_collation_safe"):
+		stage = "scalar_witness"
+	case strings.Contains(d.SQL, "AND NOT EXISTS(SELECT 1 FROM runtime.scalar_projections"):
+		stage = "overflow_probe"
+	case strings.HasPrefix(d.SQL, "SELECT rolsuper OR rolbypassrls"):
+		stage = "role_admission"
+	case strings.EqualFold(d.SQL, "commit"):
+		stage = "commit"
+	case strings.EqualFold(d.SQL, "rollback"):
+		stage = "rollback"
+	}
+	if stage == "indexed_page" || stage == "unindexed_page" {
+		o.mu.Lock()
+		o.statement = d.SQL
+		o.args = append([]any(nil), d.Args...)
+		o.mu.Unlock()
+	}
+	return context.WithValue(ctx, scalarReviewTraceKey{}, scalarReviewTraceStart{stage, time.Now()})
+}
+func (o *scalarReviewDiagnosticTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryEndData) {
+	start, ok := ctx.Value(scalarReviewTraceKey{}).(scalarReviewTraceStart)
+	if !ok {
+		return
+	}
+	elapsed := time.Since(start.at)
+	o.mu.Lock()
+	if o.maximum == nil {
+		o.maximum = map[string]time.Duration{}
+	}
+	if elapsed > o.maximum[start.stage] {
+		o.maximum[start.stage] = elapsed
+	}
+	o.mu.Unlock()
+	if d.Err != nil {
+		o.mu.Lock()
+		phase := o.phase
+		if start.stage == "indexed_page" || start.stage == "unindexed_page" {
+			o.failedStatement = o.statement
+			o.failedArgs = append([]any(nil), o.args...)
+		}
+		o.mu.Unlock()
+		kind, code := "driver", "none"
+		var pg *pgconn.PgError
+		if errors.As(d.Err, &pg) {
+			kind, code = "postgres", pg.Code
+		}
+		if errors.Is(d.Err, driver.ErrBadConn) {
+			kind = "bad_connection"
+		}
+		if errors.Is(d.Err, context.DeadlineExceeded) {
+			kind = "context_deadline"
+		}
+		if errors.Is(d.Err, context.Canceled) {
+			kind = "context_canceled"
+		}
+		o.t.Logf("review_sql_failure stage=%s phase=%s class=%s sqlstate=%s duration_ms=%.3f", start.stage, phase, kind, code, float64(elapsed.Microseconds())/1000)
+	}
+}
 
 // The review never assumes that changing an environment URI changed the actual
 // driver target. Check the effective database and role before targeted probes.
@@ -348,5 +433,224 @@ func TestM9RScalarReviewRawReservedIdentifierRejected(t *testing.T) {
 	scalarSQL(t, f.operator.QueryRow(`SELECT count(*) FROM runtime.scalar_indexes WHERE tenant_id=$1 AND app_id=$2 AND field_id='field.contact.id'`, f.tenantA, app).Scan(&count))
 	if count != 0 {
 		t.Fatal("review unsupported registration survived rollback")
+	}
+}
+
+func TestM9RScalarReviewRegistryGuardAndIncompatibleMigration(t *testing.T) {
+	m8Database(t)
+	f, h, base, token, app := scalarFixture(t, 1)
+	scalarReviewTarget(t, f)
+	var database string
+	scalarSQL(t, f.operator.QueryRow(`SELECT current_database()`).Scan(&database))
+	if !strings.HasPrefix(database, "m8_delivery_") {
+		t.Fatal("guard drift rehearsal requires owned disposable database")
+	}
+	scalarCreate(t, h, base, token, "Guard witness")
+	m9rIndexReady(t, h, base+"/indexes/field.contact.memo0", token)
+	poison := `INSERT INTO runtime.scalar_indexes(tenant_id,app_id,metadata_revision,ir_hash,entity_id,field_id,schema_hash,field_type,required,collation_version,source_revision,source_ir_hash,created_by)
+ SELECT tenant_id,app_id,metadata_revision,ir_hash,entity_id,'field.contact.id',schema_hash,'string',true,collation_version,source_revision,source_ir_hash,created_by FROM runtime.scalar_indexes WHERE tenant_id=$1 AND app_id=$2 AND field_id='field.contact.memo0'`
+	// Even trusted maintenance cannot accidentally bypass the table invariant.
+	tx, err := f.operator.Begin()
+	scalarSQL(t, err)
+	_, err = tx.Exec(poison, f.tenantA, app)
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) || pg.Code != "23514" {
+		_ = tx.Rollback()
+		t.Fatal("review intrinsic registry CHECK failed")
+	}
+	scalarSQL(t, tx.Rollback())
+	scalarSQL(t, (data.Store{}).Ready(context.Background(), f.db))
+	_, err = f.operator.Exec(`ALTER TABLE runtime.scalar_indexes DROP CONSTRAINT scalar_indexes_custom_field`)
+	scalarSQL(t, err)
+	if (data.Store{}).Ready(context.Background(), f.db) == nil {
+		t.Fatal("review absent intrinsic guard remained ready")
+	}
+	_, err = f.operator.Exec(`ALTER TABLE runtime.scalar_indexes ADD CONSTRAINT scalar_indexes_custom_field CHECK(field_id <> 'field.' || substring(entity_id FROM 8) || '.id') NOT VALID`)
+	scalarSQL(t, err)
+	if (data.Store{}).Ready(context.Background(), f.db) == nil {
+		t.Fatal("review unvalidated intrinsic guard remained ready")
+	}
+	_, err = f.operator.Exec(`ALTER TABLE runtime.scalar_indexes VALIDATE CONSTRAINT scalar_indexes_custom_field`)
+	scalarSQL(t, err)
+	scalarSQL(t, (data.Store{}).Ready(context.Background(), f.db))
+	// Rehearse migration48 against an incompatible registry only inside this
+	// disposable transaction. Execute the actual embedded UP SQL, retaining its
+	// evidence-validation step. Rollback restores the valid guard and all rows.
+	raw, err := migrations.Files.ReadFile("00048_m9r_scalar_intrinsic_id_guard.sql")
+	if err != nil {
+		t.Fatal("review forward migration unavailable")
+	}
+	tx, err = f.operator.Begin()
+	scalarSQL(t, err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`ALTER TABLE runtime.scalar_indexes DROP CONSTRAINT scalar_indexes_custom_field`)
+	scalarSQL(t, err)
+	_, err = tx.Exec(poison, f.tenantA, app)
+	scalarSQL(t, err)
+	_, err = tx.Exec(strings.Split(string(raw), "-- +goose Down")[0])
+	pg = nil
+	if !errors.As(err, &pg) || pg.Code != "23514" {
+		t.Fatal("review migration48 accepted incompatible registry")
+	}
+	scalarSQL(t, tx.Rollback())
+	scalarSQL(t, (data.Store{}).Ready(context.Background(), f.db))
+	var count int
+	scalarSQL(t, f.operator.QueryRow(`SELECT count(*) FROM runtime.scalar_indexes WHERE tenant_id=$1 AND app_id=$2 AND field_id='field.contact.id'`, f.tenantA, app).Scan(&count))
+	if count != 0 {
+		t.Fatal("review incompatible rehearsal committed poison")
+	}
+}
+
+func TestM9RScalarReviewOrderingWithSafeDriverDiagnostics(t *testing.T) {
+	m8Database(t)
+	f, _, base, token, app := scalarFixture(t, 1)
+	scalarReviewTarget(t, f)
+	config, err := pgx.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal("review trace configuration unavailable")
+	}
+	trace := &scalarReviewDiagnosticTrace{t: t}
+	config.Tracer = trace
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	defer db.Close()
+	clone := *f
+	clone.db = db
+	scalarReviewTarget(t, &clone)
+	h := m5Handler(t, &clone, policy.Native{}, audit.Postgres{}, true)
+	scalarCreate(t, h, base, token, "Ordering diagnostic")
+	scalarSeed(t, f, app, 1205)
+	principal, _ := f.verifier.Verify(token)
+	sourceBudgetExceeded := false
+	planVerificationFailed := false
+	diagnose := func() {
+		trace.mu.Lock()
+		statement, args := trace.failedStatement, append([]any(nil), trace.failedArgs...)
+		if statement == "" {
+			statement, args = trace.statement, append([]any(nil), trace.args...)
+		}
+		trace.mu.Unlock()
+		if statement == "" {
+			return
+		}
+		var records, projections int
+		scalarSQL(t, f.operator.QueryRow(`SELECT (SELECT count(*) FROM runtime.records),(SELECT count(*) FROM runtime.scalar_projections)`).Scan(&records, &projections))
+		t.Logf("review_failure_counts records=%d projections=%d", records, projections)
+		probes := []struct{ mode, jit string }{{"force_generic_plan", "on"}}
+		if os.Getenv("M9R_SCALAR_PLAN_DIAGNOSTICS") == "true" {
+			probes = append(probes, struct{ mode, jit string }{"force_custom_plan", "on"}, struct{ mode, jit string }{"force_generic_plan", "off"})
+		}
+		for _, probe := range probes {
+			mode := probe.mode
+			err := postgres.WithRuntime(context.Background(), db, func(ctx context.Context, q postgres.Executor) error {
+				if _, err := m3Scope(f, ctx, q, principal, f.tenantA); err != nil {
+					return err
+				}
+				if _, err := q.ExecContext(ctx, `SELECT set_config('plan_cache_mode',$1,true),set_config('jit',$2,true)`, mode, probe.jit); err != nil {
+					return err
+				}
+				var raw []byte
+				if err := q.QueryRowContext(ctx, `EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) `+statement, args...).Scan(&raw); err != nil {
+					return err
+				}
+				var roots []any
+				if json.Unmarshal(raw, &roots) != nil {
+					return errors.New("review structural plan decode failed")
+				}
+				var walk func(any)
+				var sourceVisits float64
+				walk = func(v any) {
+					switch n := v.(type) {
+					case map[string]any:
+						if n["Relation Name"] != nil {
+							t.Logf("review_plan mode=%s jit=%s node=%v relation=%v index=%v rows=%v actual_rows=%v loops=%v removed=%v cost=%v", mode, probe.jit, n["Node Type"], n["Relation Name"], n["Index Name"], n["Plan Rows"], n["Actual Rows"], n["Actual Loops"], n["Rows Removed by Filter"], n["Total Cost"])
+						}
+						if n["Relation Name"] == "records" {
+							rows, _ := n["Actual Rows"].(float64)
+							loops, _ := n["Actual Loops"].(float64)
+							removed, _ := n["Rows Removed by Filter"].(float64)
+							sourceVisits += (rows + removed) * loops
+						}
+						if n["Functions"] != nil {
+							t.Logf("review_jit mode=%s jit=%s functions=%v timing=%v", mode, probe.jit, n["Functions"], n["Timing"])
+						}
+						if n["Execution Time"] != nil {
+							t.Logf("review_explain_time mode=%s jit=%s execution_ms=%v planning_ms=%v", mode, probe.jit, n["Execution Time"], n["Planning Time"])
+						}
+						for _, child := range n {
+							walk(child)
+						}
+					case []any:
+						for _, child := range n {
+							walk(child)
+						}
+					}
+				}
+				walk(roots)
+				t.Logf("review_source_visits mode=%s jit=%s visits=%.0f limit=302", mode, probe.jit, sourceVisits)
+				if sourceVisits > 302 {
+					sourceBudgetExceeded = true
+				}
+				return nil
+			})
+			if err != nil {
+				planVerificationFailed = true
+				var pg *pgconn.PgError
+				code := "none"
+				if errors.As(err, &pg) {
+					code = pg.Code
+				}
+				t.Logf("review_explain_failure mode=%s jit=%s sqlstate=%s", mode, probe.jit, code)
+			}
+		}
+	}
+	defer func() {
+		trace.mu.Lock()
+		defer trace.mu.Unlock()
+		for _, stage := range []string{"indexed_page", "unindexed_page", "scalar_witness", "overflow_probe", "role_admission", "commit", "rollback", "other"} {
+			t.Logf("review_sql_max stage=%s duration_ms=%.3f", stage, float64(trace.maximum[stage].Microseconds())/1000)
+		}
+	}()
+	collect := func(field string, desc bool, phase string) []data.Record {
+		q := m5Query()
+		q.Projection = append(q.Projection, "field.contact.memo0", "field.contact.joined")
+		q.Limit = 100
+		q.Sort = &data.Sort{Field: field, Desc: desc}
+		out := []data.Record{}
+		for page := range 100 {
+			trace.mu.Lock()
+			trace.phase = fmt.Sprintf("%s_desc%v_page%d", phase, desc, page)
+			trace.mu.Unlock()
+			w := m5Call(h, base+"/query", token, q)
+			if w.Code != 200 {
+				diagnose()
+				t.Fatal("review ordering request failed", w.Code)
+			}
+			if field == "field.contact.joined" && !desc && strings.HasPrefix(phase, "after_") && page == 9 {
+				diagnose()
+				if sourceBudgetExceeded || planVerificationFailed {
+					t.Fatal("review cold indexed cursor source budget not satisfied")
+				}
+			}
+			var p data.Page
+			if json.Unmarshal(w.Body.Bytes(), &p) != nil {
+				t.Fatal("review ordering response invalid")
+			}
+			out = append(out, p.Records...)
+			if p.Next == "" {
+				return out
+			}
+			q.After = p.Next
+		}
+		t.Fatal("review ordering pagination did not finish")
+		return nil
+	}
+	for _, field := range []string{"field.contact.memo0", "field.contact.joined"} {
+		beforeAsc, beforeDesc := collect(field, false, "before_"+field), collect(field, true, "before_"+field)
+		m9rIndexReady(t, h, base+"/indexes/"+field, token)
+		if !reflect.DeepEqual(beforeAsc, collect(field, false, "after_"+field)) || !reflect.DeepEqual(beforeDesc, collect(field, true, "after_"+field)) {
+			t.Fatal("review traced ordering changed after index")
+		}
 	}
 }
