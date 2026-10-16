@@ -32,7 +32,7 @@ func writeDefinition(host string, port int, sandboxHost string, sandboxPort int)
 			{Name: "accepted", Type: "bool"},
 			{Name: "balance", Type: "decimal"},
 		},
-		Sandbox: SandboxSpec{Mode: "REROUTE", Endpoint: &Endpoint{Host: sandboxHost, Port: sandboxPort, Network: "internal", SecretRef: "crm_sandbox"}},
+		Sandbox: SandboxSpec{Mode: "REROUTE", Endpoint: &Endpoint{Host: sandboxHost, Port: sandboxPort, Network: "internal"}},
 		Tenants: []string{"*"},
 	}
 }

@@ -11,7 +11,7 @@ import (
 func validDefinitions() []Definition {
 	return []Definition{
 		writeDefinition("api.crm.example.com", 443, "sandbox.crm.example.com", 443),
-		readDefinition("api.crm.example.com", 443, "api.crm.example.com", 8443),
+		readDefinition("api.crm.example.com", 443, "ro.crm.example.com", 8443),
 		lookupDefinition("pay.example.com", 443, "pay-sandbox.example.com", 9443),
 		simulateDefinition("geo.example.com", 443),
 	}
@@ -120,7 +120,7 @@ func TestCatalogHashStableAndOrderIndependent(t *testing.T) {
 	}
 }
 
-const goldenWriteHash = "40bc18b4c24df05a03158ee87e591d60ee7dae3bdcdb86475cac632be09f4752"
+const goldenWriteHash = "d6c1930790f0862bc494f8fe0b296373a3bdd3cd4869f18f74399f7866ac4ac5"
 
 func TestLoadCatalogRejectsMalformedDocuments(t *testing.T) {
 	valid := string(catalogJSON(t, validDefinitions()))
