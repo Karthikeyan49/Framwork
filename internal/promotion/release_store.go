@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
@@ -151,9 +152,10 @@ func (Store) Candidates(ctx context.Context, q postgres.Executor, a tenant.Acces
 	return out, rows.Err()
 }
 
-// LoadCandidate reads and fully restores one staged candidate: the stored bytes
-// are re-verified (including the recomputation of risk and verification) before
-// anything is returned.
+// LoadCandidate reads and fully verifies one staged candidate: the stored bytes
+// are restored (risk, verification and every base-independent derivation are
+// recomputed) and then verified against the candidate's own base release (diff,
+// storage class and evolution plan are recomputed) before anything is returned.
 func (Store) LoadCandidate(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash string, supported []string) (Candidate, CandidateRow, error) {
 	if !ValidHash(hash) {
 		return Candidate{}, CandidateRow{}, ErrNotFound
@@ -168,6 +170,19 @@ func (Store) LoadCandidate(ctx context.Context, q postgres.Executor, a tenant.Ac
 	}
 	c, err := Restore(raw, hash, supported)
 	if err != nil {
+		return Candidate{}, CandidateRow{}, err
+	}
+	// Restore cannot recompute what depends on the base release; resolve the
+	// candidate's own base and finish the recomputation before anything is shown
+	// or decided on.
+	resolve := func(baseHash string) (compiler.Program, error) {
+		base, e := (Store{}).Release(ctx, q, a, app, baseHash, supported)
+		if e != nil {
+			return compiler.Program{}, e
+		}
+		return base.Program(supported)
+	}
+	if err = c.VerifyWithBase(resolve, supported); err != nil {
 		return Candidate{}, CandidateRow{}, err
 	}
 	row, err := scanCandidate(q.QueryRowContext(ctx, `SELECT `+candidateColumns+` FROM control.release_candidates WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3`, a.TenantID(), app, hash))
