@@ -22,11 +22,13 @@ import (
 	"testing"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
@@ -129,6 +131,41 @@ func m13apiPublishRole(t *testing.T, e *m13Env, name string, expected int64) {
 	}); err != nil {
 		t.Fatal("publish role", err)
 	}
+}
+
+// m13apiBuildMigration stages a candidate whose storage evolves (not EQUAL): the
+// order document (threshold 500, edited), a requirement set with the threshold
+// and a mandatory data_migration requirement allowing TRANSFORM, and an
+// acceptance spec by bob covering both. Source author alice, freezer alice.
+func m13apiBuildMigration(t *testing.T, e *m13Env, edit func(*metadata.Document), requester m13Actor) string {
+	t.Helper()
+	revision, requirements := e.heads()
+	doc := orderDocument(e.app, "500")
+	edit(&doc)
+	raw, _ := json.Marshal(doc)
+	if w := m3Call(e.h, "POST", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions", e.alice, revision, raw); w.Code != 201 {
+		t.Fatal("register source", w.Code, w.Body.String())
+	}
+	revision++
+	sandbox := e.sandbox(e.alice, revision)
+	set := thresholdSet(e.app, "500")
+	set.Requirements = append(set.Requirements, intent.RequirementV2{ID: "po-migration", Category: intent.CategoryDataMigration, Requiredness: intent.Mandatory,
+		RequirednessBasis: intent.BasisPolicyFloor, Status: intent.StatusResolved, Provenance: intent.ProvenanceHuman, Semantics: json.RawMessage(`{"max_class":"TRANSFORM"}`)})
+	w := e.requirements(e.alice, set, requirements)
+	if w.Code != 201 {
+		t.Fatal("requirements", w.Code, w.Body.String())
+	}
+	var stored promotion.StoredRequirements
+	_ = json.Unmarshal(w.Body.Bytes(), &stored)
+	spec := acceptanceFor(set, "500.01")
+	spec.Cases = append(spec.Cases, intent.AcceptanceCase{ID: "migration-holds", RequirementID: "po-migration", Expect: intent.Expectation{Outcome: intent.OutcomeHolds}})
+	if w = e.acceptance(e.bob, stored.Version, spec); w.Code != 201 {
+		t.Fatal("acceptance", w.Code, w.Body.String())
+	}
+	var accepted promotion.StoredAcceptance
+	_ = json.Unmarshal(w.Body.Bytes(), &accepted)
+	art := m12Artifacts{revision: revision, requirementsVersion: stored.Version, acceptanceID: accepted.ID, sandboxID: sandbox}
+	return viewOf(t, e.candidate(requester.token, art), 201).ArtifactHash
 }
 
 func m13apiSorted(reasons []string) bool {
@@ -657,18 +694,22 @@ func TestM13APIFailedVerificationAndRejectionPermanence(t *testing.T) {
 func TestM13APICriticalQuorumOnATransformRelease(t *testing.T) {
 	e := m13Setup(t)
 	m13RequireStack(t, e, true)
-	c1, _ := e.build("500", nil, e.carol)
-	viewOf(t, e.httpApprove(e.dave.token, c1), 201)
-	m13apiRelease(t, e.httpActivate(e.erin.token, c1, "", 0), 200)
-
-	relax := func(d *metadata.Document) {
-		for i := range d.Definitions {
-			if d.Definitions[i].ID == "field.order.id" && d.Definitions[i].Field != nil {
-				d.Definitions[i].Field.Required = false
+	// The first release makes the note required; the second relaxes it again
+	// (RELAX_REQUIRED: TRANSFORM storage). The record id must stay required.
+	required := func(on bool) func(*metadata.Document) {
+		return func(d *metadata.Document) {
+			for i := range d.Definitions {
+				if d.Definitions[i].ID == "field.order.note" && d.Definitions[i].Field != nil {
+					d.Definitions[i].Field.Required = on
+				}
 			}
 		}
 	}
-	c2, _ := e.build("500", relax, e.carol)
+	c1, _ := e.build("500", required(true), e.carol)
+	viewOf(t, e.httpApprove(e.dave.token, c1), 201)
+	m13apiRelease(t, e.httpActivate(e.erin.token, c1, "", 0), 200)
+
+	c2 := m13apiBuildMigration(t, e, required(false), e.carol)
 	v := viewOf(t, e.httpCandidate(e.viewer, c2), 200)
 	if v.RiskLevel != "CRITICAL" || v.StorageClass != "TRANSFORM" || v.ApprovalsRequired != 2 || len(v.Separation.Excluded) != 3 || v.Status != "STAGED" {
 		t.Fatalf("critical candidate: %+v", v)
