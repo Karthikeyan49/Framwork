@@ -75,10 +75,13 @@ grant drift, existing pinned numeric/data/workflow compatibility, all migrations
 full backend/frontend/browser regressions and independent adversarial review.
 
 On the existing PostgreSQL 18.6, 4 CPU/8 GiB reference tier, build 100k populated
-rows in checkpoints and exercise text and civil-date first/cursor pages with
+rows in checkpoints and exercise text and civil-date first/cursor pages,
+including a boundary at position 50,000 in both directions, with
 ten HTTP clients, at least 100 measured requests after warmup. Require unchanged
 HTTP p95 <=750 ms and zero errors, report p99/throughput, and inspect actual index
-plans. Retain 2s statements/500ms locks and the existing numeric/write gates.
+plans and distinguish projection entries filtered from source-record probes.
+A passing middle-page gate does not certify constant-time cursor traversal.
+Retain 2s statements/500ms locks and the existing numeric/write gates.
 Selective policies, overflow and unindexed fields retain explicit bounded-query
 limits, not the unrestricted fast-path guarantee.
 

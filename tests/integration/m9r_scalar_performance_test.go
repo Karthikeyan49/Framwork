@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,7 +123,7 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 			}
 			label += "_" + strings.ToLower(direction)
 			expected := []string{}
-			rows, err := f.operator.Query(`SELECT id::text FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=2 AND ir_hash=$3 AND entity_id='entity.contact' ORDER BY `+expr+` `+direction+` NULLS LAST,id ASC LIMIT 200`, f.tenantA, app, hash)
+			rows, err := f.operator.Query(`SELECT id::text FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=2 AND ir_hash=$3 AND entity_id='entity.contact' ORDER BY `+expr+` `+direction+` NULLS LAST,id ASC LIMIT 50100`, f.tenantA, app, hash)
 			scalarSQL(t, err)
 			for rows.Next() {
 				var id string
@@ -131,14 +132,30 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 			}
 			scalarSQL(t, rows.Err())
 			rows.Close()
-			if len(expected) != 200 {
+			if len(expected) != 50100 {
 				t.Fatal("scalar reference oracle size")
 			}
 			query := m5Query()
 			query.Projection = append(query.Projection, "field.contact.memo0", "field.contact.joined")
 			query.Limit = 100
 			query.Sort = &data.Sort{Field: field, Desc: desc}
-			for pageNumber := range 2 {
+			for _, offset := range []int{0, 100, 50000} {
+				if offset == 50000 {
+					// Use an actual API fingerprint with the independently selected
+					// fixture boundary. Cursors convey position, never authorization.
+					encoded, err := base64.RawURLEncoding.DecodeString(query.After)
+					scalarSQL(t, err)
+					var cursor map[string]json.RawMessage
+					if json.Unmarshal(encoded, &cursor) != nil {
+						t.Fatal("deep cursor template")
+					}
+					var value json.RawMessage
+					scalarSQL(t, f.operator.QueryRow(`SELECT custom_data->$4 FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND id=$3`, f.tenantA, app, expected[offset-1], field).Scan(&value))
+					cursor["id"], _ = json.Marshal(expected[offset-1])
+					cursor["value"] = value
+					encoded, _ = json.Marshal(cursor)
+					query.After = base64.RawURLEncoding.EncodeToString(encoded)
+				}
 				payload, _ := json.Marshal(query)
 				call := func() (float64, string, error) {
 					start := time.Now()
@@ -158,7 +175,7 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 						return 0, "", fmt.Errorf("reference response status %d", response.StatusCode)
 					}
 					for i, r := range page.Records {
-						if r.ID != expected[pageNumber*100+i] {
+						if r.ID != expected[offset+i] {
 							return 0, "", errors.New("scalar HTTP ordering/tenant/cursor oracle mismatch")
 						}
 					}
@@ -192,10 +209,21 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 						return errors.New("scalar plan decode")
 					}
 					found := false
+					var projectionVisits, sourceVisits float64
 					var walk func(any) error
 					walk = func(x any) error {
 						switch n := x.(type) {
 						case map[string]any:
+							if n["Relation Name"] == "scalar_projections" || n["Relation Name"] == "records" {
+								count, _ := n["Actual Rows"].(float64)
+								loops, _ := n["Actual Loops"].(float64)
+								removed, _ := n["Rows Removed by Filter"].(float64)
+								if n["Relation Name"] == "records" {
+									sourceVisits += (count + removed) * loops
+								} else {
+									projectionVisits += (count + removed) * loops
+								}
+							}
 							if n["Relation Name"] == "scalar_projections" && n["Index Name"] == indexName {
 								found = true
 								count, _ := n["Actual Rows"].(float64)
@@ -231,6 +259,7 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 					if !found {
 						return errors.New("requested scalar ordering index absent")
 					}
+					t.Logf("scalar_plan kind=%s offset=%d ordering_index=%s projection_visits=%.0f source_visits=%.0f", label, offset, indexName, projectionVisits, sourceVisits)
 					return nil
 				}))
 				times := make(chan float64, 100)
@@ -264,7 +293,7 @@ func TestM9RScalarIndexPerformanceFloor(t *testing.T) {
 				if len(samples) != 100 {
 					t.Fatal("scalar HTTP sample count")
 				}
-				if reportLatency(t, fmt.Sprintf("scalar_%s_page%d_http10", label, pageNumber+1), samples, time.Since(start)) > 750 {
+				if reportLatency(t, fmt.Sprintf("scalar_%s_offset%d_http10", label, offset), samples, time.Since(start)) > 750 {
 					t.Fatal("scalar HTTP p95 exceeds unchanged 750ms")
 				}
 				query.After = next

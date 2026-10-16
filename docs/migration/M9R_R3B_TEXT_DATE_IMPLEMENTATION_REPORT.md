@@ -49,7 +49,12 @@ stay readable. Limits are checked before base64 allocation and remain finite.
 | `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9RNumericIndex' ./tests/integration` | PASS baseline 30.549s. |
 | `make migrate migration-status` | PASS, additive47 applied; existing1–46 retained. |
 | `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9RScalarIndex' ./tests/integration` | PASS first23.287s and expanded40.001s. |
-| `node scripts/with-env.mjs ./scripts/go.sh test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RScalarIndexPerformanceFloor$' -v ./tests/integration` | RUNNING initial capacity gate. |
+| `node scripts/with-env.mjs ./scripts/go.sh test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RScalarIndexPerformanceFloor$' -v ./tests/integration` | PASS initial62.972s, then expanded deep-cursor64.464s. Twelve cases: first/second/middle page, text/date, ASC/DESC; each100 samples/ten clients. Deep HTTP p95 ranges233.483–286.036ms, zero errors, unchanged750ms target. |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9RScalarIndexPopulatedRawIsolation' ./tests/integration` | PASS2.698s: two populated tenants, raw forced RLS, worker column-grant drift/recovery, civil date under SQL/DMY and Pacific/Kiritimati. |
+| `npm --prefix apps/web run typecheck` | PASS. |
+| `npm --prefix apps/web test` | PASS96/96,6.86s, including escaped long-cursor decoding. |
+| `make check` | PASS: frozen checksums, format, vet, module verification, frontend lint/typecheck. |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestM9R(Numeric\|Scalar)Index\|TestM1FreshDatabaseMigrations)' ./tests/integration` | PASS69.845s: old numeric/new scalar roots and fresh migration installation. |
 | Independent executable adversarial review | NOT RUN yet; stable-code handoff required. |
 | Final full checks/tests/build, migrations, browser and existing numeric/write gates | NOT RUN yet. |
 

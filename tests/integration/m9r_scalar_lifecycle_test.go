@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -286,5 +287,72 @@ func TestM9RScalarIndexAdoptionAndLiveRecordScope(t *testing.T) {
 	}
 	if records := scalarPages(t, h, bound, admin, "field.contact.memo0", false, nil); len(records) != 21 {
 		t.Fatal("adopted scalar data missing")
+	}
+}
+
+func TestM9RScalarIndexPopulatedRawIsolationAndWorkerGrantDrift(t *testing.T) {
+	m8Database(t)
+	f, h, base, token, _ := scalarFixture(t, 1)
+	scalarCreate(t, h, base, token, "Tenant A")
+	m9rIndexReady(t, h, base+"/indexes/field.contact.memo0", token)
+	_, other, otherBase, otherToken, _ := scalarFixture(t, 1)
+	scalarCreate(t, other, otherBase, otherToken, "Tenant B")
+	m9rIndexReady(t, other, otherBase+"/indexes/field.contact.memo0", otherToken)
+	principal, _ := f.verifier.Verify(token)
+	scalarSQL(t, postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+		if _, err := m3Scope(f, ctx, q, principal, f.tenantA); err != nil {
+			return err
+		}
+		for _, table := range []string{"scalar_indexes", "scalar_projections"} {
+			var count int
+			var own bool
+			if err := q.QueryRowContext(ctx, `SELECT count(*),bool_and(tenant_id=$1) FROM runtime.`+table, f.tenantA).Scan(&count, &own); err != nil {
+				return err
+			}
+			if count != 1 || !own {
+				return errors.New("populated scalar cross-tenant rows visible")
+			}
+		}
+		return nil
+	}))
+	worker, err := postgres.Open(os.Getenv("WORKER_DATABASE_URL"))
+	scalarSQL(t, err)
+	defer worker.Close()
+	for _, table := range []string{"scalar_indexes", "scalar_projections"} {
+		_, err = f.operator.Exec(`GRANT SELECT(field_id) ON runtime.` + table + ` TO framework_worker`)
+		scalarSQL(t, err)
+		t.Cleanup(func() {
+			_, _ = f.operator.Exec(`REVOKE SELECT(field_id) ON runtime.` + table + ` FROM framework_worker`)
+		})
+		var safe bool
+		scalarSQL(t, worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe))
+		if safe {
+			t.Fatal("scalar worker column drift was not detected")
+		}
+		rows, err := worker.Query(`SELECT field_id FROM runtime.` + table)
+		scalarSQL(t, err)
+		if rows.Next() {
+			rows.Close()
+			t.Fatal("worker restrictive RLS leaked scalar values")
+		}
+		scalarSQL(t, rows.Err())
+		rows.Close()
+		_, err = f.operator.Exec(`REVOKE SELECT(field_id) ON runtime.` + table + ` FROM framework_worker`)
+		scalarSQL(t, err)
+	}
+	var safe bool
+	scalarSQL(t, worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe))
+	if !safe {
+		t.Fatal("scalar worker grant recovery failed")
+	}
+	var dateYear, dateMonth, dateDay int
+	tx, err := f.operator.Begin()
+	scalarSQL(t, err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`SET LOCAL DateStyle='SQL, DMY'; SET LOCAL TimeZone='Pacific/Kiritimati'`)
+	scalarSQL(t, err)
+	scalarSQL(t, tx.QueryRow(`SELECT extract(year FROM value_date)::int,extract(month FROM value_date)::int,extract(day FROM value_date)::int FROM runtime.scalar_value('"2024-02-29"','date',true)`).Scan(&dateYear, &dateMonth, &dateDay))
+	if dateYear != 2024 || dateMonth != 2 || dateDay != 29 {
+		t.Fatal("civil-date conversion depended on session style/zone")
 	}
 }
