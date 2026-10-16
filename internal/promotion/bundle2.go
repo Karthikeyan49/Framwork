@@ -638,9 +638,40 @@ func restoreV2(raw []byte, hash string, supported []string) (Candidate, error) {
 	return Candidate{append([]byte(nil), raw...), hash}, nil
 }
 
+// BaseResolver returns the executable program of a stored release (any bundle
+// version) or an error when it is not available.
+type BaseResolver func(artifactHash string) (compiler.Program, error)
+
+// VerifyWithBase completes the recomputation that Restore cannot do alone. The
+// diff, the storage classification and the evolution plan depend on the base
+// release, so a body whose diff was shrunk and whose facts, risk and report were
+// then recomputed from that forged diff is self-consistent and passes Restore.
+// Every path that LOADS a candidate for a decision (read, approve, reject,
+// activate) must therefore resolve the candidate's OWN base release (BaseRelease,
+// never the current pointer) and call this. A first release has no base and the
+// resolver is not consulted.
+func (c Candidate) VerifyWithBase(resolve BaseResolver, supported []string) error {
+	b, ok := c.V2()
+	if !ok {
+		return ErrGate
+	}
+	base := compiler.Program{}
+	if b.BaseRelease != "" {
+		if resolve == nil {
+			return gateError("the base release cannot be resolved")
+		}
+		program, err := resolve(b.BaseRelease)
+		if err != nil || !program.Valid() {
+			return gateError("the base release is not available")
+		}
+		base = program
+	}
+	return c.VerifyAgainstBase(base, supported)
+}
+
 // VerifyAgainstBase additionally recomputes the diff and storage classification
-// from the base release program, which only the caller holds. Approval and
-// activation (M13) must call it with the program restored from BaseRelease.
+// from the base release program, which only the caller holds. Callers normally
+// use VerifyWithBase (or Store.LoadCandidate), which resolve BaseRelease.
 func (c Candidate) VerifyAgainstBase(base compiler.Program, supported []string) error {
 	b, ok := c.V2()
 	if !ok {

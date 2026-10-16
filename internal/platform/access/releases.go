@@ -375,6 +375,11 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 func (a API) getCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
 	store := promotion.Store{}
 	candidate, row, err := store.LoadCandidate(ctx, q, access, app, r.PathValue("candidate"), compiler.SupportedIRVersions())
+	if errors.Is(err, promotion.ErrGate) {
+		// The stored bytes do not recompute (including against the candidate's own
+		// base release): a decision must never be taken on them. Details are not returned.
+		return denied(409, "candidate_failed_verification", "The stored candidate failed verification"), nil
+	}
 	if err != nil {
 		return reply{}, err
 	}

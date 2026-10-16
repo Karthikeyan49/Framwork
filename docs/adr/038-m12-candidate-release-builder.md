@@ -205,12 +205,27 @@ intent is unchanged.
    a first release has no data (`NONE`); every later release is `UNVERIFIED`,
    which the risk policy rates at the top of its band. The volume value is part
    of the hashed risk facts, so `Restore` still recomputes it identically.
-2. **One strict restore path (§1, §6).** `promotion.Restore` dispatches on the
-   bundle version. 2.0.0 bodies are decoded with unknown fields rejected and are
-   fully recomputed (diff, storage class, facts, risk, requirements,
-   acceptance, verifier report, dependency hashes). 1.0.0 bodies stay readable so
-   stored artifacts and `cmd/release-check` keep working, but `Store.Stage`
-   refuses them and `control.stage_candidate` accepts only version `2.0.0`.
+2. **One strict restore path (§1, §6), completed against the base (corrected after
+   independent review M12-F1).** `promotion.Restore` dispatches on the bundle
+   version. 2.0.0 bodies are decoded with unknown fields rejected and everything
+   that does not depend on the base release is recomputed (facts and risk from the
+   stored diff, requirements, acceptance, verifier report, dependency hashes). The
+   diff, the storage class and the evolution plan DO depend on the base, so
+   `Restore` only checks them structurally: a body whose diff was shrunk and whose
+   facts, risk and report were recomputed from the forged diff is self-consistent
+   and restores (reproduced by the reviewer and by
+   `TestRestoreAloneAcceptsACoordinatedDiffForgeryButVerifyWithBaseRefusesIt`).
+   `Store.LoadCandidate` — the only way the API loads a candidate to show or decide
+   on it — therefore resolves the candidate's OWN base release (`BaseRelease`, never
+   the current pointer) and runs `Candidate.VerifyWithBase`, which recomputes the
+   diff, storage class and evolution plan; a failure is a 409
+   `candidate_failed_verification`. `control.stage_candidate` still cannot see this
+   (it binds only database-known facts), which
+   `TestM12CoordinatedForgeryIsRefusedWhenLoaded` demonstrates end to end. Any new
+   code that decides on a candidate must load it through `LoadCandidate`. 1.0.0
+   bodies stay readable so stored artifacts and `cmd/release-check` keep working,
+   but `Store.Stage` refuses them and `control.stage_candidate` accepts only
+   version `2.0.0`.
 3. **Approver roles compare by set equality (§4).** The verifier requires the
    workflow's approval roles to equal the requirement's roles (canonical sorted
    set), not merely overlap: a route that also admits another role is
