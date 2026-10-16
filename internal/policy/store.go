@@ -171,8 +171,10 @@ const MaxRoleHeads = 1024
 // ActionCatalogHash is the sha256 of the sorted action names the engine knows.
 // A new or removed capability changes it, so candidates built before the change
 // become stale (ADR038 section 2).
-func ActionCatalogHash() string {
-	names := strings.Fields(actionCatalog)
+func ActionCatalogHash() string { return catalogHash(strings.Fields(actionCatalog)) }
+
+func catalogHash(names []string) string {
+	names = append([]string(nil), names...)
 	sort.Strings(names)
 	h := sha256.Sum256([]byte(strings.Join(names, "\n")))
 	return hex.EncodeToString(h[:])
