@@ -14,9 +14,11 @@ import (
 // owner/admin team administration; M10 (v7) adds non-viewer tools.invoke; M11 (v8)
 // adds sandbox.read (all roles) and owner/admin sandbox.manage; M12 (v9) adds
 // requirements/acceptance/candidates read (all roles) and owner/admin
-// requirements.decide, acceptance.author and candidates.build.
+// requirements.decide, acceptance.author and candidates.build; M13 (v10) adds
+// releases.read (all roles) and owner/admin releases.approve (approve and
+// reject), releases.activate and releases.rollback.
 // Retained evidence keeps its original version.
-const Version = "m12-native-v9"
+const Version = "m13-native-v10"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -73,13 +75,15 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			if resource.Type == "role" && role == "owner" {
 				return true
 			}
-		case "sandbox.read", "requirements.read", "acceptance.read", "candidates.read":
+		case "sandbox.read", "requirements.read", "acceptance.read", "candidates.read", "releases.read":
 			if resource.Type == "preview" && resource.AppID != "" {
 				return true
 			}
-		case "requirements.decide", "acceptance.author", "candidates.build":
-			// M12: release content authority stays with tenant administrators by
-			// default; custom roles may be granted these explicitly (never viewer).
+		case "requirements.decide", "acceptance.author", "candidates.build", "releases.approve", "releases.activate", "releases.rollback":
+			// M12/M13: release content and promotion authority stays with tenant
+			// administrators by default; custom roles may be granted these
+			// explicitly (never viewer). The database ports re-check membership,
+			// separation of duties and quorum (ADR039).
 			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
 				return true
 			}

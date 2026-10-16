@@ -1,11 +1,14 @@
 package promotion
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/sandbox"
+	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"os"
 	"strings"
 	"testing"
@@ -43,51 +46,32 @@ func candidateFixture(t *testing.T) (Candidate, metadata.Source, compiler.Progra
 	}
 	return c, s, p
 }
-func TestFrozenCandidateExactApprovalStaleDependenciesAndSeparation(t *testing.T) {
+
+// M6R's in-process approval token and activation check are gone (ADR039
+// section 9): a 1.0.0 bundle stays restorable and identified by its exact hash,
+// but it can no longer be staged, so it never gets a candidate row the
+// approval and activation ports would accept.
+func TestFrozenCandidateIsDeterministicExactAndNotStageable(t *testing.T) {
 	c, s, p := candidateFixture(t)
 	same, e := Build(s, p, c.Bundle())
 	if e != nil || same.Hash() != c.Hash() {
 		t.Fatal("nondeterministic bundle")
 	}
 	b := c.Bundle()
-	if _, e := Approve(c, c.Hash(), "33333333-3333-3333-3333-333333333333", b.RequesterID, testGate(true)); e == nil {
-		t.Fatal("self approval")
+	h := c.Header()
+	if h.Version != "1.0.0" || h.TenantID != "" || h.AppID == "" || h.RequesterID != b.RequesterID || !h.HighRisk || h.Dependencies != b.Dependencies || h.IRHash != b.IRHash {
+		t.Fatalf("legacy header %+v", h)
 	}
-	actor := "22222222-2222-2222-2222-222222222222"
-	a, e := Approve(c, c.Hash(), "33333333-3333-3333-3333-333333333333", actor, testGate(true))
-	if e != nil {
-		t.Fatal(e)
+	if _, e := Restore(c.JSON(), strings.Repeat("b", 64), []string{compiler.IRVersion}); e == nil {
+		t.Fatal("bytes restored under another hash")
 	}
-	if ValidateActivation(c, a, "", b.Dependencies, "33333333-3333-3333-3333-333333333333", actor, testGate(true)) != nil {
-		t.Fatal("exact artifact denied")
-	}
-	for _, base := range []string{"changed"} {
-		if ValidateActivation(c, a, base, b.Dependencies, "33333333-3333-3333-3333-333333333333", actor, testGate(true)) == nil {
-			t.Fatal("stale base")
+	for _, gate := range []Gate{testGate(true), testGate(false), nil} {
+		if staged, e := (Store{}).Stage(context.Background(), noSQL{t}, tenant.Access{}, c, gate); !errors.Is(e, ErrGate) || staged {
+			t.Fatal("bundle 1.0.0 reached the stage port", e)
 		}
 	}
-	deps := b.Dependencies
-	deps.ToolsHash = strings.Repeat("b", 64)
-	if ValidateActivation(c, a, "", deps, "33333333-3333-3333-3333-333333333333", actor, testGate(true)) == nil {
-		t.Fatal("stale tools")
-	}
-	if _, e := Approve(c, strings.Repeat("b", 64), "33333333-3333-3333-3333-333333333333", actor, testGate(true)); e == nil {
-		t.Fatal("changed hash approved")
-	}
-	if ValidateActivation(c, a, "", b.Dependencies, "33333333-3333-3333-3333-333333333333", actor, testGate(false)) == nil {
-		t.Fatal("authorization bypass")
-	}
 }
-func TestApprovalCannotMoveAcrossTenantContext(t *testing.T) {
-	c, _, _ := candidateFixture(t)
-	a, e := Approve(c, c.Hash(), "33333333-3333-3333-3333-333333333333", "22222222-2222-2222-2222-222222222222", testGate(true))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if ValidateActivation(c, a, "", c.Bundle().Dependencies, "44444444-4444-4444-4444-444444444444", "22222222-2222-2222-2222-222222222222", testGate(true)) == nil {
-		t.Fatal("approval crossed tenant boundary")
-	}
-}
+
 func TestRestoreRejectsChangedEvidenceSourceIRAndUnsupportedRuntime(t *testing.T) {
 	c, _, p := candidateFixture(t)
 	if _, e := Restore(c.JSON(), c.Hash(), []string{compiler.IRVersion}); e != nil {

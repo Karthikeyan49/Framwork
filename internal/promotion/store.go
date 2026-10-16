@@ -8,28 +8,19 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
+// Store reads and writes release artifacts inside the caller's transaction.
+// Since M13 the runtime role has no direct write on release approvals or the
+// active pointer: approval, rejection, activation and rollback go only through
+// the ADR039 ports wrapped in decisions.go.
 type Store struct{ Audit audit.Writer }
+
+// RollbackPlan is the caller's assessment of a rollback (ADR039 section 5). The
+// port requires it acknowledged (see Acknowledged) unless the current release
+// is POINTER_SAFE; a plan that requires recovery is never executed.
 type RollbackPlan struct {
 	StorageCompatible, ExternalEffectsReviewed bool
 	RecoveryRequired                           bool
 	PlanHash                                   string
-}
-
-// Rollback switches an approved immutable pointer only. Data migrations and
-// external effects require separate assessed recovery; they are never undone here.
-func (st Store) Rollback(ctx context.Context, q postgres.Executor, a tenant.Access, target Candidate, currentHash string, generation int64, plan RollbackPlan, gate Gate) error {
-	if !plan.StorageCompatible || !plan.ExternalEffectsReviewed || plan.RecoveryRequired || !ValidHash(plan.PlanHash) || gate == nil || !gate.AuthorizeRelease(a.TenantID(), a.ActorID(), "rollback", target.Hash()) {
-		return ErrGate
-	}
-	r, e := q.ExecContext(ctx, `UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$4 AND generation=$5`, a.TenantID(), target.Header().AppID, target.Hash(), currentHash, generation)
-	if e != nil {
-		return e
-	}
-	count, _ := r.RowsAffected()
-	if count != 1 {
-		return ErrGate
-	}
-	return st.evidence(ctx, q, a, target, "release.rolled_back")
 }
 
 func (st Store) evidence(ctx context.Context, q postgres.Executor, a tenant.Access, c Candidate, action string) error {
@@ -65,44 +56,6 @@ func bApplication(b Bundle) string {
 		return ""
 	}
 	return p.IR().Application.AppID
-}
-func (st Store) Approve(ctx context.Context, q postgres.Executor, a tenant.Access, c Candidate, exactHash string, gate Gate) (Approval, error) {
-	approval, e := Approve(c, exactHash, a.TenantID(), a.ActorID(), gate)
-	if e != nil {
-		return Approval{}, e
-	}
-	_, e = q.ExecContext(ctx, `INSERT INTO control.release_approvals(tenant_id,app_id,artifact_hash) VALUES($1,$2,$3)`, a.TenantID(), c.Header().AppID, c.Hash())
-	if e != nil {
-		return Approval{}, e
-	}
-	if e = st.evidence(ctx, q, a, c, "release.approved"); e != nil {
-		return Approval{}, e
-	}
-	return approval, nil
-}
-func (st Store) Activate(ctx context.Context, q postgres.Executor, a tenant.Access, c Candidate, approval Approval, expectedGeneration int64, currentBase string, deps Dependencies, gate Gate) error {
-	if e := ValidateActivation(c, approval, currentBase, deps, a.TenantID(), a.ActorID(), gate); e != nil {
-		return e
-	}
-	app := c.Header().AppID
-	var changed int64
-	if expectedGeneration == 0 && currentBase == "" {
-		r, e := q.ExecContext(ctx, `INSERT INTO control.active_releases(tenant_id,app_id,artifact_hash,generation) VALUES($1,$2,$3,1) ON CONFLICT DO NOTHING`, a.TenantID(), app, c.Hash())
-		if e != nil {
-			return e
-		}
-		changed, _ = r.RowsAffected()
-	} else {
-		r, e := q.ExecContext(ctx, `UPDATE control.active_releases SET artifact_hash=$3,generation=generation+1 WHERE tenant_id=$1 AND app_id=$2 AND generation=$4 AND artifact_hash=$5`, a.TenantID(), app, c.Hash(), expectedGeneration, currentBase)
-		if e != nil {
-			return e
-		}
-		changed, _ = r.RowsAffected()
-	}
-	if changed != 1 {
-		return ErrGate
-	}
-	return st.evidence(ctx, q, a, c, "release.activated")
 }
 
 // Active restores exact persisted bytes, never calls the current compiler.

@@ -2,8 +2,10 @@ package policy
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strconv"
 	"strings"
-
 	"testing"
 )
 
@@ -149,8 +151,77 @@ func TestReleaseBuilderCapabilities(t *testing.T) {
 	if _, err := CompileDefinition([]byte(strings.Replace(grant, "%s", "viewer", 1)), ""); err == nil {
 		t.Fatal("viewer granted release authority")
 	}
-	if !strings.HasPrefix(Version, "m12-native-v") {
+	if nativeRevision(t) < 9 {
 		t.Fatal("policy version not advanced for the new actions", Version)
+	}
+}
+
+// nativeRevision is the numeric suffix of the native policy version; later
+// milestones advance it, so earlier capability tests check a lower bound only.
+func nativeRevision(t *testing.T) int {
+	t.Helper()
+	_, suffix, ok := strings.Cut(Version, "-native-v")
+	n, err := strconv.Atoi(suffix)
+	if !ok || err != nil || n < 1 {
+		t.Fatal("malformed native policy version", Version)
+	}
+	return n
+}
+
+func TestReleasePromotionCapabilities(t *testing.T) {
+	preview := Resource{TenantID: "tenant-a", Type: "preview", AppID: "app.orders"}
+	authority := []string{"releases.approve", "releases.activate", "releases.rollback"}
+	for _, role := range []string{"owner", "admin", "member", "viewer", "unknown", ""} {
+		builtin := role == "owner" || role == "admin" || role == "member" || role == "viewer"
+		if got := permits("alice", "tenant-a", []string{role}, "releases.read", preview); got != builtin {
+			t.Fatalf("%q releases.read allow=%v", role, got)
+		}
+		for _, action := range authority {
+			if got := permits("alice", "tenant-a", []string{role}, action, preview); got != (role == "owner" || role == "admin") {
+				t.Fatalf("%q/%s allow=%v", role, action, got)
+			}
+		}
+	}
+	for _, action := range append([]string{"releases.read"}, authority...) {
+		if !knownAction(action) || !validResource(action, preview, "alice") {
+			t.Fatalf("%s missing from the catalog or the preview resource shape", action)
+		}
+		for _, r := range []Resource{{TenantID: "tenant-a", Type: "preview"}, {TenantID: "tenant-a", Type: "team", AppID: "app.orders"}, {TenantID: "tenant-a", Type: "workflow", AppID: "app.orders"}} {
+			if permits("alice", "tenant-a", []string{"owner"}, action, r) || validResource(action, r, "alice") {
+				t.Fatalf("%s accepted resource %+v", action, r)
+			}
+		}
+		if permits("alice", "tenant-b", []string{"owner"}, action, preview) || permits("", "tenant-a", []string{"owner"}, action, preview) {
+			t.Fatalf("%s crossed tenants or admitted an anonymous actor", action)
+		}
+	}
+	grant := `{"schema_version":"tenant-capabilities-v1","name":"%s","grants":[{"effect":"ALLOW","actions":[%s],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
+	define := func(role string, actions ...string) error {
+		_, err := CompileDefinition([]byte(fmt.Sprintf(grant, role, `"`+strings.Join(actions, `","`)+`"`)), "")
+		return err
+	}
+	// Stored custom roles may split approving from activating and rolling back.
+	if err := define("release_manager", append([]string{"releases.read"}, authority...)...); err != nil {
+		t.Fatal("custom promotion role rejected", err)
+	}
+	if err := define("release_approver", "releases.read", "releases.approve"); err != nil {
+		t.Fatal("approve-only custom role rejected", err)
+	}
+	if err := define("viewer", "releases.read"); err != nil {
+		t.Fatal("viewer denied release history", err)
+	}
+	for _, action := range authority {
+		if define("viewer", action) == nil {
+			t.Fatalf("viewer granted %s", action)
+		}
+		// A DENY is always safe, also for viewer.
+		denyOnly := strings.Replace(fmt.Sprintf(grant, "viewer", `"`+action+`"`), `"ALLOW"`, `"DENY"`, 1)
+		if _, err := CompileDefinition([]byte(denyOnly), ""); err != nil {
+			t.Fatalf("viewer DENY of %s rejected: %v", action, err)
+		}
+	}
+	if Version != "m13-native-v10" || nativeRevision(t) != 10 {
+		t.Fatal("policy version not advanced for the promotion actions", Version)
 	}
 }
 
@@ -158,5 +229,20 @@ func TestActionCatalogHashIsStableAndSensitive(t *testing.T) {
 	h := ActionCatalogHash()
 	if len(h) != 64 || h != ActionCatalogHash() {
 		t.Fatal("unstable action catalog hash")
+	}
+	names := strings.Fields(actionCatalog)
+	reversed := append([]string(nil), names...)
+	slices.Reverse(reversed)
+	if catalogHash(reversed) != h || !slices.Equal(names, strings.Fields(actionCatalog)) {
+		t.Fatal("catalog hash depends on declaration order or mutated its input")
+	}
+	// The M13 actions changed the catalog, so candidates built under the M12
+	// catalog are stale (POLICY_CHANGED) and must be rebuilt (ADR038 section 2).
+	m12 := slices.DeleteFunc(append([]string(nil), names...), func(a string) bool { return strings.HasPrefix(a, "releases.") })
+	if len(m12) != len(names)-4 || catalogHash(m12) == h {
+		t.Fatal("action catalog hash is not sensitive to the M13 actions")
+	}
+	if catalogHash(names[1:]) == h {
+		t.Fatal("action catalog hash ignored a removed action")
 	}
 }

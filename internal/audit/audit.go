@@ -65,6 +65,17 @@ type State struct {
 	Role                 string `json:"role,omitempty"`
 	UserActive           *bool  `json:"user_active,omitempty"`
 	MembershipActive     *bool  `json:"membership_active,omitempty"`
+
+	// Promotion evidence (ADR039): hashes, closed codes and counts only.
+	ReleaseGeneration int64    `json:"release_generation,omitempty"`
+	ApprovalCount     int64    `json:"approval_count,omitempty"`
+	ApprovalsRequired int64    `json:"approvals_required,omitempty"`
+	RejectReason      string   `json:"reject_reason,omitempty"`
+	PreviousHash      string   `json:"previous_hash,omitempty"`
+	PlanHash          string   `json:"plan_hash,omitempty"`
+	StorageClass      string   `json:"storage_class,omitempty"`
+	RollbackClass     string   `json:"rollback_class,omitempty"`
+	StaleReasons      []string `json:"stale_reasons,omitempty"`
 }
 type Entry struct {
 	ActorID, TenantID, Action, Resource, DecisionID, PolicyVersion, RequestID, TraceID string
@@ -116,6 +127,9 @@ func encodeEntry(e Entry) ([]any, error) {
 	if e.State.RequirementsVersion < 0 || e.State.RequirementsVersion > 1000000 || len(e.State.AcceptanceID) > 36 || len(e.State.RiskLevel) > 16 || len(e.State.VerifierOutcome) > 16 {
 		return nil, errors.New("invalid release evidence")
 	}
+	if !validPromotionEvidence(e.State) {
+		return nil, errors.New("invalid promotion evidence")
+	}
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")
 	}
@@ -145,4 +159,67 @@ func encodeEntry(e Entry) ([]any, error) {
 		return nil, err
 	}
 	return []any{e.ActorID, e.TenantID, e.Action, e.Resource, e.Allow, e.DecisionID, e.PolicyVersion, e.RequestID, e.TraceID, state}, nil
+}
+
+// validPromotionEvidence bounds the ADR039 fields. A rejection note is free
+// text and never enters audit state; the reason is a closed code.
+func validPromotionEvidence(s State) bool {
+	if s.ReleaseGeneration < 0 || s.ReleaseGeneration > 9007199254740991 || s.ApprovalCount < 0 || s.ApprovalCount > 1000000 || s.ApprovalsRequired < 0 || s.ApprovalsRequired > 8 {
+		return false
+	}
+	if !closedCode(s.RejectReason, "REQUIREMENTS_NOT_MET", "RISK_UNACCEPTABLE", "EVIDENCE_INSUFFICIENT", "SUPERSEDED", "WITHDRAWN", "OTHER") ||
+		!closedCode(s.RollbackClass, "POINTER_SAFE", "DATA_NOT_REVERSIBLE", "EXTERNAL_EFFECTS") || !upperCode(s.StorageClass, 16) {
+		return false
+	}
+	if !hexHash(s.PreviousHash) || !hexHash(s.PlanHash) || len(s.StaleReasons) > 16 {
+		return false
+	}
+	for _, r := range s.StaleReasons {
+		if r == "" || !upperCode(r, 32) {
+			return false
+		}
+	}
+	return true
+}
+
+// closedCode accepts the empty value or one of the listed codes.
+func closedCode(v string, codes ...string) bool {
+	if v == "" {
+		return true
+	}
+	for _, c := range codes {
+		if v == c {
+			return true
+		}
+	}
+	return false
+}
+
+// upperCode accepts the empty value or at most max bytes of [A-Z0-9_].
+func upperCode(v string, max int) bool {
+	if len(v) > max {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; !(c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// hexHash accepts the empty value or a lowercase 64-hex digest.
+func hexHash(v string) bool {
+	if v == "" {
+		return true
+	}
+	if len(v) != 64 {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }

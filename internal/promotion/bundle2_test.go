@@ -424,35 +424,39 @@ func TestSecondReleaseBindsAndVerifiesAgainstItsBase(t *testing.T) {
 	}
 }
 
-func TestHeaderApproveAndActivateWorkForBothBundleVersions(t *testing.T) {
+// The M6R in-process Approve/ValidateActivation token is gone (ADR039 section
+// 9); the header and the floor the approval port enforces are derived from the
+// stored body alone.
+func TestHeaderAndDatabaseFloorsOfABuiltCandidate(t *testing.T) {
 	in, _ := firstRelease(t, orderOptions{})
 	c := buildOK(t, in)
-	gate := allowAll{}
-	approver := "77777777-7777-4777-8777-777777777777"
-	if _, err := Approve(c, c.Hash(), tenantA, requester, gate); err == nil {
-		t.Fatal("the requester approved their own HIGH risk candidate")
-	}
-	approval, err := Approve(c, c.Hash(), tenantA, approver, gate)
-	if err != nil {
-		t.Fatal(err)
-	}
+	b, ok := c.V2()
 	h := c.Header()
-	if err = ValidateActivation(c, approval, "", h.Dependencies, tenantA, approver, gate); err != nil {
-		t.Fatal(err)
+	if !ok || h.Version != BundleVersion2 || h.TenantID != tenantA || h.AppID != "app.orders" || h.RequesterID != requester || !h.HighRisk || h.IRHash != b.IR.Hash ||
+		h.Dependencies != (Dependencies{PolicyHash: b.Dependencies.PolicyBundleHash, ToolsHash: b.Dependencies.ToolsHash, SchemaHash: b.Dependencies.TargetSchemaHash}) {
+		t.Fatalf("header %+v", h)
 	}
-	moved := h.Dependencies
-	moved.PolicyHash = strings.Repeat("9", 64)
-	if err = ValidateActivation(c, approval, "", moved, tenantA, approver, gate); err == nil {
-		t.Fatal("activation ignored a changed policy dependency")
+	if b.Risk.Level != "HIGH" {
+		t.Fatalf("fixture is %s, want HIGH", b.Risk.Level)
 	}
-	if err = ValidateActivation(c, approval, strings.Repeat("9", 64), h.Dependencies, tenantA, approver, gate); err == nil {
-		t.Fatal("activation ignored a moved base")
+	parties := risk.Parties{Requester: b.RequesterID, AcceptanceAuthor: b.Acceptance.AuthorID, SandboxFreezer: b.Sandbox.FrozenBy}
+	approver := "77777777-7777-4777-8777-777777777777"
+	if role, admitted := FloorExclusion(b.Risk.Level, parties, requester); admitted || role != risk.RoleRequester {
+		t.Fatal("the floor admits the requester of a HIGH risk candidate", role)
+	}
+	if role, admitted := FloorExclusion(b.Risk.Level, parties, b.Acceptance.AuthorID); admitted || role != risk.RoleAcceptanceAuthor {
+		t.Fatal("the floor admits the acceptance author of a HIGH risk candidate", role)
+	}
+	if _, admitted := FloorExclusion(b.Risk.Level, parties, approver); !admitted {
+		t.Fatal("the floor refuses an independent approver")
+	}
+	if risk.CheckSeparation(b.Risk.Separation, parties, []string{requester}) == nil || risk.CheckSeparation(b.Risk.Separation, parties, []string{approver}) != nil {
+		t.Fatal("the bundle's own separation disagrees with the floor")
+	}
+	if RequiredApprovals(b.Risk.Level) > b.Risk.Separation.Approvals || CountEligible(b.Risk.Level, parties, []string{requester, b.Acceptance.AuthorID, approver}) != 1 {
+		t.Fatal("quorum floor and eligible count disagree with the bundle")
 	}
 }
-
-type allowAll struct{}
-
-func (allowAll) AuthorizeRelease(string, string, string, string) bool { return true }
 
 func TestToolPinsAndBlockedByUnresolvedTool(t *testing.T) {
 	read := tools.Definition{Ref: "tool.vendor_lookup", Version: "1.0.0", SideEffect: "READ", Approval: "NONE",

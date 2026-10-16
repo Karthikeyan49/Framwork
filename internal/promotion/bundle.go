@@ -1,5 +1,8 @@
-// Package promotion owns release integrity contracts. Public promotion services
-// and sandbox execution are later milestones; preview routes cannot activate it.
+// Package promotion owns release integrity contracts: hash-bound bundles and
+// their restore, server-built candidates, staleness, and the store wrappers of
+// the database ports that stage, approve, reject, activate and roll back them
+// (ADR038, ADR039). Nothing serves an activated release yet: the production
+// data plane is a later milestone (ADR039 section 10).
 package promotion
 
 import (
@@ -170,28 +173,10 @@ func validateBundle(b Bundle, supported []string) error {
 	return nil
 }
 
-type Approval struct{ artifact, actor, tenantID string }
-
-func (a Approval) ActorID() string { return a.actor }
-
+// Gate is the composition-root authorization of Store.Stage. Approval and
+// promotion authority is enforced by the database ports, never by a Gate.
 type Gate interface {
 	AuthorizeRelease(tenantID, actorID, action, artifactHash string) bool
-}
-
-// Approval and activation must use the same frozen artifact and current base.
-func Approve(c Candidate, exactHash, tenantID, actor string, gate Gate) (Approval, error) {
-	b := c.Header()
-	if c.hash == "" || exactHash != c.hash || !tenant.ValidID(tenantID) || actor == "" || gate == nil || !gate.AuthorizeRelease(tenantID, actor, "approve", c.hash) || b.HighRisk && actor == b.RequesterID {
-		return Approval{}, ErrGate
-	}
-	return Approval{c.hash, actor, tenantID}, nil
-}
-func ValidateActivation(c Candidate, a Approval, currentBase string, current Dependencies, tenantID, actor string, gate Gate) error {
-	b := c.Header()
-	if c.hash == "" || a.artifact != c.hash || a.actor == "" || a.tenantID != tenantID || !tenant.ValidID(tenantID) || b.BaseRelease != currentBase || b.Dependencies != current || gate == nil || !gate.AuthorizeRelease(tenantID, actor, "activate", c.hash) {
-		return ErrGate
-	}
-	return nil
 }
 
 type ExecutionPin struct{ ReleaseHash, WorkflowID, WorkflowVersion string }
