@@ -183,6 +183,22 @@ func NewCatalog(definitions []Definition) (Catalog, error) {
 		c.hashes[k] = normalized.Hash()
 		keys = append(keys, k)
 	}
+	// Catalog-wide separation: no sandbox endpoint may be any tool's production host
+	// and no sandbox credential may be any tool's production credential, otherwise a
+	// sandbox mode of one tool could reach another tool's production system or send
+	// its production secret.
+	productionHosts, productionSecrets := map[string]bool{}, map[string]bool{}
+	for _, d := range c.definitions {
+		productionHosts[d.Connector.Host] = true
+		if d.Connector.SecretRef != "" {
+			productionSecrets[d.Connector.SecretRef] = true
+		}
+	}
+	for _, d := range c.definitions {
+		if e := d.Sandbox.Endpoint; e != nil && (productionHosts[e.Host] || e.SecretRef != "" && productionSecrets[e.SecretRef]) {
+			return Catalog{}, ErrCatalog
+		}
+	}
 	sort.Strings(keys)
 	h := sha256.New()
 	h.Write([]byte(CatalogVersion))
@@ -290,14 +306,17 @@ func validateDefinition(d Definition) (Definition, error) {
 			return d, bad
 		}
 	case "REROUTE", "TEST_ACCOUNT", "READ_ONLY":
-		if s.Endpoint == nil || !validEndpoint(*s.Endpoint) || len(s.Output) > 0 || s.Endpoint.Host == c.Host && s.Endpoint.Port == c.Port {
+		// A sandbox never shares the production HOST (another port of the same host is
+		// still the production system) and its credential is always distinct from the
+		// production one. Only TEST_ACCOUNT carries a credential: REROUTE and READ_ONLY
+		// use the sandbox endpoint alone (ADR036 decision 9).
+		if s.Endpoint == nil || !validEndpoint(*s.Endpoint) || len(s.Output) > 0 || s.Endpoint.Host == c.Host {
 			return d, bad
 		}
-		// A sandbox credential is always distinct from the production one.
 		if s.Endpoint.SecretRef != "" && s.Endpoint.SecretRef == c.SecretRef {
 			return d, bad
 		}
-		if s.Mode == "TEST_ACCOUNT" && s.Endpoint.SecretRef == "" || s.Mode == "READ_ONLY" && d.SideEffect == "WRITE" {
+		if s.Mode == "TEST_ACCOUNT" && s.Endpoint.SecretRef == "" || s.Mode != "TEST_ACCOUNT" && s.Endpoint.SecretRef != "" || s.Mode == "READ_ONLY" && d.SideEffect == "WRITE" {
 			return d, bad
 		}
 	default:
@@ -488,8 +507,25 @@ func decodeScalar(f Field, raw json.RawMessage) (any, error) {
 	return nil, ErrCatalog
 }
 
-// strictKeys rejects duplicate and non-lowercase keys before typed decoding;
-// encoding/json alone accepts differently cased aliases.
+// asciiKey admits only [a-z0-9_] (and '-'): encoding/json matches struct fields
+// with Unicode simple folding, so a key such as "hoſt" (U+017F, already lower
+// case) would silently override "host" while every other JSON tool sees a
+// different, ignored key. Restricting keys to ASCII removes the differential.
+func asciiKey(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// strictKeys rejects duplicate and non-ASCII-lowercase keys before typed decoding;
+// encoding/json alone accepts differently cased and Unicode-folded aliases.
 func strictKeys(raw []byte) bool {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -510,7 +546,7 @@ func strictKeys(raw []byte) bool {
 				for decoder.More() {
 					k, err := decoder.Token()
 					name, ok := k.(string)
-					if err != nil || !ok || seen[name] || name != strings.ToLower(name) {
+					if err != nil || !ok || seen[name] || !asciiKey(name) {
 						return false
 					}
 					seen[name] = true

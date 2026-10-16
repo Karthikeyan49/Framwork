@@ -63,6 +63,8 @@ No new Go or npm dependency. No UI change.
 | Go unit tests `./cmd/... ./internal/... ./tests/...` with `-race` | PASS |
 | Full `go test -race -tags=integration ./tests/integration` (978.6 s) | One FAIL of the whole suite: `TestM9RRecordAccessCanonicalDatasetGeneration` (stale policy-version assertion in a binary built before `bf70752` was merged); the merged test plus `TestM12*` then PASS (31.7 s). A final full run on the review-fixed tree is still required |
 | `make build` | PASS |
+| `make test-e2e` | PASS, 5 tests (20.8 s) |
+| Migrations 1–48 applied to a freshly created isolated database (new compose project, empty volume) | PASS — confirms the committed migration 48 (including the sandbox-freezer check added after the first local apply) applies from scratch; TestM12*, TestM8* (except the Redis-restart test, which is coupled to the main compose project) and TestM11* then PASS on it (147.9 s) |
 
 Evidence gap: the pre-fix exploit (a hand-built PASS bundle inserted by
 `framework_app`) was removed with the M6R test that exercised it; it was not
@@ -91,6 +93,20 @@ bodies refused with 22023/55000/42501).
   `data_migration` are verifiable; other mandatory categories BLOCK.
 - Level-2 sandbox end-to-end acceptance, redacted snapshots, field-level rebase and
   AI patch endpoints are deferred.
+
+## Independent review findings fixed after the first report
+
+- **M12-F1 (HIGH, found by the verifier review and the honesty audit):** `Restore`
+  does not recompute the diff or storage class, so a self-consistent forged body
+  (shrunk diff, facts/risk/report recomputed from it) restored with a lower risk
+  level and `HighRisk=false`. Fixed by `Candidate.VerifyWithBase` wired into
+  `Store.LoadCandidate` (resolves the candidate's own base release); the load path
+  answers 409 `candidate_failed_verification`. Evidence: unit regression tests
+  (`internal/promotion/verify_base_test.go`) and
+  `TestM12CoordinatedForgeryIsRefusedWhenLoaded`, which failed with HTTP 200 and
+  `high_risk:false` before the fix and passes after. ADR038 Amendment 2 and the
+  promotion README were corrected; the claim "`Restore` recomputes the diff" in the
+  earlier text of this report was wrong.
 
 ## Independent review
 
