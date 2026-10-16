@@ -94,6 +94,20 @@ bodies refused with 22023/55000/42501).
 - Level-2 sandbox end-to-end acceptance, redacted snapshots, field-level rebase and
   AI patch endpoints are deferred.
 
+## Independent review findings fixed after the first report
+
+- **M12-F1 (HIGH, found by the verifier review and the honesty audit):** `Restore`
+  does not recompute the diff or storage class, so a self-consistent forged body
+  (shrunk diff, facts/risk/report recomputed from it) restored with a lower risk
+  level and `HighRisk=false`. Fixed by `Candidate.VerifyWithBase` wired into
+  `Store.LoadCandidate` (resolves the candidate's own base release); the load path
+  answers 409 `candidate_failed_verification`. Evidence: unit regression tests
+  (`internal/promotion/verify_base_test.go`) and
+  `TestM12CoordinatedForgeryIsRefusedWhenLoaded`, which failed with HTTP 200 and
+  `high_risk:false` before the fix and passes after. ADR038 Amendment 2 and the
+  promotion README were corrected; the claim "`Restore` recomputes the diff" in the
+  earlier text of this report was wrong.
+
 ## Independent review
 
 NOT RUN. Review agents for M10–M12 were stopped before reporting. Run
