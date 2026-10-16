@@ -34,6 +34,16 @@ in that bounded review. Final root checks/build pass: 206 integration tests with
 zero skips, 96 frontend tests, 9 application + 7 sign-in browser cases, migrations
 through 49 and all four numeric/scalar/choice/write performance gates. Exact
 commands and limitations are in the linked report.
+[Datetime/boolean R3b](M9R_R3B_DATETIME_BOOL_IMPLEMENTATION_REPORT.md) now also
+passes independent review (47 selected groups) and twelve reference capacity
+cases, with actual retained-binary CRUD, unrounded UTC boundary checks and native
+SQL rounding/cursor equivalence. No high/medium product finding was identified.
+Final tested source `fb381d0` passes 217 integration tests with zero skips,
+96 frontend tests, 9 application + 7 sign-in browser cases, migrations through 50
+and all five numeric/scalar/choice/native/write performance gates. The final
+native gate has worst p95 301.813ms and zero errors; the preserved 32-client write
+gate completes 11153 writes, p95 209.276ms, zero errors. Search/uniqueness/aggregate
+and wider product/authority/operations work remain open.
 Full product R3b/R5/M9R remains PARTIAL.
 This is a progress ledger,
 not a claim that the review's complete scope has passed.
@@ -50,12 +60,12 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Tenant-controlled shared DDL | Generic JSONB runtime has no such path; existing ALTER denial retained | Future indexes/migrations must remain governed platform operations |
 | Records disappear across compatible compiler/release changes | R2a/R2b and [R2c preview schema evolution](M9R_R2C_IMPLEMENTATION_REPORT.md) independently PASS: immutable generation maps, checkpointed transforms, current access/tombstones and workflow data pins; actual 100k migration and post-cutover queries verified | Production active-release execution remains M12/M13; dataset-management UI, automatic index inheritance and denser/larger migration capacity remain separate work |
 | RLS membership checked once per row | Replaced by statement-level membership evaluation; populated isolation and SQL plans verified | Preserve live authorization and fail-closed RLS; HTTP latency gate remains below |
-| End-to-end query performance | Governed numeric, text/civil-date and enum/reference R3b independently PASS: numeric p95 96.713 ms; text/date worst p95 271.638 ms; enum/reference worst p95 287.883 ms; zero errors, unchanged 750 ms target. Cold-plan amplification was reproduced and fixed with 202 source visits | Register/build a supported index; overflow, general/unindexed/selective workloads remain bounded and require their own evidence. Deep projection traversal is not constant time |
+| End-to-end query performance | Governed numeric, text/civil-date, enum/reference and [datetime/boolean](M9R_R3B_DATETIME_BOOL_IMPLEMENTATION_REPORT.md) R3b independently PASS: numeric p95 96.713 ms; text/date worst p95 271.638 ms; enum/reference worst p95 287.883 ms; datetime/boolean worst p95 331.625 ms; zero errors, unchanged 750 ms target. Cold-plan amplification was reproduced and fixed with 202 source visits | Register/build a supported index; overflow, general/unindexed/selective workloads remain bounded and require their own evidence. Deep projection traversal is not constant time |
 | Shared dataset writer counter | Bounded R4 independently PASS at `94932e3`: overlapping writers/CAS/reference/fault checks and FIFO workload p95 340.575 ms, zero errors | Preserve regressions during indexing/evolution; previous failed runs retained |
 | Write retries / duplicate effects / unknown COMMIT | Bounded R4 independently PASS: known-abort retries, owned receipts and commit-response/browser reconciliation verified | External delivery is not covered; first historical 503 cause remains unconfirmed |
 | Late command rejection can commit a record without receipt/outbox | Independently reproduced fault and independently closed; real RLS-policy regression verifies zero business facts on rejection | Preserve whole-command rollback |
 | Same-login navigation loses an in-flight command key | Independently reproduced and closed; actor-owned pre-dispatch journal/navigation/account recovery verified | Browser-restart persistence intentionally absent |
-| Custom field indexes / unique projections | Integer/decimal/money, string/civil-date and enum/reference projection indexes implemented and independently verified; source JSONB, old readers and existing releases retained | Datetime/bool/search remain separate R3b scope; R3c explicit uniqueness metadata/concurrent uniqueness proof remains open |
+| Custom field indexes / unique projections | Integer/decimal/money, string/civil-date, enum/reference and datetime/boolean projection indexes implemented and independently verified; source JSONB, old readers and existing releases retained | Search remains separate R3b scope; R3c explicit uniqueness metadata/concurrent uniqueness proof remains open |
 | Aggregates and bounded join planner | Existing explicit budgets retained; broad SQL aggregation not implemented | R3d planner/aggregation correctness and workload gates |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
 | Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
@@ -82,10 +92,10 @@ Historical timing measurements and audit percentages are not current guarantees.
 
 ## Execution order and stop gate
 
-Bounded R4 and the configured numeric, text/civil-date and enum/reference R3b HTTP gates are independently verified.
+Bounded R4 and the configured numeric, text/civil-date, enum/reference and datetime/boolean R3b HTTP gates are independently verified.
 R2c preview dataset evolution now passes independent fault/capacity tests, the
-full root suite/build and browser regressions. Preserve those regressions. Remaining
-index types, uniqueness and aggregates stay explicit R3b–R3d work rather than
+full root suite/build and browser regressions. Preserve those regressions. Search
+indexes, uniqueness and aggregates stay explicit R3b–R3d work rather than
 being claimed from the membership/numeric fix. R5–R7 remain separate
 product/security/operations deliverables. R5b closes the bounded raw-worker
 capability gap; its synthetic receipt test has a narrow timeout margin and is

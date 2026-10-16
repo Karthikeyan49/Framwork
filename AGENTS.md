@@ -65,6 +65,9 @@ belongs to `internal/platform/app`.
   fetches. Keep policy/filter/cursor predicates before LIMIT and verify cold plans.
   ADR041 extends this to enum/reference with exact option/target witnesses,
   private distinctly named conversion helpers and preserved legacy readers.
+  ADR042 adds datetime/bool with strict native types, pinned timestamp conversion,
+  unrounded UTC bounds and existing SQL microsecond rounding; preserve raw JSON
+  and cursor values even when the physical key rounds beyond year 9999.
   Retained-binary tests require a checksum-pinned artifact; report default SKIPs.
 - ADR038: access administration reads typed headers under live entity/row
   authority, never unrelated business values. Preserve actor-owned recovery

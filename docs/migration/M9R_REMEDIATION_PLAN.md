@@ -44,8 +44,15 @@ slice report.
 independent executed review: exact options/target witnesses, Unicode/NULL contracts,
 tenant/worker/field/canonical-access faults, actual dropped COMMIT/concurrent copy,
 maximum enum bounds, retained-binary CRUD and twelve 100k-row capacity cases.
-Datetime/bool/search, R3c/R3d and the wider product/operations gates remain open;
+Search, R3c/R3d and the wider product/operations gates remain open;
 final root verification belongs to the linked report.
+
+[Datetime/boolean R3b](M9R_R3B_DATETIME_BOOL_IMPLEMENTATION_REPORT.md) passes
+independent executed review: native typed projections, strict private conversion,
+unrounded UTC bounds, existing SQL precision/raw cursors, real commit/concurrency
+faults, live retained-generation authorization, retained API CRUD and all twelve
+100k-row capacity cases. The slice report records final root verification.
+Search indexes, R3c/R3d and broader product/operations gates remain separate.
 
 ## Objective and release gate
 
@@ -407,8 +414,8 @@ After the focused gate, return a report and explicit M10 recommendation; do not
 start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
-governed numeric, text/civil-date and enum/reference R3b, R5a/R5b, R5c server and preview UI administration, R5d and
+governed numeric, text/civil-date, enum/reference and datetime/boolean R3b, R5a/R5b, R5c server and preview UI administration, R5d and
 R5e and bounded R5f sign-in independently verified. Production R2 execution,
-remaining R3b types/R3c/R3d, external identity deployment and R6–R7 remain open.
+R3b search/R3c/R3d, external identity deployment and R6–R7 remain open.
 Role-definition UI remains separate.
 The complete foundation gate and broader review findings are not accepted as resolved.**
