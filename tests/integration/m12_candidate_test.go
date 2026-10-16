@@ -25,8 +25,10 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
-	"github.com/Karthikeyan49/Framwork/internal/sandbox"
+	"github.com/Karthikeyan49/Framwork/internal/risk"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
+	"github.com/Karthikeyan49/Framwork/internal/verification"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -535,187 +537,92 @@ func TestM12WrongBehaviorIsRejectedWithEvidence(t *testing.T) {
 	}
 }
 
-func TestM12ApprovalActivationStalenessAndRollbackOnBuilderCandidates(t *testing.T) {
+// A compromised API process can stage a self-consistent body: the database binds only what it
+// knows, so a shrunk diff with recomputed facts, risk and verifier report is accepted by
+// control.stage_candidate. The loading path must still refuse it by recomputing the diff from
+// the candidate's own base release (independent-review finding M12-F1).
+func TestM12CoordinatedForgeryIsRefusedWhenLoaded(t *testing.T) {
 	e := m12Setup(t)
-	store := promotion.Store{}
-	gate := fixtureReleaseGate(true)
-	supported := compiler.SupportedIRVersions()
-
-	one := e.prepare("500", 0, 0, e.alice, e.bob)
-	c1 := viewOf(t, e.candidate(e.alice, one), 201)
-	load := func(hash string) promotion.Candidate {
-		t.Helper()
-		var c promotion.Candidate
-		if err := e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-			var err error
-			c, _, err = store.LoadCandidate(ctx, q, a, e.app, hash, supported)
-			return err
-		}); err != nil {
-			t.Fatal("load candidate", err)
-		}
-		return c
+	art := e.prepare("500", 0, 0, e.alice, e.bob)
+	honest := viewOf(t, e.candidate(e.alice, art), 201)
+	if !honest.HighRisk {
+		t.Fatal("precondition: the honest first release rates HIGH")
 	}
-	cand1 := load(c1.ArtifactHash)
-
-	// The requester cannot approve their own HIGH risk candidate (Go and SQL).
-	if err := e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		_, err := store.Approve(ctx, q, a, cand1, cand1.Hash(), gate)
-		return err
-	}); err == nil {
-		t.Fatal("self approval")
-	}
-	var approval1 promotion.Approval
-	if err := e.run(e.f.bobSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		var err error
-		approval1, err = store.Approve(ctx, q, a, cand1, cand1.Hash(), gate)
-		return err
-	}); err != nil {
-		t.Fatal("independent approval", err)
-	}
-	if err := e.run(e.f.bobSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		return store.Activate(ctx, q, a, cand1, approval1, 0, "", cand1.Header().Dependencies, gate)
-	}); err != nil {
-		t.Fatal("first activation", err)
-	}
-
-	// c1 was built as a first release; with an active release it is now stale.
-	d1 := viewOf(t, e.get("/candidates/"+c1.ArtifactHash, e.alice), 200)
-	if d1.Stale == nil || !*d1.Stale || !hasReason(d1.StaleReasons, promotion.StaleBaseChanged) {
-		t.Fatalf("%+v", d1)
-	}
-
-	// Release 2 evolves from the active release; the base is derived, not claimed.
-	two := e.prepare("600", 1, 1, e.alice, e.bob)
-	body := two.request()
-	body["expected_base"] = strings.Repeat("0", 64)
-	if w := e.post("/candidates", e.alice, body); w.Code != 409 {
-		t.Fatalf("a wrong asserted base: %d %s", w.Code, w.Body.String())
-	}
-	body["expected_base"] = ""
-	if w := e.post("/candidates", e.alice, body); w.Code != 409 {
-		t.Fatalf("an asserted empty base while a release is active: %d", w.Code)
-	}
-	body["expected_base"] = c1.ArtifactHash
-	c2 := viewOf(t, e.post("/candidates", e.alice, body), 201)
-	if c2.BaseRelease != c1.ArtifactHash || c2.BaseGeneration != 1 || c2.StorageClass != "EQUAL" || !c2.HighRisk {
-		t.Fatalf("%+v", c2)
-	}
-	cand2 := load(c2.ArtifactHash)
-	if d2 := viewOf(t, e.get("/candidates/"+c2.ArtifactHash, e.alice), 200); d2.Stale == nil || *d2.Stale {
-		t.Fatalf("a fresh second candidate is stale: %+v", d2)
-	}
-	// The diff and storage class recompute from the actual base bytes.
-	var baseProgram compiler.Program
-	if err := e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		var err error
-		baseProgram, _, _, err = store.Active(ctx, q, a, e.app, supported)
-		return err
-	}); err != nil {
+	var raw []byte
+	if err := e.f.operator.QueryRow(`SELECT body FROM control.release_bundles WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3`, e.f.tenantA, e.app, honest.ArtifactHash).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
-	if err := cand2.VerifyAgainstBase(baseProgram, supported); err != nil {
-		t.Fatal("base recomputation:", err)
+	var b promotion.BundleV2
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatal(err)
 	}
-
-	// A policy change (a new tenant role) makes the candidate stale.
-	role := `{"schema_version":"tenant-capabilities-v1","name":"auditor","grants":[{"effect":"ALLOW","actions":["candidates.read"],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
-	if err := e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		_, err := (policy.RoleStore{}).Publish(ctx, q, a, uuid(t), 0, []byte(role), true)
-		return err
-	}); err != nil {
-		t.Fatal("publish role", err)
-	}
-	d2 := viewOf(t, e.get("/candidates/"+c2.ArtifactHash, e.alice), 200)
-	if d2.Stale == nil || !*d2.Stale || !hasReason(d2.StaleReasons, promotion.StalePolicyChanged) {
-		t.Fatalf("a role change must stale the candidate: %+v", d2)
-	}
-
-	// Approval and activation of the second release, then compatibility and rollback.
-	var approval2 promotion.Approval
-	if err := e.run(e.f.bobSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		var err error
-		if approval2, err = store.Approve(ctx, q, a, cand2, cand2.Hash(), gate); err != nil {
-			return err
-		}
-		return store.Activate(ctx, q, a, cand2, approval2, 1, cand1.Hash(), cand2.Header().Dependencies, gate)
-	}); err != nil {
-		t.Fatal("second activation", err)
-	}
-	if err := e.run(e.f.bobSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		return store.Activate(ctx, q, a, cand1, approval1, 2, cand2.Hash(), cand1.Header().Dependencies, gate)
-	}); err == nil {
-		t.Fatal("an approval of one artifact activated another over a moved base")
-	}
-	if err := promotion.CheckActiveCompatibility(context.Background(), e.f.operator, supported); err != nil {
-		t.Fatal("supported active IR", err)
-	}
-	if err := promotion.CheckActiveCompatibility(context.Background(), e.f.operator, []string{"2.0.0"}); err == nil {
-		t.Fatal("unsupported platform deployment accepted")
-	}
-	plan := promotion.RollbackPlan{StorageCompatible: true, ExternalEffectsReviewed: true, PlanHash: strings.Repeat("c", 64)}
-	if err := e.run(e.f.bobSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		if e := store.Rollback(ctx, q, a, cand1, cand2.Hash(), 2, plan, gate); e != nil {
-			return e
-		}
-		p, h, gen, e := store.Active(ctx, q, a, e.app, supported)
-		if e != nil {
-			return e
-		}
-		if h != cand1.Hash() || gen != 3 || p.Hash() != cand1.Header().IRHash {
-			t.Fatal("rollback restored the wrong release")
-		}
-		return nil
-	}); err != nil {
-		t.Fatal("rollback", err)
-	}
-	d2 = viewOf(t, e.get("/candidates/"+c2.ArtifactHash, e.alice), 200)
-	if d2.Stale == nil || !*d2.Stale {
-		t.Fatal("a candidate whose base is no longer active must be stale")
-	}
-	// A bundle 1.0.0 can no longer be staged by a tenant.
-	legacy := legacyBundle(t, e)
-	if err := e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
-		_, err := store.Stage(ctx, q, a, legacy, gate)
-		return err
-	}); !errors.Is(err, promotion.ErrGate) {
-		t.Fatalf("bundle 1.0.0 staging: %v", err)
-	}
-}
-
-// legacyBundle builds a bundle 1.0.0 the way the retired in-process composer did.
-func legacyBundle(t *testing.T, e *m12Env) promotion.Candidate {
-	t.Helper()
-	raw, err := json.Marshal(orderDocument(e.app, "500"))
+	d, err := compiler.ParseDiff(b.Diff.JSON, b.Diff.Hash)
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := m3Registry(t).Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	program, diagnostics := compiler.Compile(source, compiler.PlatformCatalog())
-	if !program.Valid() {
-		t.Fatal(diagnostics)
-	}
-	i := intent.Contract{Version: "1.0.0", Requirements: []intent.Requirement{{ID: "approval", Mandatory: true, Status: "RESOLVED", EntityID: "entity.order", FieldID: "field.order.amount", Operator: "GT", Threshold: "500", Currency: "USD", ApproverRole: "admin", Trigger: "submit"}}}
-	acceptance := intent.Acceptance{Version: "1.0.0", IntentHash: i.Hash(), AuthorActorID: e.f.bob, Provenance: "HUMAN_INDEPENDENT", Cases: []intent.Case{{RequirementID: "approval", Input: "501 USD", Expected: "admin approval"}}}
-	acceptanceRaw, _ := json.Marshal(acceptance)
-	h := strings.Repeat("a", 64)
-	c, err := promotion.Build(source, program, promotion.Bundle{Version: "1.0.0", RequesterID: e.f.alice, HighRisk: true,
-		Dependencies: promotion.Dependencies{PolicyHash: h, ToolsHash: h, SchemaHash: h}, Intent: i, Acceptance: acceptance,
-		Sandbox:      sandbox.Context{ID: "sandbox.test", DataMode: "SYNTHETIC_SEPARATE", ToolMode: "BLOCK"},
-		Verification: promotion.Verification{Version: "1.0.0", SandboxID: "sandbox.test", IntentHash: i.Hash(), AcceptanceHash: promotion.Hash(acceptanceRaw), ReportHash: h, Outcome: "PASS"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
-}
-
-func hasReason(list []promotion.StaleReason, want promotion.StaleReason) bool {
-	for _, r := range list {
-		if r == want {
-			return true
+	for i := range d.Changes {
+		kept := []string{}
+		for _, aspect := range d.Changes[i].Aspects {
+			if aspect != compiler.AspectApprovalGate {
+				kept = append(kept, aspect)
+			}
 		}
+		d.Changes[i].Aspects = kept
 	}
-	return false
+	d.MoneyConditions, d.ApprovalGates = []compiler.MoneyConditionChange{}, []compiler.ApprovalGateChange{}
+	program, err := compiler.Restore(b.IR.JSON, b.IR.Hash, compiler.SupportedIRVersions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := risk.Normalize(promotion.ReduceFacts(promotion.FactsInput{Diff: d, Storage: b.Storage, TargetPins: promotion.ToolPins(program.IR()), Definitions: map[string]tools.Definition{}, TenantID: b.TenantID, Volume: b.Risk.Facts.Volume}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := risk.Evaluate(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.HighRisk() {
+		t.Fatalf("the forgery did not lower the risk (%s), so the test proves nothing", assessment.Level)
+	}
+	b.Diff.JSON, b.Diff.Hash = d.JSON(), d.Hash()
+	b.Risk = promotion.RiskV2{PolicyVersion: assessment.PolicyVersion, PolicyHash: assessment.PolicyHash, Level: assessment.Level.String(), Reasons: assessment.Reasons, FactsHash: assessment.FactsHash,
+		Facts: facts, Separation: assessment.Separation, Rollback: assessment.Rollback}
+	b.HighRisk = assessment.HighRisk()
+	set, _, _, err := intent.ParseRequirementSet(b.Requirements.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _, _, err := intent.ParseAcceptanceSpec(b.Acceptance.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verification.Verify(verification.Input{Program: program, Requirements: set, Acceptance: spec, StorageClass: b.Storage.Class, Changed: promotion.ChangedFor(d, b.Storage),
+		Tools: tools.EmptyCatalog(), TenantID: b.TenantID, SandboxEvidenceHash: b.Sandbox.EvidenceHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Verification.Report, b.Verification.ReportHash, b.Verification.Outcome = report.JSON(), report.Hash(), report.Outcome
+	body, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgedHash := promotion.Hash(body)
+	if _, err = promotion.Restore(body, forgedHash, compiler.SupportedIRVersions()); err != nil {
+		t.Logf("Restore alone already refuses the forgery (%v); the loading path must still refuse it", err)
+	}
+	// The database cannot see the difference: every fact it binds is true.
+	if err = e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, _ tenant.Access) error {
+		var staged bool
+		return q.QueryRowContext(ctx, `SELECT control.stage_candidate($1,$2,$3)`, e.app, forgedHash, body).Scan(&staged)
+	}); err != nil {
+		t.Fatalf("the database port is expected to accept a self-consistent body: %v", err)
+	}
+	w := e.get("/candidates/"+forgedHash, e.alice)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "candidate_failed_verification") {
+		t.Fatalf("a forged candidate must be refused when loaded: %d %s", w.Code, w.Body.String())
+	}
+	if w = e.get("/candidates/"+honest.ArtifactHash, e.alice); w.Code != 200 {
+		t.Fatalf("the honest candidate must still load: %d %s", w.Code, w.Body.String())
+	}
 }

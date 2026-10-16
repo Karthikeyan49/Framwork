@@ -419,6 +419,9 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 }
 
 func (a API) getCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
+	// loadPromotable maps a LoadCandidate ErrGate (the stored bytes do not
+	// recompute, including against the candidate's own base release) to 409
+	// candidate_failed_verification; details are audited, never returned.
 	p, refusal, err := a.loadPromotable(ctx, q, access, app, r.PathValue("candidate"), evidence)
 	if refusal != nil || err != nil {
 		return derefReply(refusal), err

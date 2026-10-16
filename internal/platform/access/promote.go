@@ -246,6 +246,12 @@ func auditHash(v string) string {
 func (a API) loadPromotable(ctx context.Context, q postgres.Executor, access tenant.Access, app, hash string, evidence *audit.Entry) (promotable, *reply, error) {
 	c, row, err := (promotion.Store{}).LoadCandidate(ctx, q, access, app, hash, compiler.SupportedIRVersions())
 	if err != nil && !errors.Is(err, promotion.ErrNotFound) && errors.Is(err, promotion.ErrGate) {
+		// LoadCandidate also refuses a 1.0.0 (M6R) bundle, which has no
+		// candidate row and can never be promoted: that is not found, not a
+		// failed verification.
+		if legacy, lerr := (promotion.Store{}).Release(ctx, q, access, app, hash, compiler.SupportedIRVersions()); lerr == nil && legacy.Header().Version != promotion.BundleVersion2 {
+			return promotable{}, nil, promotion.ErrNotFound
+		}
 		return promotable{}, failedVerification(evidence), nil
 	}
 	if err != nil {

@@ -86,7 +86,20 @@ BEGIN
   RAISE EXCEPTION 'the release pointer moves only with its release history entry' USING ERRCODE='55000';END IF;
  RETURN NULL;
 END $$;
+-- Approvals, rejections and history entries are written only by the ports: a
+-- schema-owner definer called from a runtime session, stamping the
+-- authenticated actor. An operator session cannot add one by hand (and so
+-- cannot move the pointer either).
+CREATE FUNCTION control.release_port_write() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
+BEGIN
+ IF session_user<>'framework_app' OR current_user<>'framework_schema_owner' OR NEW.actor_id IS NULL OR NEW.actor_id IS DISTINCT FROM iam.authenticated_actor() THEN
+  RAISE EXCEPTION 'release authority is written only through the promotion ports' USING ERRCODE='42501';END IF;
+ RETURN NEW;
+END $$;
 -- +goose StatementEnd
+CREATE TRIGGER release_port_write BEFORE INSERT ON control.release_approvals FOR EACH ROW EXECUTE FUNCTION control.release_port_write();
+CREATE TRIGGER release_port_write BEFORE INSERT ON control.release_rejections FOR EACH ROW EXECUTE FUNCTION control.release_port_write();
+CREATE TRIGGER release_port_write BEFORE INSERT ON control.release_history FOR EACH ROW EXECUTE FUNCTION control.release_port_write();
 CREATE TRIGGER release_history_append BEFORE INSERT ON control.release_history FOR EACH ROW EXECUTE FUNCTION control.release_history_append();
 CREATE TRIGGER release_pointer_step BEFORE UPDATE ON control.active_releases FOR EACH ROW EXECUTE FUNCTION control.release_pointer_step();
 CREATE CONSTRAINT TRIGGER release_pointer_recorded AFTER INSERT OR UPDATE ON control.active_releases DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION control.release_pointer_recorded();
@@ -222,7 +235,7 @@ END $$;
 -- +goose StatementBegin
 DO $$ DECLARE f regprocedure;BEGIN
  FOR f IN SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='control'
-  AND p.proname IN('release_history_append','release_pointer_step','release_pointer_recorded','release_approval_count','approve_release','reject_release','activate_release','rollback_release') LOOP
+  AND p.proname IN('release_history_append','release_pointer_step','release_pointer_recorded','release_port_write','release_approval_count','approve_release','reject_release','activate_release','rollback_release') LOOP
  EXECUTE format('ALTER FUNCTION %s OWNER TO framework_schema_owner',f);
  EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,framework_app,framework_worker,framework_dispatcher',f);
  END LOOP;
