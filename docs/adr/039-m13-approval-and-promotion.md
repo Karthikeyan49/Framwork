@@ -288,21 +288,44 @@ These supersede the matching sentences above where they differ.
    `ErrInvalid`, `ErrNotFound`, `ErrRecoveryRequired`, wrapping `*PortError` so the SQLSTATE
    stays reachable) and do not write audit; the handler's evidence entry does, in the same
    transaction.
-9. **Decoder hardening found on the way.** `metadata.DecodeJSON` now rejects keys that differ
+9. **Rollback targets (§5).** A release that was rejected after it ran is not a rollback
+   target: the port refuses it (`55000`) and the route answers 409
+   `rollback_target_rejected` (found by the adversarial suite).
+10. **Decoder hardening found on the way.** `metadata.DecodeJSON` now rejects keys that differ
    only by Unicode case folding (they previously decoded to the last spelling).
 
 ## Consequences
 
-Approval and promotion authority no longer rests on the API process alone: a
-compromised API runtime can no longer self-approve a HIGH/CRITICAL candidate it
-requested, skip quorum, activate over a moved base, revive a stale or rejected
-candidate, or roll back to an artifact that was never active. Residuals: a
-compromised API can still stage a self-consistent forged body (the database cannot
-recompute the verifier or policy hash), and Go `Restore` recomputation at
-approve/activate/read time is the only backstop for that; independent actors are
-required (a HIGH candidate needs requester, acceptance author and approver to be
-three distinct people, CRITICAL needs two approvers beyond those) so small tenants
-must add members; activation without storage execution records intent only.
+Approval and promotion authority no longer rests on Go code alone: the database now
+refuses what a buggy or partly compromised API runtime can do **under its own
+identity** — self-approving a HIGH/CRITICAL candidate it requested, skipping quorum,
+activating over a moved base, reviving a rejected candidate, moving the pointer
+without history, or rolling back to an artifact that was never active (or was
+rejected).
+
+Residuals, stated plainly:
+
+- **Identity is bound by the API process.** The ports read the actor and tenant from
+  session settings the API sets after verifying a token (AGENTS.md: settings are not
+  credentials). A fully compromised API process that knows another member's issuer
+  and subject can bind that identity and approve and activate "as" that member, so it
+  CAN satisfy separation of duties and CRITICAL quorum by impersonation
+  (`TestM13AdversarialCompromisedAPIBindsAnotherMembersIdentity`). Closing this needs
+  an approval credential the API cannot mint (a later slice).
+- **Forged bodies.** A compromised API can still stage a self-consistent forged body
+  (the database cannot recompute the verifier, diff or policy hash); `Store.LoadCandidate`
+  (Restore plus base verification) is the only backstop, and it runs in Go before every
+  decision (`TestM13AdversarialCompromisedAPIForgedCandidate` records which attacks the
+  database stops and which only Go stops).
+- **Availability envelope.** Every decision request restores and recomputes the
+  candidate inside the 3 s runtime transaction; on a loaded 4-core host with the race
+  detector, one read takes about 0.7 s and several parallel approvals of one candidate
+  time out with 503 (fail closed, nothing written). A cache or a lighter recompute is a
+  later optimisation; it was not measured without the race detector.
+- **Independent actors are required** (a HIGH candidate needs requester, acceptance
+  author and approver to be three distinct people, CRITICAL needs two approvers beyond
+  those), so small tenants must add members.
+- Activation without storage execution records intent only (§10).
 
 ## Verification and recovery
 

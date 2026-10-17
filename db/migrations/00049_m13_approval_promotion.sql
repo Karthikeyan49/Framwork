@@ -218,6 +218,10 @@ BEGIN
  IF p_target=cur.artifact_hash THEN RAISE EXCEPTION 'the rollback target is the active release' USING ERRCODE='55000';END IF;
  SELECT h.risk_level,h.storage_class INTO tgt FROM control.release_history h WHERE h.tenant_id=t AND h.app_id=p_app AND h.artifact_hash=p_target ORDER BY h.seq DESC LIMIT 1;
  IF NOT FOUND THEN RAISE EXCEPTION 'the rollback target was never activated' USING ERRCODE='55000';END IF;
+ -- A rejection is a permanent veto bound to the hash: a release that was rejected
+ -- after it ran is no longer a valid place to return to.
+ IF EXISTS(SELECT 1 FROM control.release_rejections x WHERE x.tenant_id=t AND x.app_id=p_app AND x.artifact_hash=p_target) THEN
+  RAISE EXCEPTION 'the rollback target was rejected' USING ERRCODE='55000';END IF;
  SELECT b.body INTO raw FROM control.release_bundles b WHERE b.tenant_id=t AND b.app_id=p_app AND b.artifact_hash=cur.artifact_hash;
  BEGIN doc:=convert_from(raw,'UTF8')::jsonb;EXCEPTION WHEN others THEN doc:=NULL;END;
  IF jsonb_typeof(doc)='object' AND jsonb_typeof(doc->'Version')='string' AND doc->>'Version'='2.0.0' AND jsonb_typeof(doc->'Risk')='object' AND jsonb_typeof(doc->'Risk'->'Rollback')='string' THEN

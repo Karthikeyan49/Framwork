@@ -1221,11 +1221,14 @@ func TestM13AdversarialRollbackAbuse(t *testing.T) {
 	// The previous base is still a candidate built on an older world: stale.
 	m13Code(t, "activate a candidate built on a replaced pointer", e.httpActivate(e.dave.token, never, r2, 2), 409, "candidate_stale")
 
-	// OBSERVATION (ADR039 is silent): a rejected release that was active
-	// before is still a rollback target.
+	// A release that was rejected after it ran is no longer a rollback target
+	// (a rejection is a permanent veto bound to the hash), through the route and the port.
 	m13Code(t, "reject the previous release", e.httpReject(e.dave.token, r1, "RISK_UNACCEPTABLE", "withdrawn after activation"), 201)
-	w := e.httpRollback(e.erin.token, r1, r2, 4, nil)
-	t.Logf("OBSERVATION: rollback to a rejected, previously active release answered %d %s", w.Code, m13Trim(w.Body.String()))
+	before = e.state()
+	m13Code(t, "rollback to a rejected release", e.httpRollback(e.erin.token, r1, r2, 4, nil), 409, "rollback_target_rejected")
+	_, err = e.rollbackPort(e.erin.subject, r1, r2, 4, "", false)
+	m13Refused(t, "port rollback to a rejected release", err, "55000")
+	e.unchanged("rollback to a rejected release", before)
 	e.checkHistory()
 }
 

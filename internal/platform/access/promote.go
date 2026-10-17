@@ -595,6 +595,13 @@ func (a API) rollbackRelease(ctx context.Context, q postgres.Executor, r *http.R
 	if !activated {
 		return denied(409, "rollback_target_not_released", "Only a release that was activated before is a rollback target"), nil
 	}
+	rejections, err := store.Rejections(ctx, q, access, app, body.Target)
+	if err != nil {
+		return reply{}, err
+	}
+	if len(rejections) > 0 {
+		return denied(409, "rollback_target_rejected", "A rejected release is not a rollback target"), nil
+	}
 	if promotion.RollbackClassNeedsPlan(class) && body.Plan == nil {
 		return denied(409, "rollback_plan_required", "Rolling back this release requires an acknowledged rollback plan"), nil
 	}
