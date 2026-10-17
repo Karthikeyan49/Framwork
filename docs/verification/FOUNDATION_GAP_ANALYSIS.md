@@ -40,7 +40,7 @@ Method. For each ledger row the cited code, migration or test was located and re
    packages PASS (`internal/platform/postgres`, `httpserver`, `policy`, `runtime/data`,
    `runtime/workflow`, `config`, `identity`, `audit`, `promotion`, `risk`, `intent`,
    `verification`, `metadata`, `tools`, `sandbox`, `events`, `tests/security`).
-3. Three temporary probes were run and deleted; none is committed (see the scan).
+3. `node scripts/verify-docs.mjs` PASS (84 architecture and 43 V3 source checksums). Three temporary probes were run and deleted; none is committed (see the scan).
 4. The fake-assumption scan searched for placeholder markers, constant returns, flags
    that gate behaviour, caller-declared authority fields, functions with no production
    caller, tests that pin a contract production does not use, and documents that
