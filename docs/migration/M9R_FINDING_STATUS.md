@@ -1,5 +1,11 @@
 # External review finding status
 
+Publication checkpoint, 17 October 2026: the completed work through `197fe85`
+was recovered from the remote after the provided workspace returned to an older
+baseline. The unfinished R3c files were unavailable and are not claimed as pushed
+or complete. See the [resumption checkpoint](M9R_RESUMPTION_CHECKPOINT_2026_10_17.md)
+for the recovery evidence, completed/pending inventory and reconstruction notes.
+
 Updated 16 October 2026 (Asia/Calcutta). Baseline review: `81b88d2`; source corrections
 through `a5bba7b` include R2c preview evolution, bounded R5a capabilities and
 [R5b worker SQL authority](M9R_R5B_IMPLEMENTATION_REPORT.md) on `remediation/m9r-foundation`. Rollback/recovery
