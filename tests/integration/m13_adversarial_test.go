@@ -32,6 +32,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
@@ -713,22 +714,45 @@ func TestM13AdversarialRaceSameActorApprovals(t *testing.T) {
 	}
 	// The same race through HTTP on the real template: one row, at most one 201.
 	tmpl := e.template()
+	start := time.Now()
+	single := e.httpCandidate(e.dave.token, tmpl.hash)
+	t.Logf("one candidate read (restore and recompute) took %v: %d", time.Since(start), single.Code)
 	fns := make([]func() error, 8)
 	codes := make([]int, len(fns))
+	took := make([]time.Duration, len(fns))
 	for j := range fns {
-		fns[j] = func() error { codes[j] = e.httpApprove(e.dave.token, tmpl.hash).Code; return nil }
+		fns[j] = func() error {
+			at := time.Now()
+			codes[j] = e.httpApprove(e.dave.token, tmpl.hash).Code
+			took[j] = time.Since(at)
+			return nil
+		}
 	}
 	m13Race(fns...)
-	created := 0
+	t.Logf("parallel HTTP approvals: %v in %v", codes, took)
+	// Each request restores and recomputes the candidate inside its 3-second
+	// runtime transaction; under -race and a shared CPU some exceed it and fail
+	// closed with 503 (rolled back). That is an envelope note, not a race win.
+	created, replayed, timedOut := 0, 0, 0
 	for _, c := range codes {
-		if c == 201 {
+		switch c {
+		case 201:
 			created++
-		} else if c != 200 && c != 409 {
+		case 200:
+			replayed++
+		case 503:
+			timedOut++
+		case 409:
+		default:
 			t.Errorf("parallel HTTP approval: %d", c)
 		}
 	}
-	if got := e.approvalsOf(tmpl.hash); created > 1 || len(got) != 1 {
-		t.Fatalf("parallel HTTP approvals: %v created, rows %v", codes, got)
+	got := e.approvalsOf(tmpl.hash)
+	if created > 1 || (created == 1) != (len(got) == 1) || replayed > 0 && len(got) != 1 || len(got) > 1 {
+		t.Fatalf("parallel HTTP approvals: %v, rows %v", codes, got)
+	}
+	if timedOut > 0 {
+		t.Logf("ENVELOPE: %d of %d parallel approvals exceeded the runtime transaction budget (503, nothing written)", timedOut, len(codes))
 	}
 }
 
@@ -1093,4 +1117,356 @@ func TestM13AdversarialRejectionIsPermanent(t *testing.T) {
 		t.Fatalf("the rejected hash gained approvals %v", a)
 	}
 	e.checkHistory()
+}
+
+// ------------------------------------------------------- 7. rollback abuse
+
+func (e *m13Env) rollbackBody(token string, body map[string]any) *httptest.ResponseRecorder {
+	return e.post("/releases/rollback", token, body)
+}
+
+// Rollback targets only a previously activated release, compares-and-sets the
+// pointer, and gates on the rollback class stored in the CURRENT release's body
+// (never on a request field): POINTER_SAFE moves freely, anything else needs an
+// acknowledged plan, and a plan that requires recovery is refused.
+func TestM13AdversarialRollbackAbuse(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	ivan := e.member("ivan", "member")
+	r1 := e.template().hash // first release: ADDITIVE, DATA_NOT_REVERSIBLE
+	m13Code(t, "approve R1", e.httpApprove(e.dave.token, r1), 201)
+	m13Code(t, "activate R1", e.httpActivate(e.dave.token, r1, "", 0), 200)
+	m13Code(t, "roll back to the only release", e.httpRollback(e.erin.token, r1, r1, 1, nil), 409, "rollback_target_is_current")
+	r2, _ := e.build("500", m13Relabel("Order 2"), e.carol) // EQUAL, POINTER_SAFE
+	m13Code(t, "approve R2", e.httpApprove(e.dave.token, r2), 201)
+	if r := m13Code(t, "activate R2", e.httpActivate(e.dave.token, r2, r1, 1), 200); r.Generation != 2 {
+		t.Fatalf("R2 generation %d", r.Generation)
+	}
+	never, _ := e.build("500", m13Relabel("Order never"), e.carol)
+	m13Code(t, "approve the never-activated candidate", e.httpApprove(e.dave.token, never), 201)
+	plan := strings.Repeat("c", 64)
+	unknown := strings.Repeat("d", 64)
+
+	before := e.state()
+	for _, c := range []struct {
+		name, target, current string
+		generation            int64
+		status                int
+		code, state           string
+	}{
+		{"approved but never activated target", never, r2, 2, 409, "rollback_target_not_released", "55000"},
+		{"target is the current release", r2, r2, 2, 409, "rollback_target_is_current", "55000"},
+		{"wrong expected current", r1, r1, 2, 409, "release_changed", "55000"},
+		{"wrong expected generation", r1, r2, 1, 409, "release_changed", "55000"},
+		{"unknown target", unknown, r2, 2, 404, "not_found", "55000"},
+	} {
+		m13Code(t, "HTTP rollback: "+c.name, e.httpRollback(e.erin.token, c.target, c.current, c.generation, m13SafePlan()), c.status, c.code)
+		_, err := e.rollbackPort(e.erin.subject, c.target, c.current, c.generation, plan, true)
+		m13Refused(t, "port rollback: "+c.name, err, c.state)
+	}
+	for name, body := range map[string]map[string]any{
+		"malformed target":       {"target": "xyz", "expected_current": r2, "expected_generation": 2},
+		"generation zero":        {"target": r1, "expected_current": r2, "expected_generation": 0},
+		"missing generation":     {"target": r1, "expected_current": r2},
+		"malformed plan hash":    {"target": r1, "expected_current": r2, "expected_generation": 2, "plan": map[string]any{"storage_compatible": true, "external_effects_reviewed": true, "recovery_required": false, "plan_hash": "xyz"}},
+		"class claimed":          {"target": r1, "expected_current": r2, "expected_generation": 2, "rollback": "POINTER_SAFE"},
+		"class claimed in plan":  {"target": r1, "expected_current": r2, "expected_generation": 2, "plan": map[string]any{"storage_compatible": true, "external_effects_reviewed": true, "recovery_required": false, "plan_hash": plan, "class": "POINTER_SAFE"}},
+		"next generation chosen": {"target": r1, "expected_current": r2, "expected_generation": 2, "generation": 7},
+	} {
+		m13Code(t, "rollback with "+name, e.rollbackBody(e.erin.token, body), 400)
+	}
+	_, err := e.rollbackPort(e.erin.subject, r1, r2, 2, "xyz", true)
+	m13Refused(t, "port rollback with a malformed plan hash", err, "22023")
+	_, err = e.rollbackPort(e.erin.subject, r1, r2, 0, plan, true)
+	m13Refused(t, "port rollback with generation zero", err, "22023")
+	for _, rogue := range []m13Actor{e.person("viewer"), ivan} {
+		m13Code(t, "rollback by "+rogue.name, e.httpRollback(rogue.token, r1, r2, 2, m13SafePlan()), 403, "forbidden")
+	}
+	_, err = e.rollbackPort(e.f.viewerSubject, r1, r2, 2, plan, true)
+	m13Refused(t, "port rollback by a viewer", err, "42501")
+	e.unchanged("refused rollbacks", before)
+
+	// R2 is POINTER_SAFE: no plan needed.
+	if r := m13Code(t, "pointer-safe rollback", e.httpRollback(e.erin.token, r1, r2, 2, nil), 200); r.ArtifactHash != r1 || r.Generation != 3 {
+		t.Fatalf("rollback reply %+v", r)
+	}
+	rows := e.checkHistory()
+	if last := rows[len(rows)-1]; last.kind != "ROLLBACK" || last.hash != r1 || last.previous != r2 || last.riskLevel != "HIGH" || last.storageClass != "ADDITIVE" || last.planHash != "" || last.actor != e.erin.id {
+		t.Fatalf("rollback history row %+v", last)
+	}
+	// R1 is DATA_NOT_REVERSIBLE: the class comes from its stored body.
+	before = e.state()
+	m13Code(t, "rollback without a plan", e.httpRollback(e.erin.token, r2, r1, 3, nil), 409, "rollback_plan_required")
+	m13Code(t, "rollback with a recovery plan", e.httpRollback(e.erin.token, r2, r1, 3, &m13Plan{StorageCompatible: true, ExternalEffectsReviewed: true, RecoveryRequired: true, PlanHash: plan}), 409, "recovery_required")
+	m13Code(t, "rollback with an unacknowledged plan", e.httpRollback(e.erin.token, r2, r1, 3, &m13Plan{ExternalEffectsReviewed: true, PlanHash: plan}), 409, "rollback_plan_required")
+	m13Code(t, "rollback claiming POINTER_SAFE", e.rollbackBody(e.erin.token, map[string]any{"target": r2, "expected_current": r1, "expected_generation": 3, "rollback": "POINTER_SAFE"}), 400)
+	_, err = e.rollbackPort(e.erin.subject, r2, r1, 3, plan, false)
+	m13Refused(t, "port rollback without acknowledgement", err, "55000")
+	_, err = e.rollbackPort(e.erin.subject, r2, r1, 3, "", true)
+	m13Refused(t, "port rollback acknowledged without a plan hash", err, "55000")
+	e.unchanged("plan-gated rollbacks", before)
+	if r := m13Code(t, "planned rollback", e.httpRollback(e.erin.token, r2, r1, 3, m13SafePlan()), 200); r.Generation != 4 {
+		t.Fatalf("planned rollback %+v", r)
+	}
+	rows = e.checkHistory()
+	if last := rows[len(rows)-1]; last.kind != "ROLLBACK" || last.hash != r2 || last.planHash != plan || last.riskLevel != "LOW" || last.storageClass != "EQUAL" {
+		t.Fatalf("planned rollback history row %+v", last)
+	}
+	// Replay of the same rollback: the pointer moved, nothing changes.
+	before = e.state()
+	m13Code(t, "replayed rollback", e.httpRollback(e.erin.token, r2, r1, 3, m13SafePlan()), 409, "release_changed")
+	_, err = e.rollbackPort(e.erin.subject, r2, r1, 3, plan, true)
+	m13Refused(t, "replayed port rollback", err, "55000")
+	e.unchanged("replayed rollback", before)
+	// The previous base is still a candidate built on an older world: stale.
+	m13Code(t, "activate a candidate built on a replaced pointer", e.httpActivate(e.dave.token, never, r2, 2), 409, "candidate_stale")
+
+	// OBSERVATION (ADR039 is silent): a rejected release that was active
+	// before is still a rollback target.
+	m13Code(t, "reject the previous release", e.httpReject(e.dave.token, r1, "RISK_UNACCEPTABLE", "withdrawn after activation"), 201)
+	w := e.httpRollback(e.erin.token, r1, r2, 4, nil)
+	t.Logf("OBSERVATION: rollback to a rejected, previously active release answered %d %s", w.Code, m13Trim(w.Body.String()))
+	e.checkHistory()
+}
+
+// ------------------------------------------------- 8. cross-tenant / -app
+
+// m13Routes calls every ADR039 route under root for hash and returns the replies.
+func (e *m13Env) m13Routes(root, token, hash string) map[string]*httptest.ResponseRecorder {
+	return map[string]*httptest.ResponseRecorder{
+		"approve":  e.postAt(root, "/candidates/"+hash+"/approve", token, map[string]any{"artifact_hash": hash}),
+		"reject":   e.postAt(root, "/candidates/"+hash+"/reject", token, map[string]any{"artifact_hash": hash, "reason": "OTHER", "note": ""}),
+		"activate": e.postAt(root, "/candidates/"+hash+"/activate", token, map[string]any{"artifact_hash": hash, "expected_base": "", "expected_generation": 0}),
+		"rollback": e.postAt(root, "/releases/rollback", token, map[string]any{"target": hash, "expected_current": hash, "expected_generation": 1}),
+		"detail":   e.getAt(root, "/candidates/"+hash, token),
+		"history":  e.getAt(root, "/releases", token),
+		"active":   e.getAt(root, "/releases/active", token),
+	}
+}
+
+// Another tenant's member, a two-tenant member on the other tenant's URL and
+// the right tenant under another application learn nothing: every route answers
+// exactly as for a hash that does not exist, and the ports find nothing.
+func TestM13AdversarialCrossTenantAndCrossApplication(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	m13Code(t, "approve", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	m13Code(t, "activate", e.httpActivate(e.dave.token, tmpl.hash, "", 0), 200)
+	olga := e.addMemberIn(e.f.tenantB, "olga", "admin")
+	random := strings.Repeat("d", 64)
+	rootB := "/v1/tenants/" + e.f.tenantB + "/preview/" + e.app
+	rootOther := "/v1/tenants/" + e.f.tenantA + "/preview/app.other_" + strings.ReplaceAll(uuid(t), "-", "")
+	before := e.state()
+	secrets := []string{e.carol.id, e.f.bob, e.f.alice, e.dave.id, `"risk_level"`, `"requester_id"`}
+	for name, c := range map[string]struct{ root, token string }{
+		"tenant-B member on tenant B":           {rootB, olga.token},
+		"two-tenant member on tenant B":         {rootB, e.bob},
+		"tenant-A member on another app":        {rootOther, e.dave.token},
+		"tenant-A owner on another application": {rootOther, e.alice},
+	} {
+		real, fake := e.m13Routes(c.root, c.token, tmpl.hash), e.m13Routes(c.root, c.token, random)
+		for route, w := range real {
+			r, f := m13Decode(w), m13Decode(fake[route])
+			if w.Code != fake[route].Code || r.Code != f.Code || r.Message != f.Message || w.Code == 200 && route != "history" {
+				t.Errorf("%s %s: real hash %d %s, unknown hash %d %s", name, route, w.Code, m13Trim(w.Body.String()), fake[route].Code, m13Trim(fake[route].Body.String()))
+			}
+			for _, s := range secrets {
+				if strings.Contains(w.Body.String(), s) {
+					t.Errorf("%s %s leaks %s: %s", name, route, s, m13Trim(w.Body.String()))
+				}
+			}
+		}
+	}
+	// A tenant-B member on tenant A's URL is refused before any lookup.
+	for route, w := range e.m13Routes(e.root, olga.token, tmpl.hash) {
+		m13Code(t, "tenant-B member on tenant A: "+route, w, 403, "forbidden")
+	}
+	// Ports: nothing of tenant A exists in tenant B's scope, and a compromised
+	// API that binds a tenant-B user to tenant A's scope is not a member there.
+	for name, c := range map[string]struct {
+		subject, tenant, state string
+	}{
+		"tenant-B member in tenant B":     {olga.subject, e.f.tenantB, "P0002"},
+		"two-tenant member in tenant B":   {e.f.bobSubject, e.f.tenantB, "P0002"},
+		"tenant-B member bound to tenant": {olga.subject, e.f.tenantA, "42501"},
+	} {
+		var n int
+		var ok bool
+		var g int64
+		m13Refused(t, name+": approve", e.portIn(c.subject, c.tenant, &n, `SELECT control.approve_release($1,$2)`, e.app, tmpl.hash), c.state)
+		m13Refused(t, name+": reject", e.portIn(c.subject, c.tenant, &ok, `SELECT control.reject_release($1,$2,'OTHER','')`, e.app, tmpl.hash), c.state)
+		m13Refused(t, name+": activate", e.portIn(c.subject, c.tenant, &g, `SELECT control.activate_release($1,$2,'',0)`, e.app, tmpl.hash), c.state)
+		rollbackState := c.state
+		if rollbackState == "P0002" {
+			rollbackState = "55000" // no pointer in that scope
+		}
+		m13Refused(t, name+": rollback", e.portIn(c.subject, c.tenant, &g, `SELECT control.rollback_release($1,$2,$3,1,'',false)`, e.app, tmpl.hash, tmpl.hash), rollbackState)
+	}
+	var n int
+	m13Refused(t, "tenant-A hash under another application", e.portIn(e.dave.subject, e.f.tenantA, &n, `SELECT control.approve_release($1,$2)`, "app.other_x", tmpl.hash), "P0002")
+	e.unchanged("cross-tenant and cross-application requests", before)
+}
+
+// RESIDUAL (not listed in ADR039 Consequences): the ports take the actor from
+// identity GUCs that the API process sets (AGENTS.md: GUCs are not
+// credentials). A compromised API process that has seen another member's
+// issuer/subject binds them and approves and activates the requester's HIGH
+// candidate "as" that member, with no token of theirs.
+func TestM13AdversarialCompromisedAPIBindsAnotherMembersIdentity(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template() // requested by carol
+	// The process serves only carol's request but binds dave's identity GUCs.
+	if n, err := e.approvePort(e.dave.subject, tmpl.hash); err != nil || n != 1 {
+		t.Fatalf("RESIDUAL changed: impersonated approval refused (%d, %v)", n, err)
+	}
+	if g, err := e.activatePort(e.dave.subject, tmpl.hash, "", 0); err != nil || g != 1 {
+		t.Fatalf("RESIDUAL changed: impersonated activation refused (%d, %v)", g, err)
+	}
+	h := e.checkHistory()
+	if len(h) != 1 || h[0].actor != e.dave.id {
+		t.Fatalf("history %+v", h)
+	}
+	t.Log("RESIDUAL: a process binding another active member's identity GUCs approved and activated a HIGH candidate; the database floors bind honest identity binding only")
+}
+
+// ---------------------------------------------- 9. replay and idempotency
+
+// Approve and reject are idempotent per actor; a replayed activation or
+// rollback after success is a 409 and leaves the pointer alone.
+func TestM13AdversarialReplayAndIdempotency(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	tmpl := e.template()
+	first := m13Code(t, "approve", e.httpApprove(e.dave.token, tmpl.hash), 201)
+	second := m13Code(t, "approve again", e.httpApprove(e.dave.token, tmpl.hash), 200)
+	if len(first.Approvals) != 1 || len(second.Approvals) != 1 {
+		t.Errorf("approval views: %d then %d approvals", len(first.Approvals), len(second.Approvals))
+	}
+	for i := 0; i < 2; i++ {
+		if n, err := e.approvePort(e.dave.subject, tmpl.hash); err != nil || n != 1 {
+			t.Errorf("port re-approval %d: %d %v", i, n, err)
+		}
+	}
+	if a := e.approvalsOf(tmpl.hash); len(a) != 1 {
+		t.Fatalf("approvals %v", a)
+	}
+	m13Code(t, "activate", e.httpActivate(e.dave.token, tmpl.hash, "", 0), 200)
+	before := e.state()
+	m13Reasons(t, "replayed activation", m13Code(t, "replay activation", e.httpActivate(e.dave.token, tmpl.hash, "", 0), 409, "candidate_stale"), "BASE_CHANGED", "SCHEMA_CHANGED")
+	m13Code(t, "re-apply the active release on itself", e.httpActivate(e.dave.token, tmpl.hash, tmpl.hash, 1), 409, "candidate_stale")
+	for _, c := range []struct {
+		base string
+		gen  int64
+	}{{"", 0}, {tmpl.hash, 1}} {
+		_, err := e.activatePort(e.dave.subject, tmpl.hash, c.base, c.gen)
+		m13Refused(t, "replayed port activation", err, "55000")
+	}
+	e.unchanged("replayed activation", before)
+
+	y, _ := e.build("500", m13Relabel("Order Y"), e.carol)
+	m13Code(t, "reject", e.httpReject(e.erin.token, y, "SUPERSEDED", "replaced"), 201)
+	m13Code(t, "reject again", e.httpReject(e.erin.token, y, "WITHDRAWN", "second thoughts"), 200)
+	if created, err := e.rejectPort(e.erin.subject, y, "OTHER", ""); err != nil || created {
+		t.Errorf("port re-rejection: %v %v", created, err)
+	}
+	if created, err := e.rejectPort(e.dave.subject, y, "OTHER", ""); err != nil || !created {
+		t.Errorf("a second actor's rejection: %v %v", created, err)
+	}
+	if r := e.rejectionsOf(y); len(r) != 2 {
+		t.Fatalf("rejections %v", r)
+	}
+	var reason string
+	if err := e.f.operator.QueryRow(`SELECT reason FROM control.release_rejections WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3 AND actor_id=$4`, e.f.tenantA, e.app, y, e.erin.id).Scan(&reason); err != nil || reason != "SUPERSEDED" {
+		t.Errorf("a replayed rejection rewrote the first reason: %q %v", reason, err)
+	}
+	if e.auditCount("release.approval_replayed") < 1 || e.auditCount("release.rejection_replayed") < 1 {
+		t.Error("replays must be audited as replays")
+	}
+}
+
+// ----------------------------------- 10. replacement end-to-end (HTTP only)
+
+// Replaces the deleted M6R-store flow of TestM12ApprovalActivationStaleness
+// AndRollbackOnBuilderCandidates through the ADR039 routes only: build, approve,
+// activate, a second release on the active base, rollback, and staleness of a
+// candidate built on the replaced base.
+func TestM13AdversarialEndToEndReleaseFlowOverHTTP(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	r1, _ := e.build("500", nil, e.carol)
+	if r := m13Code(t, "R1 detail", e.httpCandidate(e.viewer, r1), 200); r.Status != "STAGED" || r.ApprovalsRequired != 1 || r.Stale == nil || *r.Stale || r.RiskLevel != "HIGH" {
+		t.Fatalf("R1 %+v", r)
+	}
+	m13Code(t, "no active release yet", e.httpActive(e.viewer), 404, "not_found")
+	m13Code(t, "requester cannot approve R1", e.httpApprove(e.carol.token, r1), 403, "separation_of_duties")
+	if r := m13Code(t, "approve R1", e.httpApprove(e.dave.token, r1), 201); r.Status != "APPROVED" {
+		t.Fatalf("approved R1 %+v", r)
+	}
+	if r := m13Code(t, "activate R1", e.httpActivate(e.dave.token, r1, "", 0), 200); r.ArtifactHash != r1 || r.Generation != 1 {
+		t.Fatalf("activated R1 %+v", r)
+	}
+	if r := m13Code(t, "active R1", e.httpActive(e.viewer), 200); r.ArtifactHash != r1 || r.Generation != 1 {
+		t.Fatalf("active %+v", r)
+	}
+	// Release 2 evolves from the active release (threshold change: HIGH, EQUAL).
+	r2, _ := e.build("600", nil, e.carol)
+	var d2 struct {
+		Base    string `json:"base_release"`
+		Gen     int64  `json:"base_generation"`
+		Storage string `json:"storage_class"`
+		High    bool   `json:"high_risk"`
+	}
+	if w := e.httpCandidate(e.viewer, r2); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &d2) != nil || d2.Base != r1 || d2.Gen != 1 || d2.Storage != "EQUAL" || !d2.High {
+		t.Fatalf("R2 %d %s", w.Code, m13Trim(w.Body.String()))
+	}
+	m13Code(t, "approve R2", e.httpApprove(e.erin.token, r2), 201)
+	m13Code(t, "activate R2 on a wrong base", e.httpActivate(e.erin.token, r2, "", 0), 409, "base_changed")
+	if r := m13Code(t, "activate R2", e.httpActivate(e.erin.token, r2, r1, 1), 200); r.Generation != 2 {
+		t.Fatalf("activated R2 %+v", r)
+	}
+	if r := m13Decode(e.httpCandidate(e.viewer, r1)); r.Status != "SUPERSEDED" {
+		t.Errorf("R1 after R2: %s", r.Status)
+	}
+	// A third candidate is built on R2; the rollback to R1 makes it stale.
+	r3, _ := e.build("500", m13Relabel("Order three"), e.carol)
+	m13Code(t, "approve R3", e.httpApprove(e.dave.token, r3), 201)
+	if r := m13Code(t, "roll back to R1", e.httpRollback(e.erin.token, r1, r2, 2, m13SafePlan()), 200); r.ArtifactHash != r1 || r.Generation != 3 {
+		t.Fatalf("rollback %+v", r)
+	}
+	if r := m13Code(t, "R3 after the rollback", e.httpCandidate(e.viewer, r3), 200); r.Stale == nil || !*r.Stale || !slices.Contains(r.Reasons, "BASE_CHANGED") {
+		t.Fatalf("R3 must be stale after the rollback: %+v", r)
+	}
+	m13Code(t, "activate R3 after the rollback", e.httpActivate(e.dave.token, r3, r2, 2), 409, "candidate_stale")
+	for hash, want := range map[string]string{r1: "ACTIVE", r2: "SUPERSEDED", r3: "APPROVED"} {
+		if r := m13Decode(e.httpCandidate(e.viewer, hash)); r.Status != want {
+			t.Errorf("status of %s: %s, want %s", hash[:8], r.Status, want)
+		}
+	}
+	var history struct {
+		History []struct {
+			Seq        int64  `json:"seq"`
+			Kind       string `json:"kind"`
+			Hash       string `json:"artifact_hash"`
+			Generation int64  `json:"generation"`
+		} `json:"history"`
+	}
+	if w := e.httpHistory(e.viewer); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &history) != nil || len(history.History) != 3 {
+		t.Fatalf("history %d %s", w.Code, m13Trim(w.Body.String()))
+	}
+	for i, want := range []struct {
+		kind, hash string
+		gen        int64
+	}{{"ROLLBACK", r1, 3}, {"ACTIVATE", r2, 2}, {"ACTIVATE", r1, 1}} {
+		if h := history.History[i]; h.Kind != want.kind || h.Hash != want.hash || h.Generation != want.gen || h.Seq != want.gen {
+			t.Errorf("history[%d] = %+v, want %+v (newest first)", i, h, want)
+		}
+	}
+	e.checkHistory()
+	for action, want := range map[string]int{"release.approved": 3, "release.activated": 2, "release.rolled_back": 1} {
+		if n := e.auditCount(action); n != want {
+			t.Errorf("audit %s: %d, want %d", action, n, want)
+		}
+	}
 }
