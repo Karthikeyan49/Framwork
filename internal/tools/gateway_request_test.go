@@ -352,11 +352,12 @@ func TestSandboxModesNeverResolveOrUseProductionSecretOrEndpoint(t *testing.T) {
 	write := writeDefinition("api.example.com", prod.port, "sandbox.example.com", sandbox.port)
 	assertResult(t, h.run(write, ModeReroute, KindSend, testKey, writeInputs()), Success, ClassOK, false, 201)
 	r := sandbox.last()
-	if r.host != "sandbox.example.com:"+strconv.Itoa(sandbox.port) || r.header.Get("Authorization") != "Bearer "+sandboxToken || r.header.Get("Idempotency-Key") != testKey {
+	// REROUTE uses the sandbox endpoint alone: no credential is resolved or sent.
+	if r.host != "sandbox.example.com:"+strconv.Itoa(sandbox.port) || r.header.Get("Authorization") != "" || r.header.Get("Idempotency-Key") != testKey {
 		t.Fatalf("reroute request %+v", r)
 	}
-	if prod.hits.Load() != 0 || prod.conns.Load() != 0 || !reflect.DeepEqual(h.secrets.refs(), []string{"crm_sandbox"}) {
-		t.Fatalf("production touched: conns=%d refs=%v", prod.conns.Load(), h.secrets.refs())
+	if prod.hits.Load() != 0 || prod.conns.Load() != 0 || len(h.secrets.refs()) != 0 {
+		t.Fatalf("production touched or a credential was resolved: conns=%d refs=%v", prod.conns.Load(), h.secrets.refs())
 	}
 
 	// TEST_ACCOUNT uses the mandatory sandbox credential of the sandbox endpoint.

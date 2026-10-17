@@ -62,17 +62,18 @@ migration 11's `approval_insert` policy reads them; `HighRisk` is derived
   active)` sorted by name (`policy.RoleStore.Snapshot`). Whole-tenant on purpose
   (fail closed); it replaces the per-actor `policy_hash` in sandbox evidence for
   staleness (that value stays as audit data).
-- **Relevant tool hash**: sha256 of the sorted `ref@version=tool_hash` pins
-  found in the IR's workflow tool states, plus the pin list itself. Fresh iff
+- **Relevant tool hash**: sha256 of the canonical JSON array of the sorted
+  `{ref, version, hash}` pins found in the IR's workflow tool states. Fresh iff
   every pin resolves with `tools.Catalog.Lookup` and `AllowsTenant`. Unrelated
   catalog additions never stale a candidate.
 - **Schema snapshot**: `IR.SchemaSnapshot` layout id, the base release's storage
-  schema hash (the target's for a first release), the target storage schema hash
+  schema hash (empty for a first release), the target storage schema hash
   and the evolution plan hash.
 - **`runtime_contract_version`**: constant `runtime-contract-v1`, with a recorded
   components hash over `StorageContractVersion`, `EvolutionVersion`, supported IR
-  versions, workflow and rule DSL versions, `tools.CatalogVersion` and the event
-  envelope version.
+  versions, workflow and rule DSL versions, `tools.CatalogVersion`, and the diff,
+  risk-policy, verifier, vocabulary, requirement-policy, requirement-set and
+  acceptance-spec versions (no event envelope version).
 
 ### 3. Server-derived risk (`release-risk-v1`)
 
@@ -129,8 +130,8 @@ author and sandbox freezer. Enforcement is M13; M12 records it.
   sandbox evidence hash, verifier version and vocabulary version. Outcome is
   PASS, FAIL (case differs) or BLOCKED (cannot be verified: legacy IR,
   non-built-in approver role, unsupported trigger, unsupported category).
-  Only PASS is stored; FAIL/BLOCKED return the report and write
-  `release.candidate_rejected` with the report hash.
+  Only PASS is stored; FAIL/BLOCKED return the report (HTTP 422) and are audited as
+  `candidates.build.rejected` with the report hash (Amendment 8).
 - **Honest limit**: this is deterministic, replayable evidence, not an
   attestation by an independent credential. `Restore` recomputes it, and M13 must
   recompute it at approval and activation. A separate verifier principal
@@ -142,8 +143,8 @@ author and sandbox freezer. Enforcement is M13; M12 records it.
 `RequesterID` = authenticated actor; acceptance author ≠ requester; acceptance
 author ≠ author of the compiled source revision; requirement decider may equal
 neither author nor requester only where the tenant has more than one eligible
-actor (no waiver mechanism is built); a requester must be an active non-viewer
-member holding `candidates.build`. Author attestation is by authenticated
+actor (no waiver mechanism is built); the database requires an active non-viewer
+member and the API policy requires the `candidates.build` capability. Author attestation is by authenticated
 actor, not proof of human authorship; documented residual.
 
 ### 6. Staging authority
@@ -153,7 +154,8 @@ and adds TRUNCATE guards on bundles/approvals. `control.stage_candidate` is a
 SECURITY DEFINER port (owner `framework_schema_owner`,
 `search_path=pg_catalog,pg_temp`, execute only `framework_app`) that checks
 tenant scope, active non-viewer actor, content hash, version 2.0.0, app id equals
-the body's IR app, `RequesterID` equals the actor, the requirement set /
+the body's top-level `AppID` equals the route app (IR/app agreement is checked by
+`Restore`), `RequesterID` equals the actor, the requirement set /
 acceptance spec / sandbox evidence rows exist with matching hashes and DB
 authors, the source revision exists, and the base is the current active release
 or absent. `control.release_candidates` records derived columns for cheap list
@@ -166,7 +168,8 @@ recomputation at approval is the backstop (see §4 limit).
 `Staleness(bound, current)` returns sorted reasons: `BASE_CHANGED`,
 `BASE_GENERATION_ADVANCED`, `SCHEMA_CHANGED`, `POLICY_CHANGED`, `TOOL_CHANGED`,
 `TOOL_REMOVED`, `TOOL_TENANT_DENIED`, `RISK_ESCALATED`, `EVIDENCE_INVALID`,
-`UNSUPPORTED_RUNTIME`. Reads report FRESH/STALE; M13 re-evaluates inside its
+`UNSUPPORTED_RUNTIME`. The detail route returns `stale` and `stale_reasons` (the list route does not);
+M13 re-evaluates inside its
 approval and activation transactions. Source head moving is not stale; a stale
 candidate is rebuilt to a new hash and never revived.
 
@@ -205,12 +208,27 @@ intent is unchanged.
    a first release has no data (`NONE`); every later release is `UNVERIFIED`,
    which the risk policy rates at the top of its band. The volume value is part
    of the hashed risk facts, so `Restore` still recomputes it identically.
-2. **One strict restore path (§1, §6).** `promotion.Restore` dispatches on the
-   bundle version. 2.0.0 bodies are decoded with unknown fields rejected and are
-   fully recomputed (diff, storage class, facts, risk, requirements,
-   acceptance, verifier report, dependency hashes). 1.0.0 bodies stay readable so
-   stored artifacts and `cmd/release-check` keep working, but `Store.Stage`
-   refuses them and `control.stage_candidate` accepts only version `2.0.0`.
+2. **One strict restore path (§1, §6), completed against the base (corrected after
+   independent review M12-F1).** `promotion.Restore` dispatches on the bundle
+   version. 2.0.0 bodies are decoded with unknown fields rejected and everything
+   that does not depend on the base release is recomputed (facts and risk from the
+   stored diff, requirements, acceptance, verifier report, dependency hashes). The
+   diff, the storage class and the evolution plan DO depend on the base, so
+   `Restore` only checks them structurally: a body whose diff was shrunk and whose
+   facts, risk and report were recomputed from the forged diff is self-consistent
+   and restores (reproduced by the reviewer and by
+   `TestRestoreAloneAcceptsACoordinatedDiffForgeryButVerifyWithBaseRefusesIt`).
+   `Store.LoadCandidate` — the only way the API loads a candidate to show or decide
+   on it — therefore resolves the candidate's OWN base release (`BaseRelease`, never
+   the current pointer) and runs `Candidate.VerifyWithBase`, which recomputes the
+   diff, storage class and evolution plan; a failure is a 409
+   `candidate_failed_verification`. `control.stage_candidate` still cannot see this
+   (it binds only database-known facts), which
+   `TestM12CoordinatedForgeryIsRefusedWhenLoaded` demonstrates end to end. Any new
+   code that decides on a candidate must load it through `LoadCandidate`. 1.0.0
+   bodies stay readable so stored artifacts and `cmd/release-check` keep working,
+   but `Store.Stage` refuses them and `control.stage_candidate` accepts only
+   version `2.0.0`.
 3. **Approver roles compare by set equality (§4).** The verifier requires the
    workflow's approval roles to equal the requirement's roles (canonical sorted
    set), not merely overlap: a route that also admits another role is
@@ -238,7 +256,7 @@ intent is unchanged.
    frozen sandbox evidence text and freezer, the requirement set row hash, the
    acceptance row (author, requirements hash) and the active base
    (`artifact_hash` and generation), and then writes the bundle and its derived
-   `control.release_candidates` row in one statement. `control.append_requirements`
+   `control.release_candidates` row in one function call (two INSERTs, one transaction). `control.append_requirements`
    (compare-and-set head) and `control.author_acceptance` (idempotent for the
    same author and content) stamp the decider and author from the database
    actor. Direct INSERT on `control.release_bundles` is revoked at table and
