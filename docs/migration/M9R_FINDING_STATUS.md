@@ -75,6 +75,36 @@ list of newly discovered gaps (N-01 and later) are in
 | F30 Large review batches / thin review / concurrent edits | Remediation uses smaller stable commits and independent executed probes | Preserve review evidence and fix findings before accepting each boundary; AI review does not replace human release ownership | PARTIAL | Smaller stable commits are visible (85 commits between `main` and the head), but M10 to M12 landed as large feature batches; the implementation reports were corrected after the first reviews to say review is PARTIAL (`docs/migration/M10_M11_IMPLEMENTATION_REPORT.md:46,50`, `M12_IMPLEMENTATION_REPORT.md:111-125`). Reviews now exist in the tree for M10 (HIGH findings open), M12 database (PASS WITH FINDINGS), M12 verifier (HIGH, IN PROGRESS), the gateway (NOT RUN in progress) and contract honesty; the M11 review (`review/m11-final`) and the M12 API review (`review/m12-api-final`) are on unmerged branches and the M11 one has no findings recorded yet. Fixes for M10R-01..05 exist on the unmerged branch `claude/m10-fixes` (`cf02e33`, migration `00050`, DSL 2.2.0) and carry their own regression tests, but have not been reviewed or merged |
 | F31 Stacked unmerged branches | Latest current implementation pushed on `remediation/m9r-foundation`; main remains M6 | Pushing is not merging; no main merge or production deployment performed | OPEN | `main` and `origin/main` are still `9da3f5f` (M6); the audited head is 85 commits ahead of it. The lineage split is wider than the ledger states: `origin/remediation/m9r-foundation` (`06882b2`) carries R5c UI, R5d, R5e and R5f that are not in the M10 to M12 lineage (34 commits since the split at `e6305df`), and `claude/m13-approval-promotion` (`436c2b5`) adds M13 on top of M12. The two lines already collide on migration numbers 45/46 and on the tokens 1.3.0 and 2.1.0 (N-01). Pushing is not merging; no integration plan exists |
 
+## Remediation slice status (audited 2026-10-17)
+
+Same baseline and verdict words as above. "Remediation branch" means
+`origin/remediation/m9r-foundation` (`06882b2`), whose code is not in the audited tree.
+
+| Slice | Audit status | Evidence and what remains |
+|---|---|---|
+| R0 scope and ownership | PARTIAL | Map and inventory exist (`docs/migration/V2_V3_SUPERSESSION_MAP.md:6-43`) and `make docs-verify` pins the source kits (`Makefile:61-62`). The concise agent contract is stale against M10 to M12 (`AGENTS.md:3-6,62-65`, `CLAUDE.md`, `README.md:6-14`): N-08 |
+| R1 worker authority | CLOSED | F01 and F02. Residuals N-02, N-03 (M10 surface), N-14 |
+| R2a pure schema plans | CLOSED | `internal/compiler/storage.go` with `storage_test.go`; `internal/runtime/data/evolution.go` with `evolution_test.go:39,76,115` (unit, PASS here) |
+| R2b equal-schema bindings | CLOSED (preview) | `internal/runtime/data/dataset.go:61-310`, migrations 28-29, `m9r_dataset_test.go:66-611` (recorded PASS) |
+| R2c shadow generations | CLOSED (preview) | `internal/runtime/data/shadow.go:19-307`, migrations 35-37, `m9r_shadow_test.go:105-438` (recorded PASS). Capacity of larger or denser migrations unmeasured |
+| R2 as a whole | PARTIAL | F04: default routes keep the hash-keyed namespace, no production dataset, no UI |
+| R3a authorization evaluation | CLOSED | F05. The recorded current-host HTTP gate flipped between FAIL and PASS across runs (R3a report); the gate is not in CI (N-09) |
+| R3b governed numeric indexes | CLOSED | F06, `00031-00034`, `m9r_numeric_index_test.go:88-522` (recorded PASS) |
+| R3b other types (text, date, search) | OPEN | F11 |
+| R3c uniqueness | OPEN | F11: `runtime.unique_projections` has no writer |
+| R3d aggregates and join planner | OPEN | F12 |
+| R4 concurrent writes | CLOSED (local commands) | F07 to F10 |
+| R5a tenant capabilities | CLOSED | `00038`, `internal/policy/definition.go`, `m9r_capabilities_test.go`; unit `internal/policy` PASS here |
+| R5b worker SQL capability | CLOSED | `00039-00040`, `m9r_worker_policy_test.go:106,214,264,347` (recorded PASS); receipt-scan timing margin about 67 ms (R5b report) |
+| R5c-a record access administration | CLOSED | `00041-00042`, `internal/platform/access/records.go`, `m9r_record_access_test.go` |
+| R5c-b team administration | CLOSED | `00043-00044`, `internal/platform/access/teams.go`, `m9r_team_admin_test.go` |
+| R5c UI (record and team administration) | OPEN at the audited head | Delivered on the remediation branch (`c993362`), not merged |
+| R5d field masking and partial writes | OPEN at the audited head | Whole-record reads and writes remain (`internal/runtime/data/store.go:187-203`). Delivered on the remediation branch (`88c8528`, `internal/runtime/data/patch.go`), not merged |
+| R5e tenant workflow approval roles | OPEN at the audited head | Four fixed role names remain (`internal/compiler/workflow.go:30`, `internal/runtime/workflow/plan.go:274`). Delivered on the remediation branch (`44a3979`), not merged; version collision N-01 |
+| R5f identity (clock tolerance, OIDC sign-in) | OPEN at the audited head | `internal/identity/identity.go:144` strict timestamps; token paste login. Delivered on the remediation branch (`7112cd0`, `c027809`), not merged |
+| R6 requirement and verification authority | PARTIAL | M12 builder, requirements-v2, acceptance-v2, verifier-v1 and risk policy are present with unit tests (PASS here for `intent`, `verification`, `risk`, `promotion`); approval and activation authority only on `claude/m13-approval-promotion`; M14 capture not started (`internal/ai` holds a README only); the verifier is not an independent credential (N-12) |
+| R7 reliability and operations | OPEN | Outage-budget retry, subscriber versioning (F18), lease renewal and revise cycles (F20), rate limiting (F24), audit retention (F19), profiling (F25), restore drill and RPO/RTO (F29): none implemented. External tool semantics are implemented but defective (F23, N-04) |
+
 ## Execution order and stop gate
 
 Bounded R4 and the configured numeric R3b HTTP gate are independently verified.
