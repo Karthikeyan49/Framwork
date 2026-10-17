@@ -370,6 +370,10 @@ func callResultHash(ctx context.Context, q postgres.Executor, a tenant.Access, x
 	_ = q.QueryRowContext(ctx, `SELECT output_hash FROM runtime.workflow_receipts WHERE tenant_id=$1 AND instance_id=$2 AND step_key=$3`, a.TenantID(), x.ID, step).Scan(&hash)
 	return hash
 }
+
+// settleMargin covers commit latency between the send intent and the request.
+const settleMargin = 50 * time.Millisecond
+
 func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f activityFailure) error {
 	return jobs.WithJob(ctx, w.DB, lease.Ticket, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
 		x, e := w.Store.load(ctx, q, a, lease.Ticket.JobID(), true)
@@ -415,12 +419,21 @@ func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f a
 		// M10R-04: a tool step whose earlier send has an unknown outcome never
 		// ends DEAD (unreconcilable); every terminal failure parks in RECONCILE.
 		outstanding := false
-		if _, tool := toolState(state); tool && x.Termination == "" && (x.Failure == "permanent" || x.Attempt >= max) {
+		var notBefore time.Time
+		if _, tool := toolState(state); tool && x.Termination == "" {
 			l, found, e := loadToolLedger(ctx, q, a, x.ID, f.step)
 			if e != nil {
 				return e
 			}
 			outstanding = found && l.outstanding
+			// M10R-05: the lookup that may prove absence waits for the latest
+			// send's deadline plus the provider's declared settle interval.
+			if c := state.ToolContract; outstanding && c != nil && c.IdempotencyMode == "LOOKUP_BY_REFERENCE" && c.SettleMS > 0 && !l.lastSendStarted.IsZero() {
+				notBefore = l.lastSendStarted.Add(time.Duration(c.TimeoutMS+c.SettleMS)*time.Millisecond + settleMargin)
+			}
+		}
+		if x.Failure != "permanent" && x.Attempt < max {
+			outstanding = false
 		}
 		if x.Failure == "unknown" || outstanding {
 			x.Status = "RECONCILE"
@@ -444,6 +457,9 @@ func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f a
 				delay = backoffMax
 			}
 			x.DueAt = now.Add(time.Duration(delay) * time.Millisecond)
+			if x.DueAt.Before(notBefore) {
+				x.DueAt = notBefore
+			}
 		}
 		return w.save(ctx, q, a, &x, lease, entry, "activity_failed", f.step, "")
 	})

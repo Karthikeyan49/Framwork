@@ -127,7 +127,7 @@ END $$;
 CREATE OR REPLACE FUNCTION control.tool_finish(step text,n integer,outcome_in text,class_in text,retry_in boolean,status_in integer,simulated_in boolean,body bytea) RETURNS text
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
 #variable_conflict use_column
-DECLARE l record;att runtime.tool_attempts%ROWTYPE;inv runtime.tool_invocations%ROWTYPE;next_state text;outstanding boolean;
+DECLARE l record;att runtime.tool_attempts%ROWTYPE;inv runtime.tool_invocations%ROWTYPE;next_state text;outstanding boolean;c jsonb;proved boolean:=false;
 BEGIN
  SELECT * INTO l FROM control.tool_lease();
  IF NOT FOUND THEN RAISE EXCEPTION 'exact tool lease required' USING ERRCODE='42501';END IF;
@@ -142,7 +142,17 @@ BEGIN
  UPDATE runtime.tool_attempts a SET finished_at=clock_timestamp(),outcome=outcome_in,outcome_class=class_in,http_status=status_in WHERE a.tenant_id=l.tenant_id AND a.instance_id=l.job_id AND a.step_key=step AND a.attempt=n;
  outstanding:=coalesce(inv.unknown_outstanding,true);
  IF outcome_in='SUCCESS' THEN next_state:='SUCCEEDED';outstanding:=false;
- ELSIF att.kind='LOOKUP' AND class_in='not_found' THEN next_state:='NOT_APPLIED';outstanding:=false;
+ ELSIF att.kind='LOOKUP' AND class_in='not_found' THEN
+  -- M10R-05: a 404 proves absence only for a pinned contract that declares a
+  -- provider settle interval, and only when this lookup started after the
+  -- latest send's deadline plus that interval. Otherwise (early lookup,
+  -- undeclared interval, stored legacy plan) the write stays UNKNOWN.
+  SELECT s->'tool_contract' INTO c FROM runtime.workflow_bindings b,jsonb_array_elements(convert_from(b.plan_body,'UTF8')::jsonb->'states') s WHERE b.tenant_id=l.tenant_id AND b.id=l.job_id AND s->>'id'=step;
+  IF c IS NOT NULL AND c->>'idempotency_mode'='LOOKUP_BY_REFERENCE' AND (c->>'settle_ms')::bigint>0 THEN
+   SELECT att.started_at>=max(a.started_at)+((c->>'timeout_ms')::bigint+(c->>'settle_ms')::bigint)*interval '1 millisecond' INTO proved
+    FROM runtime.tool_attempts a WHERE a.tenant_id=l.tenant_id AND a.instance_id=l.job_id AND a.step_key=step AND a.kind='SEND';
+  END IF;
+  IF coalesce(proved,false) THEN next_state:='NOT_APPLIED';outstanding:=false;ELSE next_state:='UNKNOWN';outstanding:=true;END IF;
  ELSIF att.kind='LOOKUP' OR outcome_in<>'FAILED' OR outstanding THEN next_state:='UNKNOWN';outstanding:=true;
  ELSE next_state:='FAILED';
  END IF;

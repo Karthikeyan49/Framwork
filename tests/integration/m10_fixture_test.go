@@ -303,7 +303,8 @@ func m10Tools(port int) []tools.Definition {
 	}
 	native := write("tool.notify_native", "/notify", tools.DeliverySpec{IdempotencyMode: "NATIVE_KEY", RetryMode: "SAFE_RETRY", ReconciliationMode: "MANUAL", ReplayWindowMS: 3600000}, "Idempotency-Key")
 	lookup := write("tool.notify_lookup", "/notify-l", tools.DeliverySpec{IdempotencyMode: "LOOKUP_BY_REFERENCE", RetryMode: "SAFE_RETRY", ReconciliationMode: "REMOTE_LOOKUP"}, "Idempotency-Key")
-	lookup.Connector.Lookup = &tools.Lookup{Method: "GET", Path: "/notify-l/{key}"}
+	// A 404 proves absence only after the declared settle interval (M10R-05).
+	lookup.Connector.Lookup = &tools.Lookup{Method: "GET", Path: "/notify-l/{key}", SettleMS: 1000}
 	dedupe := write("tool.notify_dedupe", "/notify-d", tools.DeliverySpec{IdempotencyMode: "DEDUPE_WINDOW", RetryMode: "SAFE_RETRY", ReconciliationMode: "MANUAL", ReplayWindowMS: 3600000}, "Idempotency-Key")
 	expired := write("tool.notify_expired", "/notify-d", tools.DeliverySpec{IdempotencyMode: "DEDUPE_WINDOW", RetryMode: "SAFE_RETRY", ReconciliationMode: "MANUAL", ReplayWindowMS: 1}, "Idempotency-Key")
 	none := write("tool.notify_none", "/notify-n", tools.DeliverySpec{IdempotencyMode: "NONE", RetryMode: "RECONCILE_FIRST", ReconciliationMode: "MANUAL"}, "")
