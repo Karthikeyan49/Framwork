@@ -1,6 +1,6 @@
 # R3d — Bounded SQL aggregates and query planning
 
-18 October 2026 (Asia/Kolkata). **STATUS: IN PROGRESS; not accepted complete.**
+19 October 2026 (Asia/Kolkata). **STATUS: IN PROGRESS; not accepted complete.**
 Design: ADR046, committed before source at `8ebc75d`. Branch:
 `remediation/m9r-foundation`; M9R remains PARTIAL. No M10, main merge or production
 activation. Existing records, immutable metadata/IR and pinned workflows remain.
@@ -155,3 +155,58 @@ unwinding. The defer now re-panics immediately and leaves rollback to WithRuntim
 the independent executable panic probe is still pending. Full/root/browser,
 retained capacity gates, canonical capacity and independent executable review
 remain pending. R3d IN PROGRESS; overall M9R PARTIAL; no M10 or main merge.
+
+## Application configuration and mapped verification checkpoint
+
+ADR054 precedes application wiring in96da469: API_DB_CONCURRENCY integer1..10,
+default4, existing FIFO128, unchanged pool10 and worker behavior. Configuration
+unit tests pass; actual focused aggregate/queued-live-revocation selection
+passes28.382s. That selection did not supply the optional legacy artifact; final
+verification must supply it and report zero skips explicitly. Runtime launcher
+whitelist initially omitted the new setting; a0ede6f forwards it to API only,
+with8/8 Node environment-isolation tests passing.
+
+The mapped workload now uses actual100k adoption and verified shadow evolution,
+then current/retained bindings, governed owner/share/deletion changes and a
+current-only balance101 versus historical1 oracle. The aggregate target now runs
+both raw and mapped fixtures. Its12m total test timeout accommodates the added
+real migration/index builds; no per-query/lock/transaction/queue or latency limit
+changes. This expanded variant has not completed execution yet.
+
+## Canonical failure, independent findings and streaming remediation
+
+The first real100k adoption/evolution/default4 mapped run FAIL720.050s: current
+integer SQL/HTTP p95 353.140/887.348ms, decimal371.763/1134.864,
+money553.856/1267.286, filtered698.319/1653.025, OWNER539.429/1277.209,
+SHARE620.084/1799.529. Retained integer413.520/1133.581,
+decimal421.240/1208.863 and money493.508/1295.064 also fail HTTP. Completed
+cases return correct results with zero errors, but the total test times out
+during retained filtered warmup; its later cases are NOT RUN. Actual migration
+reached ACTIVATED with100k copied/verified and six READY numeric indexes.
+
+ADR055 precedes actual default3 scheduling (strict overrides1..10 unchanged).
+ADR056 precedes the exact canonical identity namespace boundary and streamed
+single-use aggregate CTE. Normalized projection and inner cap remain; no scope,
+RLS, view, data or arithmetic weakening. Individual deadlines remain unchanged.
+The two-fixture aggregate target now has20m total suite time to cover real100k
+adoption/evolution and six index builds; this does not extend any query budget.
+
+Independent review9ecb3b8 passes22 ordinary groups88.328s. Source d7b64dd
+reverification reports those same22 passing, with a combined command FAIL87.352s
+from a new reviewer EXPLAIN-text assertion. The corrected structural probe then
+PASS11.981s: old/current317-row generated plans each have one normalized child
+projection, one identity scan/loop and no CTE Scan. EXPLAIN CASE deparsing did not
+prove duplicate execution. Exact differentiated sums, legacy NULL raw fallback,
+current ownership/sharing/tombstones, snapshots, settings/timeout/fault assertions
+and retained executable compatibility all retain executed evidence.
+
+An injected pgx driver-tracer panic DOES hang database/sql rollback. The explicit
+`integration,driverpanic` supervised diagnostic FAIL8.576s then FAIL7.272s remains
+IR-R3d-01/R7, documented in the [independent report](../verification/M9R_R3D_INDEPENDENT_REVIEW.md).
+Default postgres.Open installs no custom tracer; ordinary callback panic rollback
+and same-backend reuse pass. There is no arbitrary driver-panic recovery claim.
+No assertion is removed: the separate explicit diagnostic still fails. A bounded
+rollback goroutine would not repair the leaked library lock and is not introduced.
+
+Final full/build/browser and all eight capacity gates remain pending. Functional
+review does not accept mapped capacity or declare overall M9R complete.
