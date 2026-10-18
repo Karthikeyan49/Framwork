@@ -81,7 +81,7 @@ func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token st
 		if len(jit) == 1 && jit[0] {
 			mode = "on"
 		}
-		if _, err := q.ExecContext(ctx, `SELECT set_config('jit',$1,true)`, mode); err != nil {
+		if _, err := q.ExecContext(ctx, `SELECT set_config('jit',$1,true),set_config('plan_cache_mode','force_custom_plan',true)`, mode); err != nil {
 			return err
 		}
 		return q.QueryRowContext(ctx, "EXPLAIN (ANALYZE,BUFFERS,VERBOSE,FORMAT JSON) "+statement, args...).Scan(&raw)

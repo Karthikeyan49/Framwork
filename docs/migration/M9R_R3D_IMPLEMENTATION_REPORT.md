@@ -97,6 +97,18 @@ Further executed evidence (all failures retained):
   miss the unchanged targets. Zero errors. Explicit four-slot scheduling with
   this final physical/expression plan is being measured before selecting any
   application concurrency default. No accepted capacity result is claimed yet.
+- Four-slot/JIT-off/header run FAIL123.770s: full sums pass (worst HTTP617.225),
+  but filtered HTTP807.830 and OWNER SQL664.298/HTTP1543.657 miss; share passes.
+  Projection-namespace boundary run FAIL124.575s: filtered execution times out.
+- Initial prepared-plan instrumentation FAIL109.948s and FAIL97.911s from an
+  observer arity error: pgx's database/sql result-format option was counted as a
+  SQL parameter (12 types versus13 tracer arguments). The observer now strips
+  that known option. Corrected probe/workload FAIL148.276s preserves other tails
+  and directly shows the SAME filtered SUM/parameters: custom182.565ms, generic
+  hits SQLSTATE57014 at2.012s with JIT off. OWNER custom149.433/generic153.273ms
+  both hash joins; this does not establish generic plans as every tail's cause.
+  No driver mode or timeout change. The cloud parent cgroup supplies4 CPUs total
+  shared by Go/API and Docker,32GiB RAM; PostgreSQL itself remains capped4CPU/8GiB.
 
 Earlier runs use128MiB shared buffers; ADR048 runs explicitly use2GiB shared,
 6GiB effective cache estimate, unchanged4MiB work_mem/random_page_cost4 and the
@@ -104,13 +116,13 @@ same4CPU/8GiB/no-swap ceiling. Buffer misses are not proof of physical disk I/O.
 Ordinary `make infra-up` retains lightweight defaults; `make reference-up`
 selects the declared performance profile and preserves the named data volume.
 Every reference test verifies actual connected settings/image/container limits.
-Four-slot admission and a CacheDescribe driver experiment are currently explicit
+Four-slot admission and a CacheDescribe driver experiment were explicit
 test compositions; default application-mode capacity is NOT certified by them.
 
 Logs are ignored `.local/reports/r3d-*.log`; generated artifacts/secrets do not
 belong in Git. Independent executable review, final root/build/browser and all
 retained capacity gates are NOT RUN. SQL_V1 is not declared accepted or production
-capable. Raw100k sums remain outside a passing capacity envelope.
+capable. Raw unindexed100k sums remain outside a passing capacity envelope.
 
 ## Pending verification and scope
 
@@ -124,3 +136,22 @@ General GROUP BY, arbitrary expressions, distinct/average, join expansion,
 report/UI builders and arbitrary-workload capacity are outside SQL_V1. R5
 deployment/UI, R6 release authority and R7 operations remain pending. Recovery
 disables opt-in use and forward-fixes; no destructive data change is involved.
+
+## Custom-plan checkpoint — 19 October 2026 (Asia/Kolkata)
+
+ADR053 captures/restores prior JIT and plan-cache mode, with LOCAL off/custom
+restricted to certified SQL_V1. Focused four groups PASS4.324s, covering six
+prior-mode combinations and actual aggregate/restoration cancellation. The
+unchanged unmapped indexed100k/ten-client reference workload now PASS119.819s:
+count SQL/HTTP p95 55.528/177.899ms; integer245.575/573.965; decimal261.648/635.354;
+money245.128/702.126; filtered290.095/731.666; OWNER208.152/492.827;
+SHARE228.720/589.006. Zero request errors. This uses explicit four-slot admission,
+not the still-ten-slot application default, and does not certify mapped/canonical
+capacity. The deliberate diagnostic generic filtered-plan timeout is recorded
+separately from successful API samples. All earlier failures remain above.
+
+Independent read-only review found restoration SQL could run during driver panic
+unwinding. The defer now re-panics immediately and leaves rollback to WithRuntime;
+the independent executable panic probe is still pending. Full/root/browser,
+retained capacity gates, canonical capacity and independent executable review
+remain pending. R3d IN PROGRESS; overall M9R PARTIAL; no M10 or main merge.

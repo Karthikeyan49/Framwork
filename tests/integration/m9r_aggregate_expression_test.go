@@ -28,33 +28,35 @@ func TestM9RSQLAggregateRestoresExpressionModeWithinSnapshot(t *testing.T) {
 		return policy.DataScope{Kind: "ALL"}, nil
 	})
 	for _, initial := range []string{"on", "off"} {
-		err = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
-			a, err := m3Scope(f, ctx, q, p, f.tenantA)
-			if err != nil {
-				return err
-			}
-			if _, err := q.ExecContext(ctx, `SELECT set_config('jit',$1,true)`, initial); err != nil {
-				return err
-			}
-			for range 2 {
-				page, err := (data.Store{}).QueryVisibleWithPolicy(ctx, q, s, a, "entity.contact", aggregateQuery("sum", aggregateBalance), policy.Native{}, guard, resolve)
+		for _, planMode := range []string{"auto", "force_custom_plan", "force_generic_plan"} {
+			err = postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+				a, err := m3Scope(f, ctx, q, p, f.tenantA)
 				if err != nil {
 					return err
 				}
-				if page.Aggregate == nil || page.Aggregate.Sum != want[aggregateBalance] || page.Aggregate.Count != 2 {
-					t.Fatal("same-transaction aggregate changed result")
-				}
-				var after string
-				if err := q.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&after); err != nil {
+				if _, err := q.ExecContext(ctx, `SELECT set_config('jit',$1,true),set_config('plan_cache_mode',$2,true)`, initial, planMode); err != nil {
 					return err
 				}
-				if after != initial {
-					t.Fatal("aggregate changed later same-transaction expression mode")
+				for range 2 {
+					page, err := (data.Store{}).QueryVisibleWithPolicy(ctx, q, s, a, "entity.contact", aggregateQuery("sum", aggregateBalance), policy.Native{}, guard, resolve)
+					if err != nil {
+						return err
+					}
+					if page.Aggregate == nil || page.Aggregate.Sum != want[aggregateBalance] || page.Aggregate.Count != 2 {
+						t.Fatal("same-transaction aggregate changed result")
+					}
+					var after, afterPlan string
+					if err := q.QueryRowContext(ctx, `SELECT current_setting('jit'),current_setting('plan_cache_mode')`).Scan(&after, &afterPlan); err != nil {
+						return err
+					}
+					if after != initial || afterPlan != planMode {
+						t.Fatal("aggregate changed later same-transaction expression mode")
+					}
 				}
-			}
-			return nil
-		})
-		scalarSQL(t, err)
+				return nil
+			})
+			scalarSQL(t, err)
+		}
 	}
 }
 
@@ -65,7 +67,7 @@ type aggregateExpressionFault struct {
 }
 
 func (f *aggregateExpressionFault) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
-	match := f.mode == "aggregate" && strings.HasPrefix(d.SQL, "WITH aggregate_input AS MATERIALIZED") || f.mode == "restore" && d.SQL == `SELECT set_config('jit','on',true)`
+	match := f.mode == "aggregate" && strings.HasPrefix(d.SQL, "WITH aggregate_input AS MATERIALIZED") || f.mode == "restore" && d.SQL == `SELECT set_config('jit',$1,true),set_config('plan_cache_mode',$2,true)`
 	if match && f.armed.Load() && f.fired.CompareAndSwap(false, true) {
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
@@ -95,9 +97,9 @@ func TestM9RSQLAggregateExpressionFailureSuppressesResultAndResetsPool(t *testin
 		defer db.Close()
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
-		var expectedDB, actualDB, role, initial string
+		var expectedDB, actualDB, role, initial, initialPlan string
 		scalarSQL(t, f.db.QueryRow(`SELECT current_database()`).Scan(&expectedDB))
-		scalarSQL(t, db.QueryRow(`SELECT current_database(),session_user,current_setting('jit')`).Scan(&actualDB, &role, &initial))
+		scalarSQL(t, db.QueryRow(`SELECT current_database(),session_user,current_setting('jit'),current_setting('plan_cache_mode')`).Scan(&actualDB, &role, &initial, &initialPlan))
 		if actualDB != expectedDB || role != "framework_app" {
 			db.Close()
 			t.Fatal("expression fault target mismatch")
@@ -108,7 +110,7 @@ func TestM9RSQLAggregateExpressionFailureSuppressesResultAndResetsPool(t *testin
 			if err != nil {
 				return err
 			}
-			if _, err := q.ExecContext(ctx, `SELECT set_config('jit','on',true)`); err != nil {
+			if _, err := q.ExecContext(ctx, `SELECT set_config('jit','on',true),set_config('plan_cache_mode','force_generic_plan',true)`); err != nil {
 				return err
 			}
 			// Do not fire the restoration fault on this fixture setup statement.
@@ -120,9 +122,9 @@ func TestM9RSQLAggregateExpressionFailureSuppressesResultAndResetsPool(t *testin
 			db.Close()
 			t.Fatal("expression cancellation/restoration failure exposed a result", stage)
 		}
-		var after string
-		scalarSQL(t, db.QueryRow(`SELECT current_setting('jit')`).Scan(&after))
-		if after != initial {
+		var after, afterPlan string
+		scalarSQL(t, db.QueryRow(`SELECT current_setting('jit'),current_setting('plan_cache_mode')`).Scan(&after, &afterPlan))
+		if after != initial || afterPlan != initialPlan {
 			db.Close()
 			t.Fatal("expression mode leaked through reused pool", stage)
 		}

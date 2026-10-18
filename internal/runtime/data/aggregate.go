@@ -107,27 +107,30 @@ func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, 
 		selection = "SELECT " + normalized + " FROM (" + selection + ") aggregate_values OFFSET 0"
 	}
 	statement := `WITH aggregate_input AS MATERIALIZED (` + selection + `) SELECT ` + result + ` FROM aggregate_input`
-	// This closed OLTP kernel avoids per-request LLVM compilation (ADR051).
+	// This closed OLTP kernel avoids LLVM and unsuitable generic plans (ADR053).
 	// Change only the certified transaction, preserving successful composition
 	// and allowing WithRuntime rollback to reset SQL-aborted/cancelled paths.
-	var jit bool
-	if err = q.QueryRowContext(ctx, `SELECT current_setting('jit')::boolean`).Scan(&jit); err != nil {
+	var jit, planMode string
+	if err = q.QueryRowContext(ctx, `SELECT current_setting('jit'),current_setting('plan_cache_mode')`).Scan(&jit, &planMode); err != nil {
 		return Page{}, err
 	}
-	if jit {
-		if _, err = q.ExecContext(ctx, `SELECT set_config('jit','off',true)`); err != nil {
-			return Page{}, err
-		}
-		defer func() {
-			var state interface{ SQLState() string }
-			if errors.As(resultErr, &state) {
-				return
-			}
-			if _, err := q.ExecContext(ctx, `SELECT set_config('jit','on',true)`); err != nil && resultErr == nil {
-				page, resultErr = Page{}, ErrUnavailable
-			}
-		}()
+	if _, err = q.ExecContext(ctx, `SELECT set_config('jit','off',true),set_config('plan_cache_mode','force_custom_plan',true)`); err != nil {
+		return Page{}, err
 	}
+	defer func() {
+		if cause := recover(); cause != nil {
+			// Preserve driver/tracer panic; WithRuntime owns the rollback.
+			// Do not issue restoration SQL while unwinding.
+			panic(cause)
+		}
+		var state interface{ SQLState() string }
+		if errors.As(resultErr, &state) {
+			return
+		}
+		if _, err := q.ExecContext(ctx, `SELECT set_config('jit',$1,true),set_config('plan_cache_mode',$2,true)`, jit, planMode); err != nil && resultErr == nil {
+			page, resultErr = Page{}, ErrUnavailable
+		}
+	}()
 	var count, invalid int64
 	var sum string
 	if err = q.QueryRowContext(ctx, statement, b.args...).Scan(&count, &invalid, &sum); err != nil {
