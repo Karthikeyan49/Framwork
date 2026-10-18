@@ -5,6 +5,11 @@ import (
 	"fmt"
 )
 
+// ErrInvalidInput marks a caller bug: a request, context or run input that the
+// pipeline refuses before any provider is called (empty or over-long request text,
+// a forged or stale context, a missing compile function).
+var ErrInvalidInput = errors.New("ai: invalid input")
+
 // ErrNotImplemented marks a published function whose body is not written yet.
 var ErrNotImplemented = errors.New("ai: not implemented")
 
@@ -14,14 +19,14 @@ var ErrNotImplemented = errors.New("ai: not implemented")
 // model-supplied bytes.
 var (
 	ErrProposal      = errors.New("ai: invalid proposal")
-	ErrMalformed     = fmt.Errorf("%w: not well-formed JSON", ErrProposal)
-	ErrTooLarge      = fmt.Errorf("%w: exceeds a size, depth or count bound", ErrProposal)
-	ErrDuplicateKey  = fmt.Errorf("%w: duplicate or case-folded duplicate key", ErrProposal)
-	ErrSchema        = fmt.Errorf("%w: violates the closed schema", ErrProposal)
+	ErrMalformed     = fmt.Errorf("%w: malformed JSON", ErrProposal)
+	ErrTooLarge      = fmt.Errorf("%w: too large", ErrProposal)
+	ErrDuplicateKey  = fmt.Errorf("%w: duplicate key", ErrProposal)
+	ErrSchema        = fmt.Errorf("%w: schema violation", ErrProposal)
 	ErrUnknownField  = fmt.Errorf("%w: unknown field", ErrSchema)
-	ErrServerField   = fmt.Errorf("%w: names a server-derived field", ErrSchema)
-	ErrForbiddenKind = fmt.Errorf("%w: target kind is not allowed", ErrProposal)
-	ErrSemantics     = fmt.Errorf("%w: requirement semantics do not match their category", ErrProposal)
+	ErrServerField   = fmt.Errorf("%w: server-derived field", ErrSchema)
+	ErrForbiddenKind = fmt.Errorf("%w: forbidden kind", ErrProposal)
+	ErrSemantics     = fmt.Errorf("%w: invalid requirement semantics", ErrProposal)
 )
 
 // ProposalError is the typed failure of ParsePatchProposal, ParseRequirementProposal
