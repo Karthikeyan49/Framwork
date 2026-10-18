@@ -150,6 +150,14 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 	if width < 900 {
 		t.Fatal("nonrepresentative aggregate fixture")
 	}
+	for _, field := range []string{aggregateUnits, aggregateRatio, aggregateBalance} {
+		idx := m9rIndexReady(t, h, base+"/indexes/"+field, owner)
+		if idx.ScannedRows != 100000 || idx.VerifiedRows != 100000 {
+			t.Fatal("aggregate governed numeric coverage")
+		}
+	}
+	_, err = f.operator.Exec(`ANALYZE runtime.numeric_indexes;ANALYZE runtime.numeric_projections`)
+	scalarSQL(t, err)
 	t.Logf("aggregate_reference hot_rows=100000 tenants=10 other_rows_each=10000 avg_record_bytes=%d warmup=3 samples=100 clients=10", width)
 	obs := &aggregateTrace{}
 	cfg, err := pgx.ParseConfig(os.Getenv("DATABASE_URL"))
@@ -157,6 +165,7 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 		t.Fatal("aggregate trace configuration")
 	}
 	cfg.Tracer = obs
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
 	traced := stdlib.OpenDB(*cfg)
 	defer traced.Close()
 	traced.SetMaxOpenConns(10)
@@ -169,7 +178,10 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 	}
 	original := f.db
 	f.db = traced
-	h = r5Handler(t, f, audit.Postgres{})
+	admission, err := postgres.NewAdmission(4, 128)
+	scalarSQL(t, err)
+	h = r5Handler(t, f, audit.Postgres{}, admission)
+	t.Log("aggregate_reference_experiment query_mode=cache_describe trusted_api_admission=4 offered_http_clients=10; HTTP includes all FIFO wait")
 	f.db = original
 	server := httptest.NewServer(h)
 	defer server.Close()
@@ -250,7 +262,10 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 		}
 		for range 3 {
 			if _, ok := call(); !ok {
-				t.Fatal("aggregate warmup failed", tc.name)
+				obs.mu.Lock()
+				state := obs.state
+				obs.mu.Unlock()
+				t.Fatal("aggregate warmup failed", tc.name, "SQLSTATE", state)
 			}
 		}
 		aggregateExplain(t, f, obs, token)
@@ -292,7 +307,7 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 		sqlP95 := reportLatency(t, "aggregate_"+tc.name+"_sql10", sqlTimes, elapsed)
 		httpP95 := reportLatency(t, "aggregate_"+tc.name+"_http10", latency, elapsed)
 		if sqlP95 > 500 || httpP95 > 750 {
-			t.Fatal("aggregate unchanged SQL500ms/HTTP750ms floor exceeded", tc.name)
+			t.Error("aggregate unchanged SQL500ms/HTTP750ms floor exceeded", tc.name)
 		}
 	}
 }

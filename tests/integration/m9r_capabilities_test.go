@@ -26,9 +26,12 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-func r5Handler(t *testing.T, f *iamFixture, writer audit.Writer) http.Handler {
+func r5Handler(t *testing.T, f *iamFixture, writer audit.Writer, admission ...*postgres.Admission) http.Handler {
 	t.Helper()
 	api := access.API{DB: f.db, Auth: f.verifier, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: writer, Registry: m3Registry(t), PreviewEnabled: true, WorkflowsEnabled: true}
+	if len(admission) == 1 {
+		api.Admission = admission[0]
+	}
 	return httpserver.Handler(httpserver.Options{Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Register: api.Register, AllowPOST: api.AcceptsPOST})
 }
 func r5Definition(name, app string, scope policy.DataScope) policy.Definition {

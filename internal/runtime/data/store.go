@@ -50,6 +50,9 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	if err = searchReady(ctx, db); err != nil {
 		return err
 	}
+	if err = aggregateReady(ctx, db); err != nil {
+		return err
+	}
 	return uniqueReady(ctx, db)
 }
 func base(s Scope, a tenant.Access, entity string) []any {

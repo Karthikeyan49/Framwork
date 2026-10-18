@@ -422,11 +422,22 @@ func TestM9RSQLAggregateRetainedGenerationUsesCurrentOwnersAndTombstones(t *test
 	raw, _ := os.ReadFile("../../contracts/examples/contacts-draft-v1.json")
 	witness := shadowSource(t, h, token, f.tenantA, app, 2, raw, func(d *metadata.Document) { addCount(d, "integer", true) })
 	intent := compiler.EvolutionIntent{Backfills: []compiler.FieldBackfill{{EntityID: "entity.contact", FieldID: "field.contact.count", When: "MISSING_OR_NULL", Value: json.RawMessage(`7`)}}}
-	x := shadowReady(t, h, token, path, shadowPrepare(t, h, token, path, 1, witness, intent))
+	x := shadowPrepare(t, h, token, path, 1, witness, intent)
+	q := data.Query{Projection: []string{"field.contact.id", aggregateBalance}, Limit: 100, Aggregate: &data.Aggregate{Op: "sum", Field: aggregateBalance, Execution: data.SQLAggregateV1}}
+	var state string
+	scalarSQL(t, f.operator.QueryRow(`SELECT state FROM runtime.datasets WHERE tenant_id=$1 AND app_id=$2`, f.tenantA, app).Scan(&state))
+	if state != "FROZEN" {
+		t.Fatal("aggregate read fixture must be frozen")
+	}
+	for _, b := range []string{base, old} {
+		if got := aggregateResult(t, h, b, token, q); got.Count != 2 || got.Sum != "24.6" {
+			t.Fatal("frozen namespace aggregate lost records")
+		}
+	}
+	x = shadowReady(t, h, token, path, x)
 	shadowStep(t, h, token, path, x, "activate")
 	current := path + "/bindings/2/entities/entity.contact"
-	q := data.Query{Projection: []string{"field.contact.id", aggregateBalance}, Limit: 100, Aggregate: &data.Aggregate{Op: "sum", Field: aggregateBalance, Execution: data.SQLAggregateV1}}
-	for _, b := range []string{old, current} {
+	for _, b := range []string{base, old, current} {
 		if got := aggregateResult(t, h, b, token, q); got.Count != 2 || got.Sum != "24.6" {
 			t.Fatal("generation aggregate lost records")
 		}
@@ -442,7 +453,7 @@ func TestM9RSQLAggregateRetainedGenerationUsesCurrentOwnersAndTombstones(t *test
 	if w := m5Call(h, current+"/records/"+r.ID+"/access", token, map[string]any{"operation": "owner", "expected_version": 1, "user_id": f.viewer}); w.Code != 200 {
 		t.Fatal("current canonical owner assignment", w.Code)
 	}
-	for _, b := range []string{old, current} {
+	for _, b := range []string{base, old, current} {
 		if got := aggregateResult(t, h, b, viewer, q); got.Count != 1 || got.Sum != "12.3" {
 			t.Fatal("aggregate used stale physical ownership")
 		}
@@ -450,7 +461,7 @@ func TestM9RSQLAggregateRetainedGenerationUsesCurrentOwnersAndTombstones(t *test
 	if w := m5Call(h, current+"/commands", token, data.Command{Operation: "delete", ID: r.ID, ExpectedVersion: 2}); w.Code != 200 {
 		t.Fatal("current canonical deletion", w.Code)
 	}
-	for _, b := range []string{old, current} {
+	for _, b := range []string{base, old, current} {
 		if got := aggregateResult(t, h, b, token, q); got.Count != 1 || got.Sum != "12.3" {
 			t.Fatal("retained aggregate included tombstoned record")
 		}
