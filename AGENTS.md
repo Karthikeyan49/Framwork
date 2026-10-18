@@ -73,6 +73,12 @@ belongs to `internal/platform/app`.
   additional restrictive query-match policy. Search text is never authority.
   Preserve parser witnesses, entry/exit context cleanup, shared quotas, search
   field authorization and correlated source/target live-view point fetches.
+  ADR044 adds opt-in schema/IR/compiler1.4 unique fields. A declaration is not
+  enforcement: require READY claims and live full-scope authority before any new
+  non-null key. Preserve transaction-bound permits, exact attempt checkpoints,
+  legacy denial and evolution fences. Map only the named claim constraint to409;
+  receipt-key collisions must retain known-abort reconciliation. ADR045 shares
+  only immutable embedded validation schemas; no tenant or authorization cache.
 - ADR038: access administration reads typed headers under live entity/row
   authority, never unrelated business values. Preserve actor-owned recovery
   across SPA routes; unknown outcomes and unobservable truncated-list targets

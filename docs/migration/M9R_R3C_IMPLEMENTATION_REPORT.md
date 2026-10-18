@@ -67,7 +67,12 @@ content. This report is updated with final evidence after independent review.
 | `./scripts/go.sh test -race ./internal/metadata ./internal/compiler ./internal/runtime/data` after ADR045 | PASS: concurrent valid/invalid validation across all five versions, source/hash isolation and independent returned handles; retained compiler/data race tests pass. |
 | `make test-unique-performance` after schema-cache and fixture correction | PASS 199.809s interim capacity run: 100k case137.49s, 203 checkpoints/build15.438s, fresh p95355.755ms/p99443.432ms (40.22/s), expected-conflict p9574.097ms/p99118.208ms (177.57/s), no unexpected errors. 32-client/60s bound-dataset writer: 10330 successes, zero errors, p95219.378ms/p99241.092ms, 171.73/s; exact source/version/receipt/outbox checks pass. Runtime statement2s/lock500ms/write-p95500ms targets unchanged. The executable compiled before the narrow receipt-error translation follow-up; final stable-source gates remain required. |
 | Independent executable source review | PASS on stable `d15be92`: 12 populated adversarial groups in 20.883s, no skips; independent capacity PASS in 200.046s. Review and dedicated tests committed/pushed at `2cf2f57`. Final root gates remain required. |
-| Final `make check test build`, `make test-e2e`, `make test-signin-e2e`, retained query/write gates | NOT RUN against final source yet; required. |
+| Final `make infra-up migrate migration-status` | PASS18.003s: local dependencies healthy; forward migration52 applied. |
+| `make browser-install` | PASS0.038s using the verified available browser. |
+| Final `GOFLAGS=-v make check test build` | PASS523.800s:246 integration groups in479.806s, zero failures/skips;97 frontend tests, Go race/unit/script/static checks and all binaries/frontend build pass. Actual pre49 retained API enabled for choice/native/search/unique compatibility. |
+| `make test-e2e` | PASS17.523s:9 application browser cases. |
+| `make test-signin-e2e` | PASS8.499s:7 sign-in browser cases. |
+| Final numeric/scalar/choice/native/search/write/unique capacity gates | IN PROGRESS; not claimed passed yet. |
 
 A checksum-pinned older API was built from archived commit `197fe85` into ignored
 `.local/reports/r3c-legacy-api`, SHA256
@@ -93,6 +98,16 @@ Independent capacity on PostgreSQL18.6/four CPUs/8GiB/disabled swap verified
 Fresh/conflict CREATE p95 was144.937/68.700ms. The32-client60s writer completed
 10,365 writes, p95215.076ms and zero errors, below the unchanged500ms target.
 These local reference measurements do not certify arbitrary production workloads.
+
+Final root retained regressions use a separate actual pre49 API built from
+archived `f99537f`, SHA256
+`03811f7cc694f33757aa4b005179f69f4ad6f94c525c6592a4e7cdf3e2537a19`.
+It was compiled without switching/resetting the checkout and launched by the
+populated compatibility tests. Set `M9R_LEGACY_API_BINARY` and
+`M9R_LEGACY_API_SHA256` to that ignored artifact for the final runner. All246
+integration groups passed without skips, including the actual retained choice,
+native, search and unique paths. A newer artifact was not substituted for the
+pre49 compatibility claim.
 
 ## Recovery and remaining gates
 

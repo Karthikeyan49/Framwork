@@ -37,3 +37,15 @@ Predicates check the full entity-visible universe before caller filtering.
 `QueryVisibleWithPolicy` optimizes only exact closed Native/Defined kernels;
 composition must pass the same live engine used by its guard. Unknown wrappers
 cannot inherit that optimization. See ADR037 for the explicit callback bounds.
+
+R3c (ADR044) adds governed unique-field registration/copy/verification/abort over
+the same physical namespace. NULL may repeat; optional empty strings and exact
+Unicode bytes are real keys. Typed numeric/time conversion matches existing SQL
+semantics. Incomplete declarations block entity writes; READY claims are enforced
+atomically with records and receipts. New non-null keys require closed policy,
+full entity/field read/write scopes and a private transaction-bound SQL permit.
+Scoped/opaque/worker/legacy write paths cannot probe fresh versus duplicate keys.
+Compatible bindings retain installed constraints even if their metadata omits
+the flag. Exact generation/checkpoint reconciliation preserves aborted evidence;
+READY removal, uniqueness-preserving shadow evolution and administration UI are
+not implemented. The R3c report records executed gates and recovery limitations.

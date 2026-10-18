@@ -20,3 +20,11 @@ approval role identifiers. Legacy schemas/compiled bytes/hashes stay unchanged;
 restoration dispatches by stored versions without compiling. Tenant catalog
 existence and capability authority are live runtime checks, never inferred from
 a syntactically valid role reference. See ADR036 and approval_roles_test.go.
+
+R3c adds opt-in schema/IR/compiler1.4 and typed `Field.Unique`. Restore verifies
+the exact version pair, source/field agreement and declaration budgets without
+recompiling. Integrity flags do not alter the physical storage hash; existing
+compatible records retain their identity. Constraint-preserving shadow evolution
+is not implemented, so declared or installed uniqueness fences that operation.
+Schemas1.0–1.3 and their readers/hashes remain unchanged. See ADR044 and
+integrity_test.go; SQL enforcement is a separate runtime contract.
