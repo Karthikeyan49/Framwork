@@ -93,7 +93,10 @@ func runM9RWriteFloor(t *testing.T, unique bool) {
 	rows := make([]data.Record, 32)
 	for i := range rows {
 		if unique {
-			rows[i] = uniqueCreate(t, h, base, token, fmt.Sprintf("initial-%d", i), 200)
+			w := m5Call(h, base+"/commands", token, data.Command{Operation: "create", Values: uniqueValues(fmt.Sprintf("initial-%d", i))})
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &rows[i]) != nil {
+				t.Fatal("unique write fixture create", w.Code)
+			}
 		} else {
 			rows[i] = m5Create(t, h, base, token, "Write floor")
 		}

@@ -62,7 +62,10 @@ content. This report is updated with final evidence after independent review.
 | `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^TestM9RUnique' -v ./tests/integration` first attempt | FAIL build: unused test import; removed. |
 | Same focused command, second attempt and duplicate-build diagnostic | FAIL: three groups passed; duplicate-build status comparison exposed GET returning the general descriptor. This was a real routing defect, not committed backfill progress. Guarding the descriptor route fixes it. |
 | Same focused command after route fix | PASS 19.803s: four populated groups, including independent backfill coverage, conflict/permit cleanup, abort/restart/stale generations, concurrent claims, hidden-value denial and typed key checks. Migration 52 successfully applied in disposable fixtures and is now frozen. Later SQL fixes must be forward-only. |
-| `make test-unique-performance` | RUNNING; result must be recorded before a capacity claim. |
+| `make test-unique-performance` initial | FAIL 240.485s overall: 100k/ten-tenant 1509-byte case PASS (177.17s, 203 checkpoints, build20.478s, fresh p95470.164ms / expected-conflict p95477.845ms). Bound 32-client writes had 3259 successes/zero errors but p95690.646ms above 500ms; fixture also incorrectly included 32 initial create receipts in an updates-only assertion. Both failures are retained. |
+| `./scripts/go.sh run .local/reports/r3c-validator-profile.go` before/after ADR045 | Initial fixed-schema construction100 samples mean25.476ms versus existing-validator parse0.583ms. Immutable compiled-schema sharing reduces construction to0.306ms amortized including first compilation; parse0.719ms. No source/policy/record/catalog cache. |
+| `./scripts/go.sh test -race ./internal/metadata ./internal/compiler ./internal/runtime/data` after ADR045 | PASS: concurrent valid/invalid validation across all five versions, source/hash isolation and independent returned handles; retained compiler/data race tests pass. |
+| `make test-unique-performance` after schema-cache and fixture correction | RUNNING; no final capacity claim yet. |
 | Independent executable source review | NOT RUN yet; required. |
 | Final `make check test build`, `make test-e2e`, `make test-signin-e2e`, retained query/write gates | NOT RUN against final source yet; required. |
 
@@ -70,6 +73,12 @@ A checksum-pinned older API was built from archived commit `197fe85` into ignore
 `.local/reports/r3c-legacy-api`, SHA256
 `bdcbffb3be0e7bda6eb4d29fe4f30b6b9bcc63acbf3a85680e4809b5864ef48c`.
 This artifact has not yet been claimed as executed against the new unique paths.
+
+Initial independent read-only review identified a retry regression: translating
+every SQLSTATE23505 into a business conflict would swallow receipt-key races
+handled by KnownAbort. Translation is now restricted to the exact
+runtime.unique_claims/unique_claim_value constraint; executable concurrency
+reverification is still required. No arbitrary uniqueness violation is retried.
 
 ## Recovery and remaining gates
 

@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	contracts "github.com/Karthikeyan49/Framwork/contracts/jsonschema"
@@ -57,7 +58,21 @@ type noLoader struct{}
 func (noLoader) Load(string) (any, error) {
 	return nil, errors.New("external schema loading is disabled")
 }
+
+// Only fixed, embedded schema graphs are shared. Request/source validation state
+// belongs to each call; tenant metadata and authorization are never cached here.
+var embeddedSchemas = sync.OnceValues(compileEmbeddedSchemas)
+
 func NewValidator() (*Validator, error) {
+	template, err := embeddedSchemas()
+	if err != nil {
+		return nil, err
+	}
+	copy := *template
+	return &copy, nil
+}
+
+func compileEmbeddedSchemas() (*Validator, error) {
 	compile := func(file, version string) (*js.Schema, error) {
 		raw, e := contracts.Files.ReadFile(file)
 		if e != nil {

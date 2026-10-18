@@ -290,7 +290,13 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 	var databaseError *pgconn.PgError
 	if errors.As(err, &databaseError) {
 		switch databaseError.Code {
-		case "23505", "23503", "55P03":
+		case "23505":
+			// Receipt-key races must reach the existing KnownAbort retry path.
+			// Only this integrity constraint is a uniqueness business conflict.
+			if databaseError.SchemaName == "runtime" && databaseError.TableName == "unique_claims" && databaseError.ConstraintName == "unique_claim_value" {
+				return reply{}, &requestRejection{response: denied(409, "record_conflict", "A record already claims this value; reconcile before retrying")}
+			}
+		case "23503", "55P03":
 			// These SQL failures abort the transaction. Roll back the mutation,
 			// receipt, audit and outbox before auditing the defined rejection.
 			return reply{}, &requestRejection{response: denied(409, "record_conflict", "A concurrent change or reference prevents this command; reconcile and reload before retrying")}
