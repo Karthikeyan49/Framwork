@@ -210,3 +210,43 @@ rollback goroutine would not repair the leaked library lock and is not introduce
 
 Final full/build/browser and all eight capacity gates remain pending. Functional
 review does not accept mapped capacity or declare overall M9R complete.
+
+## Final gate execution checkpoint
+
+`make infra-up migrate migration-status` PASS10.460s: local developer database
+now applies all54 migrations. `make reference-up` PASS8.450s verifies declared
+limits/settings before workload checks. `make test-write-performance` PASS71.581s
+(test62.47s):32 clients,60s,5697 successful writes,94.33/s, HTTP p95406.116ms,
+p99515.602ms, zero errors, unchanged500ms p95 gate. This passes its defined floor
+but is slower than the historical R3c run (12547 writes,p95183.117ms). Those runs
+also differ in source/index/reference settings; no single-cause attribution or
+unchanged-throughput claim is made. Keep this scheduling/write-cost tradeoff visible.
+
+`make test-aggregate-performance` against streamed/default3 source FAIL488.664s.
+The raw fixture fails HTTP integer1130.093ms, decimal1482.324, money784.300,
+filtered1013.037 and SHARE1000.764 (all SQL p95 below500ms, zero completed-case
+errors). The implementer interrupts the later mapped rehearsal after this raw
+failure: mapped acceptance is INCOMPLETE. Root runner records exact
+commands/HEAD/exit/time in ignored `.local/reports/r3d-final-results.jsonl` and
+uniquely named per-attempt logs, so failed retries cannot overwrite earlier logs.
+
+ADR057 precedes the controlled app-role planner-cost diagnostic: PASS81.81s and
+PASS91.382s. The second run corrects missing pg_stats visibility using only
+guarded fixture-admin statistics metadata; business EXPLAIN retains app authority.
+ABBA timings and visibility are preserved in ADR058; these are diagnostics,
+not capacity acceptance. ADR058 introduces a provisional reference-v2 cost1.1
+and default4 admission combination without changing hardware or workload gates.
+`make reference-up` PASS8.584s selects that actual connected candidate.
+
+Candidate `make test-aggregate-performance` FAIL133.412s (test125.385s). Raw
+SQL/HTTP p95 ms: count153.414 HTTP (PASS); integer460.289 HTTP (PASS);
+decimal615.982/1141.316 (FAIL); money180.107/457.880 (PASS);
+filtered321.349/1036.406 (FAIL); OWNER142.951/371.507 (PASS);
+SHARE424.073/1197.209 (FAIL). All seven completed cases return exact expected
+results with zero errors. Unchanged SQL500/HTTP750ms limits still fail.
+`-failfast` then prevents the separate expensive mapped test from starting;
+mapped candidate capacity is NOT RUN. The explicit forced-generic diagnostic
+times out with57014; it is neither an API error nor a passing diagnostic.
+Reference-v2/default4 remains unaccepted. R3d remains INCOMPLETE. Full/build,
+browser and other capacity gates on this candidate remain pending; the earlier
+default3/cost4 write PASS does not certify the new profile.
