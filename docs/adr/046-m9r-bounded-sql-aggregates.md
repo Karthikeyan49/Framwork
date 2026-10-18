@@ -62,6 +62,15 @@ these invariants. Guard casts with CASE and return an invalid-input count togeth
 with count/sum; any invalid input rejects the whole result, even if its value
 would cancel another invalid value. Count ignores unrelated projected values.
 
+An independently reviewed refinement materializes one validated numeric scalar
+per row: `CASE WHEN valid THEN COALESCE(number,0::numeric) ELSE NULL END`.
+Optional missing/null becomes numeric zero; required-null and invalid values
+remain SQL NULL sentinels. Compute invalid count as `count(*)-count(n)` and sum
+as `sum(n)`. Reject any invalid count before returning a result. Never coalesce
+outside the guarded CASE, which would erase invalid evidence. This removes
+duplicate validity evaluation and raw JSON materialization without trusting
+stored JSON or changing the cap, field contract or exact result.
+
 Keep exact fixed-point summation in PostgreSQL numeric, then validate/canonicalize
 the single returned scalar using the existing rational/18-place formatting
 semantics. Do not use floating point or the per-field maximum as a sum maximum.

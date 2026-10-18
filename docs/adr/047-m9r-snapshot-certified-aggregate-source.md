@@ -50,6 +50,13 @@ membership revocation semantics are unchanged. Generic/autocommit/wrapped
 executors cannot claim this proof. This is a local query-plan decision, not a
 global bypass or mutable dataset cache.
 
+An explicit primary-key ordering experiment was rejected: it added sorting and
+temporary spill, worsening SQL p95 from612.464ms to1017.584ms. The capped input
+therefore remains unordered; accepted count/sum results are order independent
+and over-cap results are rejected. Never move scope/filter after the cap or
+disable planner methods/RLS to force a pass. Measure the actual generated plan,
+including its fresh-row heap work. ADR048 declares the reference memory profile.
+
 ## Required verification
 
 Independently test scratch namespaces before and after adoption/canonical
