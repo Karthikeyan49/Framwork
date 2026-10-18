@@ -106,7 +106,7 @@ func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, 
 		// the single guarded normalization before both outer aggregate inputs.
 		selection = "SELECT " + normalized + " FROM (" + selection + ") aggregate_values OFFSET 0"
 	}
-	statement := `WITH aggregate_input AS MATERIALIZED (` + selection + `) SELECT ` + result + ` FROM aggregate_input`
+	statement := `WITH aggregate_input AS (` + selection + `) SELECT ` + result + ` FROM aggregate_input`
 	// This closed OLTP kernel avoids LLVM and unsuitable generic plans (ADR053).
 	// Change only the certified transaction, preserving successful composition
 	// and allowing WithRuntime rollback to reset SQL-aborted/cancelled paths.
@@ -178,7 +178,7 @@ func aggregateSource(ctx context.Context, q postgres.Executor, s Scope, a tenant
 	}
 	id := b.bind(dataset) + "::uuid"
 	return `(SELECT src.tenant_id,src.app_id,src.metadata_revision,src.ir_hash,src.entity_id,src.id,src.custom_data,src.row_version,c.owner_user_id,c.owner_team_id
- FROM runtime.records src JOIN runtime.record_identity c ON c.tenant_id=$1 AND c.app_id=$2 AND c.dataset_id=` + id + ` AND c.entity_id=$5 AND c.id=src.id AND NOT c.tombstone
+ FROM runtime.records src JOIN (SELECT id,owner_user_id,owner_team_id FROM runtime.record_identity WHERE tenant_id=$1 AND app_id=$2 AND dataset_id=` + id + ` AND entity_id=$5 AND NOT tombstone OFFSET 0) c ON c.id=src.id
  WHERE src.tenant_id=$1 AND src.app_id=$2 AND src.metadata_revision=$3 AND src.ir_hash=$4 AND src.entity_id=$5) r`, nil
 }
 

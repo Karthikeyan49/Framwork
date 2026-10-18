@@ -614,7 +614,7 @@ type aggregateReviewTimeoutTracer struct {
 }
 
 func (p *aggregateReviewTimeoutTracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
-	if strings.HasPrefix(d.SQL, "WITH aggregate_input AS MATERIALIZED") && p.fired.CompareAndSwap(false, true) {
+	if strings.HasPrefix(d.SQL, "WITH aggregate_input AS") && p.fired.CompareAndSwap(false, true) {
 		// Driver entry precedes sending the actual aggregate. Narrow the owned
 		// fixture transaction budget to force a real PostgreSQL cancellation.
 		if _, err := conn.Exec(ctx, `SELECT set_config('statement_timeout','1',true)`); err != nil {

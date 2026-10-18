@@ -39,7 +39,7 @@ type aggregateTrace struct {
 }
 
 func (p *aggregateTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
-	if !strings.HasPrefix(d.SQL, "WITH aggregate_input AS MATERIALIZED") {
+	if !strings.HasPrefix(d.SQL, "WITH aggregate_input AS") {
 		return ctx
 	}
 	args := d.Args
@@ -330,6 +330,7 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 		if idx.ScannedRows != 100000 || idx.VerifiedRows != 100000 {
 			t.Fatal("aggregate governed numeric coverage")
 		}
+		t.Logf("aggregate_source_index_ready field=%s verified=%d", field, idx.VerifiedRows)
 	}
 	_, err = f.operator.Exec(`ANALYZE runtime.numeric_indexes;ANALYZE runtime.numeric_projections`)
 	scalarSQL(t, err)
@@ -344,6 +345,9 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &d) != nil {
 				t.Fatal("mapped capacity adoption", w.Code)
 			}
+			if n%250 == 0 || d.State == "OPEN" {
+				t.Logf("aggregate_adoption state=%s verified=%d", d.State, d.VerifiedRows)
+			}
 		}
 		if d.State != "OPEN" || d.VerifiedRows != 100000 {
 			t.Fatal("mapped capacity adoption coverage")
@@ -355,6 +359,9 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 		x := shadowPrepare(t, h, owner, path, 1, target, intent)
 		for n := 0; x.State != "READY" && n < 6001; n++ {
 			x = shadowStep(t, h, owner, path, x, "advance")
+			if n%250 == 0 || x.State == "READY" {
+				t.Logf("aggregate_migration state=%s copied=%d verified=%d", x.State, x.CopiedRows, x.VerifiedRows)
+			}
 		}
 		if x.State != "READY" || x.CopiedRows != 100000 || x.VerifiedRows != 100000 || x.SourceManifest != x.TargetManifest {
 			t.Fatal("mapped capacity migration coverage")
@@ -379,6 +386,7 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 			if idx.ScannedRows != 99999 || idx.VerifiedRows != 99999 {
 				t.Fatal("mapped current numeric coverage")
 			}
+			t.Logf("aggregate_current_index_ready field=%s verified=%d", field, idx.VerifiedRows)
 		}
 		if w := m5Call(h, current+"/commands", owner, data.Command{Key: uuid(t), Operation: "patch", ID: id, ExpectedVersion: changedAccess.Version, Values: map[string]any{aggregateBalance: map[string]any{"amount": "101", "currency": "USD"}}}); w.Code != 200 {
 			t.Fatal("mapped capacity current-only certified value change", w.Code)

@@ -79,13 +79,15 @@ belongs to `internal/platform/app`.
   legacy denial and evolution fences. Map only the named claim constraint to409;
   receipt-key collisions must retain known-abort reconciliation. ADR045 shares
   only immutable embedded validation schemas; no tenant or authorization cache.
-  ADR046–055 add opt-in SQL_V1 count/exact numeric sums: closed policy and
+  ADR046–056 add opt-in SQL_V1 count/exact numeric sums: closed policy and
   certified snapshot only, scope/filter before the100000-input cap, strict
   per-input validation and immutable generation/current ACL separation. READY
   projection validity v1 binds raw semantics, value and source version; changing
   those semantics requires a new witness version. Missing/stale/false projections
   deny, legacy NULL validates exact physical-generation JSON. Preserve LOCAL
-  JIT/plan-mode restoration, panic rollback and no-result-on-failure behavior.
+  JIT/plan-mode restoration, ordinary callback-panic rollback and no-result-on-failure
+  behavior. Injected driver/tracer panic is an unresolved R7 recovery limitation;
+  do not claim database/sql can repair its leaked locks.
   API_DB_CONCURRENCY is trusted1..10/default3 with FIFO128; it is not rate limiting.
   Reference capacity needs make reference-up and actual connected profile checks;
   ordinary infra-up resets lightweight defaults. Mapped/retained and all earlier

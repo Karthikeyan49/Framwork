@@ -28,7 +28,7 @@ func (p *aggregateReviewPanicTracer) TraceQueryStart(ctx context.Context, _ *pgx
 	if p.armed.Load() && d.SQL == `SELECT set_config('jit',$1,true),set_config('plan_cache_mode',$2,true)` {
 		p.restores.Add(1)
 	}
-	if p.armed.Load() && strings.HasPrefix(d.SQL, "WITH aggregate_input AS MATERIALIZED") && p.fired.CompareAndSwap(false, true) {
+	if p.armed.Load() && strings.HasPrefix(d.SQL, "WITH aggregate_input AS") && p.fired.CompareAndSwap(false, true) {
 		panic("independent aggregate driver panic")
 	}
 	return ctx

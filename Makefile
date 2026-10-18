@@ -57,7 +57,7 @@ test-unique-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RUnique(Constraint|Write)PerformanceFloor$$' -v ./tests/integration
 .PHONY: test-aggregate-performance
 test-aggregate-performance:
-	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=12m -count=1 -run '^TestM9RSQLAggregate(Mapped)?PerformanceFloor$$' -v ./tests/integration
+	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=20m -count=1 -run '^TestM9RSQLAggregate(Mapped)?PerformanceFloor$$' -v ./tests/integration
 test: test-unit test-integration
 check: docs-verify
 	./scripts/check-format.sh

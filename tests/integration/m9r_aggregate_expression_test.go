@@ -67,7 +67,7 @@ type aggregateExpressionFault struct {
 }
 
 func (f *aggregateExpressionFault) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
-	match := f.mode == "aggregate" && strings.HasPrefix(d.SQL, "WITH aggregate_input AS MATERIALIZED") || f.mode == "restore" && d.SQL == `SELECT set_config('jit',$1,true),set_config('plan_cache_mode',$2,true)`
+	match := f.mode == "aggregate" && strings.HasPrefix(d.SQL, "WITH aggregate_input AS") || f.mode == "restore" && d.SQL == `SELECT set_config('jit',$1,true),set_config('plan_cache_mode',$2,true)`
 	if match && f.armed.Load() && f.fired.CompareAndSwap(false, true) {
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
