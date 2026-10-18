@@ -177,7 +177,18 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if err != nil {
 		return errors.New("metadata schema initialization failed")
 	}
-	accessAPI := access.API{DB: db, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
+	concurrency := c.APIConcurrency
+	if concurrency == 0 {
+		concurrency = 4 // Preserve programmatic zero-valued configuration.
+	}
+	if concurrency < 1 || concurrency > 10 {
+		return errors.New("API database concurrency is outside supported bounds")
+	}
+	admission, err := postgres.NewAdmission(concurrency, 128)
+	if err != nil {
+		return err
+	}
+	accessAPI := access.API{DB: db, Admission: admission, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
 	signIn := signin.API{Development: c.Environment != "production"}
 	var signInStore *cache.Client
 	if c.OIDC != nil {

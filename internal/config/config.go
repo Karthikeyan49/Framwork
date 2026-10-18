@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ var brokerUserPattern = regexp.MustCompile(`^event_[a-z][a-z0-9_]{0,62}$`)
 type Config struct {
 	Environment           string
 	HTTPAddr              string
+	APIConcurrency        int
 	DatabaseURL           string
 	WorkerDatabaseURL     string
 	DispatcherDatabaseURL string
@@ -43,6 +45,11 @@ type Config struct {
 
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), WorkerDatabaseURL: getenv("WORKER_DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
+	var concurrencyErr error
+	c.APIConcurrency, concurrencyErr = strconv.Atoi(value(getenv, "API_DB_CONCURRENCY", "4"))
+	if concurrencyErr != nil || c.APIConcurrency < 1 || c.APIConcurrency > 10 {
+		return c, fmt.Errorf("API_DB_CONCURRENCY must be an integer from 1 to 10")
+	}
 	c.DispatcherDatabaseURL = getenv("DISPATCHER_DATABASE_URL")
 	c.EventRedisURL = getenv("EVENT_REDIS_URL")
 	switch getenv("WORKFLOWS_ENABLED") {

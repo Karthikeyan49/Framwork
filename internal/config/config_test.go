@@ -55,6 +55,28 @@ func TestConfiguration(t *testing.T) {
 	}
 }
 
+func TestAPIDatabaseConcurrencyBounds(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"", 4}, {"1", 1}, {"4", 4}, {"10", 10},
+		{"0", 0}, {"-1", 0}, {"11", 0}, {"four", 0}, {"4.0", 0}, {" 4", 0},
+	} {
+		t.Run("value="+tc.raw, func(t *testing.T) {
+			values := map[string]string{"DATABASE_URL": "postgres://app:private@localhost/db?sslmode=disable", "REDIS_URL": "redis://:private@localhost:6379/0", "API_DB_CONCURRENCY": tc.raw}
+			c, err := Load(func(k string) string { return values[k] })
+			if tc.want == 0 {
+				if err == nil || !strings.Contains(err.Error(), "API_DB_CONCURRENCY") {
+					t.Fatal("invalid concurrency accepted or incorrectly classified")
+				}
+			} else if err != nil || c.APIConcurrency != tc.want {
+				t.Fatal("valid concurrency rejected or changed")
+			}
+		})
+	}
+}
+
 func TestSecondaryWorkerServiceBinding(t *testing.T) {
 	base := map[string]string{"DATABASE_URL": "postgres://app:private@localhost/db?sslmode=disable", "REDIS_URL": "redis://:private@localhost:6379/0", "AUTH_ISSUER": "https://issuer.example", "AUTH_AUDIENCE": "api", "AUTH_JWKS_FILE": "/run/auth/public.json", "WORKER_DATABASE_URL": "postgres://tenant_worker:private@localhost/db?sslmode=disable", "EVENT_REDIS_URL": "redis://event_tenant_worker:private@localhost:6379/0"}
 	c, err := Load(func(k string) string { return base[k] })

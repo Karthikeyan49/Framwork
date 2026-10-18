@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
@@ -289,6 +291,14 @@ func aggregatePreparedExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, 
 }
 
 func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
+	runAggregatePerformance(t, false)
+}
+
+func TestM9RSQLAggregateMappedPerformanceFloor(t *testing.T) {
+	runAggregatePerformance(t, true)
+}
+
+func runAggregatePerformance(t *testing.T, mapped bool) {
 	m8Database(t)
 	requireM9RReferencePostgres(t)
 	f, h, base, owner, app := aggregateFixture(t)
@@ -323,6 +333,54 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 	}
 	_, err = f.operator.Exec(`ANALYZE runtime.numeric_indexes;ANALYZE runtime.numeric_projections`)
 	scalarSQL(t, err)
+	bases := []string{base}
+	if mapped {
+		root := "/v1/tenants/" + f.tenantA + "/preview/" + app
+		witness := m9rDatasetWitness(t, h, root+"/versions/2", owner)
+		d := m9rDatasetCreate(t, h, root+"/datasets", owner, "ADOPT", witness)
+		path := root + "/datasets/" + d.ID
+		for n := 0; d.State != "OPEN" && n < 2001; n++ {
+			w := m5Call(h, path+"/verify", owner, struct{}{})
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &d) != nil {
+				t.Fatal("mapped capacity adoption", w.Code)
+			}
+		}
+		if d.State != "OPEN" || d.VerifiedRows != 100000 {
+			t.Fatal("mapped capacity adoption coverage")
+		}
+		var raw []byte
+		scalarSQL(t, f.operator.QueryRow(`SELECT document FROM control.metadata_versions WHERE tenant_id=$1 AND app_id=$2 AND revision=2`, f.tenantA, app).Scan(&raw))
+		target := shadowSource(t, h, owner, f.tenantA, app, 3, raw, func(doc *metadata.Document) { addCount(doc, "integer", true) })
+		intent := compiler.EvolutionIntent{Backfills: []compiler.FieldBackfill{{EntityID: "entity.contact", FieldID: "field.contact.count", When: "MISSING_OR_NULL", Value: json.RawMessage(`7`)}}}
+		x := shadowPrepare(t, h, owner, path, 1, target, intent)
+		for n := 0; x.State != "READY" && n < 6001; n++ {
+			x = shadowStep(t, h, owner, path, x, "advance")
+		}
+		if x.State != "READY" || x.CopiedRows != 100000 || x.VerifiedRows != 100000 || x.SourceManifest != x.TargetManifest {
+			t.Fatal("mapped capacity migration coverage")
+		}
+		shadowStep(t, h, owner, path, x, "activate")
+		old := path + "/bindings/1/entities/entity.contact"
+		current := path + "/bindings/2/entities/entity.contact"
+		var id, deleted string
+		scalarSQL(t, f.operator.QueryRow(`SELECT md5('1')::uuid::text,md5('100000')::uuid::text`).Scan(&id, &deleted))
+		if w := m5Call(h, current+"/records/"+id+"/access", owner, map[string]any{"operation": "owner", "expected_version": 1, "user_id": f.viewer}); w.Code != 200 {
+			t.Fatal("mapped capacity governed owner change", w.Code)
+		}
+		if w := m5Call(h, current+"/commands", owner, data.Command{Key: uuid(t), Operation: "delete", ID: deleted, ExpectedVersion: 1}); w.Code != 200 {
+			t.Fatal("mapped capacity governed deletion", w.Code)
+		}
+		for _, field := range []string{aggregateUnits, aggregateRatio, aggregateBalance} {
+			idx := m9rIndexReady(t, h, current+"/indexes/"+field, owner)
+			if idx.ScannedRows != 99999 || idx.VerifiedRows != 99999 {
+				t.Fatal("mapped current numeric coverage")
+			}
+		}
+		_, err = f.operator.Exec(`ANALYZE runtime.records;ANALYZE runtime.record_identity;ANALYZE runtime.identity_shares;ANALYZE runtime.numeric_projections;ANALYZE runtime.numeric_indexes;ANALYZE runtime.dataset_generations;ANALYZE runtime.datasets`)
+		scalarSQL(t, err)
+		bases = []string{current, old}
+		t.Log("aggregate_mapped_reference real100k adoption/evolution; current and retained physical generations; current owner change and tombstone; no manual VACUUM")
+	}
 	t.Logf("aggregate_reference hot_rows=100000 tenants=10 other_rows_each=10000 avg_record_bytes=%d warmup=3 samples=100 clients=10", width)
 	obs := &aggregateTrace{}
 	cfg, err := pgx.ParseConfig(os.Getenv("DATABASE_URL"))
@@ -342,10 +400,8 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 	}
 	original := f.db
 	f.db = traced
-	admission, err := postgres.NewAdmission(4, 128)
-	scalarSQL(t, err)
-	h = r5Handler(t, f, audit.Postgres{}, admission)
-	t.Log("aggregate_reference_experiment api_admission=4 offered_http_clients=10; default driver mode and complete HTTP latency")
+	h = r5Handler(t, f, audit.Postgres{})
+	t.Log("aggregate_reference api_admission=default4 offered_http_clients=10; default driver mode and complete HTTP latency")
 	f.db = original
 	server := httptest.NewServer(h)
 	defer server.Close()
@@ -366,120 +422,127 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 		{"owner_money", aggregateBalance, "OWNER", aggregateQuery("sum", aggregateBalance), func(i int) bool { return i%2 == 0 }},
 		{"share_count", "", "SHARE", aggregateQuery("count", ""), func(i int) bool { return i%5 == 0 }},
 	}
-	for _, tc := range cases {
-		token := owner
-		if tc.role != "" {
-			d := r5Definition("finance_manager", app, policy.DataScope{Kind: tc.role})
-			version = r5Publish(t, h, "/v1/tenants/"+f.tenantA+"/roles", owner, version, d, true, uuid(t)).Version
-			if version == 1 {
-				r5Assign(t, h, "/v1/tenants/"+f.tenantA, owner, f.viewer, "finance_manager", 200)
-			}
-			token = viewer
-		}
-		if tc.name == "filtered_money" {
-			tc.query.Filter = &data.Filter{Op: "eq", Field: "field.contact.status", Value: json.RawMessage(`"inactive"`)}
-		}
-		want := data.AggregateResult{}
-		sum := new(big.Rat)
-		for i := 1; i <= 100000; i++ {
-			if !tc.allow(i) {
-				continue
-			}
-			want.Count++
-			value := "0"
-			switch tc.field {
-			case aggregateUnits:
-				value = fmt.Sprint(i)
-			case aggregateRatio:
-				if i%17 != 0 {
-					value = fmt.Sprintf("%d.000000000000000001", i%5)
+	for branch, queryBase := range bases {
+		for _, tc := range cases {
+			t.Logf("aggregate_case mapped=%t branch=%d case=%s", mapped, branch, tc.name)
+			token := owner
+			if tc.role != "" {
+				d := r5Definition("finance_manager", app, policy.DataScope{Kind: tc.role})
+				version = r5Publish(t, h, "/v1/tenants/"+f.tenantA+"/roles", owner, version, d, true, uuid(t)).Version
+				if version == 1 {
+					r5Assign(t, h, "/v1/tenants/"+f.tenantA, owner, f.viewer, "finance_manager", 200)
 				}
-			case aggregateBalance:
-				value = fmt.Sprint(i % 97)
+				token = viewer
 			}
-			n, ok := new(big.Rat).SetString(value)
-			if !ok {
-				t.Fatal("aggregate reference oracle")
+			if tc.name == "filtered_money" {
+				tc.query.Filter = &data.Filter{Op: "eq", Field: "field.contact.status", Value: json.RawMessage(`"inactive"`)}
 			}
-			sum.Add(sum, n)
-		}
-		if tc.field != "" {
-			want.Sum = strings.TrimRight(strings.TrimRight(sum.FloatString(18), "0"), ".")
-			if want.Sum == "" {
-				want.Sum = "0"
+			want := data.AggregateResult{}
+			sum := new(big.Rat)
+			for i := 1; i <= 100000; i++ {
+				allowed := tc.allow(i)
+				if mapped && tc.role == "OWNER" && i == 1 {
+					allowed = true
+				}
+				if !allowed || mapped && i == 100000 {
+					continue
+				}
+				want.Count++
+				value := "0"
+				switch tc.field {
+				case aggregateUnits:
+					value = fmt.Sprint(i)
+				case aggregateRatio:
+					if i%17 != 0 {
+						value = fmt.Sprintf("%d.000000000000000001", i%5)
+					}
+				case aggregateBalance:
+					value = fmt.Sprint(i % 97)
+				}
+				n, ok := new(big.Rat).SetString(value)
+				if !ok {
+					t.Fatal("aggregate reference oracle")
+				}
+				sum.Add(sum, n)
 			}
-		}
-		body, _ := json.Marshal(tc.query)
-		call := func() (float64, bool) {
-			r, _ := http.NewRequest("POST", server.URL+base+"/query", bytes.NewReader(body))
-			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set("Authorization", "Bearer "+token)
-			start := time.Now()
-			response, err := client.Do(r)
-			if err != nil {
-				return 0, false
+			if tc.field != "" {
+				want.Sum = strings.TrimRight(strings.TrimRight(sum.FloatString(18), "0"), ".")
+				if want.Sum == "" {
+					want.Sum = "0"
+				}
 			}
-			defer response.Body.Close()
-			var page data.Page
-			valid := response.StatusCode == 200 && json.NewDecoder(response.Body).Decode(&page) == nil && page.Aggregate != nil && *page.Aggregate == want && len(page.Records) == 0 && page.Next == ""
-			return float64(time.Since(start).Microseconds()) / 1000, valid
-		}
-		for range 3 {
-			if _, ok := call(); !ok {
+			body, _ := json.Marshal(tc.query)
+			call := func() (float64, bool) {
+				r, _ := http.NewRequest("POST", server.URL+queryBase+"/query", bytes.NewReader(body))
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("Authorization", "Bearer "+token)
+				start := time.Now()
+				response, err := client.Do(r)
+				if err != nil {
+					return 0, false
+				}
+				defer response.Body.Close()
+				var page data.Page
+				valid := response.StatusCode == 200 && json.NewDecoder(response.Body).Decode(&page) == nil && page.Aggregate != nil && *page.Aggregate == want && len(page.Records) == 0 && page.Next == ""
+				return float64(time.Since(start).Microseconds()) / 1000, valid
+			}
+			for range 3 {
+				if _, ok := call(); !ok {
+					obs.mu.Lock()
+					state := obs.state
+					obs.mu.Unlock()
+					t.Fatal("aggregate warmup failed", tc.name, "SQLSTATE", state)
+				}
+			}
+			aggregateExplain(t, f, obs, token)
+			if tc.name == "owner_money" || tc.name == "filtered_money" {
+				aggregatePreparedExplain(t, f, obs, token)
+			}
+			obs.mu.Lock()
+			obs.times = nil
+			obs.mu.Unlock()
+			latency := make([]float64, 100)
+			valid := make([]bool, 100)
+			jobs := make(chan int)
+			var group sync.WaitGroup
+			begin := time.Now()
+			for range 10 {
+				group.Go(func() {
+					for i := range jobs {
+						latency[i], valid[i] = call()
+					}
+				})
+			}
+			for i := range 100 {
+				jobs <- i
+			}
+			close(jobs)
+			group.Wait()
+			unexpected := 0
+			for _, ok := range valid {
+				if !ok {
+					unexpected++
+				}
+			}
+			if unexpected != 0 {
 				obs.mu.Lock()
 				state := obs.state
 				obs.mu.Unlock()
-				t.Fatal("aggregate warmup failed", tc.name, "SQLSTATE", state)
+				t.Errorf("aggregate request failure/oracle mismatch case=%s errors=%d SQLSTATE=%s", tc.name, unexpected, state)
+				continue // Remains FAIL; collect independent remaining cases honestly.
 			}
-		}
-		aggregateExplain(t, f, obs, token)
-		if tc.name == "owner_money" || tc.name == "filtered_money" {
-			aggregatePreparedExplain(t, f, obs, token)
-		}
-		obs.mu.Lock()
-		obs.times = nil
-		obs.mu.Unlock()
-		latency := make([]float64, 100)
-		valid := make([]bool, 100)
-		jobs := make(chan int)
-		var group sync.WaitGroup
-		begin := time.Now()
-		for range 10 {
-			group.Go(func() {
-				for i := range jobs {
-					latency[i], valid[i] = call()
-				}
-			})
-		}
-		for i := range 100 {
-			jobs <- i
-		}
-		close(jobs)
-		group.Wait()
-		unexpected := 0
-		for _, ok := range valid {
-			if !ok {
-				unexpected++
-			}
-		}
-		if unexpected != 0 {
 			obs.mu.Lock()
-			state := obs.state
+			sqlTimes := append([]float64(nil), obs.times...)
 			obs.mu.Unlock()
-			t.Errorf("aggregate request failure/oracle mismatch case=%s errors=%d SQLSTATE=%s", tc.name, unexpected, state)
-			continue // Remains FAIL; collect independent remaining cases honestly.
-		}
-		obs.mu.Lock()
-		sqlTimes := append([]float64(nil), obs.times...)
-		obs.mu.Unlock()
-		if len(sqlTimes) != 100 {
-			t.Fatal("aggregate SQL sample count")
-		}
-		elapsed := time.Since(begin)
-		sqlP95 := reportLatency(t, "aggregate_"+tc.name+"_sql10", sqlTimes, elapsed)
-		httpP95 := reportLatency(t, "aggregate_"+tc.name+"_http10", latency, elapsed)
-		if sqlP95 > 500 || httpP95 > 750 {
-			t.Error("aggregate unchanged SQL500ms/HTTP750ms floor exceeded", tc.name)
+			if len(sqlTimes) != 100 {
+				t.Fatal("aggregate SQL sample count")
+			}
+			elapsed := time.Since(begin)
+			sqlP95 := reportLatency(t, "aggregate_"+tc.name+"_sql10", sqlTimes, elapsed)
+			httpP95 := reportLatency(t, "aggregate_"+tc.name+"_http10", latency, elapsed)
+			if sqlP95 > 500 || httpP95 > 750 {
+				t.Error("aggregate unchanged SQL500ms/HTTP750ms floor exceeded", tc.name)
+			}
 		}
 	}
 }

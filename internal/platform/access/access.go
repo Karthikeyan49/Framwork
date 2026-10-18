@@ -52,8 +52,8 @@ func (a API) catalog() compiler.Catalog {
 func (a API) Register(mux *http.ServeMux) {
 	if a.Admission == nil && a.DB != nil {
 		limit := a.DB.Stats().MaxOpenConnections
-		if limit < 1 {
-			limit = 10
+		if limit < 1 || limit > 4 {
+			limit = 4
 		}
 		a.Admission, _ = postgres.NewAdmission(limit, 128)
 	}

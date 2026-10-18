@@ -42,6 +42,26 @@ Final checks pass246 integration groups without skips,97 frontend tests,
 9 application plus7 sign-in browser cases and all seven capacity gates.
 Uniqueness administration UI/removal/evolution, R3d aggregates and the remaining
 R5–R7 product/authority/operations work remain open; M9R is PARTIAL.
+
+[R3d SQL aggregates](docs/migration/M9R_R3D_IMPLEMENTATION_REPORT.md) are being
+verified. Opt-in `aggregate.execution: "SQL_V1"` supports exact count and
+integer/decimal/fixed-currency sums over at most 100,000 authorized matching
+inputs; omitted execution retains the legacy bounded behavior. Unsupported
+shapes and invalid inputs fail explicitly. A READY governed numeric index is
+needed for the measured full-set sum workload. No aggregate/report UI or general
+query capacity is claimed. Independent and mapped capacity acceptance is pending.
+
+`API_DB_CONCURRENCY` bounds access API database transactions (integer 1..10,
+default 4), with the existing 128-place FIFO queue. The pool remains 10 and all
+queue/statement/transaction deadlines remain. This does not limit health probes,
+Redis sign-in or other processes and does not complete rate limiting. Capacity
+checks require `make reference-up` after ordinary infrastructure startup: the
+explicit PostgreSQL profile uses four CPUs, 8GiB/no swap, 2GiB shared buffers,
+6GiB effective cache estimate and 4MiB work memory. API and Docker share the cloud
+parent's four CPUs. Ordinary `make infra-up` restores lightweight defaults;
+do not run it between selecting the reference profile and performance checks.
+`make test-aggregate-performance` exercises unmapped and current/retained mapped
+generations; its larger total suite timeout does not increase query budgets.
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,
