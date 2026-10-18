@@ -95,7 +95,9 @@ func Ready(ctx context.Context, db *sql.DB, expected string) error {
  AND has_table_privilege('runtime.tool_invocations','SELECT') AND NOT has_table_privilege('runtime.tool_invocations','INSERT,UPDATE,DELETE,TRUNCATE') AND NOT has_table_privilege('runtime.tool_attempts','INSERT,UPDATE,DELETE,TRUNCATE')
  AND has_function_privilege('control.tool_begin(text,text,text,text,text,text,text,boolean)','EXECUTE')=($1='framework_worker')
  AND has_function_privilege('control.tool_finish(text,integer,text,text,boolean,integer,boolean,bytea)','EXECUTE')=($1='framework_worker')
- AND has_function_privilege('control.tool_reconcile(uuid,uuid,text,boolean)','EXECUTE')=($1='framework_app')`, expected).Scan(&valid); e != nil || !valid {
+ AND has_function_privilege('control.tool_reconcile(uuid,uuid,text,boolean)','EXECUTE')=($1='framework_app')
+ AND EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='runtime.workflow_instances'::regclass AND tgname='guard_worker_transition' AND tgenabled='O' AND tgfoid='runtime.guard_worker_transition()'::regprocedure)
+ AND EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='runtime.workflow_receipts'::regclass AND tgname='guard_tool_receipt' AND tgenabled='O' AND tgfoid='runtime.guard_tool_receipt()'::regprocedure)`, expected).Scan(&valid); e != nil || !valid {
 		return errors.New("tool ledger contract unavailable")
 	}
 	if e = db.QueryRowContext(ctx, `SELECT NOT has_column_privilege('runtime.workflow_bindings','actor_id','INSERT') AND NOT has_column_privilege('runtime.workflow_history','actor_id','INSERT') AND NOT has_column_privilege('runtime.workflow_signals','actor_id','INSERT') AND NOT has_column_privilege('runtime.workflow_instances','deadline','UPDATE') AND NOT has_table_privilege('control.workflow_attempts','SELECT')`).Scan(&valid); e != nil || !valid {

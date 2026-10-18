@@ -121,3 +121,64 @@ mid-flight is implemented (`tools.invoke` in the SQL decision) but not covered b
 integration test yet. Migration 45 is additive and forward-only. Recover by removing a tool
 from the catalog (pinned plans fail closed without I/O) or revoking
 `tools.invoke`; never delete ledger/attempt evidence.
+
+## Amendments
+
+Date: 2026-10-16/17. Trigger: the independent M10 review
+([M10_INDEPENDENT_REVIEW.md](../verification/M10_INDEPENDENT_REVIEW.md))
+findings M10R-01..05 and candidate C6. Each amendment is enforced by migration
+00050 (additive, forward-only; 45-48 unchanged) and has a regression test in
+`tests/integration/m10r_review_fixes_test.go` that failed on the reviewed code.
+
+- **A1 (M10R-02, amends #2 and #7): the database owns the approval gate.** Plans
+  with tools compile to DSL **2.2.0**: each tool state pins `tool_contract`
+  (side effect, approval, idempotency and retry mode, replay window, lookup
+  settle interval, timeout) derived from the definition whose `tool_hash` is
+  pinned beside it; the runtime fails closed if the catalog definition and the
+  pin disagree. DSL 2.1.0 is restore-only: stored plans restore byte-for-byte
+  and still match their source, and the database treats a 2.1.0 tool state as
+  approval-required whenever it is structurally gated by an approval state.
+  `control.tool_begin` ignores its `needs_approval` argument (kept for the
+  signature) and derives the requirement from the pinned plan, and derives the
+  step request witness from the binding (a forged `request_hash` is refused).
+  The worker's column UPDATE grant on its leased instance is bound by a trigger
+  to the pinned plan: a worker-made state change must follow an `always`
+  transition of a start/activity/timer state, and leaving an activity needs its
+  receipt; approval transitions remain API-only. A worker tool receipt must equal
+  the settled ledger (request hash, response hash, pinned activity). Residual: a
+  compromised worker inside an approved lease can still lie about a provider
+  response (unchanged ADR024 residual).
+- **A2 (M10R-01, amends #6): unknown outcomes are durable.** `tool_invocations`
+  gains `unknown_outstanding` (NULL for pre-00050 rows, derived conservatively
+  from retained attempts and materialized by the next port). The invocation
+  state describes the write: a failed, rejected or rate-limited lookup, or any
+  non-success attempt while an outcome is unknown, leaves it UNKNOWN. While it
+  holds, SEND is admitted only for (a) a fresh send after lookup-proved absence
+  or operator NOT_APPLIED, (b) an in-window keyed resend (NATIVE_KEY or
+  DEDUPE_WINDOW with SAFE_RETRY) whose whole send deadline ends inside the replay
+  window measured from the first send (C6 margin), or (c) a NONE/READ safe retry;
+  otherwise `TL003` and RECONCILE. A failed lookup is retried as a lookup. Stored
+  2.1.0 plans never resend after an unknown outcome.
+- **A3 (M10R-03/M10R-04, amends #5 and #6): every outcome follows the retry
+  policy and unknowns never die.** Each fresh non-success outcome passes through
+  the failure path (attempt count, configured backoff, `max_attempts`); the
+  20-attempt ledger budget is a settled failure (`TL004`). The ledger is read
+  before the catalog fail-closed check, and any terminal failure of a tool step
+  while an unknown outcome is outstanding (permanent, budget, abandon at the
+  last attempt, catalog change, stale approval) parks in RECONCILE, never DEAD.
+  Consequence: `max_attempts` also bounds lookups; `max_attempts: 1` parks an
+  unknown write in RECONCILE without a lookup.
+- **A4 (M10R-05, amends #6): proof of absence needs a settle interval.** A
+  LOOKUP_BY_REFERENCE tool may declare `connector.lookup.settle_ms`
+  (0..600000; omitted when zero, so existing hashes and pins are unchanged;
+  part of the hash when set). A lookup 404 proves absence only if the pinned
+  contract declares it and the lookup started at or after the latest send's
+  start + timeout + settle; the runtime schedules the lookup after that point.
+  Without a declaration a lookup can find an effect but never prove absence.
+
+Not amended (still open): C7 (`control.tool_reconcile` admits any non-viewer
+member while Go policy restricts `workflows.reconcile` to owner/admin), C8
+(reconcile APPLIED output is not validated against the declared typed output),
+C9 (wording of #4 for `tool_finish`), and `Definition.Hash` covering the tenant
+allowlist (an allowlist edit re-pins every tenant; with A3 an in-flight unknown
+send now parks in RECONCILE instead of DEAD).

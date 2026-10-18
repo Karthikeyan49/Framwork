@@ -51,7 +51,8 @@ func toolInputCompatible(input tools.Field, f Field) bool {
 // toolActivities resolves every 1.3.0 tool activity in the trusted catalog,
 // type-checks its input mapping against the workflow entity and enforces
 // approval dominance. Tenant allowlists are checked at execution, where the
-// tenant is known. The returned resolver yields the pinned definition hash.
+// tenant is known. The returned resolver yields the pinned definition hash and
+// its database-enforced contract.
 func toolActivities(w *metadata.Workflow, path string, entity Entity, catalog tools.Catalog, add func(string, string, string)) (workflow.ToolResolver, bool) {
 	fields := map[string]Field{}
 	for _, f := range entity.Fields {
@@ -64,7 +65,7 @@ func toolActivities(w *metadata.Workflow, path string, entity Entity, catalog to
 	}
 	states := append([]metadata.WorkflowState(nil), w.States...)
 	sort.SliceStable(states, func(i, j int) bool { return states[i].ID < states[j].ID })
-	pins := map[string]string{}
+	pins := map[string]workflow.ToolResolution{}
 	for _, s := range states {
 		a := s.Activity
 		if a == nil || a.ToolRef == "" {
@@ -101,11 +102,11 @@ func toolActivities(w *metadata.Workflow, path string, entity Entity, catalog to
 		if definition.Approval == "REQUIRED" && !approvalDominates(w, s.ID) {
 			report(at, "tool_requires_approval", "Every path to an approval-required tool must pass an approval state's approved transition")
 		}
-		pins[a.ToolRef+"@"+a.Version] = definition.Hash()
+		pins[a.ToolRef+"@"+a.Version] = workflow.ToolResolution{Hash: definition.Hash(), Contract: workflow.ToolContractOf(definition)}
 	}
-	return func(ref, version string) (string, bool) {
-		hash, ok := pins[ref+"@"+version]
-		return hash, ok
+	return func(ref, version string) (workflow.ToolResolution, bool) {
+		pin, ok := pins[ref+"@"+version]
+		return pin, ok
 	}, failed
 }
 

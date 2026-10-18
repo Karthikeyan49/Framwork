@@ -130,7 +130,7 @@ type RuntimeComponentsDoc struct {
 func runtimeComponents(supported []string) RuntimeComponentsDoc {
 	return RuntimeComponentsDoc{
 		StorageContract: compiler.StorageContractVersion, Evolution: compiler.EvolutionVersion, SupportedIR: append([]string{}, supported...),
-		WorkflowDSL: []string{workflow.Version, workflow.ToolDSLVersion}, RuleDSL: rules.Version, ToolCatalog: tools.CatalogVersion,
+		WorkflowDSL: []string{workflow.Version, workflow.LegacyToolDSLVersion, workflow.ToolDSLVersion}, RuleDSL: rules.Version, ToolCatalog: tools.CatalogVersion,
 		Diff: compiler.DiffVersion, RiskPolicies: risk.Versions(), Verifier: verification.VerifierVersion, AcceptanceVocab: intent.VocabularyVersion,
 		RequirementPolicy: intent.RequirementPolicyVersion, RequirementSetSpec: intent.RequirementSetVersion, AcceptanceSpec: intent.AcceptanceSpecVersion,
 	}
