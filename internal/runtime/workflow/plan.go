@@ -15,13 +15,21 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
 const Version = "2.0.0"
 
-// ToolDSLVersion marks plans with at least one ADR036 tool activity. Plans
-// without tools keep Version and byte-identical encoding.
-const ToolDSLVersion = "2.1.0"
+// ToolDSLVersion marks plans with at least one ADR036 tool activity whose
+// state pins the tool contract (approval requirement and delivery capability)
+// so the database can enforce it without the catalog (ADR036 Amendment A1).
+// Plans without tools keep Version and byte-identical encoding.
+const ToolDSLVersion = "2.2.0"
+
+// LegacyToolDSLVersion is the M10 tool DSL without a pinned contract. Stored
+// plans keep restoring byte-for-byte; the compiler never emits it again and
+// the database derives conservative rules for it (ADR036 Amendment A1).
+const LegacyToolDSLVersion = "2.1.0"
 const ActivityVersion = "1.0.0"
 const MaxToolInputs = 32
 const MaxPlanBytes = 1 << 20
@@ -54,7 +62,34 @@ type State struct {
 	// Runtime resolves only Lookup(ref, version, ToolHash); a changed or removed
 	// definition never replaces the pin.
 	ToolHash string `json:"tool_hash,omitempty"`
+	// ToolContract pins the approval requirement and delivery capability of the
+	// pinned definition (DSL ToolDSLVersion only). The database derives the
+	// approval gate, resend admission and proof-of-absence rules from it.
+	ToolContract *ToolContract `json:"tool_contract,omitempty"`
 }
+
+// ToolContract is the database-enforced subset of a trusted tool definition.
+// It is derived from the definition whose hash is pinned beside it.
+type ToolContract struct {
+	SideEffect      string `json:"side_effect"`
+	Approval        string `json:"approval"`
+	IdempotencyMode string `json:"idempotency_mode"`
+	RetryMode       string `json:"retry_mode"`
+	ReplayWindowMS  int64  `json:"replay_window_ms"`
+	SettleMS        int    `json:"settle_ms"`
+	TimeoutMS       int    `json:"timeout_ms"`
+}
+
+func validToolContract(c ToolContract) bool {
+	keyed := c.IdempotencyMode == "NATIVE_KEY" || c.IdempotencyMode == "DEDUPE_WINDOW"
+	return includes([]string{"NONE", "READ", "WRITE"}, c.SideEffect) && includes([]string{"NONE", "REQUIRED"}, c.Approval) && (c.SideEffect != "WRITE" || c.Approval == "REQUIRED") &&
+		includes([]string{"NATIVE_KEY", "LOOKUP_BY_REFERENCE", "DEDUPE_WINDOW", "NONE"}, c.IdempotencyMode) && includes([]string{"NEVER", "SAFE_RETRY", "RECONCILE_FIRST"}, c.RetryMode) &&
+		c.ReplayWindowMS >= 0 && c.ReplayWindowMS <= 7*86400000 && keyed == (c.ReplayWindowMS > 0) &&
+		c.SettleMS >= 0 && c.SettleMS <= MaxSettleMS && (c.SettleMS == 0 || c.IdempotencyMode == "LOOKUP_BY_REFERENCE") && c.TimeoutMS >= 1 && c.TimeoutMS <= 2000
+}
+
+// MaxSettleMS bounds a declared provider settle interval (ADR036 Amendment A4).
+const MaxSettleMS = tools.MaxSettleMS
 
 // IsTool reports an ADR036 tool activity state.
 func (s State) IsTool() bool {
@@ -134,7 +169,13 @@ func (p Program) FieldIDs() []string {
 // ToolResolver returns the canonical catalog hash for a tool activity that the
 // trusted compiler has already resolved and type-checked. This package never
 // reads a tool catalog; a nil resolver admits no tool activity.
-type ToolResolver func(ref, version string) (hash string, ok bool)
+type ToolResolver func(ref, version string) (ToolResolution, bool)
+
+// ToolResolution is the pin of one resolved tool activity.
+type ToolResolution struct {
+	Hash     string
+	Contract ToolContract
+}
 
 func CompileDefinition(id string, w metadata.Workflow, fields []rules.Field, capabilities []string) (Program, error) {
 	return CompileDefinitionWithTools(id, w, fields, capabilities, nil)
@@ -157,11 +198,12 @@ func CompileDefinitionWithTools(id string, w metadata.Workflow, fields []rules.F
 			if tools == nil {
 				return Program{}, ErrInvalid
 			}
-			hash, ok := tools(x.Activity.ToolRef, x.Activity.Version)
-			if !ok {
+			pin, ok := tools(x.Activity.ToolRef, x.Activity.Version)
+			if !ok || !validToolContract(pin.Contract) {
 				return Program{}, ErrInvalid
 			}
-			x.ToolHash = hash
+			contract := pin.Contract
+			x.ToolHash, x.ToolContract = pin.Hash, &contract
 			hasTools = true
 		} else if x.Activity != nil {
 			if !includes(capabilities, x.Activity.LocalRef) || (x.Activity.CompensationLocalRef != "" && !includes(capabilities, x.Activity.CompensationLocalRef)) {
@@ -222,7 +264,8 @@ func Restore(raw []byte, hash string) (Program, error) {
 	return Program{append([]byte(nil), raw...), hash}, nil
 }
 func validatePlan(p Plan) error {
-	withTools := p.DSLVersion == ToolDSLVersion
+	pinned := p.DSLVersion == ToolDSLVersion
+	withTools := pinned || p.DSLVersion == LegacyToolDSLVersion
 	if p.DSLVersion != Version && !withTools || !validID(p.ID, "workflow") || !validID(p.EntityID, "entity") || !versionPattern.MatchString(p.Version) || p.TimeoutMS < 1 || p.TimeoutMS > 604800000 || !includes([]string{"manual", "record.created", "record.updated"}, p.Trigger) || len(p.States) < 2 || len(p.States) > 100 {
 		return ErrInvalid
 	}
@@ -250,7 +293,7 @@ func validatePlan(p Plan) error {
 		if s.TimerMS < 0 || s.TimerMS > 86400000 || s.ApprovalTimeoutMS < 0 || s.ApprovalTimeoutMS > p.TimeoutMS {
 			return ErrInvalid
 		}
-		if s.ToolHash != "" && !s.IsTool() {
+		if s.ToolHash != "" && !s.IsTool() || s.ToolContract != nil && (!s.IsTool() || !pinned) || pinned && s.IsTool() && (s.ToolContract == nil || !validToolContract(*s.ToolContract)) {
 			return ErrInvalid
 		}
 		if s.Activity != nil {
@@ -260,7 +303,7 @@ func validatePlan(p Plan) error {
 				return ErrInvalid
 			}
 			if a.ToolRef != "" {
-				// Only DSL 2.1.0 admits tools. A tool has no local ref, timeout
+				// Only the tool DSLs admit tools. A tool has no local ref, timeout
 				// (the trusted catalog bounds it) or compensation (deferred, ADR036).
 				if !withTools || len(a.ToolRef) > 160 || !toolRefPattern.MatchString(a.ToolRef) || !versionPattern.MatchString(a.Version) || !toolHashPattern.MatchString(s.ToolHash) || a.LocalRef != "" || a.CompensationLocalRef != "" || a.CompensationToolRef != "" || a.TimeoutMS != 0 || !validToolInputs(a.Inputs, declared) {
 					return ErrInvalid
@@ -415,6 +458,10 @@ func (p Program) MatchesDefinition(id string, w metadata.Workflow, fields []rule
 				return false
 			}
 			dsl = ToolDSLVersion
+			if x.DSLVersion == LegacyToolDSLVersion {
+				// A stored pre-amendment plan still matches its source.
+				dsl = LegacyToolDSLVersion
+			}
 		}
 	}
 	fs, _, e := rules.CanonicalInputs(fields, nil)

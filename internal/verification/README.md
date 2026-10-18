@@ -34,11 +34,16 @@ requirement, otherwise `OMITTED_REQUIREMENT`.
 
 Honest limits:
 
-- Examples, not proofs. A bypass that no probe or case tries (a "vip" skip) is
-  invisible; the independent acceptance author is expected to try it (see the
-  tests). Probes only vary the threshold field; other fields come from the
-  requirement `context` and case `given` values, and an absent optional field
-  reads as null.
+- Examples, not proofs. The mechanical floor is the derived boundary probes plus, for
+  every string, enum, boolean and integer field the requirement does not pin,
+  repeated probes with the values the route compares against and one value that
+  matches none (at most 8 fields and 6 values per field; worlds that fail or cannot
+  be evaluated are skipped). It catches exemptions and extra branches on unpinned
+  fields and caps on huge orders, and an approval whose rejection still completes.
+  It does not mine decimal, money, date or datetime fields, and a bypass that
+  lives only in a world the requirement pins away (for example `note = "vip"` when
+  the requirement pins `note = "regular"`) is outside what the requirement
+  promises; the independent acceptance author is expected to add that case.
 - The report is replayable evidence derived from stored bytes, not an attestation
   by an independent credential. Approval and activation (M13) must recompute it.
 - Observed approver roles must EQUAL the required set (a deliberate tightening of

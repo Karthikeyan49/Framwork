@@ -20,9 +20,13 @@ const (
 const (
 	ReasonType     = "TYPE"
 	ReasonCurrency = "CURRENCY"
-	ReasonEnum     = "ENUM"
-	ReasonRequired = "REQUIRED"
-	ReasonRange    = "RANGE"
+	// ReasonRejectionCompletes is only ever an OBSERVED reason (never accepted in a
+	// human expectation): the workflow reaches an approval state, but a rejection
+	// still ends in a successful completion, so the approval decides nothing.
+	ReasonRejectionCompletes = "REJECTION_COMPLETES"
+	ReasonEnum               = "ENUM"
+	ReasonRequired           = "REQUIRED"
+	ReasonRange              = "RANGE"
 )
 
 // Expectation is what a case, probe or oracle says must happen.
@@ -53,6 +57,9 @@ func (e Expectation) String() string {
 	case OutcomeApprovalRequired:
 		return fmt.Sprintf("%s%v", e.Outcome, e.Roles)
 	case OutcomeInputRejected:
+		return e.Outcome + "(" + e.Reason + ")"
+	}
+	if e.Reason != "" {
 		return e.Outcome + "(" + e.Reason + ")"
 	}
 	return e.Outcome
@@ -158,6 +165,21 @@ func DeriveProbes(requirementID string, t ApprovalThreshold) ([]Probe, error) {
 		{"zero", amountText(new(big.Rat), minor), t.Currency},
 		{"negative", amountText(new(big.Rat).Neg(unit), minor), t.Currency},
 		{"currency", amountText(limit, minor), wrong},
+	}
+	// A cap, an exemption window or a second threshold far from the boundary changes
+	// the answer there and nowhere near it, so probe every decade up to the largest
+	// valid amount on both sides, and multiples of the threshold. Probes are a
+	// mechanical floor, not a proof: human cases must cover special regions.
+	for _, exponent := range []int{3, 6, 9, 12, 15, 18} {
+		decade := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(exponent)), nil))
+		specs = append(specs,
+			spec{fmt.Sprintf("plus1e%d", exponent), amountText(decade, minor), t.Currency},
+			spec{fmt.Sprintf("minus1e%d", exponent), amountText(new(big.Rat).Neg(decade), minor), t.Currency})
+	}
+	if limit.Sign() > 0 {
+		for _, multiple := range []int64{10, 1000} {
+			specs = append(specs, spec{fmt.Sprintf("x%d", multiple), amountText(new(big.Rat).Mul(limit, new(big.Rat).SetInt64(multiple)), minor), t.Currency})
+		}
 	}
 	seen := map[string]bool{}
 	probes := []Probe{}

@@ -18,7 +18,9 @@ keys, unknown fields, trailing data and unsafe definitions:
 - side effect `NONE|READ|WRITE` only; `WRITE` needs `approval: REQUIRED` and a
   non-GET method; financial and destructive tools wait for M13;
 - delivery passes `Delivery.Validate`; `NATIVE_KEY`/`DEDUPE_WINDOW` declare a
-  replay window, `LOOKUP_BY_REFERENCE` declares a `{key}` lookup path;
+  replay window, `LOOKUP_BY_REFERENCE` declares a `{key}` lookup path and may
+  declare `lookup.settle_ms` (0..600000, omitted when zero): only with it can a
+  404 lookup prove absence (ADR036 Amendment A4);
 - literal DNS hosts only (no IP literals or numeric shorthand), HTTPS, timeout
   at most 2000 ms, response at most 16 KiB, per-tool rate, typed scalar inputs
   and outputs, path templates of whole `{name}` segments used exactly once;
@@ -27,7 +29,9 @@ keys, unknown fields, trailing data and unsafe definitions:
   secret is never the production secret.
 
 Each definition has a canonical hash. Plans pin it, and `Catalog.Lookup` never
-lets a changed definition satisfy an existing pin.
+lets a changed definition satisfy an existing pin. DSL 2.2.0 plans also pin the
+database-enforced contract (`workflow.ToolContractOf`: approval, side effect,
+idempotency/retry mode, replay window, settle interval, timeout).
 
 ## Gateway (`executor.go`, `connector.go`, `netpolicy.go`)
 
@@ -93,6 +97,11 @@ connector limit, and parses a single strict flat JSON object (no duplicate keys)
 | Deadline after the connection was used | `UNKNOWN` `timeout` |
 | 2xx with oversize or invalid body | `UNKNOWN` `invalid_response` |
 | 2xx with a valid typed body | `SUCCESS` with the declared output only |
+
+These are attempt outcomes. The ledger (`control.tool_finish`, ADR036
+Amendments A2-A4) keeps the invocation UNKNOWN while an earlier send's outcome
+is unknown: a lookup that is not a valid 2xx or a settled 404 never settles it,
+and the database refuses a resend unless the pinned capability permits it.
 
 The per-tool token bucket (`ref@version`, burst equal to `rate_per_second`) is
 process-local. Each call records one `tool.execute` span with only `tool_ref`,

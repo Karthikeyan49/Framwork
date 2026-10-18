@@ -39,6 +39,12 @@ type orderOptions struct {
 	discount  bool     // route reads a different money field
 	gate      bool     // unconditional approval gate (for approval_gate requirements)
 	gateSkip  bool     // with gate: a note "skip" bypasses the gate
+
+	cap             string // route also requires amount <= cap (an upper cap that stops approving huge orders)
+	noteExempt      bool   // route also requires note != "vip"
+	noteNotNull     bool   // route also requires note to be set
+	orNote          string // route is amount > threshold OR note == orNote (over-approval)
+	rejectCompletes bool   // a rejected approval ends in complete instead of failed
 }
 
 func orderDocument(o orderOptions) metadata.Document {
@@ -81,6 +87,24 @@ func orderDocument(o orderOptions) metadata.Document {
 	}
 	money := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"` + o.threshold + `","currency":"` + o.currency + `"}`)}
 	condition := &metadata.Expression{Op: o.op, Args: []metadata.Expression{{Op: "field", FieldRef: field}, money}}
+	amountField := metadata.Expression{Op: "field", FieldRef: field}
+	noteField := metadata.Expression{Op: "field", FieldRef: "field.order.note"}
+	and := func(args ...metadata.Expression) *metadata.Expression {
+		return &metadata.Expression{Op: "and", Args: args}
+	}
+	if o.cap != "" {
+		capMoney := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"` + o.cap + `","currency":"` + o.currency + `"}`)}
+		condition = and(*condition, metadata.Expression{Op: "lte", Args: []metadata.Expression{amountField, capMoney}})
+	}
+	if o.noteExempt {
+		condition = and(*condition, metadata.Expression{Op: "neq", Args: []metadata.Expression{noteField, {Op: "literal", Value: json.RawMessage(`"vip"`)}}})
+	}
+	if o.noteNotNull {
+		condition = and(*condition, metadata.Expression{Op: "not", Args: []metadata.Expression{{Op: "is_null", Args: []metadata.Expression{noteField}}}})
+	}
+	if o.orNote != "" {
+		condition = &metadata.Expression{Op: "or", Args: []metadata.Expression{*condition, {Op: "eq", Args: []metadata.Expression{noteField, {Op: "literal", Value: json.RawMessage(`"` + o.orNote + `"`)}}}}}
+	}
 	if o.always {
 		condition = &metadata.Expression{Op: "eq", Args: []metadata.Expression{{Op: "literal", Value: json.RawMessage(`true`)}, {Op: "literal", Value: json.RawMessage(`true`)}}}
 	}
@@ -93,16 +117,27 @@ func orderDocument(o orderOptions) metadata.Document {
 		if o.gateSkip {
 			start = append(start, metadata.Transition{To: "state.complete", Condition: note("skip")})
 		}
+		if o.rejectCompletes {
+			start = append(start, metadata.Transition{To: "state.failed", Condition: note("invalid")})
+		}
 		start = append(start, metadata.Transition{To: "state.approval"})
 	default:
+		if o.rejectCompletes {
+			// Keeps state.failed reachable, which the workflow contract requires.
+			start = append(start, metadata.Transition{To: "state.failed", Condition: &metadata.Expression{Op: "eq", Args: []metadata.Expression{{Op: "field", FieldRef: "field.order.id"}, {Op: "literal", Value: json.RawMessage(`"invalid"`)}}}})
+		}
 		if o.vipSkip {
 			start = append(start, metadata.Transition{To: "state.complete", Condition: note("vip")})
 		}
 		start = append(start, metadata.Transition{To: "state.approval", Condition: condition}, metadata.Transition{To: "state.complete"})
 	}
+	rejected := "state.failed"
+	if o.rejectCompletes {
+		rejected = "state.complete"
+	}
 	wf := def("workflow.order.approve", "Order approval", "workflow")
 	wf.Workflow = &metadata.Workflow{DSLVersion: "2.0.0", Version: "1.0.0", TimeoutMS: 60000, EntityRef: "entity.order", Trigger: "manual", InitialState: "state.start", States: []metadata.WorkflowState{
-		{ID: "state.approval", Type: "approval", ApprovalRoles: o.roles, ApprovalTimeoutMS: 30000, Transitions: []metadata.Transition{{To: "state.complete", On: "approved"}, {To: "state.failed", On: "rejected"}}},
+		{ID: "state.approval", Type: "approval", ApprovalRoles: o.roles, ApprovalTimeoutMS: 30000, Transitions: []metadata.Transition{{To: "state.complete", On: "approved"}, {To: rejected, On: "rejected"}}},
 		{ID: "state.complete", Type: "complete", Transitions: []metadata.Transition{}},
 		{ID: "state.failed", Type: "failed", Transitions: []metadata.Transition{}},
 		{ID: "state.start", Type: "start", Transitions: start},
@@ -213,6 +248,15 @@ func hasFinding(r Report, code, caseID string) bool {
 	return false
 }
 
+func hasFindingPrefix(r Report, code, prefix string) bool {
+	for _, f := range r.Findings {
+		if f.Code == code && strings.HasPrefix(f.CaseID, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // -------------------------------------------------------------------- control
 
 func TestControlFixturePasses(t *testing.T) {
@@ -283,15 +327,82 @@ func TestMutantsFailOrBlockWithSpecificCodes(t *testing.T) {
 	})
 }
 
-// A bypass that no case reaches is invisible to examples. The independent
-// acceptance author's job is to think of it; without the vip case the same
-// mutant passes, and that limit is documented rather than hidden.
-func TestExamplesCannotSeeBypassesTheyDoNotTry(t *testing.T) {
+// A requirement that pins a field ("for regular notes") scopes itself: a bypass
+// that lives only in the pinned-away world is outside what it promises, and no
+// example case reaches it, so it passes. That is the documented limit of a
+// pinned context; the unpinned case is the next test.
+func TestPinnedContextScopesTheRequirement(t *testing.T) {
 	set := requirementSet(thresholdRequirement("po-approval", regular))
 	spec := controlSpec(set)
 	spec.Cases = spec.Cases[:1]
 	if r := mustVerify(t, input(orderProgram(t, orderOptions{vipSkip: true}), set, spec)); r.Outcome != Pass {
 		t.Fatalf("the documented limit changed: %s %+v", r.Outcome, r.Findings)
+	}
+}
+
+// Independent review F4/F5: when the requirement does not pin a field, "any
+// value" includes the values the route compares against. Exemptions and extra OR
+// branches on unpinned fields fail without any acceptance case reaching them.
+func TestUnpinnedFieldsAreMinedFromTheRoute(t *testing.T) {
+	cases := []struct {
+		name    string
+		options orderOptions
+		outcome string
+		caseID  string
+	}{
+		{"correct route", orderOptions{}, Pass, ""},
+		{"vip skips approval", orderOptions{vipSkip: true}, Fail, "po-approval/probe/above/"},
+		{"vip exempt in the condition", orderOptions{noteExempt: true}, Fail, "po-approval/probe/above/"},
+		{"unset note skips approval", orderOptions{noteNotNull: true}, Fail, "po-approval/probe/above"},
+		{"note x approves small orders", orderOptions{orNote: "x"}, Fail, "po-approval/probe/below/"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			set := requirementSet(thresholdRequirement("po-approval", nil))
+			spec := controlSpec(set)
+			spec.Cases = spec.Cases[:1] // no vip case: only the mechanical probes can find it
+			r := mustVerify(t, input(orderProgram(t, c.options), set, spec))
+			if r.Outcome != c.outcome {
+				t.Fatalf("%s %+v", r.Outcome, r.Findings)
+			}
+			if c.caseID != "" && !hasFindingPrefix(r, CodeApprovalMismatch, c.caseID) {
+				t.Fatalf("no %s finding for %q: %+v", CodeApprovalMismatch, c.caseID, r.Findings)
+			}
+		})
+	}
+}
+
+// Independent review F3: an upper cap that stops approving large orders passed
+// because the probes stopped one tick above the threshold.
+func TestUpperCapOnTheApprovalRouteFails(t *testing.T) {
+	set := requirementSet(thresholdRequirement("po-approval", regular))
+	spec := controlSpec(set)
+	if r := mustVerify(t, input(orderProgram(t, orderOptions{cap: "1000000"}), set, spec)); r.Outcome != Fail || !hasFindingPrefix(r, CodeApprovalMismatch, "po-approval/probe/plus1e") {
+		t.Fatalf("cap at one million: %s %+v", r.Outcome, r.Findings)
+	}
+	if r := mustVerify(t, input(orderProgram(t, orderOptions{cap: "1000000000000"}), set, spec)); r.Outcome != Fail || !hasFindingPrefix(r, CodeApprovalMismatch, "po-approval/probe/plus1e") {
+		t.Fatalf("cap at 1e12: %s %+v", r.Outcome, r.Findings)
+	}
+}
+
+// Independent review F2: a rejected approval that still ends in complete means a
+// rejection completes the order.
+func TestRejectedApprovalThatCompletesFails(t *testing.T) {
+	// The id is pinned: the fixture's failure branch reads it, and a required field
+	// the route reads must be pinned or the probes block.
+	pinned := map[string]json.RawMessage{"field.order.note": json.RawMessage(`"regular"`), "field.order.id": json.RawMessage(`"PO-1"`)}
+	set := requirementSet(thresholdRequirement("po-approval", pinned))
+	if r := mustVerify(t, input(orderProgram(t, orderOptions{rejectCompletes: true}), set, controlSpec(set))); r.Outcome != Fail || !hasFindingPrefix(r, CodeApprovalMismatch, "po-approval/probe/above") {
+		t.Fatalf("threshold: %s %+v", r.Outcome, r.Findings)
+	}
+	gate := requirement("po-gate", intent.CategoryApprovalGate, json.RawMessage(`{"workflow_id":"workflow.order.approve","approver_roles":["admin"]}`))
+	gset := requirementSet(gate)
+	gspec := intent.AcceptanceSpec{SchemaVersion: intent.AcceptanceSpecVersion, RequirementsHash: gset.Hash(), Cases: []intent.AcceptanceCase{{ID: "gate", RequirementID: "po-gate", Expect: intent.Expectation{Outcome: intent.OutcomeHolds}}}}
+	if r := mustVerify(t, input(orderProgram(t, orderOptions{gate: true, rejectCompletes: true}), gset, gspec)); r.Outcome != Fail || !hasFinding(r, CodeGateBypass, "") {
+		t.Fatalf("gate: %s %+v", r.Outcome, r.Findings)
+	}
+	if r := mustVerify(t, input(orderProgram(t, orderOptions{gate: true}), gset, gspec)); r.Outcome != Pass {
+		t.Fatalf("honest gate: %s %+v", r.Outcome, r.Findings)
 	}
 }
 
