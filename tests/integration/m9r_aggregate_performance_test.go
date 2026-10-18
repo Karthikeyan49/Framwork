@@ -408,7 +408,7 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 	original := f.db
 	f.db = traced
 	h = r5Handler(t, f, audit.Postgres{})
-	t.Log("aggregate_reference api_admission=default4 offered_http_clients=10; default driver mode and complete HTTP latency")
+	t.Log("aggregate_reference api_admission=default3 offered_http_clients=10; default driver mode and complete HTTP latency")
 	f.db = original
 	server := httptest.NewServer(h)
 	defer server.Close()
