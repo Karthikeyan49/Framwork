@@ -52,12 +52,12 @@ needed for the measured full-set sum workload. No aggregate/report UI or general
 query capacity is claimed. Independent and mapped capacity acceptance is pending.
 
 `API_DB_CONCURRENCY` bounds access API database transactions (integer 1..10,
-default 3), with the existing 128-place FIFO queue. The pool remains 10 and all
+default 4), with the existing 128-place FIFO queue. The pool remains 10 and all
 queue/statement/transaction deadlines remain. This does not limit health probes,
 Redis sign-in or other processes and does not complete rate limiting. Capacity
 checks require `make reference-up` after ordinary infrastructure startup: the
-explicit PostgreSQL profile uses four CPUs, 8GiB/no swap, 2GiB shared buffers,
-6GiB effective cache estimate and 4MiB work memory. API and Docker share the cloud
+explicit PostgreSQL reference profile v2 candidate uses four CPUs, 8GiB/no swap, 2GiB shared buffers,
+6GiB effective cache estimate, 4MiB work memory and random_page_cost1.1. API and Docker share the cloud
 parent's four CPUs. Ordinary `make infra-up` restores lightweight defaults;
 do not run it between selecting the reference profile and performance checks.
 `make test-aggregate-performance` exercises unmapped and current/retained mapped

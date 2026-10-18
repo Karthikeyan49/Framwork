@@ -179,7 +179,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	}
 	concurrency := c.APIConcurrency
 	if concurrency == 0 {
-		concurrency = 3 // Preserve programmatic zero-valued configuration.
+		concurrency = 4 // Preserve programmatic zero-valued configuration.
 	}
 	if concurrency < 1 || concurrency > 10 {
 		return errors.New("API database concurrency is outside supported bounds")

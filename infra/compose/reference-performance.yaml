@@ -1,4 +1,5 @@
-# Explicit ADR048 reference tier; normal infra-up keeps lightweight defaults.
+# Explicit ADR058 reference profile v2 candidate; acceptance gates pending.
+# Normal infra-up keeps lightweight defaults.
 # Recreating this owned local container retains the named pgdata volume.
 services:
   postgres:
@@ -14,4 +15,4 @@ services:
       - -c
       - work_mem=4MB
       - -c
-      - random_page_cost=4
+      - random_page_cost=1.1

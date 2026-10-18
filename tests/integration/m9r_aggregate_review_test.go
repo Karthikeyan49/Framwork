@@ -515,7 +515,7 @@ func TestIndependentR3dAdmissionFallbackAndExplicitGateAreActuallyUsed(t *testin
 	f := newIAM(t)
 	scalarReviewTarget(t, f)
 	token := f.token(t, f.aliceSubject, nil)
-	for _, tc := range []struct{ pool, explicit, want int }{{10, 0, 3}, {0, 0, 3}, {2, 0, 2}, {10, 1, 1}, {10, 5, 5}} {
+	for _, tc := range []struct{ pool, explicit, want int }{{10, 0, 4}, {0, 0, 4}, {2, 0, 2}, {10, 1, 1}, {10, 5, 5}} {
 		f.db.SetMaxOpenConns(tc.pool)
 		entered, release := make(chan struct{}, 8), make(chan struct{})
 		var once sync.Once

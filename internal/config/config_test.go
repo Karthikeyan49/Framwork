@@ -60,7 +60,7 @@ func TestAPIDatabaseConcurrencyBounds(t *testing.T) {
 		raw  string
 		want int
 	}{
-		{"", 3}, {"1", 1}, {"4", 4}, {"10", 10},
+		{"", 4}, {"1", 1}, {"4", 4}, {"10", 10},
 		{"0", 0}, {"-1", 0}, {"11", 0}, {"four", 0}, {"4.0", 0}, {" 4", 0},
 	} {
 		t.Run("value="+tc.raw, func(t *testing.T) {
