@@ -120,8 +120,9 @@ type Join struct {
 	Projection   []string `json:"projection"`
 }
 type Aggregate struct {
-	Op    string `json:"op"`
-	Field string `json:"field,omitempty"`
+	Op        string `json:"op"`
+	Field     string `json:"field,omitempty"`
+	Execution string `json:"execution,omitempty"`
 }
 type Query struct {
 	RecordID   string     `json:"record_id,omitempty"`

@@ -212,6 +212,10 @@ func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenan
 	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > base64.RawURLEncoding.EncodedLen(maxCursorBytes) || len(query.Projection) == 0 || len(query.Projection) > 32 {
 		return Page{}, ErrBudget
 	}
+	if query.Aggregate != nil && query.Aggregate.Execution != "" {
+		span.SetAttributes(attribute.String("query_execution", "aggregate-sql-v1"))
+		return st.aggregateSQL(ctx, q, s, a, e, query, g, resolve)
+	}
 	if st.visible && !st.sqlFields || !st.visible && query.RecordID != "" {
 		if !postgres.RuntimeSnapshot(q) {
 			return Page{}, ErrDenied
