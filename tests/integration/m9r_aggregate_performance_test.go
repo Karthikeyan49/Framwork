@@ -69,6 +69,12 @@ func (p *aggregateTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, d pgx.T
 
 func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token string, jit ...bool) float64 {
 	t.Helper()
+	compilation, _ := aggregateExplainWithCost(t, f, obs, token, len(jit) == 1 && jit[0], "")
+	return compilation
+}
+
+func aggregateExplainWithCost(t *testing.T, f *iamFixture, obs *aggregateTrace, token string, jit bool, cost string) (float64, float64) {
+	t.Helper()
 	obs.mu.Lock()
 	statement, args := obs.sql, append([]any(nil), obs.args...)
 	obs.mu.Unlock()
@@ -80,11 +86,19 @@ func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token st
 			return err
 		}
 		mode := "off" // Same static expression mode as the SQL_V1 kernel.
-		if len(jit) == 1 && jit[0] {
+		if jit {
 			mode = "on"
 		}
 		if _, err := q.ExecContext(ctx, `SELECT set_config('jit',$1,true),set_config('plan_cache_mode','force_custom_plan',true)`, mode); err != nil {
 			return err
+		}
+		if cost != "" {
+			if cost != "4" && cost != "1.1" {
+				t.Fatal("unexpected diagnostic cost model")
+			}
+			if _, err := q.ExecContext(ctx, `SELECT set_config('random_page_cost',$1,true)`, cost); err != nil {
+				return err
+			}
 		}
 		return q.QueryRowContext(ctx, "EXPLAIN (ANALYZE,BUFFERS,VERBOSE,FORMAT JSON) "+statement, args...).Scan(&raw)
 	})
@@ -94,12 +108,15 @@ func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token st
 		t.Fatal("aggregate plan decoding")
 	}
 	membership, aggregates := 0, 0
-	jitMillis := float64(0)
+	jitMillis, executionMillis := float64(0), float64(0)
 	diagnostics := []map[string]any{}
 	var walk func(any)
 	walk = func(v any) {
 		switch n := v.(type) {
 		case map[string]any:
+			if ms, ok := n["Execution Time"].(float64); ok {
+				executionMillis = ms
+			}
 			if j, ok := n["JIT"].(map[string]any); ok {
 				if timing, ok := j["Timing"].(map[string]any); ok {
 					jitMillis, _ = timing["Total"].(float64)
@@ -153,7 +170,34 @@ func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token st
 		t.Fatal("aggregate SQL or single-evaluation membership proof absent")
 	}
 	t.Logf("aggregate_plan membership_initplans_executed_once=%d sql_aggregate_nodes=%d", membership, aggregates)
-	return jitMillis
+	return jitMillis, executionMillis
+}
+
+func aggregateCostStatistics(t *testing.T, f *iamFixture) {
+	t.Helper()
+	// pg_stats deliberately hides RLS-protected column statistics from normal
+	// roles. Use the existing disposable-fixture admin binding for metadata
+	// inspection only; all analyzed business queries remain the app role.
+	cfg, err := pgx.ParseConfig(os.Getenv("DATABASE_URL"))
+	scalarSQL(t, err)
+	cfg.User, cfg.Password = "postgres", os.Getenv("POSTGRES_PASSWORD")
+	admin := stdlib.OpenDB(*cfg)
+	defer admin.Close()
+	var expectedDB, actualDB, role string
+	scalarSQL(t, f.operator.QueryRow(`SELECT current_database()`).Scan(&expectedDB))
+	scalarSQL(t, admin.QueryRow(`SELECT current_database(),session_user`).Scan(&actualDB, &role))
+	if actualDB != expectedDB || !strings.HasPrefix(actualDB, "m8_delivery_") || role != "postgres" {
+		t.Fatal("cost statistics target is not the owned disposable fixture")
+	}
+	var relations, columns []byte
+	scalarSQL(t, f.operator.QueryRow(`SELECT coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM
+ (SELECT relname,relpages,relallvisible,reltuples FROM pg_class WHERE oid IN('runtime.records'::regclass,'runtime.numeric_projections'::regclass,'runtime.record_identity'::regclass)) x`).Scan(&relations))
+	scalarSQL(t, admin.QueryRow(`SELECT coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM
+ (SELECT tablename,attname,n_distinct,correlation FROM pg_stats WHERE schemaname='runtime' AND tablename IN('records','numeric_projections','record_identity') AND attname IN('tenant_id','app_id','metadata_revision','ir_hash','entity_id','field_id','id') ORDER BY tablename,attname) x`).Scan(&columns))
+	if len(columns) < 3 {
+		t.Fatal("cost statistics were not visible to the fixture inspector")
+	}
+	t.Logf("aggregate_cost_relations=%s aggregate_cost_columns=%s", relations, columns)
 }
 
 // Diagnostic, not an alternative capacity gate. Compare the SAME generated
@@ -298,7 +342,12 @@ func TestM9RSQLAggregateMappedPerformanceFloor(t *testing.T) {
 	runAggregatePerformance(t, true)
 }
 
-func runAggregatePerformance(t *testing.T, mapped bool) {
+func TestM9RSQLAggregatePlannerCostDiagnostic(t *testing.T) {
+	runAggregatePerformance(t, false, true)
+}
+
+func runAggregatePerformance(t *testing.T, mapped bool, costStudy ...bool) {
+	diagnostic := len(costStudy) == 1 && costStudy[0]
 	m8Database(t)
 	requireM9RReferencePostgres(t)
 	f, h, base, owner, app := aggregateFixture(t)
@@ -439,6 +488,9 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 	}
 	for branch, queryBase := range bases {
 		for _, tc := range cases {
+			if diagnostic && tc.name != "sum_money" && tc.name != "filtered_money" {
+				continue
+			}
 			t.Logf("aggregate_case mapped=%t branch=%d case=%s", mapped, branch, tc.name)
 			token := owner
 			if tc.role != "" {
@@ -514,6 +566,18 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 					obs.mu.Unlock()
 					t.Fatal("aggregate warmup failed", tc.name, "SQLSTATE", state)
 				}
+			}
+			if diagnostic {
+				aggregateCostStatistics(t, f)
+				for attempt, cost := range []string{"4", "1.1", "1.1", "4"} {
+					_, ms := aggregateExplainWithCost(t, f, obs, token, false, cost)
+					if ms <= 0 {
+						t.Fatal("cost diagnostic did not report analyzed execution")
+					}
+					t.Logf("aggregate_cost_diagnostic query=%s attempt=%d random_page_cost=%s execution_ms=%.3f (not a capacity gate)", tc.name, attempt+1, cost, ms)
+				}
+				aggregateCostStatistics(t, f)
+				continue
 			}
 			aggregateExplain(t, f, obs, token)
 			if tc.name == "owner_money" || tc.name == "filtered_money" {
