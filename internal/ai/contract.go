@@ -247,6 +247,7 @@ type ContextInput struct {
 	DraftRevision int64
 	DraftHash     string
 	BaseProgram   *compiler.Program // active release program, when one exists
+	DraftProgram  *compiler.Program // compiled draft, when it compiles; with BaseProgram it yields the draft-versus-release diff (addendum 1)
 	Tools         []ToolSummary
 	RoleNames     []string
 	Requirements  *intent.RequirementSet // current set, for requirement capture
@@ -307,6 +308,9 @@ type RequirementRun struct {
 	Hash      string
 	Attempts  []Attempt
 	Usage     Usage
+	// Diagnostics are the last semantic violations when the run ended without a
+	// valid proposal (addendum 1); capped and sanitized like PatchRun.Diagnostics.
+	Diagnostics []compiler.Diagnostic
 }
 
 // Conflict is a typed reason a proposal cannot be applied to the current draft.
@@ -323,6 +327,8 @@ const (
 	ConflictCollision     = "ADD_COLLISION"
 	ConflictForbiddenKind = "FORBIDDEN_KIND"
 	ConflictInvalid       = "INVALID_DEFINITION"
+	// ConflictDuplicateTarget: two operations name one target (addendum 1).
+	ConflictDuplicateTarget = "DUPLICATE_TARGET"
 )
 
 // Gateway runs the pipeline over an injected provider. Implementations are safe for
