@@ -12,6 +12,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/erp"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
@@ -244,8 +245,10 @@ func (v *run) threshold(r intent.RequirementV2, t intent.ApprovalThreshold) {
 		id, source string
 		values     map[string]json.RawMessage
 		want       intent.Expectation
+		optional   bool // a mined variant: extra coverage that is skipped, never blocking, when it cannot be evaluated
 	}
 	var items []item
+	mined := v.minedValues(plan, t)
 	for _, p := range probes {
 		values := map[string]json.RawMessage{}
 		for id, raw := range t.Context {
@@ -256,7 +259,22 @@ func (v *run) threshold(r intent.RequirementV2, t intent.ApprovalThreshold) {
 			Currency string `json:"currency"`
 		}{p.Amount, p.Currency})
 		values[t.FieldID] = money
-		items = append(items, item{p.ID, SourceProbe, values, p.Expect})
+		items = append(items, item{p.ID, SourceProbe, values, p.Expect, false})
+		// Optional fields the requirement does not pin are "any value": repeat the
+		// boundary probes with the values the route's own conditions compare against
+		// (independent review F4/F5: an exemption such as note != "vip" or an extra
+		// OR branch is invisible in the all-null world).
+		if !minedProbe(p.ID) {
+			continue
+		}
+		for _, m := range mined {
+			variant := map[string]json.RawMessage{}
+			for id, raw := range values {
+				variant[id] = raw
+			}
+			variant[m.field] = m.raw
+			items = append(items, item{p.ID + "/" + m.label, SourceProbe, variant, p.Expect, true})
+		}
 	}
 	humans := []intent.AcceptanceCase{}
 	for _, c := range v.in.Acceptance.Cases {
@@ -273,14 +291,16 @@ func (v *run) threshold(r intent.RequirementV2, t intent.ApprovalThreshold) {
 		for id, raw := range c.Given {
 			values[id] = raw
 		}
-		items = append(items, item{c.ID, SourceCase, values, c.Expect})
+		items = append(items, item{c.ID, SourceCase, values, c.Expect, false})
 	}
 	for _, it := range items {
 		if v.overflow {
 			return
 		}
-		observed, why := v.observe(wf, plan, field, t, it.values, known)
+		observed, why := v.observe(wf, plan, field, t, it.values, known, it.optional)
 		switch {
+		case why != "" && it.optional:
+			continue
 		case why != "":
 			v.block(CodeIncompleteCaseInput, r.ID, it.id, "%s", why)
 			v.result(it.id, r.ID, it.source, it.want.String(), "not evaluated", Blocked)
@@ -296,7 +316,7 @@ func (v *run) threshold(r intent.RequirementV2, t intent.ApprovalThreshold) {
 // observe runs one input through the workflow exactly as the runtime would: the
 // money input is validated against the IR field, then the plan is walked from
 // its initial state with Program.Next until an approval state or a terminal.
-func (v *run) observe(wf workflow.Program, plan workflow.Plan, field compiler.Field, t intent.ApprovalThreshold, values map[string]json.RawMessage, known map[string]bool) (intent.Expectation, string) {
+func (v *run) observe(wf workflow.Program, plan workflow.Plan, field compiler.Field, t intent.ApprovalThreshold, values map[string]json.RawMessage, known map[string]bool, optional bool) (intent.Expectation, string) {
 	for id := range values {
 		if !known[id] {
 			return intent.Expectation{}, fmt.Sprintf("value for %s names a field that the entity does not have", id)
@@ -329,8 +349,18 @@ func (v *run) observe(wf workflow.Program, plan workflow.Plan, field compiler.Fi
 		}
 		switch s.Type {
 		case "approval":
+			if v.rejectionCompletes(states, s) {
+				// The approval decides nothing: a rejection ends in the same successful
+				// completion (independent review F2).
+				return intent.Expectation{Outcome: intent.OutcomeNoApproval, Reason: intent.ReasonRejectionCompletes}, ""
+			}
 			return intent.Expectation{Outcome: intent.OutcomeApprovalRequired, Roles: append([]string{}, s.ApprovalRoles...)}, ""
 		case "complete", "failed":
+			if s.Type == "failed" && optional {
+				// A mined world that ends the order in failure completes nothing; it
+				// is neither a bypass nor evidence of one.
+				return intent.Expectation{}, "the variant ends in a failed state"
+			}
 			return intent.Expectation{Outcome: intent.OutcomeNoApproval}, ""
 		}
 		next, err := wf.Next(context.Background(), current, "always", values)
@@ -340,6 +370,170 @@ func (v *run) observe(wf workflow.Program, plan workflow.Plan, field compiler.Fi
 		current = next
 	}
 	return intent.Expectation{}, "the plan did not terminate"
+}
+
+// rejectionCompletes reports whether a rejected approval can still end in a
+// successful completion. The walk ignores conditions (it over-approximates), so
+// it fails closed; an exhausted work budget also answers true.
+func (v *run) rejectionCompletes(states map[string]workflow.State, approval workflow.State) bool {
+	seen := map[string]bool{}
+	var walk func(id string) bool
+	walk = func(id string) bool {
+		if seen[id] {
+			return false
+		}
+		seen[id] = true
+		v.work++
+		if v.work > MaxWork {
+			v.overflow = true
+			return true
+		}
+		s, ok := states[id]
+		if !ok {
+			return true
+		}
+		switch s.Type {
+		case "complete":
+			return true
+		case "failed":
+			return false
+		}
+		for _, t := range s.Transitions {
+			if walk(t.To) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, t := range approval.Transitions {
+		if t.On == "rejected" && walk(t.To) {
+			return true
+		}
+	}
+	return false
+}
+
+// minedValue is one extra value for an optional field the requirement does not pin.
+type minedValue struct {
+	field, label string
+	raw          json.RawMessage
+}
+
+const (
+	maxMinedFields   = 8
+	maxMinedPerField = 6
+	minedOtherString = "zz-other"
+)
+
+// minedProbe selects the probes repeated for every mined value: the boundary and
+// one decade each way, which is where an exemption or a second branch shows.
+func minedProbe(id string) bool {
+	for _, kind := range []string{"below", "at", "above", "plus1e6", "minus1e6"} {
+		if len(id) > len(kind) && id[len(id)-len(kind)-1:] == "/"+kind {
+			return true
+		}
+	}
+	return false
+}
+
+// minedValues collects, for every field a workflow condition reads other than the
+// threshold field and the fields the requirement pins, the values that condition
+// itself compares against (string, enum, boolean and integer literals) plus one
+// value that matches none of them. The EXPECTED outcome of a mined variant stays
+// the oracle's, which never reads the IR: the requirement says "any value".
+func (v *run) minedValues(plan workflow.Plan, t intent.ApprovalThreshold) []minedValue {
+	type candidates struct {
+		kind string
+		set  map[string]json.RawMessage
+	}
+	fields := map[string]*candidates{}
+	order := []string{}
+	for _, state := range plan.States {
+		for _, tr := range state.Transitions {
+			if tr.Condition == nil {
+				continue
+			}
+			cond := tr.Condition
+			literals := map[string][]json.RawMessage{}
+			var walk func(n rules.Node)
+			walk = func(n rules.Node) {
+				if (n.Op == "literal" || n.Op == "typed_literal") && len(n.Value) > 0 {
+					literals[n.Type.Kind] = append(literals[n.Type.Kind], n.Value)
+				}
+				for _, a := range n.Args {
+					walk(a)
+				}
+			}
+			walk(cond.Root)
+			for _, f := range cond.Fields {
+				if f.ID == t.FieldID {
+					continue
+				}
+				if _, pinned := t.Context[f.ID]; pinned {
+					continue
+				}
+				kind := f.Type.Kind
+				switch kind {
+				case "string", "enum", "bool", "integer":
+				default:
+					continue
+				}
+				c := fields[f.ID]
+				if c == nil {
+					c = &candidates{kind: kind, set: map[string]json.RawMessage{}}
+					fields[f.ID] = c
+					order = append(order, f.ID)
+				}
+				for _, raw := range literals[kind] {
+					c.set[string(raw)] = raw
+				}
+				if kind == "enum" {
+					for _, ev := range f.EnumValues {
+						b, _ := json.Marshal(ev)
+						c.set[string(b)] = b
+					}
+				}
+				switch kind {
+				case "string":
+					b, _ := json.Marshal(minedOtherString)
+					c.set[string(b)] = b
+				case "bool":
+					c.set["true"], c.set["false"] = json.RawMessage("true"), json.RawMessage("false")
+				case "integer":
+					c.set["0"] = json.RawMessage("0")
+					for _, raw := range literals["integer"] {
+						var n int64
+						if json.Unmarshal(raw, &n) == nil {
+							for _, d := range []int64{-1, 1} {
+								b := []byte(fmt.Sprintf("%d", n+d))
+								c.set[string(b)] = json.RawMessage(b)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(order)
+	if len(order) > maxMinedFields {
+		order = order[:maxMinedFields]
+	}
+	var out []minedValue
+	for _, id := range order {
+		c := fields[id]
+		keys := make([]string, 0, len(c.set))
+		for k := range c.set {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if len(keys) > maxMinedPerField {
+			keys = keys[:maxMinedPerField]
+		}
+		for _, k := range keys {
+			out = append(out, minedValue{field: id, label: id + "=" + k, raw: c.set[k]})
+		}
+	}
+	return out
 }
 
 // --------------------------------------------------------------------- gates
@@ -378,7 +572,13 @@ func (v *run) gate(r intent.RequirementV2, g intent.ApprovalGate) {
 		var answer bool
 		switch {
 		case s.Type == "approval" && sameRoles(s.ApprovalRoles, g.ApproverRoles):
-			answer = false
+			// Only the approved edges are gated: a rejection must not complete either.
+			for _, t := range s.Transitions {
+				if t.On == "rejected" && bypass(t.To) {
+					answer = true
+					break
+				}
+			}
 		case s.Type == "complete":
 			answer = true
 		case s.Type == "failed":
@@ -401,7 +601,7 @@ func (v *run) gate(r intent.RequirementV2, g intent.ApprovalGate) {
 		v.fail(CodeGateRolesMismatch, r.ID, "", "the workflow's approval states do not have exactly the roles %v", g.ApproverRoles)
 		v.result(r.ID, r.ID, SourceStatic, "ALL_PATHS_GATED_BY "+fmt.Sprint(g.ApproverRoles), "approval roles differ", Fail)
 	case bypassed:
-		v.fail(CodeGateBypass, r.ID, "", "a path reaches completion without an approval by %v", g.ApproverRoles)
+		v.fail(CodeGateBypass, r.ID, "", "a path reaches completion without an approval by %v (or a rejection by them still completes)", g.ApproverRoles)
 		v.result(r.ID, r.ID, SourceStatic, "ALL_PATHS_GATED_BY "+fmt.Sprint(g.ApproverRoles), "approval-free path exists", Fail)
 	default:
 		v.result(r.ID, r.ID, SourceStatic, "ALL_PATHS_GATED_BY "+fmt.Sprint(g.ApproverRoles), "all paths gated", Pass)

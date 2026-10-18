@@ -255,6 +255,13 @@ func TestDerivedProbes(t *testing.T) {
 	want := map[string]string{
 		"below": "499.99 USD NO_APPROVAL", "at": "500.00 USD NO_APPROVAL", "above": "500.01 USD APPROVAL_REQUIRED[admin]",
 		"zero": "0.00 USD NO_APPROVAL", "negative": "-0.01 USD NO_APPROVAL", "currency": "500.00 EUR INPUT_REJECTED(CURRENCY)",
+		// Far-from-boundary decades (independent review F3: a cap such as "<= 1000000" must be seen).
+		"x10": "5000.00 USD APPROVAL_REQUIRED[admin]", "x1000": "500000.00 USD APPROVAL_REQUIRED[admin]",
+	}
+	for _, e := range []int{3, 6, 9, 12, 15, 18} {
+		scale := "1" + strings.Repeat("0", e) + ".00 USD"
+		want[fmt.Sprintf("plus1e%d", e)] = scale + " APPROVAL_REQUIRED[admin]"
+		want[fmt.Sprintf("minus1e%d", e)] = "-" + scale + " NO_APPROVAL"
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%v", got)
@@ -276,7 +283,7 @@ func TestDerivedProbes(t *testing.T) {
 	for _, p := range zero {
 		ids = append(ids, strings.TrimPrefix(p.ID, "r/probe/"))
 	}
-	if !reflect.DeepEqual(ids, []string{"below", "at", "above", "currency"}) {
+	if !reflect.DeepEqual(ids, []string{"below", "at", "above", "currency", "plus1e3", "minus1e3", "plus1e6", "minus1e6", "plus1e9", "minus1e9", "plus1e12", "minus1e12", "plus1e15", "minus1e15", "plus1e18", "minus1e18"}) {
 		t.Fatalf("%v", ids)
 	}
 	// Zero-decimal currency and the wrong-currency choice for EUR.
@@ -285,7 +292,13 @@ func TestDerivedProbes(t *testing.T) {
 		t.Fatalf("%+v", jpy)
 	}
 	eur, _ := DeriveProbes("r", ApprovalThreshold{Currency: "EUR", Op: "GT", Amount: "10.00", ApproverRoles: []string{"admin"}})
-	if eur[len(eur)-1].Currency != "USD" {
+	wrongCurrency := ""
+	for _, p := range eur {
+		if strings.HasSuffix(p.ID, "/currency") {
+			wrongCurrency = p.Currency
+		}
+	}
+	if wrongCurrency != "USD" {
 		t.Fatal("wrong currency probe must differ from the threshold currency")
 	}
 	if _, err = DeriveProbes("r", ApprovalThreshold{Currency: "XXX", Amount: "1"}); err == nil {

@@ -93,6 +93,12 @@ func ReduceFacts(in FactsInput) risk.Facts {
 				f.PlanOnlyChanged = true
 			}
 		case "workflow":
+			// Any change to a workflow that contains a tool inherits the tool's level,
+			// including a plan-only recompilation of the conditions in front of it
+			// (independent review F7).
+			for _, ref := range c.Tools {
+				changedWorkflowTools[ref] = true
+			}
 			if len(c.Aspects) == 1 && c.Aspects[0] == compiler.AspectPlanOnly {
 				f.PlanOnlyChanged = true
 				break
@@ -100,9 +106,6 @@ func ReduceFacts(in FactsInput) risk.Facts {
 			f.WorkflowChanged = true
 			if hasAspect(c, compiler.AspectApprovalGate) {
 				f.ApprovalGateChanged = true
-			}
-			for _, ref := range c.Tools {
-				changedWorkflowTools[ref] = true
 			}
 		case "tool":
 		default:

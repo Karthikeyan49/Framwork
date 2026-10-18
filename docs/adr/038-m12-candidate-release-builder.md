@@ -267,6 +267,25 @@ intent is unchanged.
    risk rejections (422) and database refusals record `candidates.build.rejected`
    with the report/assessment hashes in the audit state. Requirement decisions
    record `requirements.decide` with the version and hash.
+9. **Verifier strengthened after independent review (§4).** The review of the
+   deterministic logic (`docs/verification/M12_VERIFIER_INDEPENDENT_REVIEW.md`,
+   F2–F5, F7) showed that probes stopping one tick above the threshold, an
+   all-null world for unpinned optional fields, and a walk that stopped at the
+   first approval state let wrong applications pass. As shipped now:
+   (a) an approval whose `rejected` edge can still reach `complete` is observed as
+   `NO_APPROVAL(REJECTION_COMPLETES)` for thresholds and as a bypass for gates;
+   (b) the derived probes add one decade each way from 1e3 to 1e18 and 10x/1000x
+   multiples of the threshold, so an upper cap fails;
+   (c) for every string, enum, boolean and integer field the requirement does not
+   pin, the below/at/above and 1e6 probes are repeated with the values the route's
+   own conditions compare against plus one value matching none of them (at most 8
+   fields and 6 values per field); a mined world that cannot be evaluated or that
+   ends in `failed` is skipped, never blocking and never a pass; (d) a plan-only
+   workflow change around a pinned tool inherits the tool's level (F7).
+   Still true: this is a bounded mechanical floor, not a proof. Decimal, money,
+   date and datetime fields other than the threshold are not mined, two-field
+   interactions beyond one extra value per run are not explored, and a bypass that
+   needs a pinned value is outside what the requirement promises.
 
 ## Consequences
 
