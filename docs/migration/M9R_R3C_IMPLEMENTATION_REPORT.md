@@ -65,20 +65,34 @@ content. This report is updated with final evidence after independent review.
 | `make test-unique-performance` initial | FAIL 240.485s overall: 100k/ten-tenant 1509-byte case PASS (177.17s, 203 checkpoints, build20.478s, fresh p95470.164ms / expected-conflict p95477.845ms). Bound 32-client writes had 3259 successes/zero errors but p95690.646ms above 500ms; fixture also incorrectly included 32 initial create receipts in an updates-only assertion. Both failures are retained. |
 | `./scripts/go.sh run .local/reports/r3c-validator-profile.go` before/after ADR045 | Initial fixed-schema construction100 samples mean25.476ms versus existing-validator parse0.583ms. Immutable compiled-schema sharing reduces construction to0.306ms amortized including first compilation; parse0.719ms. No source/policy/record/catalog cache. |
 | `./scripts/go.sh test -race ./internal/metadata ./internal/compiler ./internal/runtime/data` after ADR045 | PASS: concurrent valid/invalid validation across all five versions, source/hash isolation and independent returned handles; retained compiler/data race tests pass. |
-| `make test-unique-performance` after schema-cache and fixture correction | RUNNING; no final capacity claim yet. |
-| Independent executable source review | NOT RUN yet; required. |
+| `make test-unique-performance` after schema-cache and fixture correction | PASS 199.809s interim capacity run: 100k case137.49s, 203 checkpoints/build15.438s, fresh p95355.755ms/p99443.432ms (40.22/s), expected-conflict p9574.097ms/p99118.208ms (177.57/s), no unexpected errors. 32-client/60s bound-dataset writer: 10330 successes, zero errors, p95219.378ms/p99241.092ms, 171.73/s; exact source/version/receipt/outbox checks pass. Runtime statement2s/lock500ms/write-p95500ms targets unchanged. The executable compiled before the narrow receipt-error translation follow-up; final stable-source gates remain required. |
+| Independent executable source review | PASS on stable `d15be92`: 12 populated adversarial groups in 20.883s, no skips; independent capacity PASS in 200.046s. Review and dedicated tests committed/pushed at `2cf2f57`. Final root gates remain required. |
 | Final `make check test build`, `make test-e2e`, `make test-signin-e2e`, retained query/write gates | NOT RUN against final source yet; required. |
 
 A checksum-pinned older API was built from archived commit `197fe85` into ignored
 `.local/reports/r3c-legacy-api`, SHA256
 `bdcbffb3be0e7bda6eb4d29fe4f30b6b9bcc63acbf3a85680e4809b5864ef48c`.
-This artifact has not yet been claimed as executed against the new unique paths.
+The independent reviewer actually launched this artifact against populated
+compatible legacy1.0 bindings with installed constraints. Reads, unrelated PATCH,
+nullable CREATE, clear and DELETE pass. Fresh and duplicate non-null claims both
+return the same generic503 because the older handler predates42501 translation.
+That limitation is retained; it does not reveal whether a value exists.
 
 Initial independent read-only review identified a retry regression: translating
 every SQLSTATE23505 into a business conflict would swallow receipt-key races
 handled by KnownAbort. Translation is now restricted to the exact
-runtime.unique_claims/unique_claim_value constraint; executable concurrency
-reverification is still required. No arbitrary uniqueness violation is retried.
+runtime.unique_claims/unique_claim_value constraint. The reviewer reproduced the
+pre-fix409 against archived `1f8ab79`, then verified eight concurrent callers all
+receive the same successful receipt with one business/audit/outbox fact at
+`d15be92`. No arbitrary uniqueness violation is retried. See the
+[independent report](../verification/M9R_R3C_INDEPENDENT_REVIEW.md) for exact
+commands, coverage, retained failures and optional probes not executed.
+
+Independent capacity on PostgreSQL18.6/four CPUs/8GiB/disabled swap verified
+100k source records and nine other populated tenants through203 checkpoints.
+Fresh/conflict CREATE p95 was144.937/68.700ms. The32-client60s writer completed
+10,365 writes, p95215.076ms and zero errors, below the unchanged500ms target.
+These local reference measurements do not certify arbitrary production workloads.
 
 ## Recovery and remaining gates
 
