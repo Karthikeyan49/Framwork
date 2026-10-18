@@ -6,6 +6,11 @@ existing aggregate regression groups passed together. An explicit
 driver-panic diagnostic FAILED and remains an unresolved R7 infrastructure
 finding. Capacity and overall R3d/M9R completion are not certified.
 
+ADR056 re-verification additionally passes the same22 ordinary regression groups
+on stable `d7b64dd3acc56d387bc697a029accab863e03d24` and a separate corrected
+317-row canonical normalized-plan probe. See the retained failed plan assertion
+and exact separate results below; no new large capacity run was performed.
+
 ## Scope and stable source
 
 The reviewer independently assessed ADR046–054 and read the aggregate kernel,
@@ -155,5 +160,45 @@ reviewer and remain separate completion obligations. No production execution,
 general reporting/optimizer support or M10 is certified. Product semantics passed
 the completed populated functional probes; broader R3d/M9R remains PARTIAL.
 No review execution remains active at handback. The proposed subsequent ADR056
-canonical identity boundary and CTE inlining are not implemented or tested by
-this review; they require a stable-source re-verification after implementation.
+canonical identity boundary and CTE inlining were not implemented at the initial
+handback. The following section records the later stable-source re-verification.
+
+## ADR056 stable-source re-verification
+
+The implementer committed the prior design before changing the canonical identity
+namespace boundary and making the aggregate CTE single-use/inlinable. The
+reviewer then received another exclusive execution window at
+`d7b64dd3acc56d387bc697a029accab863e03d24`. Product source remained frozen; only
+the new independent plan test and this report changed during the review.
+
+The canonical identity relation still includes exact trusted tenant, app,
+dataset and entity predicates plus NOT tombstone. Its unique key bounds each
+source match to one canonical identity. The new OFFSET0 boundary changes planning,
+not tenant membership, scope, shares, ownership or historical physical values.
+The normalized projection and inner100001 limit remain, and every cancellation/
+timeout tracer matches the new prefix with its fault-firing assertion intact.
+
+| Executed command or probe | Result |
+| --- | --- |
+| `sha256sum .local/reports/r3c-legacy-api` | PASS, unchanged retained artifact checksum recorded above. |
+| `M9R_LEGACY_API_BINARY=/workspace/Framwork/.local/reports/r3c-legacy-api M9R_LEGACY_API_SHA256=bdcbffb3be0e7bda6eb4d29fe4f30b6b9bcc63acbf3a85680e4809b5864ef48c node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestIndependentR3d\|TestM9RSQLAggregate)' -v ./tests/integration` | FAIL 87.352s overall: the same22 prior ordinary groups all PASS, zero skips; the new23rd plan probe failed an overly strict reviewer assertion about CASE text in Aggregate.Output. No semantic, permission, snapshot, cancellation or settings failure occurred. |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestIndependentR3dCanonicalPlanStreamsOneNormalizedProjection$' -v ./tests/integration` | PASS 11.981s after correcting that plan assertion; both actual retained/current generated SQL plans and exact differentiated decimal sums were checked. |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration,driverpanic -timeout=30s -count=1 -run '^TestIndependentR3dPanicDoesNotIssueRestorationSQLAndPoolRecovers$' -v ./tests/integration` | FAIL 7.272s; the broadened tracer still reaches the injected driver fault, and bounded subprocess supervision preserves the unresolved recovery assertion. This diagnostic is outside the ordinary integration build. |
+| `git diff --check` | PASS. |
+
+The failed structural assertion treated CASE text printed in the top Aggregate
+as proof of repeated evaluation. EXPLAIN VERBOSE expands child OUTER-slot target
+expressions while deparsing. The actual populated plans contain a single
+one-column normalized Subquery Scan below Aggregate, executing once. Both plans
+show exactly one record_identity scan with Actual Loops=1 and zero CTE Scan
+nodes. The corrected test checks those structures rather than rejecting
+deparsed CASE text. Only sanitized node kinds, aliases, loop counts and counts
+of output columns/CASE text are logged; query literals and parameters stay in
+memory. This is a small functional plan check, not a100k capacity result or proof
+that the planner will choose the same physical join on every workload.
+
+The original22 regression groups and the corrected new plan group passed across
+the stated executions; no single combined23-group PASS is claimed. Large mapped/
+unmapped capacity, older workload gates, root check/test/build and browser gates
+remain NOT RUN by this reviewer. IR-R3d-01 remains unresolved and overall R3d/M9R
+remains PARTIAL.
