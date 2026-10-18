@@ -14,6 +14,10 @@ env:
 infra-up: env
 	$(COMPOSE) up -d --wait --wait-timeout 90
 	node scripts/with-env.mjs node scripts/signin-roles.mjs
+.PHONY: reference-up
+reference-up: env
+	@test "$$(docker info --format '{{.MemTotal}}')" -ge 8589934592 || { echo 'Reference profile requires at least 8GiB Docker memory'; exit 1; }
+	$(COMPOSE) -f infra/compose/reference-performance.yaml up -d --wait --wait-timeout 90 postgres
 infra-down:
 	$(COMPOSE) down
 migrate: roles-init

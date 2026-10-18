@@ -413,10 +413,10 @@ func (o *pagePlanObserver) QueryContext(ctx context.Context, query string, args 
 // string flag. Verify the container limits and the connected server's cluster ID.
 func requireM9RReferencePostgres(t *testing.T) {
 	t.Helper()
-	info, err := exec.Command("docker", "inspect", "--format", "{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.Image}}", "framework-m0-postgres-1").Output()
+	info, err := exec.Command("docker", "inspect", "--format", "{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.Image}} {{.Config.Image}}", "framework-m0-postgres-1").Output()
 	fields := strings.Fields(string(info))
-	if err != nil || len(fields) != 4 || fields[0] != "4000000000" || fields[1] != "8589934592" || fields[2] != "8589934592" {
-		t.Fatal("performance gate requires the ADR025 local PostgreSQL container at4 CPUs/8GiB, with swap disabled")
+	if err != nil || len(fields) != 5 || fields[0] != "4000000000" || fields[1] != "8589934592" || fields[2] != "8589934592" || fields[4] != "postgres:18.6" {
+		t.Fatal("performance gate requires make reference-up: pinned PG18.6 at4 CPUs/8GiB, with swap disabled")
 	}
 	u, err := url.Parse(os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -436,5 +436,9 @@ func requireM9RReferencePostgres(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(inside)) != actual {
 		t.Fatal("connected PostgreSQL is not the constrained reference container")
 	}
-	t.Logf("verified_reference cpus=4 memory_bytes=8589934592 swap_disabled=true image=%s", fields[3])
+	var shared, effective, work, cost string
+	if err = probe.QueryRow(`SELECT current_setting('shared_buffers'),current_setting('effective_cache_size'),current_setting('work_mem'),current_setting('random_page_cost')`).Scan(&shared, &effective, &work, &cost); err != nil || shared != "2GB" || effective != "6GB" || work != "4MB" || cost != "4" {
+		t.Fatal("performance gate requires actual ADR048 reference memory/planner settings; run make reference-up")
+	}
+	t.Logf("verified_reference cpus=4 memory_bytes=8589934592 swap_disabled=true image=%s shared_buffers=%s effective_cache_size=%s work_mem=%s random_page_cost=%s", fields[3], shared, effective, work, cost)
 }
