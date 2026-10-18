@@ -41,3 +41,11 @@ test('local sign-in activation refuses production and invalid bindings without i
   assert.notEqual(result.status,0);assert.match(result.stderr,/Local sign-in ACL activation failed/);assert.equal(result.stdout,'')
  }
 })
+
+test('database concurrency reaches only the API process',()=>{
+ for(const value of ['1','4','10','0']){
+  const configured={...source,API_DB_CONCURRENCY:value}
+  assert.equal(runtimeEnv(configured,'api').API_DB_CONCURRENCY,value)
+  for(const kind of ['worker','dispatcher','web'])assert.equal(runtimeEnv(configured,kind).API_DB_CONCURRENCY,undefined)
+ }
+})
