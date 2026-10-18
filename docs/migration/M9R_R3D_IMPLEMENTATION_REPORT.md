@@ -80,6 +80,23 @@ Further executed evidence (all failures retained):
   Reusing the original bound field parameter fixes that query-construction
   defect. This failed run does not measure indexed-sum capacity for that driver
   mode; the corrected run remains pending. Data runtime unit race tests PASS1.330s.
+- Corrected gated-JSON/CacheDescribe experiment FAIL138.132s. Full integer HTTP
+  p95 remains801.510ms; decimal1045.755, money970.509, filtered797.308,
+  owner893.723. Zero errors. Driver-mode changes are rejected; default restored.
+- Migration54 fixed covering indexes plus exact late legacy-JSON lookup pass
+  witness functional checks4.158s. Initial default-ten-slot capacity FAIL94.218s
+  with integer SQLSTATE57014. Actual JIT diagnostic then PASS44.485s: same100k
+  generated money statement with JIT on reports394.627ms compilation and577.394ms
+  total, off reports0ms compilation and181.034ms total. This measures a real cost.
+  ADR051 scopes LOCAL JIT disabling/restoration to the certified aggregate kernel.
+- Same-transaction prior-on/off and actual driver cancellation at aggregate/
+  restoration, result suppression and pooled reuse: PASS2 groups4.203s.
+- Default-ten-slot/JIT-off capacity FAIL121.053s: count143.374/230.438 passes,
+  integer755.498/819.925, decimal787.116/819.218, money759.354/804.132,
+  filtered999.777/1037.248, owner1431.314/1475.345 and share748.606/806.323
+  miss the unchanged targets. Zero errors. Explicit four-slot scheduling with
+  this final physical/expression plan is being measured before selecting any
+  application concurrency default. No accepted capacity result is claimed yet.
 
 Earlier runs use128MiB shared buffers; ADR048 runs explicitly use2GiB shared,
 6GiB effective cache estimate, unchanged4MiB work_mem/random_page_cost4 and the

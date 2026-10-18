@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -39,8 +40,16 @@ func (p *aggregateTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx
 	if !strings.HasPrefix(d.SQL, "WITH aggregate_input AS MATERIALIZED") {
 		return ctx
 	}
+	args := d.Args
+	// database/sql prepends a pgx result-format option. It is not a bound
+	// SQL parameter and must not be replayed as part of a PREPARE contract.
+	if len(args) != 0 {
+		if _, ok := args[0].(pgx.QueryResultFormatsByOID); ok {
+			args = args[1:]
+		}
+	}
 	p.mu.Lock()
-	p.sql, p.args = d.SQL, append([]any(nil), d.Args...)
+	p.sql, p.args = d.SQL, append([]any(nil), args...)
 	p.mu.Unlock()
 	return context.WithValue(ctx, aggregateTraceKey{}, time.Now())
 }
@@ -56,7 +65,7 @@ func (p *aggregateTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, d pgx.T
 	}
 }
 
-func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token string) {
+func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token string, jit ...bool) float64 {
 	t.Helper()
 	obs.mu.Lock()
 	statement, args := obs.sql, append([]any(nil), obs.args...)
@@ -68,6 +77,13 @@ func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token st
 		if _, err := m3Scope(f, ctx, q, principal, f.tenantA); err != nil {
 			return err
 		}
+		mode := "off" // Same static expression mode as the SQL_V1 kernel.
+		if len(jit) == 1 && jit[0] {
+			mode = "on"
+		}
+		if _, err := q.ExecContext(ctx, `SELECT set_config('jit',$1,true)`, mode); err != nil {
+			return err
+		}
 		return q.QueryRowContext(ctx, "EXPLAIN (ANALYZE,BUFFERS,VERBOSE,FORMAT JSON) "+statement, args...).Scan(&raw)
 	})
 	scalarSQL(t, err)
@@ -76,14 +92,28 @@ func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token st
 		t.Fatal("aggregate plan decoding")
 	}
 	membership, aggregates := 0, 0
+	jitMillis := float64(0)
 	diagnostics := []map[string]any{}
 	var walk func(any)
 	walk = func(v any) {
 		switch n := v.(type) {
 		case map[string]any:
+			if j, ok := n["JIT"].(map[string]any); ok {
+				if timing, ok := j["Timing"].(map[string]any); ok {
+					jitMillis, _ = timing["Total"].(float64)
+				}
+				// JIT diagnostic metadata contains only counts, boolean options
+				// and timing; never SQL, arguments, source code or row values.
+				safe := map[string]any{}
+				for _, key := range []string{"Functions", "Options", "Timing"} {
+					safe[key] = j[key]
+				}
+				encoded, _ := json.Marshal(safe)
+				t.Logf("aggregate_jit_diagnostics=%s", encoded)
+			}
 			if n["Node Type"] != nil {
 				d := map[string]any{}
-				for _, key := range []string{"Node Type", "Relation Name", "Index Name", "Actual Rows", "Actual Loops", "Actual Total Time", "Shared Hit Blocks", "Shared Read Blocks", "Temp Written Blocks"} {
+				for _, key := range []string{"Node Type", "Relation Name", "Index Name", "Actual Rows", "Actual Loops", "Actual Total Time", "Shared Hit Blocks", "Shared Read Blocks", "Temp Written Blocks", "Heap Fetches"} {
 					if value := n[key]; value != nil {
 						d[key] = value
 					}
@@ -121,6 +151,141 @@ func aggregateExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token st
 		t.Fatal("aggregate SQL or single-evaluation membership proof absent")
 	}
 	t.Logf("aggregate_plan membership_initplans_executed_once=%d sql_aggregate_nodes=%d", membership, aggregates)
+	return jitMillis
+}
+
+// Diagnostic, not an alternative capacity gate. Compare the SAME generated
+// statement, parameters and fixture; each LOCAL setting dies with its owned tx.
+func TestM9RSQLAggregateJITDiagnostic(t *testing.T) {
+	m8Database(t)
+	requireM9RReferencePostgres(t)
+	f, h, base, token, app := aggregateFixture(t)
+	aggregateBulkSeed(t, f, h, base, token, app, 100000)
+	m9rIndexReady(t, h, base+"/indexes/"+aggregateBalance, token)
+	_, err := f.operator.Exec(`ANALYZE runtime.records;ANALYZE runtime.numeric_indexes;ANALYZE runtime.numeric_projections`)
+	scalarSQL(t, err)
+	obs := &aggregateTrace{}
+	cfg, err := pgx.ParseConfig(os.Getenv("DATABASE_URL"))
+	scalarSQL(t, err)
+	cfg.Tracer = obs
+	db := stdlib.OpenDB(*cfg)
+	defer db.Close()
+	var actualDB, expectedDB, role string
+	scalarSQL(t, f.db.QueryRow(`SELECT current_database()`).Scan(&expectedDB))
+	scalarSQL(t, db.QueryRow(`SELECT current_database(),session_user`).Scan(&actualDB, &role))
+	if actualDB != expectedDB || role != "framework_app" {
+		t.Fatal("JIT diagnostic target mismatch")
+	}
+	original := f.db
+	f.db = db
+	h = r5Handler(t, f, audit.Postgres{})
+	f.db = original
+	got := aggregateResult(t, h, base, token, aggregateQuery("sum", aggregateBalance))
+	if got.Count != 100000 {
+		t.Fatal("JIT diagnostic must execute the full input")
+	}
+	on := aggregateExplain(t, f, obs, token, true)
+	off := aggregateExplain(t, f, obs, token, false)
+	t.Logf("aggregate_jit_comparison on_compile_ms=%.3f off_compile_ms=%.3f; diagnostic only", on, off)
+}
+
+// Inspect the SAME manually prepared statement under both planning modes.
+// EXECUTE utility arguments cannot be driver parameters, so PostgreSQL itself
+// quotes values, and casts come only from this finite built-in type allowlist.
+// Neither the SQL text nor its literals are logged.
+func aggregatePreparedExplain(t *testing.T, f *iamFixture, obs *aggregateTrace, token string) {
+	t.Helper()
+	obs.mu.Lock()
+	statement, args := obs.sql, append([]any(nil), obs.args...)
+	obs.mu.Unlock()
+	principal, err := f.verifier.Verify(token)
+	scalarSQL(t, err)
+	for _, mode := range []string{"force_custom_plan", "force_generic_plan"} {
+		var raw []byte
+		begin := time.Now()
+		err := postgres.WithRuntime(context.Background(), f.db, func(ctx context.Context, q postgres.Executor) error {
+			if _, err := m3Scope(f, ctx, q, principal, f.tenantA); err != nil {
+				return err
+			}
+			if _, err := q.ExecContext(ctx, `SELECT set_config('jit','off',true),set_config('plan_cache_mode',$1,true)`, mode); err != nil {
+				return err
+			}
+			name := "m9r_aggregate_" + strings.ReplaceAll(uuid(t), "-", "")
+			if _, err := q.ExecContext(ctx, "PREPARE "+name+" AS "+statement); err != nil {
+				return err
+			}
+			var encoded []byte
+			if err := q.QueryRowContext(ctx, `SELECT to_json(ARRAY(SELECT x::text FROM unnest(parameter_types) x)) FROM pg_prepared_statements WHERE name=$1`, name).Scan(&encoded); err != nil {
+				return err
+			}
+			var types []string
+			if json.Unmarshal(encoded, &types) != nil || len(types) != len(args) {
+				t.Fatalf("prepared aggregate parameter contract types=%d args=%d", len(types), len(args))
+			}
+			literals := []string{}
+			for i, arg := range args {
+				switch types[i] {
+				case "text", "uuid", "bigint", "integer", "numeric", "boolean", "date", "timestamp with time zone", "timestamp without time zone", "jsonb":
+				default:
+					t.Fatal("unexpected prepared aggregate built-in type")
+				}
+				value := fmt.Sprint(arg)
+				switch v := arg.(type) {
+				case []byte:
+					value = string(v)
+				case json.RawMessage:
+					value = string(v)
+				}
+				var quoted string
+				if err := q.QueryRowContext(ctx, `SELECT quote_nullable($1::text)`, value).Scan(&quoted); err != nil {
+					return err
+				}
+				literals = append(literals, quoted+"::"+types[i])
+			}
+			if err := q.QueryRowContext(ctx, `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) EXECUTE `+name+"("+strings.Join(literals, ",")+")").Scan(&raw); err != nil {
+				return err
+			}
+			_, err := q.ExecContext(ctx, "DEALLOCATE "+name)
+			return err
+		})
+		if err != nil {
+			var state interface{ SQLState() string }
+			if errors.As(err, &state) && state.SQLState() == "57014" {
+				t.Logf("aggregate_prepared_diagnostic mode=%s SQLSTATE57014 after=%s (diagnostic failure, not a capacity pass)", mode, time.Since(begin))
+				continue
+			}
+			scalarSQL(t, err)
+		}
+		var plan []struct {
+			Plan          map[string]any `json:"Plan"`
+			ExecutionTime float64        `json:"Execution Time"`
+		}
+		if json.Unmarshal(raw, &plan) != nil || len(plan) != 1 {
+			t.Fatal("prepared aggregate plan decoding")
+		}
+		joins, scans := []string{}, []string{}
+		var walk func(map[string]any)
+		walk = func(p map[string]any) {
+			node, _ := p["Node Type"].(string)
+			rows, _ := p["Actual Rows"].(float64)
+			loops, _ := p["Actual Loops"].(float64)
+			if strings.Contains(node, "Join") || node == "Nested Loop" {
+				joins = append(joins, node)
+			}
+			if table, ok := p["Relation Name"].(string); ok {
+				scans = append(scans, node+":"+table+":rows="+strconv.FormatFloat(rows, 'f', 0, 64)+":loops="+strconv.FormatFloat(loops, 'f', 0, 64))
+			}
+			if children, ok := p["Plans"].([]any); ok {
+				for _, child := range children {
+					if c, ok := child.(map[string]any); ok {
+						walk(c)
+					}
+				}
+			}
+		}
+		walk(plan[0].Plan)
+		t.Logf("aggregate_prepared_diagnostic mode=%s execution_ms=%.3f joins=%v scans=%v", mode, plan[0].ExecutionTime, joins, scans)
+	}
 }
 
 func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
@@ -165,7 +330,6 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 		t.Fatal("aggregate trace configuration")
 	}
 	cfg.Tracer = obs
-	cfg.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
 	traced := stdlib.OpenDB(*cfg)
 	defer traced.Close()
 	traced.SetMaxOpenConns(10)
@@ -181,7 +345,7 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 	admission, err := postgres.NewAdmission(4, 128)
 	scalarSQL(t, err)
 	h = r5Handler(t, f, audit.Postgres{}, admission)
-	t.Log("aggregate_reference_experiment query_mode=cache_describe trusted_api_admission=4 offered_http_clients=10; HTTP includes all FIFO wait")
+	t.Log("aggregate_reference_experiment api_admission=4 offered_http_clients=10; default driver mode and complete HTTP latency")
 	f.db = original
 	server := httptest.NewServer(h)
 	defer server.Close()
@@ -269,6 +433,9 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 			}
 		}
 		aggregateExplain(t, f, obs, token)
+		if tc.name == "owner_money" || tc.name == "filtered_money" {
+			aggregatePreparedExplain(t, f, obs, token)
+		}
 		obs.mu.Lock()
 		obs.times = nil
 		obs.mu.Unlock()
@@ -289,13 +456,18 @@ func TestM9RSQLAggregatePerformanceFloor(t *testing.T) {
 		}
 		close(jobs)
 		group.Wait()
+		unexpected := 0
 		for _, ok := range valid {
 			if !ok {
-				obs.mu.Lock()
-				state := obs.state
-				obs.mu.Unlock()
-				t.Fatal("aggregate request failed or disagreed with oracle", tc.name, "SQLSTATE", state)
+				unexpected++
 			}
+		}
+		if unexpected != 0 {
+			obs.mu.Lock()
+			state := obs.state
+			obs.mu.Unlock()
+			t.Errorf("aggregate request failure/oracle mismatch case=%s errors=%d SQLSTATE=%s", tc.name, unexpected, state)
+			continue // Remains FAIL; collect independent remaining cases honestly.
 		}
 		obs.mu.Lock()
 		sqlTimes := append([]float64(nil), obs.times...)

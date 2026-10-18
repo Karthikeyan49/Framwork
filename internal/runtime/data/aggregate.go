@@ -17,7 +17,7 @@ const MaxSQLAggregateRows = 100000
 
 // Expanded aggregation is an explicit interactive contract. Strict execution
 // inputs, workers, opaque policies and legacy requests keep their existing path.
-func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e compiler.Entity, query Query, g Guard, resolve []ScopeResolver) (Page, error) {
+func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e compiler.Entity, query Query, g Guard, resolve []ScopeResolver) (page Page, resultErr error) {
 	if !st.visible || !st.sqlFields || st.legacy || st.workerSource || !postgres.RuntimeSnapshot(q) {
 		return Page{}, ErrDenied
 	}
@@ -78,7 +78,8 @@ func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, 
 	input, result := "1", "count(*),0::bigint,''::text"
 	var normalized string
 	if query.Aggregate.Op == "sum" {
-		rawValue := "r.custom_data->" + b.bind(f.ID) + "::text"
+		fieldKey := b.bind(f.ID) + "::text"
+		rawValue := "r.custom_data->" + fieldKey
 		input = rawValue + " AS v"
 		valid, number := aggregateValueSQL(f, &b, "v")
 		normalized = "CASE WHEN " + valid + " THEN COALESCE(" + number + ",0::numeric) ELSE NULL END AS n"
@@ -89,9 +90,13 @@ func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, 
 		if indexErr == nil && index.State == "READY" {
 			// Versioned per-write certification binds raw validity to this exact
 			// projected value/source version. Legacy NULL flags retain raw checks.
-			source += ` LEFT JOIN runtime.numeric_projections p ON p.tenant_id=$1 AND p.app_id=$2 AND p.metadata_revision=$3 AND p.ir_hash=$4 AND p.entity_id=$5 AND p.field_id=` + b.bind(f.ID) + ` AND p.id=r.id`
-			input = "CASE WHEN p.aggregate_valid_v1 IS NULL THEN " + rawValue + " ELSE NULL END AS v,r.row_version AS rv,p.id AS pid,p.source_version AS pv,p.aggregate_valid_v1 AS certified,p.value_number AS projected"
-			normalized = "CASE WHEN pid IS NULL OR pv IS DISTINCT FROM rv THEN NULL WHEN certified IS TRUE THEN COALESCE(projected,0::numeric) WHEN certified IS FALSE THEN NULL ELSE " + strings.TrimSuffix(normalized, " AS n") + " END AS n"
+			source += ` LEFT JOIN (SELECT id,source_version,aggregate_valid_v1,value_number FROM runtime.numeric_projections WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4 AND entity_id=$5 AND field_id=` + b.bind(f.ID) + ` OFFSET 0) p ON p.id=r.id`
+			// Late exact point lookup keeps raw JSON out of certified header
+			// scans. JSON null means an optional missing value in an existing
+			// row; SQL NULL means the lookup itself is missing and must deny.
+			late := `(SELECT COALESCE(l.custom_data->` + fieldKey + `,'null'::jsonb) FROM runtime.records l WHERE l.tenant_id=$1 AND l.app_id=$2 AND l.metadata_revision=$3 AND l.ir_hash=$4 AND l.entity_id=$5 AND l.id=r.id AND l.row_version=r.row_version)`
+			input = "CASE WHEN p.id IS NOT NULL AND p.source_version=r.row_version AND p.aggregate_valid_v1 IS NULL THEN " + late + " ELSE NULL END AS v,r.row_version AS rv,p.id AS pid,p.source_version AS pv,p.aggregate_valid_v1 AS certified,p.value_number AS projected"
+			normalized = "CASE WHEN pid IS NULL OR pv IS DISTINCT FROM rv THEN NULL WHEN certified IS TRUE THEN COALESCE(projected,0::numeric) WHEN certified IS FALSE OR v IS NULL THEN NULL ELSE " + strings.TrimSuffix(normalized, " AS n") + " END AS n"
 		}
 		result = "count(*),count(*)-count(n),COALESCE(sum(n),0)::text"
 	}
@@ -102,6 +107,27 @@ func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, 
 		selection = "SELECT " + normalized + " FROM (" + selection + ") aggregate_values OFFSET 0"
 	}
 	statement := `WITH aggregate_input AS MATERIALIZED (` + selection + `) SELECT ` + result + ` FROM aggregate_input`
+	// This closed OLTP kernel avoids per-request LLVM compilation (ADR051).
+	// Change only the certified transaction, preserving successful composition
+	// and allowing WithRuntime rollback to reset SQL-aborted/cancelled paths.
+	var jit bool
+	if err = q.QueryRowContext(ctx, `SELECT current_setting('jit')::boolean`).Scan(&jit); err != nil {
+		return Page{}, err
+	}
+	if jit {
+		if _, err = q.ExecContext(ctx, `SELECT set_config('jit','off',true)`); err != nil {
+			return Page{}, err
+		}
+		defer func() {
+			var state interface{ SQLState() string }
+			if errors.As(resultErr, &state) {
+				return
+			}
+			if _, err := q.ExecContext(ctx, `SELECT set_config('jit','on',true)`); err != nil && resultErr == nil {
+				page, resultErr = Page{}, ErrUnavailable
+			}
+		}()
+	}
 	var count, invalid int64
 	var sum string
 	if err = q.QueryRowContext(ctx, statement, b.args...).Scan(&count, &invalid, &sum); err != nil {
