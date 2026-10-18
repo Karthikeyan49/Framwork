@@ -362,19 +362,26 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 		shadowStep(t, h, owner, path, x, "activate")
 		old := path + "/bindings/1/entities/entity.contact"
 		current := path + "/bindings/2/entities/entity.contact"
-		var id, deleted string
-		scalarSQL(t, f.operator.QueryRow(`SELECT md5('1')::uuid::text,md5('100000')::uuid::text`).Scan(&id, &deleted))
-		if w := m5Call(h, current+"/records/"+id+"/access", owner, map[string]any{"operation": "owner", "expected_version": 1, "user_id": f.viewer}); w.Code != 200 {
+		var id, shared, deleted string
+		scalarSQL(t, f.operator.QueryRow(`SELECT md5('1')::uuid::text,md5('2')::uuid::text,md5('100000')::uuid::text`).Scan(&id, &shared, &deleted))
+		var changedAccess data.Access
+		if w := m5Call(h, current+"/records/"+id+"/access", owner, map[string]any{"operation": "owner", "expected_version": 1, "user_id": f.viewer}); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &changedAccess) != nil {
 			t.Fatal("mapped capacity governed owner change", w.Code)
 		}
 		if w := m5Call(h, current+"/commands", owner, data.Command{Key: uuid(t), Operation: "delete", ID: deleted, ExpectedVersion: 1}); w.Code != 200 {
 			t.Fatal("mapped capacity governed deletion", w.Code)
+		}
+		if w := m5Call(h, current+"/records/"+shared+"/access", owner, map[string]any{"operation": "share", "expected_version": 1, "user_id": f.viewer, "can_write": false}); w.Code != 200 {
+			t.Fatal("mapped capacity governed canonical sharing", w.Code)
 		}
 		for _, field := range []string{aggregateUnits, aggregateRatio, aggregateBalance} {
 			idx := m9rIndexReady(t, h, current+"/indexes/"+field, owner)
 			if idx.ScannedRows != 99999 || idx.VerifiedRows != 99999 {
 				t.Fatal("mapped current numeric coverage")
 			}
+		}
+		if w := m5Call(h, current+"/commands", owner, data.Command{Key: uuid(t), Operation: "patch", ID: id, ExpectedVersion: changedAccess.Version, Values: map[string]any{aggregateBalance: map[string]any{"amount": "101", "currency": "USD"}}}); w.Code != 200 {
+			t.Fatal("mapped capacity current-only certified value change", w.Code)
 		}
 		_, err = f.operator.Exec(`ANALYZE runtime.records;ANALYZE runtime.record_identity;ANALYZE runtime.identity_shares;ANALYZE runtime.numeric_projections;ANALYZE runtime.numeric_indexes;ANALYZE runtime.dataset_generations;ANALYZE runtime.datasets`)
 		scalarSQL(t, err)
@@ -444,6 +451,9 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 				if mapped && tc.role == "OWNER" && i == 1 {
 					allowed = true
 				}
+				if mapped && tc.role == "SHARE" && i == 2 {
+					allowed = true
+				}
 				if !allowed || mapped && i == 100000 {
 					continue
 				}
@@ -458,6 +468,9 @@ func runAggregatePerformance(t *testing.T, mapped bool) {
 					}
 				case aggregateBalance:
 					value = fmt.Sprint(i % 97)
+					if mapped && branch == 0 && i == 1 {
+						value = "101" // Retained generation must keep historical1.
+					}
 				}
 				n, ok := new(big.Rat).SetString(value)
 				if !ok {
