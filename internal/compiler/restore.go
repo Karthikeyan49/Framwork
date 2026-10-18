@@ -42,6 +42,9 @@ func Restore(raw []byte, expectedHash string, supportedIR []string) (Program, er
 	if validateStoredEntities(ir) != nil {
 		return Program{}, errors.New("stored runtime model disagrees with application")
 	}
+	if ir.IRVersion == IntegrityIRVersion && (ir.Application.SchemaVersion != metadata.IntegritySchemaVersion || ir.CompilerVersion != IntegrityCompilerVersion) || validateIntegrity(ir.Application.SchemaVersion, ir.Entities) != nil {
+		return Program{}, errors.New("invalid stored integrity contract")
+	}
 	if validateStoredRules(ir) != nil {
 		return Program{}, errors.New("stored rule model disagrees with application")
 	}
@@ -91,7 +94,7 @@ func validateStoredEntities(ir IR) error {
 			}
 			values := append([]string{}, f.EnumValues...)
 			sort.Strings(values)
-			entity.Fields = append(entity.Fields, Field{ID: id, Label: fd.Label, Type: f.Type, Required: f.Required, CoreID: core, EnumValues: values, Currency: f.Currency, ReferenceTo: f.ReferenceTo})
+			entity.Fields = append(entity.Fields, Field{ID: id, Label: fd.Label, Type: f.Type, Required: f.Required, CoreID: core, EnumValues: values, Currency: f.Currency, ReferenceTo: f.ReferenceTo, Unique: f.Unique})
 		}
 		sort.Slice(entity.Fields, func(i, j int) bool { return entity.Fields[i].ID < entity.Fields[j].ID })
 		derived = append(derived, entity)

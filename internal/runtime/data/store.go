@@ -47,7 +47,10 @@ func (Store) Ready(ctx context.Context, db *sql.DB) error {
 	if err = scalarReady(ctx, db); err != nil {
 		return err
 	}
-	return searchReady(ctx, db)
+	if err = searchReady(ctx, db); err != nil {
+		return err
+	}
+	return uniqueReady(ctx, db)
 }
 func base(s Scope, a tenant.Access, entity string) []any {
 	return []any{a.TenantID(), s.AppID(), s.DataRevision(), s.DataHash(), entity}
@@ -320,6 +323,9 @@ func command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 	if !permitted {
 		return Record{}, ErrDenied
 	}
+	if err = authorizeUniqueMutation(ctx, q, s, a, e, c.ID, normalized, g, resolve); err != nil {
+		return Record{}, err
+	}
 	if c.Operation == "create" {
 		_, err = q.ExecContext(ctx, `INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`, args...)
 	} else {
@@ -343,6 +349,9 @@ func command(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access,
 		return Record{}, err
 	}
 	// Reference projections share the same transaction and tenant-inclusive FKs.
+	if err = clearUniqueMutation(ctx, q); err != nil {
+		return Record{}, err
+	}
 	if _, err = q.ExecContext(ctx, "DELETE FROM runtime.record_links WHERE "+recordWhere+" AND id=$6", append(base(s, a, entity), c.ID)...); err != nil {
 		return Record{}, err
 	}

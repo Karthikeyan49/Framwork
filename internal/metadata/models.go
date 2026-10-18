@@ -10,6 +10,7 @@ const SchemaVersion = "1.0.0"
 const RuleSchemaVersion = "1.1.0"
 const WorkflowSchemaVersion = "1.2.0"
 const ApprovalSchemaVersion = "1.3.0"
+const IntegritySchemaVersion = "1.4.0"
 const MaxBytes = 256 << 10
 
 type Document struct {
@@ -43,6 +44,7 @@ type Field struct {
 	EnumValues  []string `json:"enum_values,omitempty"`
 	Currency    string   `json:"currency,omitempty"`
 	ReferenceTo string   `json:"reference_to,omitempty"`
+	Unique      bool     `json:"unique,omitempty"`
 }
 type Relationship struct {
 	FromEntity  string `json:"from_entity"`

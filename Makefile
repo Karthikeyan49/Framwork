@@ -48,6 +48,9 @@ test-native-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RNativeIndexPerformanceFloor$$' -v ./tests/integration
 test-search-performance:
 	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RSearchPerformanceFloor$$' -v ./tests/integration
+.PHONY: test-unique-performance
+test-unique-performance:
+	node scripts/with-env.mjs $(GO) test -tags=integration,performance -timeout=5m -count=1 -run '^TestM9RUnique(Constraint|Write)PerformanceFloor$$' -v ./tests/integration
 test: test-unit test-integration
 check: docs-verify
 	./scripts/check-format.sh

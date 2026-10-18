@@ -150,12 +150,12 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 	if r.PathValue("workflow") != "" {
 		return a.previewWorkflow(ctx, q, r, u, access, evidence, scope)
 	}
-	if r.PathValue("index") != "" {
+	if r.PathValue("index") != "" && !strings.Contains(r.Pattern, "/unique-constraints/") {
 		evidence.State.EntityID = r.PathValue("entity")
 		evidence.State.FieldID = r.PathValue("index")
 		return indexRequest(ctx, q, r, scope, access, guard)
 	}
-	if r.Method == http.MethodGet && r.PathValue("record") == "" {
+	if r.Method == http.MethodGet && r.PathValue("record") == "" && r.PathValue("index") == "" {
 		// Capability hints improve UX; each command/query still enforces live policy.
 		canWrite := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, "preview.write", policy.Resource{TenantID: access.TenantID(), Type: "preview", AppID: app}, policy.Context{})).Allow
 		writable, err := (data.DatasetStore{}).Writable(ctx, q, scope, access)
@@ -163,6 +163,13 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 			return reply{}, err
 		}
 		canWrite = canWrite && writable
+		if canWrite {
+			ready, err := (data.Store{}).IntegrityReady(ctx, q, scope, access)
+			if err != nil {
+				return reply{}, err
+			}
+			canWrite = ready
+		}
 		return reply{status: 200, body: struct {
 			Mode           string      `json:"mode"`
 			Revision       int64       `json:"revision"`
@@ -214,6 +221,11 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 	if r.PathValue("record") != "" {
 		return recordAccessRequest(ctx, q, r, scope, access, evidence, guard, resolve)
 	}
+	if r.PathValue("index") != "" {
+		evidence.State.EntityID = r.PathValue("entity")
+		evidence.State.FieldID = r.PathValue("index")
+		return uniqueRequest(ctx, q, r, scope, access, a.Policy, guard, resolve)
+	}
 	if r.PathValue("rule") != "" {
 		return a.evaluateRule(ctx, q, r, u, access, evidence, program, scope, guard, resolve)
 	}
@@ -240,7 +252,7 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 			}
 			var record data.Record
 			before := *evidence
-			record, err = (data.Store{}).Command(ctx, q, scope, access, entity, command, guard, resolve)
+			record, err = (data.Store{}).CommandWithPolicy(ctx, q, scope, access, entity, command, a.Policy, guard, resolve)
 			if err == nil {
 				*evidence = before
 			}
@@ -278,12 +290,14 @@ func (a API) executePreview(ctx context.Context, q postgres.Executor, r *http.Re
 	var databaseError *pgconn.PgError
 	if errors.As(err, &databaseError) {
 		switch databaseError.Code {
-		case "23503", "55P03":
+		case "23505", "23503", "55P03":
 			// These SQL failures abort the transaction. Roll back the mutation,
 			// receipt, audit and outbox before auditing the defined rejection.
 			return reply{}, &requestRejection{response: denied(409, "record_conflict", "A concurrent change or reference prevents this command; reconcile and reload before retrying")}
 		case "55000":
 			return reply{}, &requestRejection{response: denied(409, "dataset_conflict", "Select the active dataset binding before retrying")}
+		case "42501":
+			return reply{}, &requestRejection{response: denied(403, "forbidden", "Data access is denied")}
 		}
 	}
 	switch {

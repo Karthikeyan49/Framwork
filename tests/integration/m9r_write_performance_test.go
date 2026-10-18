@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,14 +73,30 @@ func (w *m9rWriteAuditDiagnostics) recordError(err error) error {
 }
 
 func TestM9RIndependentWritePerformanceFloor(t *testing.T) {
+	runM9RWriteFloor(t, false)
+}
+
+func TestM9RUniqueWritePerformanceFloor(t *testing.T) {
+	runM9RWriteFloor(t, true)
+}
+
+func runM9RWriteFloor(t *testing.T, unique bool) {
 	m8Database(t)
 	requireM9RReferencePostgres(t)
 	f, h, base, token, app := m5Fixture(t)
+	if unique {
+		f, h, base, token, app, _ = uniqueFixture(t, 0, false)
+		uniqueReady(t, h, base+"/unique-constraints/field.contact.memo0", token)
+	}
 	diagnostics := &m9rWriteAuditDiagnostics{errors: map[string]int{}}
 	h = r5Handler(t, f, diagnostics)
 	rows := make([]data.Record, 32)
 	for i := range rows {
-		rows[i] = m5Create(t, h, base, token, "Write floor")
+		if unique {
+			rows[i] = uniqueCreate(t, h, base, token, fmt.Sprintf("initial-%d", i), 200)
+		} else {
+			rows[i] = m5Create(t, h, base, token, "Write floor")
+		}
 	}
 	server := httptest.NewServer(h)
 	defer server.Close()
@@ -109,6 +126,10 @@ func TestM9RIndependentWritePerformanceFloor(t *testing.T) {
 				// final UUID bytes while retaining this client's random namespace.
 				commandKey := key[:24] + fmt.Sprintf("%012x", counts[i]+1)
 				c := data.Command{Key: commandKey, Operation: "update", ID: rows[i].ID, ExpectedVersion: rows[i].Version, Values: m5Values("Write floor")}
+				if unique {
+					c.Values = uniqueValues(fmt.Sprintf("client-%d-step-%d", i, counts[i]+1))
+					c.Values["field.contact.name"] = strings.Repeat("Unique representative writer ", 35)
+				}
 				raw, _ := json.Marshal(c)
 				req, _ := http.NewRequest("POST", server.URL+base+"/commands", bytes.NewReader(raw))
 				req.Header.Set("Authorization", "Bearer "+token)

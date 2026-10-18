@@ -15,7 +15,7 @@ import (
 
 var indexesPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(versions/[0-9]+|datasets/[0-9a-f-]{36}/bindings/[0-9]+)/entities/entity\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(indexes|search-indexes)/field\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(register|build)$`)
 
-func indexReply(index data.NumericIndex, err error) (reply, error) {
+func indexReply[T any](index T, err error) (reply, error) {
 	if err == nil {
 		return reply{status: 200, body: index}, nil
 	}
@@ -38,7 +38,7 @@ func indexReply(index data.NumericIndex, err error) (reply, error) {
 			status, code = 400, "invalid_index"
 		case "42501":
 			status, code = 403, "forbidden"
-		case "55000", "55P03", "40001", "40P01":
+		case "23505", "55000", "55P03", "40001", "40P01":
 			status, code = 409, "index_conflict"
 		}
 	}

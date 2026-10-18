@@ -81,11 +81,14 @@ func (a API) Register(mux *http.ServeMux) {
 		} {
 			mux.HandleFunc("GET "+prefix+"/entities/{entity}/records/{record}/access", a.serve)
 			mux.HandleFunc("POST "+prefix+"/entities/{entity}/records/{record}/access", a.serve)
-			for _, kind := range []string{"indexes", "search-indexes"} {
+			for _, kind := range []string{"indexes", "search-indexes", "unique-constraints"} {
 				path := prefix + "/entities/{entity}/" + kind + "/{index}"
 				mux.HandleFunc("GET "+path, a.serve)
 				mux.HandleFunc("POST "+path+"/register", a.serve)
 				mux.HandleFunc("POST "+path+"/build", a.serve)
+				if kind == "unique-constraints" {
+					mux.HandleFunc("POST "+path+"/abort", a.serve)
+				}
 			}
 		}
 		if a.WorkflowsEnabled {

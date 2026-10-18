@@ -189,6 +189,9 @@ func patch(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e
 	if err != nil {
 		return Record{}, err
 	}
+	if err = authorizeUniqueMutation(ctx, q, s, a, e, c.ID, normalized, g, resolve); err != nil {
+		return Record{}, err
+	}
 	payload := b.bind(string(raw)) + "::jsonb"
 	version := b.bind(c.ExpectedVersion)
 	// Recheck the same scopes in the UPDATE; only non-business-state predicates
@@ -205,6 +208,9 @@ func patch(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, e
 		return Record{}, ErrConflict
 	}
 	// Touch only changed reference projections, including explicit-null removal.
+	if err = clearUniqueMutation(ctx, q); err != nil {
+		return Record{}, err
+	}
 	for _, id := range keys {
 		f, _ := field(e, id)
 		if f.Type != "reference" {

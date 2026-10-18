@@ -1,6 +1,7 @@
 # ADR044 — Governed unique-field integrity
 
-18 October 2026 (Asia/Kolkata). Status: proposed for independent design review.
+18 October 2026 (Asia/Kolkata). Status: accepted for implementation following
+independent read-only design review; executable verification is still required.
 Scope: R3c, on remediation/m9r-foundation. No M10 or production activation.
 
 ## Contract and compatibility
@@ -52,6 +53,14 @@ Registration must reject a frozen dataset; namespace/epoch locks fence races.
 Compatible metadata bindings retain installed constraints even if an older source
 does not describe uniqueness. Explicit constraint removal/evolution is later work.
 
+Registration, abort and restart lock/update the namespace write epoch. Every
+source writer holds its shared gate; older repeatable-read snapshots must abort.
+Use dataset → namespace → constraint → source record lock order. Builders use
+constraint NO KEY UPDATE, compatible with trigger KEY SHARE, avoiding a head/source
+lock inversion. Generation-specific claim keys exclude previous aborted attempts
+from current arbitration. Restore pairs application/IR/compiler 1.4 exactly and
+derives types, flags and budgets from immutable source rather than caller claims.
+
 ## Authorization and existence privacy
 
 A uniqueness conflict discloses value existence, even as a generic HTTP409.
@@ -59,7 +68,8 @@ Before attempting ANY new non-null canonical key, require closed Native/Defined
 policy and unconditional full-namespace read/write scopes for entity and field,
 plus normal entity/row/field actions. Unknown wrappers and scoped/opaque policies
 deny fresh and duplicate claims identically before lookup. SQL independently
-checks live membership, active role head/hash, deny precedence and ALL grants.
+checks live membership, active role head/hash, deny precedence and ALL grants,
+holding tenant/user/membership/head locks through mutation and commit.
 Token roles, caller flags and GUCs are not authority.
 
 Mint private permits through an app-only governed SQL port. Bind permits to the
@@ -67,8 +77,10 @@ exact backend and xid8, actor, tenant/namespace/entity/record/field, generation 
 canonical value hash. Bound slots, clear them after DML and rely on transaction
 rollback fencing. Trigger enforcement covers compatible/old metadata and raw DML:
 every changed NEW non-null canonical key needs a permit, whether or not the
-caller declared uniqueness. Workers and old binaries cannot mint permits; reject
-fresh and duplicate claims identically. Preserve permitted old reads, unrelated
+caller declared uniqueness. Workers cannot mint permits. Legacy write paths omit
+permits and deny fresh and duplicate claims identically; the database cannot
+identify binary age when processes share the same app credential.
+Preserve permitted old reads, unrelated
 patches, key clearing and deletions. Do not grant tenant discovery or generic
 business reads to a worker to make this feature work.
 
@@ -92,3 +104,6 @@ errors; key-write p95 target 500ms. Retain the 32-client/60s write gate and all
 existing query gates. Run full check/test/build and both browser suites before
 declaring this bounded feature complete. A compiler-only preparatory slice must
 explicitly reject execution rather than promise unenforced uniqueness.
+
+Never log canonical keys, customer values or raw duplicate-key details. Return a
+generic conflict only after full-scope authorization has already admitted a claim.

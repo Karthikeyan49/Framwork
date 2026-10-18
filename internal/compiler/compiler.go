@@ -22,9 +22,11 @@ const WorkflowIRVersion = "1.2.0"
 const WorkflowCompilerVersion = "1.2.0"
 const ApprovalIRVersion = "1.3.0"
 const ApprovalCompilerVersion = "1.3.0"
+const IntegrityIRVersion = "1.4.0"
+const IntegrityCompilerVersion = "1.4.0"
 
 func SupportedIRVersions() []string {
-	return []string{IRVersion, RuleIRVersion, WorkflowIRVersion, ApprovalIRVersion}
+	return []string{IRVersion, RuleIRVersion, WorkflowIRVersion, ApprovalIRVersion, IntegrityIRVersion}
 }
 
 const SchemaSnapshot = "hybrid-preview-v1"
@@ -53,6 +55,7 @@ type Field struct {
 	EnumValues  []string `json:"enum_values,omitempty"`
 	Currency    string   `json:"currency,omitempty"`
 	ReferenceTo string   `json:"reference_to,omitempty"`
+	Unique      bool     `json:"unique,omitempty"`
 }
 type Entity struct {
 	ID     string  `json:"id"`
@@ -157,7 +160,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		values := append([]string{}, f.EnumValues...)
 		sort.Strings(values)
 		f.EnumValues = values
-		fields[d.ID] = Field{d.ID, d.Label, f.Type, f.Required, core, values, f.Currency, f.ReferenceTo}
+		fields[d.ID] = Field{d.ID, d.Label, f.Type, f.Required, core, values, f.Currency, f.ReferenceTo, f.Unique}
 		if f.Type != "enum" && len(f.EnumValues) > 0 || f.Type != "money" && f.Currency != "" || f.Type != "reference" && f.ReferenceTo != "" {
 			add("/"+d.ID, "field_options", "Field options must match its type")
 		}
@@ -199,6 +202,9 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		if definition.Field != nil && membership[id] == "" {
 			add("/"+id, "orphan_field", "Every field must be listed by its owning entity")
 		}
+	}
+	if err := validateIntegrity(doc.SchemaVersion, entities); err != nil {
+		add("/definitions", "unique_contract", "Unique fields require schema 1.4, supported non-intrinsic types and at most eight per entity / 32 per application")
 	}
 	expression := expressionChecker(fields, membership, add)
 	rulePlans := []rules.Plan{}
@@ -263,7 +269,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if r := d.Rule; r != nil {
 			resolve(r.EntityRef, "entity", path)
-			if doc.SchemaVersion == metadata.RuleSchemaVersion || doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion {
+			if doc.SchemaVersion == metadata.RuleSchemaVersion || doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion || doc.SchemaVersion == metadata.IntegritySchemaVersion {
 				var entity Entity
 				for _, e := range entities {
 					if e.ID == r.EntityRef {
@@ -289,7 +295,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if w := d.Workflow; w != nil {
 			resolve(w.EntityRef, "entity", path)
-			if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion {
+			if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion || doc.SchemaVersion == metadata.IntegritySchemaVersion {
 				var entity Entity
 				for _, e := range entities {
 					if e.ID == w.EntityRef {
@@ -349,7 +355,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		ir.CompilerVersion = RuleCompilerVersion
 		ir.Rules = rulePlans
 	}
-	if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion {
+	if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion || doc.SchemaVersion == metadata.IntegritySchemaVersion {
 		ir.IRVersion = WorkflowIRVersion
 		ir.CompilerVersion = WorkflowCompilerVersion
 		ir.Rules = rulePlans
@@ -358,6 +364,10 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 	if doc.SchemaVersion == metadata.ApprovalSchemaVersion {
 		ir.IRVersion = ApprovalIRVersion
 		ir.CompilerVersion = ApprovalCompilerVersion
+	}
+	if doc.SchemaVersion == metadata.IntegritySchemaVersion {
+		ir.IRVersion = IntegrityIRVersion
+		ir.CompilerVersion = IntegrityCompilerVersion
 	}
 	raw, err := json.Marshal(ir)
 	if err != nil {

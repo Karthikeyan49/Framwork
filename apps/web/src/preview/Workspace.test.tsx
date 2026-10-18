@@ -38,6 +38,19 @@ function fixture(write = true): unknown {
 function preview(write = true) {
   return decodePreview(fixture(write), "app.contacts", 1);
 }
+it("preserves an opt-in integrity flag and rejects malformed or legacy declarations", () => {
+  const raw = fixture() as Preview;
+  raw.ir.ir_version = "1.4.0";
+  raw.ir.compiler_version = "1.4.0";
+  const field = raw.ir.entities[0].fields.find((f) => !f.core_id)!;
+  field.unique = true;
+  expect(decodePreview(raw, "app.contacts", 1).ir.entities[0].fields.find((f) => f.id === field.id)?.unique).toBe(true);
+  raw.ir.ir_version = "1.3.0";
+  expect(() => decodePreview(raw, "app.contacts", 1)).toThrow("Invalid field");
+  raw.ir.ir_version = "1.4.0";
+  Object.assign(field, { unique: "true" });
+  expect(() => decodePreview(raw, "app.contacts", 1)).toThrow("Invalid field");
+});
 const response = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status });
 async function load() {

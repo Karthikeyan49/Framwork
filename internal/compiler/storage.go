@@ -133,6 +133,9 @@ func schemaFields(e StorageEntity) map[string]StorageField {
 // its historical NONE layout; candidate builders must hash this separate plan.
 // No destructive operation, inferred rename, SQL, or arbitrary conversion exists.
 func PlanEvolution(base, target Program, intent EvolutionIntent) (EvolutionPlan, error) {
+	if HasUniqueConstraints(base) || HasUniqueConstraints(target) {
+		return EvolutionPlan{}, ErrEvolution // Constraint-preserving evolution needs an explicit lifecycle.
+	}
 	old, oldHash, err := Storage(base)
 	if err != nil {
 		return EvolutionPlan{}, err
