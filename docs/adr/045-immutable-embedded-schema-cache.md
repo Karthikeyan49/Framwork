@@ -1,7 +1,9 @@
 # ADR045 — Cache only immutable embedded validation schemas
 
-18 October 2026 (Asia/Kolkata). Status: accepted for implementation after
-independent source/library design review; executable review remains required.
+18 October 2026 (Asia/Kolkata). Status: accepted after independent source/library
+design and executable review. The [R3c report](../migration/M9R_R3C_IMPLEMENTATION_REPORT.md)
+records concurrent validation, full regressions and final bound-dataset writes
+(32 clients,p95 227.569ms,zero errors) under unchanged budgets.
 No policy/source/program/result cache is added.
 
 The R3c bound-dataset write gate failed p95 690.646ms against the unchanged 500ms

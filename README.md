@@ -33,7 +33,15 @@ ordering preserves the existing PostgreSQL microsecond precision and raw busines
 values. [Full-text search](docs/migration/M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md)
 now passes independent adversarial, retained-binary and 100k-row capacity review,
 plus full backend/frontend/browser and all six capacity gates. This is a bounded
-API capability; uniqueness, aggregates and wider product search remain separate.
+API capability; aggregates and wider product search remain separate.
+[Unique-field integrity](docs/migration/M9R_R3C_IMPLEMENTATION_REPORT.md) now
+passes independent adversarial review and final regression/build/browser/capacity
+gates. Opt-in schema/IR1.4 declarations use governed verified claims and live
+full-scope authorization; existing records and legacy readers are retained.
+Final checks pass246 integration groups without skips,97 frontend tests,
+9 application plus7 sign-in browser cases and all seven capacity gates.
+Uniqueness administration UI/removal/evolution, R3d aggregates and the remaining
+R5–R7 product/authority/operations work remain open; M9R is PARTIAL.
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,

@@ -1,5 +1,17 @@
 # External review finding status
 
+Current checkpoint, 18 October 2026: [R3c unique-field integrity](M9R_R3C_IMPLEMENTATION_REPORT.md)
+passes bounded independent review and final root verification on source `d15be92`
+with review/tests `2cf2f57`. Opt-in schema/IR1.4, governed copy/verification,
+private live-authority key permits, abort generations and compatible legacy
+bindings are implemented without tenant DDL or record loss. The reviewer
+reproduced and closed the receipt-retry regression. Final checks/build pass
+246 integration groups with zero failures/skips, 97 frontend tests, 9 application
+plus 7 sign-in browser cases and all seven capacity gates. Unique-key writes:
+10,061 updates, p95 227.569ms, zero errors at 32 clients. Uniqueness UI/removal/
+evolution, wider search, R3d, remaining R5 deployment/UI, R6 and R7 stay open.
+**Overall M9R remains PARTIAL; M10/main merge/production remain outside this task.**
+
 Publication checkpoint, 17 October 2026: the completed work through `197fe85`
 was recovered from the remote after the provided workspace returned to an older
 baseline. The unfinished R3c files were unavailable and are not claimed as pushed
@@ -79,12 +91,12 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Tenant-controlled shared DDL | Generic JSONB runtime has no such path; existing ALTER denial retained | Future indexes/migrations must remain governed platform operations |
 | Records disappear across compatible compiler/release changes | R2a/R2b and [R2c preview schema evolution](M9R_R2C_IMPLEMENTATION_REPORT.md) independently PASS: immutable generation maps, checkpointed transforms, current access/tombstones and workflow data pins; actual 100k migration and post-cutover queries verified | Production active-release execution remains M12/M13; dataset-management UI, automatic index inheritance and denser/larger migration capacity remain separate work |
 | RLS membership checked once per row | Replaced by statement-level membership evaluation; populated isolation and SQL plans verified | Preserve live authorization and fail-closed RLS; HTTP latency gate remains below |
-| End-to-end query performance | Governed numeric, text/civil-date, enum/reference, datetime/boolean and [selective full-text search](M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md) independently PASS within stated workloads. Final root p95: numeric 110.682ms, text/date worst 302.545ms, enum/reference worst 297.361ms, native worst 249.209ms, search worst 203.519ms; zero errors, unchanged 750ms target. Source and target cold-scan amplification were reproduced and fixed with correlated live-view point lookups | Register/build a supported index; overflow, general/unindexed/selective and broad/common-term workloads require their own evidence. Deep projection traversal is not constant time |
+| End-to-end query performance | Governed numeric, text/civil-date, enum/reference, datetime/boolean and [selective full-text search](M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md) independently PASS within stated workloads. Final root p95 on18 October: numeric118.359ms, text/date worst264.759ms, enum/reference worst209.020ms, native worst207.305ms, search worst169.357ms; zero errors, unchanged750ms target. Source and target cold-scan amplification were reproduced and fixed with correlated live-view point lookups | Register/build a supported index; overflow, general/unindexed/selective and broad/common-term workloads require their own evidence. Deep projection traversal is not constant time |
 | Shared dataset writer counter | Bounded R4 independently PASS at `94932e3`: overlapping writers/CAS/reference/fault checks and FIFO workload p95 340.575 ms, zero errors | Preserve regressions during indexing/evolution; previous failed runs retained |
 | Write retries / duplicate effects / unknown COMMIT | Bounded R4 independently PASS: known-abort retries, owned receipts and commit-response/browser reconciliation verified | External delivery is not covered; first historical 503 cause remains unconfirmed |
 | Late command rejection can commit a record without receipt/outbox | Independently reproduced fault and independently closed; real RLS-policy regression verifies zero business facts on rejection | Preserve whole-command rollback |
 | Same-login navigation loses an in-flight command key | Independently reproduced and closed; actor-owned pre-dispatch journal/navigation/account recovery verified | Browser-restart persistence intentionally absent |
-| Custom field indexes / unique projections | Integer/decimal/money, string/civil-date, enum/reference, datetime/boolean and fixed plain full-text projection indexes implemented and independently verified; source JSONB, old readers/cursors and existing releases retained | Search UI/ranking/languages/broad-term capacity remain separate; R3c explicit uniqueness metadata/concurrent uniqueness proof remains open |
+| Custom field indexes / unique projections | Integer/decimal/money, string/civil-date, enum/reference, datetime/boolean and fixed plain full-text indexes plus [R3c typed unique-field enforcement](M9R_R3C_IMPLEMENTATION_REPORT.md) independently verified; source JSONB, existing records, old readers/cursors and immutable releases retained. Populated backfill, conflict rollback, private permits, raw roles, concurrent claims/receipt replay and 100k/32-client gates pass | Uniqueness UI/READY removal/constraint-preserving evolution and search UI/ranking/languages/broad-term capacity remain separate; aggregates/planning remain R3d |
 | Aggregates and bounded join planner | Existing explicit budgets retained; broad SQL aggregation not implemented | R3d planner/aggregation correctness and workload gates |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
 | Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
@@ -101,7 +113,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Rules have no consumer | Original statement corrected: preview and workflow conditions consume rule plans | Business tools remain later work; a rule result never grants authorization |
 | External exactly-once and AI steps | No external tool/AI implementation or universal exactly-once claim | M10 per-tool delivery/reconciliation; AI milestones preserve deterministic authority |
 | Rate limiting / invalid authentication DB amplification | Still open | R7 bounded admission before expensive DB work, with safe denial evidence and abuse tests |
-| Per-request compile / repeated validator construction / catalog checks | Present; read/write reference gates now pass within the stated configuration | Profile before caching; preserve immutable artifacts, live membership and role drift checks |
+| Per-request compile / repeated validator construction / catalog checks | R3c/ADR045 profiles and removes repeated construction of immutable embedded JSON-Schema graphs only; concurrent validation and final read/write gates pass. Per-request source compilation and live catalog checks remain | Broader R7 profiling/admission/caching still open; preserve exact immutable keys, live membership/revocation and privilege drift detection |
 | Two conflicting rulebooks / missing supersession map | R0 map and concise agent rules implemented; source kits retained verbatim | Keep clause-level authority and current capability inventory updated |
 | No numeric verification gates / migration ownership | R2–R4 ADRs and reference targets now explicit | Execution must pass those gates; design and numbers alone are insufficient |
 | Portability claim | Qualified as deferred; format and round-trip proof absent | M17 concrete export/import specification and executed portability verification |
@@ -115,8 +127,10 @@ Bounded R4 and the configured numeric, text/civil-date, enum/reference,
 datetime/boolean and selective full-text search R3b HTTP gates are independently verified.
 R2c preview dataset evolution now passes independent fault/capacity tests, the
 full root suite/build and browser regressions. Preserve those regressions.
-Broader search, uniqueness and aggregates stay explicit R3b–R3d work; the bounded
-search API does not complete product search or general query capacity. R5–R7 remain separate
+Bounded R3c uniqueness now also passes independent and final root gates. Broader
+search and aggregates stay explicit R3b/R3d work; uniqueness administration/removal/
+evolution remain separate. The bounded search API does not complete product search
+or general query capacity. R5–R7 remain separate
 product/security/operations deliverables. R5b closes the bounded raw-worker
 capability gap; its synthetic receipt test has a narrow timeout margin and is
 not a wider capacity guarantee. The independent report records which final

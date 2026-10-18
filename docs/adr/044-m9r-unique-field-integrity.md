@@ -1,7 +1,9 @@
 # ADR044 — Governed unique-field integrity
 
-18 October 2026 (Asia/Kolkata). Status: accepted for implementation following
-independent read-only design review; executable verification is still required.
+18 October 2026 (Asia/Kolkata). Status: accepted and independently verified within
+the bounded API foundation. See the [implementation report](../migration/M9R_R3C_IMPLEMENTATION_REPORT.md)
+and [independent review](../verification/M9R_R3C_INDEPENDENT_REVIEW.md) for actual
+executions, retained failures and limits; overall M9R remains PARTIAL.
 Scope: R3c, on remediation/m9r-foundation. No M10 or production activation.
 
 ## Contract and compatibility

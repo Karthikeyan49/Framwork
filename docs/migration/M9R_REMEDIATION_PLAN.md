@@ -25,7 +25,7 @@ and broader migration capacity remain separate. Governed numeric R3b passes the 
 and independent runs (independent p95 96.713 ms, zero errors). See
 [R3b evidence](M9R_R3B_IMPLEMENTATION_REPORT.md) and
 [R4 progress](M9R_R4_IMPLEMENTATION_REPORT.md). M10 remains paused. Additional
-index types, R3c/R3d and full R5–R7 are not complete. Bounded R5a and
+index types, R3d and full R5–R7 are not complete; bounded R3c is recorded below. Bounded R5a and
 [R5b SQL worker authority](M9R_R5B_IMPLEMENTATION_REPORT.md) now pass documented
 review/full/browser gates at a5bba7b; remaining product policy and capacity work
 are explicit.
@@ -36,15 +36,15 @@ are explicit.
 independent review and the unchanged 100k-row/ten-client capacity gate. Review
 reproduced and closed raw intrinsic-ID admission and cold-plan source-scan
 amplification. The latter requires correlated live-view point fetches, not weaker
-authorization or longer timeouts. Additional query work, R3c uniqueness and
-R3d aggregates remain separate; final whole-suite evidence is recorded in the
+authorization or longer timeouts. Additional query work and R3d aggregates
+remain separate; bounded R3c is recorded below. Final whole-suite evidence is recorded in the
 slice report.
 
 [Enum/reference R3b](M9R_R3B_ENUM_REFERENCE_IMPLEMENTATION_REPORT.md) also passes
 independent executed review: exact options/target witnesses, Unicode/NULL contracts,
 tenant/worker/field/canonical-access faults, actual dropped COMMIT/concurrent copy,
 maximum enum bounds, retained-binary CRUD and twelve 100k-row capacity cases.
-R3c/R3d and the wider product/operations gates remain open;
+R3d and the wider product/operations gates remain open; bounded R3c is recorded below;
 final root verification belongs to the linked report.
 
 [Datetime/boolean R3b](M9R_R3B_DATETIME_BOOL_IMPLEMENTATION_REPORT.md) passes
@@ -52,7 +52,7 @@ independent executed review: native typed projections, strict private conversion
 unrounded UTC bounds, existing SQL precision/raw cursors, real commit/concurrency
 faults, live retained-generation authorization, retained API CRUD and all twelve
 100k-row capacity cases. The slice report records final root verification.
-R3c/R3d and broader product/operations gates remain separate.
+R3d and broader product/operations gates remain separate; bounded R3c is recorded below.
 
 [Governed full-text search R3b](M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md) now
 passes independent executable review at `d61f696`, with final source/review
@@ -66,8 +66,21 @@ browser cases and all six numeric/scalar/choice/native/search/write gates.
 Final search worst p95 is 203.519ms with zero errors; the 32-client write gate
 completes 11989 writes, p95 192.061ms, zero errors. Search is fixed simple/plain
 AND, default ID ASC pages and one string field; no search UI/ranking/languages
-or arbitrary broad-term capacity is claimed. Wider R3b, R3c/R3d and R6–R7 remain
+or arbitrary broad-term capacity is claimed. Wider R3b, R3d and R6–R7 remain
 open. No production activation, main merge or M10.
+
+[Governed uniqueness R3c](M9R_R3C_IMPLEMENTATION_REPORT.md) now passes independent
+executable review on source `d15be92`, with dedicated review/tests `2cf2f57`.
+Opt-in schema/IR/compiler1.4 separates integrity from storage identity; verified
+claims, private transaction permits, live scope checks and immutable abort
+generations preserve populated compatible bindings. The concurrent receipt-key
+regression was actually reproduced and fixed. Final check/test/build passes
+246 integration groups without skips and 97 frontend tests; browser9+7 and all
+seven capacity gates pass. The final unique writer completes10,061 updates at
+32 clients, p95 227.569ms and zero errors. UI, READY removal and constraint-
+preserving evolution are not part of this bounded API foundation. The next core
+R3 subgate is R3d SQL aggregates/planning, with its own ADR, populated independent
+oracles, authorization/fault tests and reference workload before acceptance.
 
 ## Objective and release gate
 
@@ -316,7 +329,8 @@ and production gateway validation remain required; a local fixture is not SSO
 deployment evidence. Role-definition editing remains API-only; enterprise UI
 remains separate from the R5c controls. Overall R5/M9R remains PARTIAL.
 Implement and review remaining work before promising product policy completeness.
-Remaining R3b query/search scope, R3c/R3d, R6 and R7 remain in this plan.
+Remaining R3b query/search scope, R3d, R6 and R7 remain in this plan;
+bounded R3c evidence is above, with its product/evolution limits explicit.
 
 Replace fixed-role branching with versioned tenant role/capability definitions
 and central RBAC/ABAC policy. Support `finance_manager` without trusting token
@@ -430,7 +444,8 @@ start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
 governed numeric, text/civil-date, enum/reference, datetime/boolean and bounded full-text search R3b, R5a/R5b, R5c server and preview UI administration, R5d and
-R5e and bounded R5f sign-in independently verified. Production R2 execution,
-broader R3b query/search scope, R3c/R3d, external identity deployment and R6–R7 remain open.
+R5e, bounded R5f sign-in and bounded R3c uniqueness independently verified.
+Production R2 execution,
+broader R3b query/search scope, R3d, external identity deployment and R6–R7 remain open.
 Role-definition UI remains separate.
 The complete foundation gate and broader review findings are not accepted as resolved.**

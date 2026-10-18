@@ -46,3 +46,12 @@ Read the [findings](../verification/M0_M9_REVIEW_VALIDATION.md) and
 [remediation plan](M9R_REMEDIATION_PLAN.md). Historical PASS reports certify only
 their tested scope. Contract placeholders and unexecuted test labels must never
 be reported as wired, verified product capabilities.
+
+Current remediation evidence is maintained in the
+[finding ledger](M9R_FINDING_STATUS.md), rather than inferred from the historical
+baseline table. [R3c](M9R_R3C_IMPLEMENTATION_REPORT.md) adds independently verified
+schema/IR1.4 unique-field declarations, governed claims and private live-authority
+permits over retained physical records. This is a preview/API foundation;
+constraint administration UI/removal/evolution and R3d aggregate expansion are
+separate work. The V2 source kit remains unchanged; no tenant-defined generated
+columns or shared DDL is reinstated.
