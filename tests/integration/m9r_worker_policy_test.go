@@ -88,7 +88,7 @@ func r5RawWorker(t *testing.T, m *m9Fixture, lease jobs.WorkflowLease, allow boo
 	if _, e = tx.Exec(`SAVEPOINT denied_effect`); e != nil {
 		t.Fatal(e)
 	}
-	_, e = tx.Exec(`INSERT INTO runtime.m9_test_effects(tenant_id,instance_id,step_key) VALUES($1::uuid,$2::uuid,'raw-denied')`, tenantID, lease.Ticket.JobID())
+	_, e = tx.Exec(`INSERT INTO m9_fixture.effects(tenant_id,instance_id,step_key) VALUES($1::uuid,$2::uuid,'raw-denied')`, tenantID, lease.Ticket.JobID())
 	var rejected *pgconn.PgError
 	if !errors.As(e, &rejected) || rejected.Code != "42501" {
 		t.Fatal("raw effect expected RLS rejection")
@@ -488,7 +488,7 @@ func TestM9RSQLWorkerCapabilitiesAndLiveRecordScopes(t *testing.T) {
 	})
 	// Definition/ACL changes never rewrite the immutable job or execute an effect.
 	var n int
-	if e := m.f.operator.QueryRow(`SELECT count(*) FROM runtime.m9_test_effects`).Scan(&n); e != nil || n != 0 {
+	if e := m.f.operator.QueryRow(`SELECT count(*) FROM m9_fixture.effects`).Scan(&n); e != nil || n != 0 {
 		t.Fatal("raw policy probes executed an effect", e)
 	}
 }

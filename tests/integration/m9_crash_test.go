@@ -154,7 +154,7 @@ func TestM9ProcessChild(t *testing.T) {
 		select {}
 	}
 	store.Activity = func(ctx context.Context, q postgres.Executor, a tenant.Access, r workflow.ActivityRequest) (json.RawMessage, error) {
-		if _, e := q.ExecContext(ctx, `INSERT INTO runtime.m9_test_effects(tenant_id,instance_id,step_key) VALUES($1,$2,$3)`, a.TenantID(), r.InstanceID, r.StepKey); e != nil {
+		if _, e := q.ExecContext(ctx, `INSERT INTO m9_fixture.effects(tenant_id,instance_id,step_key) VALUES($1,$2,$3)`, a.TenantID(), r.InstanceID, r.StepKey); e != nil {
 			return nil, e
 		}
 		if point == "before_commit" {
