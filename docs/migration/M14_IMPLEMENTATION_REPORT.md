@@ -37,7 +37,7 @@ time, integration tests against the isolated M14 stack reset from this tree.
 | `go test -race ./internal/ai/... ./internal/policy ./internal/platform/... ./internal/audit ./internal/tools` | PASS (`internal/ai` takes about 200 s under `-race`, 24 s without) |
 | `TestM14` integration group (API, ports, adversarial; 23 tests), `-race` | PASS, 92 s |
 | `TestM12`, `TestM13` groups on the M14 stack, `-race` | PASS, 251 s |
-| Eleven mutation checks of the guards (`docs/verification/M14_ADVERSARIAL_PLAN.md`) | each weakening was caught by at least one test; the tree was clean afterwards |
+| Twelve mutation checks of the guards (`docs/verification/M14_ADVERSARIAL_PLAN.md`; the twelfth removes the write-deadline extension) | each weakening was caught by at least one test; the tree was clean afterwards |
 | Full integration suite, `make check`, `make test-unit`, `make build`, `make test-e2e` on the final tree | see "Final gate" below |
 
 ## Final gate
@@ -54,13 +54,36 @@ against the isolated M14 database stack reset from that tree.
 | `make test-e2e` (5 browser tests) | PASS, 21.6 s |
 | `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN: it restarts the shared Redis and fails on isolated stacks by design |
 
+## Follow-up: provider-phase wall clock lifted from 6 s to 60 s (2026-10-19)
+
+The synchronous provider phase was clamped to 6 s because `httpserver.New` ends a response at 10 s. It now follows
+the contract (`ai.APIWallClockCeiling` = `DefaultWallClock`, 60 s) and the route extends the write deadline of its own
+connection (`reply.nextWithin`, `http.NewResponseController`; ADR040 A5 and Amendment B.9). Run on the isolated M14
+stack reset from the changed tree, one process at a time. This change post-dates the "Final gate" above; the full
+integration suite, `make check`, `make test-unit`, `make build` and `make test-e2e` were **not** re-run for it.
+
+| Command | Result |
+|---|---|
+| `gofmt -l` on tracked Go files, `node scripts/verify-docs.mjs`, `go vet ./internal/ai/... ./internal/platform/...`, `go vet -tags=integration ./tests/integration` | PASS |
+| `go test -race ./internal/platform/access ./internal/platform/httpserver` (new: `TestExtendWriteDeadline*`) | PASS, 3.3 s and 1.1 s |
+| `go test -race ./internal/ai/...` (new: `TestEffectiveWallClock*`) | PASS, 193 s |
+| `TestM14APIProviderPhaseOutlivesTheServerWriteTimeout`, `-race` (11 s scripted answer behind a real `httpserver.New` server) | PASS, 13.2 s |
+| Same test with `nextWithin` removed from `access/ai.go` | FAIL as intended: EOF after 11.05 s; the file was restored |
+| `TestM14APIClientGoneDuringProviderPhaseStillRecordsTheOutcome`, `-race` | PASS, 3.8 s: the proposal ended `FAILED`/`INTERNAL`, one provider call, the slot was free again |
+| `TestM14` group (25 tests), `-race` | PASS, 109 s |
+| `TestM12`, `TestM13` groups, `-race` | PASS, 251 s |
+
 ## Threat model and limits
 
 - **No real model.** Context quality, prompt quality, repair success rate, cost and latency are unmeasured. The
   corpus and the provider-swap comparison prove the gateway's substitutability and its handling of hostile bytes, not
   model behaviour.
-- **The provider phase is clamped to 6 s** (the HTTP server's 10 s deadlines and the 3 s transaction cap): a real
-  provider that answers more slowly cannot be used until an asynchronous slice exists (non-goal).
+- **The provider phase may take up to 60 s** (the contract's wall clock). It holds no transaction and no database
+  connection; the route moves the write deadline of its own connection to wall clock + 10 s (ADR040 A5, Amendment
+  B.9). It holds an HTTP connection for that time and the API has no process-wide limit on such requests (the
+  per-tenant in-flight limit applies); a proxy in front of the API may cut the exchange earlier, and a provider that
+  needs more than 60 s needs the asynchronous slice (non-goal). Executed: an 11 s answer behind the production server
+  timeouts; not executed: a 60 s phase and a real proxy.
 - **Closed schemas and the compiler protect structure, not meaning.** A model can propose valid, business-wrong
   logic; the control for that is M12 (verifier and independent acceptance) and M13 (approval), which M14 does not
   weaken. An AI-applied draft takes the whole path (`TestM14AdversarialAIAppliedDraftStillPassesTheReleasePath`).

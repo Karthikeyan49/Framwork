@@ -27,11 +27,11 @@ import (
 // (compile function, active release program, tool summaries, role names).
 
 const (
-	// APIWallClockCeiling bounds the provider phase of one request. The HTTP server
-	// sets 10 s read and write deadlines and every runtime transaction is capped at
-	// 3 s, so the 60 s DefaultWallClock of the contract cannot be honoured
-	// synchronously (ADR040 A5).
-	APIWallClockCeiling = 6 * time.Second
+	// APIWallClockCeiling bounds the provider phase of one request: the contract's
+	// DefaultWallClock. The phase holds no transaction; the route extends the
+	// connection's write deadline for it (the HTTP server's own is 10 s), and a proxy
+	// in front of the API may still impose a smaller limit of its own (ADR040 A5).
+	APIWallClockCeiling = DefaultWallClock
 	// leaseMargin is added to the wall clock to form a PENDING proposal's lease: it
 	// covers the admission and result transactions.
 	leaseMargin = 20 * time.Second
@@ -52,7 +52,7 @@ type ServiceLimits struct {
 }
 
 // Effective applies the defaults and the ceilings of the contract and of the
-// API (the wall clock is clamped to APIWallClockCeiling).
+// API (the wall clock never exceeds APIWallClockCeiling).
 func (l ServiceLimits) Effective() ServiceLimits {
 	if l.MaxAttempts <= 0 || l.MaxAttempts > MaxAttempts {
 		l.MaxAttempts = MaxAttempts
@@ -318,7 +318,7 @@ type Outcome struct {
 }
 
 // Execute is the provider phase. It holds no database connection and no
-// transaction: it only calls the gateway with the clamped wall clock and a token
+// transaction: it only calls the gateway within the wall clock and a token
 // budget equal to what admission reserved. A panic inside the pipeline becomes an
 // internal failure that is still recorded.
 func (s *Service) Execute(ctx context.Context, adm *Admission) (out Outcome) {

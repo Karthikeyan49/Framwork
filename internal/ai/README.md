@@ -21,4 +21,6 @@ ARCH-01..10 in `architecture_test.go`).
 | `corpus/`, `testdata/corpus/` | the adversarial corpus (412 items) and its interpreter |
 
 The HTTP surface is `internal/platform/access/ai.go`. Status: preview. No real model was called; the provider
-phase is clamped to 6 s by the HTTP server's deadlines (ADR040 A5), so real provider latencies are not usable yet.
+phase may take up to 60 s (`APIWallClockCeiling`): the route extends the write deadline of its own connection for it
+(ADR040 A5, Amendment B.9); the longest phase executed is a scripted 11 s answer behind the production server
+timeouts. Real provider latency, cost and quality are unmeasured.

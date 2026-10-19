@@ -385,17 +385,22 @@ pessimistic estimate when none is given, the port never lowers it.
 | output tokens | `max_output_tokens` | 4096 | 16384 |
 | daily tokens per tenant | `daily_token_budget` | `ai.DefaultDailyToken` (200 000) | 100 000 000 (port) |
 | in-flight per tenant | `in_flight_per_tenant` | 2 | 16 (port) |
-| provider-phase wall clock | `wall_clock`, **clamped to 6 s** by the API | 60 s per contract | 6 s |
-| lease | wall clock + 20 s | 26 s | 600 s (port) |
+| provider-phase wall clock | `wall_clock_ms`; never above `ai.APIWallClockCeiling` (= `DefaultWallClock`) | 60 s per contract | 60 s (Amendment B.9; this row said 6 s before) |
+| lease | wall clock + 20 s | 80 s | 600 s (port) |
 | request text | `MaxRequestRunes` | 4000 runes | — |
 | list page | `MaxListItems` | 50 | — |
 | body caps | create 32 KiB, apply 128 KiB, confirm 64 KiB, reject 4 KiB | | 1 MiB (global) |
 
-The clamp exists because `httpserver.New` sets 10 s read and write deadlines and each runtime
-transaction is capped at 3 s (`postgres.WithRuntime`); the admission transaction, the provider
-phase, the result transaction and the response must fit inside one request, so a 60 s
-synchronous wall clock cannot be honoured. Longer provider calls need the asynchronous slice
-(non-goal §15).
+`httpserver.New` sets 10 s read and write deadlines and each runtime transaction is capped at
+3 s (`postgres.WithRuntime`). The provider phase holds neither a transaction nor a connection,
+so only the write deadline limits it: after the admission transaction has committed and before
+the provider is called, the route moves the write deadline of its own connection to
+`wall clock + 10 s` (`reply.nextWithin` in `access.serve`, `http.NewResponseController`); the
+margin covers the result transaction and the response. No other route changes its deadline.
+A proxy or load balancer in front of the API may still impose a shorter limit; the API then
+sees the client gone, cancels the provider call and records the proposal `FAILED`/`INTERNAL`
+(the result transaction is detached from the client's cancellation), which frees the in-flight
+slot. Provider calls that need more than 60 s need the asynchronous slice (non-goal §15).
 
 ### A6. Policy `m14-native-v11`
 
@@ -480,7 +485,7 @@ membership and policy are re-evaluated in every one):
    (`Gateway.BuildContext`), audit `ai.proposal.admitted`, commit. A refusal rolls everything
    back (including the PENDING row) and is audited in a fresh transaction.
 2. **Provider phase** — no transaction, no connection held: `Gateway.RunPatch` or
-   `RunRequirements` with the request context, the clamped wall clock and `Budget`.
+   `RunRequirements` with the request context, the wall clock (A5) and `Budget`.
 3. **Result transaction** (detached from client cancellation, own deadline) —
    re-authenticate, `ai_record_attempt` per attempt, `ai_finish`, audit
    `ai.proposal.created` (READY/NEEDS_HUMAN/FAILED) and build the response.
@@ -554,9 +559,13 @@ a provider or a gateway directly.
 - Budget limits are passed by the API; the database caps them at fixed ceilings (A3) but
   cannot know the configured value. The body hash proves the stored body is what was
   submitted, not that it is what a model returned.
-- Expiry charges a crashed request pessimistically only when a later admission sweeps it.
-- The 6 s clamp makes real provider latencies unusable; this slice proves the seam, the
-  durability and the authority model, not model quality (§15).
+- Expiry charges a crashed request pessimistically only when a later admission sweeps it; a
+  crashed request keeps its in-flight slot until the lease lapses (80 s at the 60 s ceiling).
+- A provider phase of up to 60 s holds an HTTP connection (and a goroutine) for up to 70 s without
+  holding a database connection. The per-tenant in-flight limit bounds this per tenant; the API
+  has no global limit on such requests, and a proxy in front of it may cut them earlier (A5).
+- No real model was called: this slice proves the seam, the durability and the authority model, not
+  model quality, cost or latency (§15).
 - The independent review of M14 has not run: everything here is builder-side evidence.
 
 ## Amendment B — pipeline decisions and corrections (2026-10-19)
@@ -591,3 +600,13 @@ code is the source of truth for each of them.
 8. **Test evidence added by the builder side** (not independent review): a 412-item attack corpus run against
    the pure pipeline and, for 62 items, through the real routes; a provider-swap comparison over 145 items;
    architecture rules ARCH-01..10; eleven mutation checks (`docs/verification/M14_ADVERSARIAL_PLAN.md`).
+9. **The provider phase is no longer clamped to 6 s (corrects A5, A8 and the A12 residual).** The clamp existed
+   because the server's 10 s write deadline would cut a longer exchange. The phase holds no transaction and
+   no connection, so the route now moves the write deadline of its own connection to `wall clock + 10 s` and
+   `ai.APIWallClockCeiling` equals the contract's `DefaultWallClock` (60 s). Evidence: an 11 s scripted
+   answer behind a real `httpserver.New` server gives a stored READY proposal
+   (`TestM14APIProviderPhaseOutlivesTheServerWriteTimeout`); with the extension removed the same request
+   ends in EOF at the 10 s mark (mutation check, `M14_ADVERSARIAL_PLAN.md`); a client that gives up
+   mid-phase leaves a `FAILED`/`INTERNAL` proposal, one provider call and a free slot
+   (`TestM14APIClientGoneDuringProviderPhaseStillRecordsTheOutcome`). Not executed: a 60 s phase, a real
+   proxy in front of the API, a real provider.

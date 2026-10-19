@@ -148,9 +148,20 @@ type reply struct {
 	// (the AI provider phase and its result transaction, ADR040 A8). Its reply
 	// replaces this one.
 	next func(context.Context) reply
+	// nextWithin, when positive, moves the connection's write deadline to that long
+	// from now before next runs: the server-wide write timeout is 10 s and the
+	// provider phase may take longer.
+	nextWithin time.Duration
 
 	// retryAfter, when positive, is sent as a Retry-After header in whole seconds.
 	retryAfter time.Duration
+}
+
+// extendWriteDeadline moves the write deadline of the request's connection to d from
+// now. Writers that do not support deadlines (a test recorder) are left alone: the
+// call is best effort and its failure changes nothing but the available time.
+func extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
 }
 
 // A service rejection must roll back its entire business transaction before
@@ -314,6 +325,9 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err == nil && response.next != nil {
+		if response.nextWithin > 0 {
+			extendWriteDeadline(w, response.nextWithin)
+		}
 		response = response.next(parentContext)
 	}
 	// No protected response or security success is sent before the outer commit.

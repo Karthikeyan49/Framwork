@@ -20,6 +20,7 @@ stack, `-race`, one process at a time.
 | A-07 | Routes: policy matrix (owner, admin, member, viewer, custom roles, outsider, anonymous), strict bodies on every route, 503 when unconfigured before anything happens, acknowledgement of the server-derived sensitive list, apply against the current draft, state machine (double apply, apply after reject), requirement capture and human confirmation, NEEDS_HUMAN and FAILED as stored results, one transient retry, budgets and in-flight limit, context cap, audit without prompt or model text, tenant and application isolation, no model call on ordinary paths | 9–12 | `TestM14API*` (17 tests) | PASS |
 | A-08 | Ports: caller authority, malformed arguments, admission under concurrency, expiry, finish/decide state machine, append-only tables, RLS, grants, the derived worker guard | 8 | `TestM14Ports*` (5 tests) | PASS |
 | A-09 | HTTP provider: redirect (including to the same origin), request and response caps, timeout, private-range dial refusal, credential not retained | 3 | `internal/ai/provider_http_test.go` | PASS |
+| A-10 | Deadlines: an 11 s scripted answer behind a real `http.Server` built by `httpserver.New` (10 s read and write timeouts) still gives a stored READY proposal; a client that gives up during the provider phase leaves one `FAILED`/`INTERNAL` proposal, one provider call and a free in-flight slot | 5, 8 | `TestM14APIProviderPhaseOutlivesTheServerWriteTimeout`, `TestM14APIClientGoneDuringProviderPhaseStillRecordsTheOutcome`, `TestExtendWriteDeadline*`, `TestEffectiveWallClock*` | PASS (13.2 s and 3.8 s) |
 
 ## Mutation checks
 
@@ -39,12 +40,13 @@ clean afterwards). A guard whose weakening no test notices is not a control.
 | Viewer may propose and apply (`policy.go`) | 4 (`TestM14APIPolicyMatrix`, three policy unit tests) |
 | Unknown body fields accepted (`access/ai.go`) | 1 (`TestM14APIBodiesAreStrict`) |
 | A deterministic package imports `internal/ai` (`internal/observability`) | 2 (`TestArchitectureAIBoundary` ARCH-01, `TestArchitectureAIImporters`); for packages that `internal/ai` itself depends on the Go compiler already rejects the import as a cycle |
+| The route does not extend the write deadline for the provider phase (`access/ai.go`, `nextWithin` removed) | 1 (`TestM14APIProviderPhaseOutlivesTheServerWriteTimeout`: the request ends in EOF after 11.05 s) |
 
 ## Not executed
 
 - Any real model, any real provider endpoint, any vendor credential. Prompt quality, repair success rate,
   latency and cost are unmeasured.
-- A provider call longer than the 6 s clamp that the HTTP server's deadlines impose (ADR040 A5).
+- A provider phase of 60 s (the longest the API allows; the longest executed is 11 s), a real proxy or load balancer in front of the API, and many concurrent long provider phases (ADR040 A5, A12).
 - Daily budget rollover (the clock is not injectable end to end); several API processes sharing one database.
 - A per-item budget override over HTTP; load or timing tests of the provider phase; browser or frontend.
 - An independent review of M14 and independent re-verification of this evidence.

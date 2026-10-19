@@ -398,8 +398,12 @@ func (a API) aiPropose(ctx context.Context, q postgres.Executor, r *http.Request
 	evidence.Action = "ai.proposal.admitted"
 	evidence.State.AIProposalID, evidence.State.AIKind, evidence.State.AIStatus = adm.ProposalID, string(kind), string(ai.ProposalPending)
 	evidence.State.AIRequestHash, evidence.State.AIContextHash, evidence.State.AISourceRevision = adm.RequestHash, adm.Context.Hash, adm.DraftRevision
-	return reply{status: 202, next: func(ctx context.Context) reply { return a.aiRun(ctx, r, app, adm) }}, nil
+	return reply{status: 202, nextWithin: adm.Limits.WallClock + aiResultMargin, next: func(ctx context.Context) reply { return a.aiRun(ctx, r, app, adm) }}, nil
 }
+
+// aiResultMargin is added to the provider wall clock to form the connection's write deadline for
+// the whole exchange: the result transaction (capped at 3 s) and the response.
+const aiResultMargin = 10 * time.Second
 
 // aiAuthorize re-authenticates the bearer token of the request in a new transaction
 // and re-evaluates policy for the action: identity, tenant membership and policy are
