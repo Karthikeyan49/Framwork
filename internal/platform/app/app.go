@@ -242,7 +242,11 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	}
 	platformCatalog := compiler.PlatformCatalog()
 	platformCatalog.ToolCatalog = toolCatalog
-	accessAPI := access.API{CompilerCatalog: &platformCatalog, ToolCatalog: toolCatalog, DB: db, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
+	aiConfig, aiProbe, err := newAI(c, registry, db, logger)
+	if err != nil {
+		return err
+	}
+	accessAPI := access.API{CompilerCatalog: &platformCatalog, ToolCatalog: toolCatalog, DB: db, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled, AI: aiConfig}
 	identityProbe := func(ctx context.Context) error {
 		return (identity.Store{}).Ready(ctx, db)
 	}
@@ -251,7 +255,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 			return nil
 		}
 		return workflow.Ready(ctx, db, "framework_app")
-	}, "policy": func(ctx context.Context) error { return (policy.RoleStore{}).Ready(ctx, db, false) }, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
+	}, "policy": func(ctx context.Context) error { return (policy.RoleStore{}).Ready(ctx, db, false) }, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }, "ai": aiProbe}})
 	server := httpserver.New(c.HTTPAddr, handler)
 	listener, err := net.Listen("tcp", c.HTTPAddr)
 	if err != nil {

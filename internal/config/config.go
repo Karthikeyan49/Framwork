@@ -39,6 +39,9 @@ type Config struct {
 	ToolSecretsDir    string
 	ToolCAFile        string
 	ToolAllowInternal bool
+	// AIProviderFile names an ai-provider-v1 file (ADR040); empty leaves the AI
+	// builder unconfigured (its routes answer 503). A path, never a secret.
+	AIProviderFile string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -96,6 +99,14 @@ func Load(getenv func(string) string) (Config, error) {
 	for _, p := range []string{c.ToolCatalogFile, c.ToolSecretsDir, c.ToolCAFile} {
 		if p != "" && (len(p) > 4096 || strings.ContainsRune(p, 0)) {
 			return c, fmt.Errorf("tool configuration paths are invalid")
+		}
+	}
+	if c.AIProviderFile = getenv("AI_PROVIDER_FILE"); c.AIProviderFile != "" {
+		if len(c.AIProviderFile) > 4096 || strings.ContainsRune(c.AIProviderFile, 0) {
+			return c, fmt.Errorf("AI_PROVIDER_FILE is invalid")
+		}
+		if c.Environment == "production" {
+			return c, fmt.Errorf("AI_PROVIDER_FILE is restricted to development/test: the AI builder is a preview capability")
 		}
 	}
 	c.AuthIssuer = getenv("AUTH_ISSUER")
