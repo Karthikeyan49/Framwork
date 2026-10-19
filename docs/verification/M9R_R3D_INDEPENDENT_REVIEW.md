@@ -1,10 +1,14 @@
 # M9R R3d independent adversarial review
 
 19 October 2026 (Asia/Kolkata). Status: bounded functional review PASS, overall
-R3d/M9R PARTIAL. Eleven independent default functional/fault groups and eleven
-existing aggregate regression groups passed together. An explicit
-driver-panic diagnostic FAILED and remains an unresolved R7 infrastructure
-finding. Capacity and overall R3d/M9R completion are not certified.
+R3d/M9R PARTIAL. The latest frozen-source run passes all23 ordinary groups
+together: twelve independent functional/fault/plan groups and eleven existing
+aggregate regressions, with zero skips and the checksum-pinned retained executable.
+A focused extension also passes nested live-scope/core-ID selection within an
+over-cap physical namespace. An explicit driver-panic diagnostic previously
+FAILED and remains an unresolved R7 infrastructure finding. The implementer's
+latest24-case capacity PASS is separate evidence; this reviewer did not repeat
+that workload. Wider profile and overall R3d/M9R acceptance remain pending.
 
 ADR056 re-verification additionally passes the same22 ordinary regression groups
 on stable `d7b64dd3acc56d387bc697a029accab863e03d24` and a separate corrected
@@ -202,3 +206,93 @@ the stated executions; no single combined23-group PASS is claimed. Large mapped/
 unmapped capacity, older workload gates, root check/test/build and browser gates
 remain NOT RUN by this reviewer. IR-R3d-01 remains unresolved and overall R3d/M9R
 remains PARTIAL.
+
+## ADR059 final frozen-source re-verification
+
+The final exclusive window uses product source
+`f9cb4fa798843e66db3d4c53ad57b7c7bc67dcc2`, including ADR058's provisional
+reference-v2/default4 configuration and ADR059's physical namespace boundary.
+No implementer source edits, competing database workload or root build occurred
+during this window. Only this independent report and review-test assertions
+changed. Earlier results and failed diagnostics above remain historical evidence;
+the latest combined command below now provides the previously missing single
+23-group PASS.
+
+Read-only comparison confirms that physical records are constrained by all five
+trusted tenant/app/revision/hash/entity keys inside OFFSET0, without an inner
+limit. Outer DataScope and caller predicates still precede LIMIT100001. The
+relation retains JSON for nested policy conditions, while current canonical
+ownership and tombstones still come from record_identity. Missing/stale numeric
+witness denial, exact retained-generation fallback, normalized scalar projection
+and transaction-local mode restoration are unchanged. Exact small retained and
+current generated plans still have one normalized projection and one identity
+scan/loop with no CTE Scan. These are functional plan observations, not a claim
+about every physical plan or large-workload latency.
+
+LOW finding IR-R3d-02 is closed at this source: backend boundary diagnostics now
+apply current_database() to both active clients and autovacuum workers. The
+previous OR branch counted autovacuum workers from other databases. No SQL,
+parameters, database identifiers or business values are emitted. GC/cgroup
+counters and boundary wait counts remain passive correlations, outside the
+individual request timers; they do not prove the cause of a latency tail.
+
+The actual API registration probe verifies default4 with pool10 and an unlimited
+pool, fallback2 with a two-connection pool, and preserved explicit1/5 injections.
+No hidden pool waiting occurs in that fixture. Config race tests additionally
+verify default4, valid1/4/10 and rejection of explicit0 and other invalid values.
+
+Executed commands and results:
+
+```sh
+sha256sum .local/reports/r3c-legacy-api
+```
+
+PASS: unchanged checksum
+`bdcbffb3be0e7bda6eb4d29fe4f30b6b9bcc63acbf3a85680e4809b5864ef48c`,
+retained source `197fe85`.
+
+```sh
+set -o pipefail
+M9R_LEGACY_API_BINARY=/workspace/Framwork/.local/reports/r3c-legacy-api M9R_LEGACY_API_SHA256=bdcbffb3be0e7bda6eb4d29fe4f30b6b9bcc63acbf3a85680e4809b5864ef48c node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestIndependentR3d|TestM9RSQLAggregate)' -v ./tests/integration 2>&1 | tee .local/reports/r3d-independent-adr059-final.log
+```
+
+PASS60.415s: all23 ordinary groups, zero skips, including the actual retained
+executable reader, real SQL timeout/cancellation, ordinary callback rollback,
+fault-firing assertions, pinned snapshots, canonical ACLs and settings cleanup.
+The log-count assertion also PASSes:
+
+```sh
+awk '/^--- PASS:/ {passed++} /^--- SKIP:/ {skipped++} /^--- FAIL:/ {failed++} END {printf "passed=%d skipped=%d failed=%d\n", passed, skipped, failed; exit !(passed==23 && skipped==0 && failed==0)}' .local/reports/r3d-independent-adr059-final.log
+```
+
+The reviewer then strengthened the existing independent budget/timeout group,
+reusing its100001-row disposable fixture rather than creating a capacity run.
+A live role with nested OWNER AND CONDITION narrows the namespace to7142 inputs;
+its exact integer sum passes. A core-ID filter returns exactly one included
+record and excludes a populated out-of-scope record. This closes the specific
+gap between existing over-cap caller-filter coverage and smaller nested-scope
+fixtures. The extension changes no product code or existing assertion.
+
+```sh
+.local/toolchains/go/bin/gofmt -w tests/integration/m9r_aggregate_review_test.go
+set -o pipefail
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestIndependentR3dBudgetRestorationAndActualStatementTimeout$' -v ./tests/integration 2>&1 | tee .local/reports/r3d-independent-adr059-scope-cap.log
+./scripts/go.sh test -race ./internal/config
+git diff --check
+```
+
+PASS: formatting; strengthened integration group12.831s with zero skips;
+config1.019s; whitespace check. Product source remains unchanged. The combined
+23-group run preceded this test-only extension; the strengthened group was then
+executed separately, without implying a repeated combined run.
+
+The implementer reports `make test-aggregate-performance` PASS619.747s: all24
+raw/current/retained cases,100k hot rows, ten offered clients,100 samples/case,
+zero errors and worst HTTP p95712.030ms. This is root-observed evidence, not an
+independent workload execution or acceptance of the wider profile. Independent
+large capacity, root full checks/build, browsers and all seven earlier capacity
+targets are NOT RUN in this review window and remain parent-owned obligations.
+The injected-driver-panic diagnostic is NOT RERUN here; its previous executed
+FAIL and unresolved IR-R3d-01/R7 status are preserved. No arbitrary driver-panic
+recovery or general production readiness is claimed. No independent execution
+remains active at handback.

@@ -687,6 +687,39 @@ func TestIndependentR3dBudgetRestorationAndActualStatementTimeout(t *testing.T) 
 	if afterJIT != initialJIT || afterMode != initialMode || afterTimeout != initialTimeout {
 		t.Fatal("statement timeout leaked transaction-local settings into the pool")
 	}
+	// Reuse the over-cap namespace to prove that live nested scope and a rare
+	// core-ID filter select inputs before the aggregate cap. The physical source
+	// boundary must retain JSON used only by a policy CONDITION.
+	h = r5Handler(t, f, audit.Postgres{})
+	root := "/v1/tenants/" + f.tenantA
+	scoped := policy.DataScope{Kind: "AND", Children: []policy.DataScope{
+		{Kind: "OWNER"},
+		{Kind: "CONDITION", Condition: &policy.ScopeCondition{Field: "field.contact.status", Op: "eq", Value: json.RawMessage(`"inactive"`)}},
+	}}
+	r5Publish(t, h, root+"/roles", token, 0, r5Definition("finance_manager", app, scoped), true, uuid(t))
+	r5Assign(t, h, root, token, f.viewer, "finance_manager", 200)
+	viewer := f.token(t, f.viewerSubject, nil)
+	wantCount, wantSum := 0, int64(0)
+	for i := 14; i <= data.MaxSQLAggregateRows+1; i += 14 {
+		wantCount++
+		wantSum += int64(i)
+	}
+	if got := aggregateResult(t, h, base, viewer, aggregateQuery("sum", aggregateUnits)); got.Count != wantCount || got.Sum != fmt.Sprint(wantSum) {
+		t.Fatal("over-cap namespace truncated before nested live scope")
+	}
+	for _, ordinal := range []int{99988, 99989} {
+		query := aggregateQuery("sum", aggregateUnits)
+		id, err := json.Marshal(aggregateReviewID(t, f, ordinal))
+		scalarSQL(t, err)
+		query.Filter = &data.Filter{Op: "eq", Field: "field.contact.id", Value: id}
+		want := data.AggregateResult{Sum: "0"}
+		if ordinal%14 == 0 {
+			want = data.AggregateResult{Count: 1, Sum: fmt.Sprint(ordinal)}
+		}
+		if got := aggregateResult(t, h, base, viewer, query); got != want {
+			t.Fatal("rare core-ID filter bypassed live scope or followed the input cap")
+		}
+	}
 }
 
 func TestIndependentR3dNumericBuildOverlapsWritesWithoutNewLockInversion(t *testing.T) {
