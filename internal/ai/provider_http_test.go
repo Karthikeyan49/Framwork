@@ -205,6 +205,24 @@ func TestHTTPProviderNeverFollowsARedirect(t *testing.T) {
 	}
 }
 
+// A redirect to the SAME host and port passes the dial pinning, so only the client's
+// own refusal to follow redirects stops the second request (and the credential with it).
+func TestHTTPProviderNeverFollowsASameOriginRedirect(t *testing.T) {
+	origin := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/complete" {
+			t.Errorf("a redirect was followed to %q", r.URL.Path)
+		}
+		http.Redirect(w, r, "/v1/other", http.StatusTemporaryRedirect)
+	})
+	_, err := origin.provider(t, testCredential).Complete(context.Background(), sampleRequest())
+	if !errors.Is(err, ErrProviderRefused) {
+		t.Fatalf("err %v", err)
+	}
+	if got := origin.hits.Load(); got != 1 {
+		t.Fatalf("the origin saw %d requests, want exactly the first", got)
+	}
+}
+
 func TestHTTPProviderBoundsRequestAndResponse(t *testing.T) {
 	t.Run("response larger than the cap", func(t *testing.T) {
 		huge := answer(strings.Repeat("x", MaxProviderBytes), "m", Usage{})
