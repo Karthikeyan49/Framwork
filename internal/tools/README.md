@@ -1,11 +1,14 @@
 # Tools — M6R delivery contracts and M10 governed execution
 
-This package holds two layers. `delivery.go` (M6R) models native keys, reference
-lookup, dedupe windows and non-idempotent providers as admission and retry
-decisions. M10 (ADR036) adds the operator catalog and the gateway that actually
-performs a governed HTTPS call. Neither layer promises exactly-once external
-effects: a timeout or a broken connection after a write is `UNKNOWN` until it is
-reconciled.
+This package holds two layers. `delivery.go` (M6R) declares native keys, reference
+lookup, dedupe windows and non-idempotent providers and validates that a declaration can
+be reconciled (`Delivery.Validate`). M10 (ADR036) adds the operator catalog and the
+gateway that actually performs a governed HTTPS call. Which attempt may follow which
+outcome is decided by the workflow runtime over the durable ledger
+(`internal/runtime/workflow.decideTool`, with its own table test), not here: an earlier
+`Delivery.MayRetry` that duplicated those rules had no production caller and was removed.
+Neither layer promises exactly-once external effects: a timeout or a broken connection
+after a write is `UNKNOWN` until it is reconciled.
 
 ## Catalog (`catalog.go`)
 

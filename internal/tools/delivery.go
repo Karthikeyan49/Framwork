@@ -1,4 +1,6 @@
-// Package tools declares delivery guarantees. No external tool executes in M6R.
+// Package tools declares delivery guarantees (Delivery.Validate), the operator catalog and the governed gateway
+// that performs a tool call (M10, ADR036). Which attempt may follow which outcome is decided by the workflow
+// runtime over the durable ledger (internal/runtime/workflow.decideTool), never by a rule declared here.
 package tools
 
 import "errors"
@@ -36,26 +38,4 @@ func (d Delivery) Validate() error {
 		return errors.New("effect requires reconciliation")
 	}
 	return nil
-}
-func (d Delivery) MayRetry(out Outcome, windowValid bool, reconciledAbsent bool) bool {
-	if d.Validate() != nil || d.RetryMode == "NEVER" || out != Failed && out != Unknown {
-		return false
-	}
-	if d.RetryMode == "RECONCILE_FIRST" && !reconciledAbsent {
-		return false
-	}
-	if out == Unknown && d.IdempotencyMode != "NATIVE_KEY" && !reconciledAbsent {
-		return false
-	}
-	switch d.IdempotencyMode {
-	case "NATIVE_KEY":
-		return true
-	case "LOOKUP_BY_REFERENCE":
-		return reconciledAbsent
-	case "DEDUPE_WINDOW":
-		return windowValid
-	case "NONE":
-		return d.SideEffectClass == "NONE" || d.SideEffectClass == "READ"
-	}
-	return false
 }

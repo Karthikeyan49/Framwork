@@ -89,6 +89,25 @@ worktree, so the two environmental failures of the first run did not recur.
 | `make test-e2e` (5 browser tests) | PASS, 25.3 s |
 | `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN (restarts the shared Redis; fails on isolated stacks by design) |
 
+## Gap-analysis follow-ups closed on this line (2026-10-19)
+
+`docs/verification/FOUNDATION_GAP_ANALYSIS.md` left three M10 to M13 follow-ups at PARTIAL. They are closed here; the
+audit document itself is not edited (its refresh belongs to the remediation line).
+
+| Item | What changed | Tests |
+|---|---|---|
+| N-13 policy actions `tools.invoke`, `sandbox.read`, `sandbox.manage` had no test that names them | the built-in matrix, the resource shapes, tenant and anonymous refusals and the custom-role rules are pinned: `tools.invoke` for any role but viewer, `sandbox.read` for every role, `sandbox.manage` for no custom role | `TestToolInvokeCapability`, `TestSandboxCapabilities`, `TestToolAndSandboxGrantsInCustomRoles`; mutation checks (viewer may invoke, member may manage the sandbox) fail them |
+| N-11 `Delivery.MayRetry` had no production caller and its test pinned a rule that production does not use | removed; the retry rules live in `decideTool` over the durable ledger, which has its own table test; the package comment and README no longer say that no tool executes | `TestDeliveryDeclarationsAreValidatedForTheirRisk`, `TestDecideToolRoutesFreshOutcomesAndRefusesBlindResends` |
+| N-06 `releaseGate` answered true unconditionally | the gate carries the request's own `candidates.build` decision, obtained at the point of use, and opens only for it, for the same tenant and actor and for the stage action | `TestReleaseGateOpensOnlyForTheRequestsOwnDecision` and every candidate-building integration test |
+
+Still open: N-03 / N-22 (a worker inside its lease can set status, termination and failure of its instance; ADR024
+residual, a trigger would have to encode the plan's terminal states), N-07 (the migration 48 comment cannot change;
+ADR039 amendment 6 states it), N-12 (a separate verifier credential) and N-15 (`runtime.unique_projections` has no writer;
+the remediation line replaces it). Run on the M14 stack reset from the changed tree: `go vet ./internal/...`,
+`go vet -tags=integration ./tests/integration`, `go test -race` of `internal/policy`, `internal/tools`,
+`internal/platform/...`, `internal/runtime/workflow` PASS; `TestM10` to `TestM14` groups, `-race`, PASS in 1056 s. The full
+suite, `make test-unit`, `make build` and `make test-e2e` were not re-run for this commit.
+
 ## Threat model and limits
 
 - **No real model.** Context quality, prompt quality, repair success rate, cost and latency are unmeasured. The

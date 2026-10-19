@@ -49,12 +49,26 @@ var releasePatterns = map[string]string{
 	activePattern:   "releases.read",
 }
 
-// releaseGate records that the API already holds an ALLOW decision for the
-// action (policy.Decide ran before this handler) and the stage port re-checks
-// membership; M6R's Gate interface is satisfied, not bypassed.
-type releaseGate struct{}
+// releaseGate is the stage gate of the request that builds a candidate. It carries the
+// policy decision for candidates.build that the request obtains at the point of use and
+// opens only for that decision, for the same tenant and actor, and for the stage action.
+// A zero gate, a denied decision or another actor's gate refuses (it used to answer true
+// unconditionally, gap N-06); the stage port still re-checks membership and every other
+// binding.
+type releaseGate struct {
+	decision          policy.Decision
+	tenantID, actorID string
+}
 
-func (releaseGate) AuthorizeRelease(string, string, string, string) bool { return true }
+func (g releaseGate) AuthorizeRelease(tenantID, actorID, action, _ string) bool {
+	return g.decision.Allow && g.tenantID != "" && g.tenantID == tenantID && g.actorID != "" && g.actorID == actorID && action == "stage"
+}
+
+// stageGate asks the policy again for candidates.build, with the request's own correlation.
+func (a API) stageGate(ctx context.Context, u identity.User, access tenant.Access, app string, evidence *audit.Entry) releaseGate {
+	d := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, "candidates.build", policy.Resource{TenantID: access.TenantID(), Type: "preview", AppID: app}, policy.Context{RequestID: evidence.RequestID, TraceID: evidence.TraceID}))
+	return releaseGate{decision: d, tenantID: access.TenantID(), actorID: access.ActorID()}
+}
 
 // releaseRetryAfter is what a request that timed out is told to wait.
 const releaseRetryAfter = 2 * time.Second
@@ -188,7 +202,7 @@ func (a API) release(ctx context.Context, q postgres.Executor, r *http.Request, 
 			result = reply{status: 200, body: s}
 		}
 	case "POST /v1/tenants/{tenant}/preview/{app}/candidates":
-		result, err = a.postCandidate(ctx, q, r, access, app, evidence)
+		result, err = a.postCandidate(ctx, q, r, access, app, evidence, a.stageGate(ctx, u, access, app, evidence))
 	case "GET /v1/tenants/{tenant}/preview/{app}/candidates":
 		var rows []promotion.CandidateRow
 		if rows, err = a.store().Candidates(ctx, q, access, app); err == nil {
@@ -392,7 +406,7 @@ func (a API) frozenSandbox(ctx context.Context, q postgres.Executor, access tena
 	return promotion.FrozenSandbox{DatasetID: id, EvidenceHash: e.Hash, FrozenBy: e.FrozenBy, Evidence: string(e.Body)}, nil
 }
 
-func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
+func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry, gate releaseGate) (reply, error) {
 	var body candidateRequest
 	if readDatasetRequest(r, &body) != nil || body.Revision < 1 || body.Revision > 1e9 || body.RequirementVersion < 1 || !tenant.ValidID(body.AcceptanceSpecID) || !tenant.ValidID(body.SandboxID) {
 		return denied(400, "invalid_release_request", "Request body is invalid; authority-bearing fields are derived by the server"), nil
@@ -471,7 +485,7 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 	if err != nil {
 		return reply{}, err
 	}
-	staged, err := store.Stage(ctx, q, access, candidate, releaseGate{})
+	staged, err := store.Stage(ctx, q, access, candidate, gate)
 	if err != nil {
 		return reply{}, err
 	}
