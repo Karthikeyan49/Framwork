@@ -45,7 +45,7 @@ var wrapper = corpus.Wrapper{Begin: wrapperBegin, End: wrapperEnd}
 // corpusCompile is the real validator and compiler with the case's catalog.
 func corpusCompile(t testing.TB, cat compiler.Catalog) func(metadata.Document) (compiler.Program, []compiler.Diagnostic, error) {
 	t.Helper()
-	v, err := metadata.NewValidator()
+	v, err := sharedValidator() // cached: compiling the schemas for every case is the slow part
 	if err != nil {
 		t.Fatal(err)
 	}
