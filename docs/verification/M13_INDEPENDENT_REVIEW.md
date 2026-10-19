@@ -61,11 +61,16 @@ re-checks). Related, weaker, same class: disabling a user account (`iam.users.ac
 activation that already holds its snapshot still counts that approver (S2c); membership changes are safe
 (`FOR SHARE`, S2a/S2b).
 
+Same class, different port: M12 API review F8 ("the base is snapshot-current, not commit-current", tracked). This finding
+is the M13 consequence for the veto.
+
 Impact: a veto acknowledged to its author can be overtaken by an activation that started up to ~3 s earlier,
 leaving a REJECTED release ACTIVE. Recoverable by rollback; nothing serves the pointer yet (ADR039 section 10).
-Fix direction (not applied): make activation and rejection write-conflict (for example both insert a row keyed by
-the hash into a per-hash "finality" table, or lock the candidate row in both ports and re-check under the lock),
-or run the M13 transactions SERIALIZABLE.
+Fix direction (not applied): make activation and rejection write-conflict, so a stale REPEATABLE READ transaction
+aborts with 40001 (for example both insert or update a row keyed by the hash in a per-hash "finality" table), or run the
+M13 transactions SERIALIZABLE. A lock-only fence does NOT work: the R5a review's negative control
+(`M9R_R5A_INDEPENDENT_REVIEW.md:75`) shows a `FOR UPDATE` fence lets both stale transactions commit, while migration 38's
+real tenant-row UPDATE forces them to abort; that is the project's own precedent for this class.
 
 ### M13R-02 MEDIUM - the rollback class gate reads only the current release, so a rollback may cross an irreversible release without a plan
 
@@ -108,6 +113,10 @@ lower case, but `encoding/json` folds it to `s`. `DecodeJSON` rejects only a pai
 (the duplicate-alias variant is refused, held), not a single aliased key.
 Executed: Appendix A `TestZZReproM13R04...`: an approve body whose key is `artifact_ha` + U+017F + `h` (sent as the
 JSON escape for U+017F) approves (201); the key `rea` + U+017F + `on` rejects (201). The same decoder serves every strict body route of M12 and M13 (`readDatasetRequest`).
+Tracked in part: the M12 API review F3 records "a single aliased key without a duplicate ... is still accepted" as a
+residual of the M12 envelopes. It is recorded again because ADR039 amendment 7 and the `promote.go` comment state the
+opposite for the M13 bodies.
+
 Impact: a request that any strict JSON reader sees as an unknown field is accepted as the field (request
 inspection, signing and audit tooling that matches key names literally will not see it). No authority field is
 reachable this way (hash binding still applies).
@@ -122,6 +131,10 @@ Impact: display spoofing in a future UI. The note is never copied to audit (held
 0 audit rows contain the marker).
 
 ### M13R-06 LOW - the recorded runtime components are never compared with the running binary
+
+Tracked: M12 verifier review F8, last bullet ("`RuntimeContract.Components` is only self-hashed"). Recorded again because
+M13 is the first consumer that approves and activates on the strength of "no recompile after approval" and because the
+DSL 2.2.0 change makes the case concrete.
 
 Evidence: `restoreV2` (`bundle2.go:507`) checks only that `ComponentsHash` equals the hash of the body's own
 components document; `Staleness` (`staleness.go:109-117`) judges only `IRVersion`. ADR038 section 2 and
@@ -246,7 +259,7 @@ Documentation/hardening: say so, or add `UNSUPPORTED_RUNTIME` for a components-h
   `-run TestM13` 31 tests PASS in 87.8 s (ports 6, API 8, adversarial 16, fixture 1), no flake observed.
   The seven reproductions of Appendix A FAIL on the same tree (about 25 s), which is the point: the builder suites do not
   exercise these cases.
-- Availability (documented residual 3): one candidate read (restore + recompute + staleness) 0.40 s on an idle host.
+- Availability (documented residual 3; also tracked as M12 API review F9, MEDIUM, "a viewer can exhaust the API"): one candidate read (restore + recompute + staleness) 0.40 s on an idle host.
   With 24 concurrent viewer read loops (a viewer holds `candidates.read`) the admin approve latency rose to about
   0.8 to 1.1 s (replays and the activation), 0 of 9 requests timed out (503). On a loaded host the same measurement
   earlier showed 2.0 to 2.7 s with 12 loops and still no 503, i.e. close to the 3 s envelope. The residual is accurate;
