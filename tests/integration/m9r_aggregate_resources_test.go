@@ -63,7 +63,7 @@ func aggregateReportResources(t *testing.T, before, after aggregateResources) {
 
 func aggregateBackendBoundary(t *testing.T, f *iamFixture) {
 	t.Helper()
-	rows, err := f.operator.Query(`SELECT backend_type,COALESCE(wait_event_type,'NONE'),COALESCE(wait_event,'NONE'),count(*) FROM pg_catalog.pg_stat_activity WHERE (datname=current_database() AND pid<>pg_backend_pid() AND state='active') OR backend_type='autovacuum worker' GROUP BY 1,2,3 ORDER BY 1,2,3`)
+	rows, err := f.operator.Query(`SELECT backend_type,COALESCE(wait_event_type,'NONE'),COALESCE(wait_event,'NONE'),count(*) FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND (state='active' OR backend_type='autovacuum worker') GROUP BY 1,2,3 ORDER BY 1,2,3`)
 	if err != nil {
 		t.Log("aggregate_backend_boundary unavailable")
 		return
