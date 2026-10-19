@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { AdministrationOutcomeUnknown, administrationMessage } from "../api/administration";
 import type { AdministrationIntent, AdministrationPort } from "./Recovery";
 
-export function useChange(port: AdministrationPort) {
+export function useChange(port: AdministrationPort, connectionKey?: unknown) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const running = useRef(false);
   const mounted = useRef(false);
   const request = useRef<AbortController | undefined>(undefined);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort(); }; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort(); }; }, [connectionKey]);
   async function run<T>(intent: AdministrationIntent, operation: (signal: AbortSignal) => Promise<T>) {
     if (running.current || port.pending[intent.scope]) return;
     running.current = true; setBusy(true); setError("");

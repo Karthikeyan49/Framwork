@@ -10,3 +10,5 @@ input, select { font: inherit; padding: .75rem; border: 1px solid #b8c5cd; borde
 .access-summary { overflow-wrap: anywhere; }
 
 .administration{margin:24px 0;min-width:0;overflow-wrap:anywhere}.administration form{margin:24px 0}.administration li{margin:12px 0}.administration code{overflow-wrap:anywhere}.administration .check{display:flex;align-items:flex-start;gap:10px;font-weight:400}.administration .check input{width:auto;margin-top:8px;flex-shrink:0}.administration .member-suggestions{margin-top:24px}.administration button{max-width:100%;overflow-wrap:anywhere}
+
+.administration fieldset{min-width:0;max-width:100%;border:1px solid #dce1d6;border-radius:6px;margin:16px 0;padding:12px}.administration textarea{font:inherit;width:100%;min-height:5rem;max-width:100%;border:1px solid #b8c5cd;border-radius:6px;padding:10px}.administration input[type=checkbox]{width:auto;max-width:none;margin-right:10px}.role-capabilities{display:grid;gap:4px;margin:12px 0}.role-capabilities label{font-weight:400;overflow-wrap:anywhere}.administration .role-scope{margin-left:0;padding:8px}

@@ -3,11 +3,15 @@ import { createContext, useContext, useEffect, useState, type ReactNode, type Di
 export interface AdministrationIntent {
   status?: "dispatched" | "unknown";
   scope: string;
-  kind: "team.create" | "team.save" | "team.member" | "record.owner" | "record.share" | "record.unshare";
+  kind: "team.create" | "team.save" | "team.member" | "record.owner" | "record.share" | "record.unshare" | "role.publish" | "role.assign";
   tenant: string;
   resource: string;
   target?: string;
   expectedVersion?: number;
+  operationID?: string;
+  expectedHash?: string;
+  expectedActive?: boolean;
+  expectedRole?: string;
 }
 interface Recovery {
   commandJournal: Record<string, string>;

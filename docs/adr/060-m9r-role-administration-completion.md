@@ -52,7 +52,14 @@ Never suggest a grant unsupported by the role contract or add privileges implici
 Publication sends a fresh UUID, exact observed head version (zero only after an
 authorized missing-role read), explicit active state and serialized definition.
 Verify the successful response's role, next version, operation ID, active state,
-definition and exact request-body hash. Editing an observed role never becomes
+definition and exact stored-definition hash. The existing V1 HTTP command decoder
+strictly validates JSON and re-encodes maps through Go encoding/json before
+passing RawMessage bytes to the role store. Match that existing wire profile:
+UTF-8 key ordering, safe integer values and HTML/U+2028/U+2029 escaping. Do not
+change historical role bytes or assume JavaScript insertion order is the stored
+hash. A shared Go/TypeScript fixture binds this profile; browser verification
+must exercise both successful acknowledgements and uncertain receipt recovery.
+Editing an observed role never becomes
 an implicit create. A conflict or revoked read clears writable state until reload.
 
 Use ADR038's actor-owned memory journal above navigation/account/workspace changes.
