@@ -39,6 +39,12 @@ rollback everything. A changed hash for the same event is rejected. ACK follows
 confirmed commit; a lost commit response or ACK retains redelivery and deduplication.
 Malformed/unroutable pointers are hash-only quarantined before ACK, never logged.
 
+ADR063 requires READ COMMITTED for event authority at binding and every use;
+raw RR/SERIALIZABLE and imported snapshots cannot retain revoked membership.
+Event callbacks use that isolation without shared-snapshot certification. API
+and workflow transactions remain REPEATABLE READ. Revocation is visible on
+subsequent statements; no raw-process lock/liveness guarantee is claimed.
+
 Production composition currently installs only a receipt handler in development/
 test. This handler does not read current business records, execute a workflow or
 send external actions. LocalHandler is a trusted Go integration port, never an AI
@@ -58,6 +64,9 @@ verification reports for the original protocol. Current work follows the M9R
 remediation plan; do not start M10 automatically.
 
 Current M9R timing authority is [ADR062](../../docs/adr/062-m9r-event-outage-budgets.md).
+Its reviewed correction is [ADR063](../../docs/adr/063-m9r-live-event-authority.md):
+policy `event-outage-v3` verifies actual private retry outputs without exposing
+the helper, while preserving timing and immutable issued evidence.
 See the [outage runbook](../../docs/operations/R7B_EVENT_DELIVERY_RUNBOOK.md) for
 finite retry/receipt budgets, the longer broker-loss repair delay, controlled
 forward migration and the real `make test-event-outage` rehearsal. This does not

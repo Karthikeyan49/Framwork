@@ -3,7 +3,7 @@
 19 October 2026 (Asia/Kolkata). Starting checkpoint `0a4f7d2` was clean and
 directly matched `remediation/m9r-foundation` on the remote. Main remains
 `9da3f5f40fcdbed53ebe5af694cf0a14c600cbe7`. ADR062 was committed before code at
-`237ca65`; implementation checkpoint `8099055`. No M10, main merge or production
+`237ca65`; implementation checkpoints `8099055` and `1fdefa1`. No M10, main merge or production
 activation. Current status: verification IN PROGRESS, not a completion claim.
 
 ## Change and boundaries
@@ -17,6 +17,14 @@ Twenty attempts use500ms exponential retry backoff capped at60 seconds. An
 expired publication lease waits backoff after expiry; a known publish failure
 waits backoff directly. Immediate known failures cannot consume a fresh
 20-attempt budget before about783.5 seconds. Actual dispatch delays extend that.
+Independent review then demonstrated stale RR/imported-snapshot event authority
+and a semantic retry-readiness omission. ADR063 was committed before the fix at
+`a98cb40`. Forward migration00056 introduces the final `event-outage-v3` contract:
+event-only READ COMMITTED authority and actual private helper-output validation.
+API and workflow stay RR; event executors are not certified shared snapshots.
+The nine focused review/readiness/54-to56 migration groups PASS32.867s, and
+`make migrate migration-status check test-unit` PASS with56 applied migrations
+and126 frontend tests. Independent fix closure and final gates are still pending.
 
 Forward migration00055 replaces only dispatcher SQL ports and the attempts
 upper-bound constraint, plus private retry/readiness contract functions. It does
@@ -63,8 +71,9 @@ timestamp adjustment occurs in either real-duration test.
 | Fixed same30-second acceptance | PASS;35.028s. At30.019 monotonic/30.123 PostgreSQL seconds: receipt SENT/attempts1, broker PENDING/attempts6, successor attempts0, receipts0. Recovery32.141s total, exactly3 inbox/effects/audits/intents;9 attempts retained |
 | Existing M8 plus new SQL/readiness/migration tests | PASS;17 groups54.520s, no failures/skips |
 | Expanded forward migration manifest | PASS;3.261s. Existing COMPLETED/SENT/DEAD/LEASED/PENDING/LEGACY_PAUSED states populated; SHA-256 manifests unchanged across delivery/attempt/envelope/inbox/replay/business-record/outbox/audit tables; migration55 idempotent |
-| First real600-second outage and recovery | FAIL;602.485s. At600.003 monotonic/600.111 PostgreSQL seconds, receipt SENT/attempts1, broker PENDING/attempts16, successor attempts0, receipts0. Recovery failed from the harness treating the normal publish-before-confirmation `ErrNotReady` window as terminal; this first run is not a PASS |
-| Independent adversarial review | NOT RUN yet |
+| First real600-second outage and recovery | FAIL;602.485s. At600.003 monotonic/600.111 PostgreSQL seconds, receipt SENT/attempts1, broker PENDING/attempts16, successor attempts0, receipts0. Original recovery error was unclassified; the later controlled `ErrNotReady` reproduction is separate evidence |
+| Second real600-second outage at1fdefa1 | PASS609.451s: actual600.004 monotonic/600.104 PostgreSQL seconds; recovery606.726 total,3 inbox/effects/audits/intents,19 retained attempts and2 unconfirmed redeliveries. A corrected-source rehearsal remains required after migration56 |
+| Independent adversarial review | Initial FAIL: MEDIUM raw stale snapshot authority and LOW semantic retry drift; fixes awaiting independent closure. See linked independent report |
 | Final full regression/build/browser/reference gates | NOT RUN yet |
 
 Fast boundary tests intentionally accelerate only owned fixture due times;

@@ -271,11 +271,11 @@ func TestR7bForwardMigrationPreservesIssuedStateAndEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal("migration provider")
 	}
-	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 1 {
-		t.Fatal("additive migration55")
+	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 2 {
+		t.Fatal("additive migrations55 and56")
 	}
 	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 0 {
-		t.Fatal("migration55 repeatability")
+		t.Fatal("migrations55 and56 repeatability")
 	}
 	after := r7bManifest(t, f.operator)
 	for i := range before {

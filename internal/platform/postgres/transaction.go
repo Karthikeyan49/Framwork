@@ -24,15 +24,19 @@ type Executor interface {
 var ErrUnavailable = errors.New("database transaction unavailable")
 var ErrCommitUnknown = errors.New("database commit outcome is unconfirmed")
 
-type executor struct{ tx *sql.Tx }
+type executor struct {
+	tx             *sql.Tx
+	repeatableRead bool
+}
 
-// RuntimeSnapshot identifies the transaction-bound port created by WithRuntime.
+// RuntimeSnapshot identifies the repeatable-read port created by WithRuntime.
+// WithEventRuntime deliberately does not receive this certification.
 // An isolation setting alone cannot prove a shared snapshot: an autocommit DB
 // pool may also default to REPEATABLE READ across separate transactions.
 // Opaque/decorated executors are deliberately not certified by this proof.
 func RuntimeSnapshot(q Executor) bool {
 	e, ok := q.(executor)
-	return ok && e.tx != nil
+	return ok && e.tx != nil && e.repeatableRead
 }
 
 func (e executor) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
@@ -55,6 +59,17 @@ const clearContext = `SELECT pg_catalog.set_config('app.auth_issuer','',false),
 // resets persistent identity context, and owns a bounded transaction. The caller
 // must buffer results until this function succeeds. No automatic retry occurs.
 func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, Executor) error) (result error) {
+	return withRuntime(parent, db, run, sql.LevelRepeatableRead)
+}
+
+// WithEventRuntime preserves live per-statement event authority. Its executor
+// does not certify a shared runtime snapshot; API/workflow callers use WithRuntime.
+// Job binding independently requires this isolation at the database boundary.
+func WithEventRuntime(parent context.Context, db *sql.DB, run func(context.Context, Executor) error) error {
+	return withRuntime(parent, db, run, sql.LevelReadCommitted)
+}
+
+func withRuntime(parent context.Context, db *sql.DB, run func(context.Context, Executor) error, isolation sql.IsolationLevel) (result error) {
 	if db == nil || run == nil {
 		return ErrUnavailable
 	}
@@ -99,7 +114,7 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
 	if _, err = conn.ExecContext(ctx, clearContext); err != nil {
 		return ErrUnavailable
 	}
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: isolation})
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -112,7 +127,7 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
 	err = func() error {
 		bodyCtx, bodySpan := otel.Tracer("framework/postgres").Start(ctx, "postgres.transaction.body")
 		defer bodySpan.End()
-		return run(bodyCtx, executor{tx})
+		return run(bodyCtx, executor{tx: tx, repeatableRead: isolation == sql.LevelRepeatableRead})
 	}()
 	if err != nil {
 		return err

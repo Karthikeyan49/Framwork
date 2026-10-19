@@ -26,6 +26,9 @@ func Ready(ctx context.Context, db *sql.DB, role string) error {
 	} else {
 		return ErrDelivery
 	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*)=1 AND coalesce(bool_and(p.proowner='framework_schema_owner'::regrole AND p.prokind='f' AND p.provolatile='s' AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog']),false) FROM pg_catalog.pg_proc p WHERE p.oid=to_regprocedure('control.event_delivery_policy()')`).Scan(&ok); err != nil || !ok {
+		return ErrDelivery
+	}
 	if err := db.QueryRowContext(ctx, `SELECT count(*)=1 AND coalesce(bool_and(version=$1 AND lease_ms=$2 AND receipt_ms=$3 AND max_attempts=$4 AND retry_base_ms=$5 AND retry_cap_ms=$6),false) FROM control.event_delivery_policy()`, DeliveryPolicyVersion, PublishLease.Milliseconds(), ReceiptWindow.Milliseconds(), MaxDeliveryAttempts, RetryBase.Milliseconds(), RetryCap.Milliseconds()).Scan(&ok); err != nil || !ok {
 		return ErrDelivery
 	}

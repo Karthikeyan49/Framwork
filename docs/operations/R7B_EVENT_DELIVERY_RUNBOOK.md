@@ -1,7 +1,8 @@
 # R7b preview event outage operation
 
-Authority: [ADR062](../adr/062-m9r-event-outage-budgets.md), database policy
-`event-outage-v2`. Event envelopes remain1.0 and routing pointers remain1.1;
+Authority: [ADR062](../adr/062-m9r-event-outage-budgets.md) and its independent
+review correction [ADR063](../adr/063-m9r-live-event-authority.md), database policy
+`event-outage-v3`. Event envelopes remain1.0 and routing pointers remain1.1;
 stored IR and workflow plans are unchanged. This is development/test delivery,
 not a production deployment or an external-action guarantee.
 
@@ -15,6 +16,9 @@ not a production deployment or an external-action guarantee.
   membership, assignment, policy and RLS still apply. Trusted Go consumer
   transactions remain3 seconds, SQL2 seconds and lock waits500ms; this is not a
   new processing-lease protocol or raw-credential process-liveness guarantee.
+  Event authority requires READ COMMITTED at binding and every later use. Raw
+  RR/SERIALIZABLE and imported snapshots fail closed. Revocation is visible on
+  subsequent statements; API and workflow isolation remain REPEATABLE READ.
 - Known publish failure:500ms exponential retry, capped at60 seconds. Expired
   publication leases also wait this backoff after expiry. Maximum20 attempts;
   immediate known failures cannot exhaust the budget before about783.5 seconds.
@@ -38,16 +42,21 @@ do not erase inboxes, forge receipts or rewrite due times operationally.
 
 ## Forward migration
 
-1. Identify and quiesce only owned dispatcher processes. Do not kill unrelated
+1. Identify and quiesce only owned consumer and dispatcher processes. Do not kill unrelated
    services or flush Redis. Preserve event envelopes, attempts, inbox, replay
    history and broker references.
 2. Apply `make migrate`, then inspect `make migration-status`. Migration00055
-   changes functions and the attempt-count upper bound only. It does not reset
+   changes functions and the attempt-count upper bound only; migration00056
+   adds event isolation enforcement and semantic retry readiness. Neither resets
    existing states, tokens, attempts, deadlines or data.
 3. Verify new runtime event readiness before starting owned dispatchers/workers.
    New binaries deny a missing or mismatched policy contract. Older compatible
    callers keep the same SQL signatures; in-progress issued deadlines remain
-   unchanged until completion or a later fenced attempt.
+   unchanged until completion or a later fenced attempt. Pre-correction RR event
+   consumers must be upgraded: they fail closed after migration00056. The policy
+   probe returns no contract for incorrect actual helper delays; runtime roles
+   still cannot execute the private helper. This is drift detection, not proof
+   against an administrator able to replace both helper and probe.
 4. Observe completion and ordering in the intended local tenant. DEAD and
    LEGACY_PAUSED rows remain paused; they do not resume just because code was
    updated. Workflow leases and external tools are unaffected.

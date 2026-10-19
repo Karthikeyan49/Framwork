@@ -6,6 +6,10 @@ renewal, public replay or audit retention. Starting checkpoint `0a4f7d2`, clean
 and directly verified on `remediation/m9r-foundation`. Preserve all frozen
 migrations through00054 and immutable event/inbox/replay evidence.
 
+Review correction: [ADR063](063-m9r-live-event-authority.md) supersedes the
+event-isolation/readiness assumptions below. Final policy is `event-outage-v3`
+through additive migration00056; the timing budgets in this decision remain.
+
 ## Problem
 
 ADR022 currently uses a five-second publication lease, a five-second receipt

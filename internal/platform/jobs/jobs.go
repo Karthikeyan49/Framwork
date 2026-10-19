@@ -79,7 +79,11 @@ func WithJob(ctx context.Context, db *sql.DB, t Ticket, run func(context.Context
 	if t.job == "" || t.tenant == "" || t.release == "" || t.kind == "" || t.generation < 1 || !tenant.ValidID(t.token) || run == nil || CheckRole(ctx, db, "framework_worker") != nil {
 		return ErrJob
 	}
-	return postgres.WithRuntime(ctx, db, func(ctx context.Context, q postgres.Executor) error {
+	within := postgres.WithRuntime
+	if t.kind == "event" {
+		within = postgres.WithEventRuntime
+	}
+	return within(ctx, db, func(ctx context.Context, q postgres.Executor) error {
 		var bound bool
 		if e := q.QueryRowContext(ctx, `SELECT control.bind_worker_job($1::uuid,$2::uuid,$3,$4,$5::uuid,$6)`, t.tenant, t.job, t.kind, t.generation, t.token, t.release).Scan(&bound); e != nil {
 			return e
@@ -124,7 +128,11 @@ func TicketAuthority(ctx context.Context, db *sql.DB, t Ticket) (bool, error) {
 		return false, ErrJob
 	}
 	valid := false
-	err := postgres.WithRuntime(ctx, db, func(ctx context.Context, q postgres.Executor) error {
+	within := postgres.WithRuntime
+	if t.kind == "event" {
+		within = postgres.WithEventRuntime
+	}
+	err := within(ctx, db, func(ctx context.Context, q postgres.Executor) error {
 		var safe bool
 		if err := q.QueryRowContext(ctx, `SELECT control.worker_principal() AND control.worker_grants_safe()`).Scan(&safe); err != nil {
 			return err
