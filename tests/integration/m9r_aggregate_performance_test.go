@@ -479,6 +479,7 @@ func runAggregatePerformance(t *testing.T, mapped bool, costStudy ...bool) {
 		allow             func(int) bool
 	}{
 		{"count", "", "", aggregateQuery("count", ""), func(int) bool { return true }},
+		{"point_count", "", "", aggregateQuery("count", ""), func(i int) bool { return i == 1 }},
 		{"sum_integer", aggregateUnits, "", aggregateQuery("sum", aggregateUnits), func(int) bool { return true }},
 		{"sum_decimal", aggregateRatio, "", aggregateQuery("sum", aggregateRatio), func(int) bool { return true }},
 		{"sum_money", aggregateBalance, "", aggregateQuery("sum", aggregateBalance), func(int) bool { return true }},
@@ -503,6 +504,10 @@ func runAggregatePerformance(t *testing.T, mapped bool, costStudy ...bool) {
 			}
 			if tc.name == "filtered_money" {
 				tc.query.Filter = &data.Filter{Op: "eq", Field: "field.contact.status", Value: json.RawMessage(`"inactive"`)}
+			}
+			if tc.name == "point_count" {
+				id, _ := json.Marshal(aggregateReviewID(t, f, 1))
+				tc.query.Filter = &data.Filter{Op: "eq", Field: "field.contact.id", Value: id}
 			}
 			want := data.AggregateResult{}
 			sum := new(big.Rat)
