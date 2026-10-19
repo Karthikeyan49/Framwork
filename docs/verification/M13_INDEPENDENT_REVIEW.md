@@ -6,7 +6,7 @@ previous reviewer, which was cut off by an API session limit). Branch `review/m1
 `internal/promotion` (`decisions.go`, `release_store.go`, `store.go`, `staleness.go`, `bundle2.go`),
 `internal/platform/access/{promote,releases}.go`. Product code is not modified by this review.
 
-STATUS: M13 REVIEW COMPLETE for the attacks listed; second and third job pending. Verdict: PASS WITH FINDINGS (2 MEDIUM, 4 LOW, 8 INFO; no HIGH). The database
+STATUS: COMPLETE for the attacks listed (not covered: see the last section). Verdict: PASS WITH FINDINGS (2 MEDIUM, 4 LOW, 8 INFO; no HIGH). The database
 authority floor held against every direct attack below; the findings are concurrency and gate-completeness
 defects of the control plane.
 
@@ -20,8 +20,8 @@ defects of the control plane.
 | 05:40 | own probes: multi-hop rollback, function surface, demoted approver, audit of port refusals, note characters | done |
 | 05:50 | cross-tenant / forged-GUC raw probe, viewer flood (availability), `worker_grants_safe`, goose Down, operator guards, large stress, HTTP race | done |
 | 05:46 | builder's own `TestM13*` suites re-run on the pinned commit (31 PASS) | done |
-| | second job: foundation finding-status audit (`/home/user/review-status`) | pending |
-| | third job: re-verification of the M10 review fixes and the verifier fixes | pending |
+| 06:50 | second job: foundation finding-status audit (`docs/finding-status`, commit `5929be5`) | done |
+| 06:08 | third job: `docs/verification/FIX_REVERIFICATION.md` (commit `e6c816b`) | done |
 
 Method. Probe tests lived in untracked `zz_review_*_test.go` files, kept outside the repository while
 committing; the seven reproductions are in Appendix A. Every probe ran against a disposable database
