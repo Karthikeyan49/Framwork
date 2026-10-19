@@ -182,3 +182,26 @@ member while Go policy restricts `workflows.reconcile` to owner/admin), C8
 C9 (wording of #4 for `tool_finish`), and `Definition.Hash` covering the tenant
 allowlist (an allowlist edit re-pins every tenant; with A3 an in-flight unknown
 send now parks in RECONCILE instead of DEAD).
+
+### Amendment after the independent gateway review (2026-10-19)
+
+Trigger: `docs/verification/GATEWAY_INDEPENDENT_REVIEW.md` F5-F9 (F1-F4 were fixed earlier). Not
+independently reviewed. Unit tests in `internal/tools/review_regression_test.go` and
+`netpolicy_test.go` failed before the fixes.
+
+- **F5.** A 2xx is SUCCESS only if its content coding is identity (or absent) and it carries
+  exactly one media type, `application/json`, whose only parameter may be `charset=utf-8`; any other
+  answer is `UNKNOWN` `invalid_response` (a write may have been applied). Real providers send
+  `Content-Type: application/json`; a provider that does not is not accepted.
+- **F6/F7.** `Definition.Hash` is canonical over the decoded fixture; null optional members are
+  absent; `decodeScalar` accepts exactly one scalar. Definitions with `simulated_output` values
+  spelled with escapes, padding or nulls change their hash once (they re-pin); every other
+  definition keeps its hash. An unencodable hand-built definition hashes to `tools.Unhashable`.
+- **F8.** 169.254.0.0/16, fd00:ec2::/32 and 168.63.129.16 are never allowed, and ISATAP interface
+  identifiers are classified by their embedded IPv4. The never-allowed list stays best-effort.
+- **F9 (documentation).** #6 already says a policy or mode denial is FAILED permanent (`blocked`);
+  the README table agrees. A denied DNS answer that would recover later therefore fails the step
+  permanently; the safe direction was kept.
+- **M11 R07** (a REROUTE/READ_ONLY ceiling still sent the test-account credential) was fixed with
+  gateway F4; `TestNarrowedTestAccountToolNeverResolvesItsSandboxCredential` and
+  `TestOnlyTestAccountSendsTheSandboxCredential` pin it.

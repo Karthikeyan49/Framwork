@@ -95,3 +95,45 @@ forged worker mode, and sandbox tool modes against a fake provider. Migration 46
 is additive and forward-only. Recover by revoking `EXECUTE` on the sandbox ports
 (creation/freezing stops; evidence stays) and forward-fixing; never delete
 evidence or reopen a frozen sandbox.
+
+## Amendments
+
+Date: 2026-10-19. Trigger: `docs/verification/M11_INDEPENDENT_REVIEW.md` R01-R07. Enforced by
+migration 00051 (additive, forward-only; 46 and 50 unchanged) and `tests/integration/m11r_review_fixes_test.go`
+(`TestM11R*`), which failed on the reviewed code. Not independently reviewed.
+
+1. **A frozen sandbox is read-only in the database (R01, R03, R04; amends #5 and Consequences).**
+   `sandbox_frozen_fence` triggers refuse (SQLSTATE 55000, `frozen sandbox is read-only`) every
+   INSERT/UPDATE/DELETE on the workflow instance, history, receipt, signal and tool-ledger rows of
+   a frozen sandbox's workflows and on `record_links`, `dataset_bindings` and `dataset_generations` of its
+   dataset; the dataset row accepts no update at all (which also stops the epoch bumps of record
+   share/owner mirrors, so record shares of a frozen sandbox are refused at the SQL layer);
+   `tool_finish`, `tool_abandon` and `tool_reconcile` refuse it explicitly. The API answers 409
+   `sandbox_frozen` to a workflow signal. Workflows that were in flight when the sandbox was frozen
+   stay parked: their worker steps fail against the fence (they have no state change to make).
+2. **Freeze is quiescent and serialised with tool begins (R01, R02; amends #3 and #5).**
+   `freeze_sandbox` holds the sandbox row `FOR UPDATE`; `tool_begin` holds it `FOR SHARE`. The freeze
+   locks the ledger rows of the dataset, then refuses (55000, `sandbox has outstanding tool work`) while an
+   invocation is `SENDING` or `UNKNOWN` or a workflow is in `RECONCILE`: the operator settles the
+   outcome (reconcile, or wait for the attempt) and freezes again. A stuck unknown outcome therefore blocks
+   the freeze until it is settled; that is intended. Workflows that merely wait (approval, timer, retry
+   with a settled invocation) do not block it, because every later write to them is fenced (this deviates
+   from the first design, which also waited for every non-terminal workflow: the existing test of
+   freezing a sandbox with an in-flight workflow is part of the contract). **The port runs READ
+   COMMITTED and refuses any other isolation level**: under REPEATABLE READ a freeze that waits for a
+   concurrent begin would aggregate from a snapshot older than that begin and freeze evidence that omits
+   it. The API opens the freeze route's transaction at READ COMMITTED (`postgres.WithRuntimeIsolation`);
+   every other route keeps REPEATABLE READ.
+3. **Owner/admin in the ports (R05; amends #5).** `register_sandbox` and `freeze_sandbox` require an
+   active owner or admin membership, as the evolution ports do. **Residual:** the tool-catalog hash and
+   the policy hash are arguments of the definer port; a compromised API credential of an owner/admin can
+   still supply other values. They are computed by the server on the API path; the database cannot
+   recompute them (credential-bound identity of the API process, as for the other API-supplied hashes).
+4. **Bytewise manifests (R06; amends #5).** The record and ledger manifests are ordered `COLLATE "C"`
+   and new evidence bodies carry `"manifest_order":"bytewise"`. `schema_version` stays
+   `sandbox-evidence-v1` because M12 (`promotion.checkEvidence`) and the stored bundles check that value.
+   Stored bodies are immutable and keep the order they were hashed in (no `manifest_order` field = the
+   database default collation of that time); nothing recomputes a manifest (M12 binds the stored body hash),
+   so no body needs migrating.
+5. **R07** was fixed by gateway F4 (see ADR036 amendment of 2026-10-19); the ceiling now removes the
+   test-account credential, which `TestNarrowedTestAccountToolNeverResolvesItsSandboxCredential` pins.

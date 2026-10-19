@@ -34,7 +34,9 @@ func Ready(ctx context.Context, db *sql.DB, expected string) error {
  AND has_column_privilege('runtime.workflow_outbox','body','INSERT')
  AND NOT has_table_privilege('runtime.workflow_bindings','UPDATE')
  AND NOT has_table_privilege('runtime.workflow_history','DELETE')
- AND NOT has_table_privilege('control.workflow_jobs','SELECT')`).Scan(&valid)
+ AND NOT has_table_privilege('control.workflow_jobs','SELECT')
+ AND (SELECT count(*)=6 FROM pg_catalog.pg_trigger WHERE tgname='sandbox_frozen_fence' AND tgenabled='O' AND NOT tgisinternal AND tgfoid='runtime.fence_frozen_instance()'::regprocedure
+  AND tgrelid IN('runtime.workflow_instances'::regclass,'runtime.workflow_history'::regclass,'runtime.workflow_receipts'::regclass,'runtime.workflow_signals'::regclass,'runtime.tool_invocations'::regclass,'runtime.tool_attempts'::regclass))`).Scan(&valid)
 	if e != nil || !valid {
 		return errors.New("workflow storage contract unavailable")
 	}
