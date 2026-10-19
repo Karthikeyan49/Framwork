@@ -89,6 +89,22 @@ worktree, so the two environmental failures of the first run did not recur.
 | `make test-e2e` (5 browser tests) | PASS, 25.3 s |
 | `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN (restarts the shared Redis; fails on isolated stacks by design) |
 
+## Final gate, third run (2026-10-19)
+
+Run on `claude/m14-ai-builder` at `6a8756f` (it contains the 60 s provider phase, M13R-03, the follow-ups N-06, N-11 and
+N-13, the tool-pin staleness tests and the freeze race test; later commits change documentation only), against the
+isolated M14 database stack reset from that tree. The Docker daemon had been restarted by the environment in between and
+was brought back with the host's `ensure-docker` helper before this run.
+
+| Command | Result |
+|---|---|
+| `make check` | PASS, 21 s |
+| `make test-unit` (Go `-race`, script tests, web tests) | PASS, 206 s |
+| Full `go test -race -tags=integration ./tests/integration`, skipping `TestM8RedisACLStreamLossAndPendingRecovery` | PASS, 1751.9 s, no failure |
+| `make build` | PASS, 28 s |
+| `make test-e2e` (5 browser tests) | PASS, 23.4 s |
+| `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN (restarts the shared Redis; fails on isolated stacks by design) |
+
 ## Gap-analysis follow-ups closed on this line (2026-10-19)
 
 `docs/verification/FOUNDATION_GAP_ANALYSIS.md` left three M10 to M13 follow-ups at PARTIAL. They are closed here; the
@@ -106,7 +122,7 @@ ADR039 amendment 6 states it), N-12 (a separate verifier credential) and N-15 (`
 the remediation line replaces it). Run on the M14 stack reset from the changed tree: `go vet ./internal/...`,
 `go vet -tags=integration ./tests/integration`, `go test -race` of `internal/policy`, `internal/tools`,
 `internal/platform/...`, `internal/runtime/workflow` PASS; `TestM10` to `TestM14` groups, `-race`, PASS in 1056 s. The full
-suite, `make test-unit`, `make build` and `make test-e2e` were not re-run for this commit.
+gate was re-run afterwards on the final head (section "Final gate, third run").
 
 ## Items the reviews listed as "not covered", executed here (2026-10-19)
 
@@ -116,8 +132,8 @@ suite, `make test-unit`, `make build` and `make test-e2e` were not re-run for th
 | M11 review: freeze racing a record write (reasoned statically) | `TestM11RFreezeRacesRecordWrites`: 12 concurrent writers through the governed command route, the sandbox frozen after 0, 20, 50, 120 and 300 ms | in every round the record count of the evidence, the rows of the dataset and the acknowledged writes are equal (0, 10, 11, 10 and 10 records); the writes that lost the race were refused with 409; 15.4 s with `-race` |
 
 The freeze test does not mutate the freeze's locking (applied migrations are immutable), so its sensitivity rests on the
-equality it asserts: a write acknowledged after the freeze snapshot, or a counted row nobody acknowledged, fails it. Only
-these tests were run for this addition.
+equality it asserts: a write acknowledged after the freeze snapshot, or a counted row nobody acknowledged, fails it. The
+full gate on the final head (next section) includes both tests.
 
 ## Threat model and limits
 
