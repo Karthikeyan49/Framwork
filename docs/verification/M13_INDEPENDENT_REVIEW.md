@@ -6,7 +6,7 @@ previous reviewer, which was cut off by an API session limit). Branch `review/m1
 `internal/promotion` (`decisions.go`, `release_store.go`, `store.go`, `staleness.go`, `bundle2.go`),
 `internal/platform/access/{promote,releases}.go`. Product code is not modified by this review.
 
-STATUS: IN PROGRESS. Verdict so far: PASS WITH FINDINGS (2 MEDIUM, 4 LOW, 6 INFO; no HIGH). The database
+STATUS: M13 REVIEW COMPLETE for the attacks listed; second and third job pending. Verdict: PASS WITH FINDINGS (2 MEDIUM, 4 LOW, 8 INFO; no HIGH). The database
 authority floor held against every direct attack below; the findings are concurrency and gate-completeness
 defects of the control plane.
 
@@ -18,13 +18,13 @@ defects of the control plane.
 | 2026-10-19 05:28 | takeover: briefs, ADR039, migrations 48/49, `promotion/*.go`, `access/{promote,releases,access,preview}.go` read | done |
 | 05:35 | inherited probes (authority A1-A9, state S1-S5, API P1-P9, migration M1-M2) compiled and run | done |
 | 05:40 | own probes: multi-hop rollback, function surface, demoted approver, audit of port refusals, note characters | done |
-| | cross-tenant / forged-GUC raw probe, viewer flood (availability), `worker_grants_safe`, goose Down, large stress | pending |
-| | builder's own `TestM13*` suites re-run on the pinned commit | pending |
+| 05:50 | cross-tenant / forged-GUC raw probe, viewer flood (availability), `worker_grants_safe`, goose Down, operator guards, large stress, HTTP race | done |
+| 05:46 | builder's own `TestM13*` suites re-run on the pinned commit (31 PASS) | done |
 | | second job: foundation finding-status audit (`/home/user/review-status`) | pending |
 | | third job: re-verification of the M10 review fixes and the verifier fixes | pending |
 
 Method. Probe tests lived in untracked `zz_review_*_test.go` files, kept outside the repository while
-committing; the six reproductions are in Appendix A. Every probe ran against a disposable database
+committing; the seven reproductions are in Appendix A. Every probe ran against a disposable database
 `m8_delivery_<random>` that the fixture creates from this worktree's migrations on the MAIN stack (`dbrun`,
 `nice -n 10`, one process at a time); the shared MAIN database itself was never written. Run command:
 
@@ -50,8 +50,11 @@ under load, bounded by the 3 s envelope), not a nanosecond race.
 
 Executed: Appendix A `TestZZReproM13R01...`: T1 begins and takes its snapshot; T2 runs `reject_release` and
 commits (the API answers 201); T1 then calls `activate_release` and commits: SUCCESS, the pointer sits on the
-rejected hash (`rejections=1`). The HTTP shape was run as well (inherited probe S1d): reject 201 and activation
-200; the candidate view then reports `status=REJECTED active=true`, approve and activate answer 409
+rejected hash (`rejections=1`). With nothing but HTTP (`TestZZReproM13R01b...`): an approved candidate, a reject
+request started at t0 and an activate request started 40, 80, 120 and 160 ms later: in all 4 of 4 trials the reject
+was acknowledged 201 first and the activation was acknowledged 200 afterwards (87 to 226 ms later); a start offset of
+200 ms or more is refused (409). So the window is about the length of the reject request, not a nanosecond race.
+The candidate view then reports `status=REJECTED active=true`, approve and activate answer 409
 `candidate_rejected`, and an operator can still roll away from it (and never back: `rollback_target_rejected`).
 The same skew lets `approve_release` record an approval after a committed rejection (S1c, harmless: activation
 re-checks). Related, weaker, same class: disabling a user account (`iam.users.active`) takes no lock, so an
@@ -147,6 +150,13 @@ Documentation/hardening: say so, or add `UNSUPPORTED_RUNTIME` for a components-h
   Consistent with residual 1 of ADR039; separation of duties is only as strong as that.
 - I-6 `plan_hash` of a rollback is a 64-hex label the caller supplies; nothing checks it against a stored plan (an
   all-zero or repeated-digit hash is accepted). The "plan" is an attestation of three booleans, as the ADR says.
+- I-7 Policy `release-risk-v1` excludes only requester, acceptance author and sandbox freezer. The SOURCE author (and
+  the requirement decider) may approve and activate a HIGH or CRITICAL release that someone else requested. A design
+  choice of ADR038 section 3, not a defect; recorded because the acceptance author is separated from the source author
+  at build time but the approver is not.
+- I-8 Rollback never re-runs staleness (ADR039 section 5, documented): a release whose tool pin was withdrawn or denied
+  for the tenant, or whose policy bundle changed, can be rolled back to. The M10 execution-time guards still apply and
+  no data plane serves the pointer yet.
 
 ## Attacks that held (each executed; probe ids refer to the inherited and own probe sets)
 
@@ -200,6 +210,22 @@ Documentation/hardening: say so, or add `UNSUPPORTED_RUNTIME` for a components-h
   M13 activation over the legacy pointer works (history seq 1, generation 6, previous = legacy hash); legacy approvals
   by the requester or a viewer do not satisfy a HIGH quorum (55000).
 - Quorum: one approver twice is one approval; CRITICAL needs two distinct eligible approvers (builder suites, S4).
+- X1-X5 cross-tenant (own probe `TestZZCrossTenantRaw`, member `zed` of tenant B only): bound to tenant A, approve /
+  reject / activate / rollback of tenant A's hashes answer 42501; bound to its own tenant B, tenant A's hash is P0002;
+  forged settings (A's actor id with B's subject, B's id with A's subject, random tenant, empty tenant) answer 42501;
+  bound either way, zed sees 0 rows of tenant A in all six release tables (RLS); over HTTP approve / history / detail
+  answer 403; A's hash under another application of tenant A is P0002 (no existence oracle between apps).
+- OG operator-level guards (`TestZZOperatorGuards`): TRUNCATE, DELETE, UPDATE and a hand-written INSERT into every
+  release table are refused for the migration role and for the superuser (immutability and recording triggers).
+- W `worker_grants_safe()` (`TestZZWorkerGrantsSafe`): true on a fresh database; false for each of table SELECT,
+  column SELECT, column INSERT, REFERENCES, TRIGGER, a PUBLIC TRUNCATE and a column REFERENCES grant on the new
+  tables; true again after revoking. The table list of each successive definition is a superset of the previous one.
+- D goose Down of 00049 (`TestZZGooseDown`): refused ("forward recovery only"), objects and version 49 stay, Up
+  proceeds to 00050 afterwards.
+- S5 16 workers x 80 mixed operations (1.65 s): 35 approvals, 25 rejections, 15 rollbacks, 3 activations won, 273+45
+  55000 and 49 40001 refusals, no 40P01/23505/XX000; history dense and chained; every ACTIVATE row has its eligible
+  quorum recorded. (Candidates go stale quickly in that workload, so HIGH/CRITICAL activations are rare in S5; the
+  CRITICAL path is covered by `TestM13APICriticalQuorumOnATransformRelease` and the demotion races S2a/S2b.)
 
 ## Residual assessment (documented residuals, ADR039 "Consequences")
 
@@ -216,17 +242,39 @@ Documentation/hardening: say so, or add `UNSUPPORTED_RUNTIME` for a components-h
 
 ## Test baseline and measurements
 
-(pending: builder `TestM13*` suites on the pinned commit, viewer-flood availability measurement, large stress,
-goose Down, `worker_grants_safe`, cross-tenant raw probe)
+- Builder suites on the pinned commit `e6b7877` (my run, alone, `nice -n 10`, MAIN stack disposable databases):
+  `-run TestM13` 31 tests PASS in 87.8 s (ports 6, API 8, adversarial 16, fixture 1), no flake observed.
+  The seven reproductions of Appendix A FAIL on the same tree (about 25 s), which is the point: the builder suites do not
+  exercise these cases.
+- Availability (documented residual 3): one candidate read (restore + recompute + staleness) 0.40 s on an idle host.
+  With 24 concurrent viewer read loops (a viewer holds `candidates.read`) the admin approve latency rose to about
+  0.8 to 1.1 s (replays and the activation), 0 of 9 requests timed out (503). On a loaded host the same measurement
+  earlier showed 2.0 to 2.7 s with 12 loops and still no 503, i.e. close to the 3 s envelope. The residual is accurate;
+  the amplification by read-only members (cost of a read equals cost of an approval) is not stated in ADR039.
+- Strictness and audit results were taken from the inherited API probe (run in full, one run of 22 s); its failing
+  assertions in that run were probe-order artefacts (an earlier approve from the same loop had already satisfied the
+  quorum, and "approve with a query string" is a legitimate approve), not product defects; the real misses are
+  M13R-04 only.
 
 ## Not covered
 
-(to be completed)
+- Tool-catalog staleness through the HTTP handlers (a candidate whose IR pins a tool that is then changed, removed or
+  denied for the tenant): the closure in `releases.go:466-477` was read and the pure `Staleness` unit tests exist, but
+  no tool-pinned candidate was built (it needs the M10 provider fixture); NOT RUN.
+- Sandbox evidence "unfrozen" staleness (evidence is immutable, so only reachable by forging the lookup): NOT RUN.
+- Real production-scale timing without the race detector and on a quiet host; the envelope numbers above are from a
+  shared 4-core host.
+- Compromised-API scenarios beyond those the builder's `TestM13AdversarialCompromisedAPI*` and A7/A8 cover: a process
+  that can run arbitrary SQL as `framework_app` is bounded by the floors verified here, and by nothing else.
+- Operator/superuser abuse (disabling triggers as the table owner, `session_replication_role=replica`): out of scope by
+  the AGENTS.md threat model; the legacy-row rehearsal uses that power openly.
+- Multi-region, backup/restore of release history, and the UI: not present in the subject.
+- The M10-M12 code that M13 builds on was read only where M13 depends on it (stage port, risk, `Restore`).
 
 ## Appendix A - reproductions
 
 Copy the block to `tests/integration/zz_review_m13_repro_test.go`, run, delete. Each test FAILS while its defect
-exists (executed 2026-10-19 on `e6b7877`: all six FAIL). The file is ASCII only.
+exists (executed 2026-10-19 on `e6b7877`: all seven FAIL). The file is ASCII only.
 
     /home/user/bin/dbrun nice -n 10 node scripts/with-env.mjs ./scripts/go.sh test -tags=integration \
       -count=1 -run 'TestZZRepro' ./tests/integration
@@ -242,7 +290,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
@@ -288,6 +338,32 @@ func TestZZReproM13R01RejectedHashActivatedByStaleSnapshot(t *testing.T) {
 	hash, _, _ := e.activePointer()
 	if aerr == nil && hash == y {
 		t.Errorf("M13R-01: the release pointer moved onto a hash whose rejection had committed before the activation committed (rejections=%d)", len(e.rejectionsOf(y)))
+	}
+}
+
+// M13R-01 over plain HTTP: reject and activate requests that overlap by a few hundred
+// milliseconds. The rejection is acknowledged (201) first and the activation still succeeds.
+func TestZZReproM13R01bHTTPOverlap(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	overtaken := 0
+	for k, delay := range []time.Duration{40, 80, 120, 160} {
+		base, gen, _ := e.activePointer()
+		c, _ := e.build("500", m13Relabel(fmt.Sprintf("Race %d", k)), e.carol)
+		m13Code(t, "approve", e.httpApprove(e.dave.token, c), 201)
+		var wg sync.WaitGroup
+		var rCode, aCode int
+		wg.Add(2)
+		go func() { defer wg.Done(); rCode = e.httpReject(e.bob, c, "RISK_UNACCEPTABLE", "veto").Code }()
+		time.Sleep(delay * time.Millisecond)
+		go func() { defer wg.Done(); aCode = e.httpActivate(e.erin.token, c, base, gen).Code }()
+		wg.Wait()
+		if hash, _, _ := e.activePointer(); rCode == 201 && aCode == 200 && hash == c {
+			overtaken++
+		}
+	}
+	if overtaken > 0 {
+		t.Errorf("M13R-01b: %d of 4 overlapping reject/activate pairs ended with the rejected hash active", overtaken)
 	}
 }
 
