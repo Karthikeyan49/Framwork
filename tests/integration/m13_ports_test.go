@@ -912,6 +912,7 @@ func TestM13PortsTablesAreAppendOnlyIsolatedAndHygienic(t *testing.T) {
 	}
 
 	// The worker drift guard covers every release authority table.
+	m12rDropFixtureGrants(t, p.f.operator)
 	var safe bool
 	if err := worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe); err != nil || !safe {
 		t.Fatal("worker grants must start safe", safe, err)

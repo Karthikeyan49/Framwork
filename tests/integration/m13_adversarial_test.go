@@ -592,6 +592,7 @@ func TestM13AdversarialLegacyWritePathsAreClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer worker.Close()
+	m12rDropFixtureGrants(t, e.f.operator)
 	var safe bool
 	if err = worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe); err != nil || !safe {
 		t.Fatal("worker grants unsafe before the probe", err)
