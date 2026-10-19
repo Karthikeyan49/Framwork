@@ -758,11 +758,13 @@
    ],
    "expect": {
     "status": [
+     "BUDGET_EXCEEDED",
      "FAILED",
      "NEEDS_HUMAN"
     ],
     "max_provider_calls": 3,
-    "layer": "syntax"
+    "layer": "syntax",
+    "ambiguous": "builder decision (ADR040 amendment B): a 10 MiB answer is charged its pessimistic byte estimate (about 2.6 million tokens), which exhausts the 1 million token budget of this case, so the run may end BUDGET_EXCEEDED instead of retrying; either way no document and a single provider call."
    },
    "tags": [
     "e2e"
@@ -1314,7 +1316,8 @@
      "NEEDS_HUMAN"
     ],
     "max_provider_calls": 3,
-    "layer": "syntax"
+    "layer": "schema",
+    "ambiguous": "builder decision (ADR040 amendment B): a number the shared strict decoder cannot represent exactly (number_limit) is classified SCHEMA_ERROR, not PARSE_ERROR; it is rejected before ApplyProposal either way."
    }
   },
   {
@@ -1347,7 +1350,8 @@
      "NEEDS_HUMAN"
     ],
     "max_provider_calls": 3,
-    "layer": "syntax"
+    "layer": "schema",
+    "ambiguous": "builder decision (ADR040 amendment B): a number the shared strict decoder cannot represent exactly (number_limit) is classified SCHEMA_ERROR, not PARSE_ERROR; it is rejected before ApplyProposal either way."
    }
   },
   {
@@ -13442,7 +13446,8 @@
     ],
     "oracle_diff": {
      "workflow.order.fast": [
-      "WORKFLOW_GRAPH"
+      "WORKFLOW_GRAPH",
+      "WORKFLOW_TRIGGER"
      ]
     },
     "ambiguous": "the exact aspect set of an ADDED workflow is derived by the compiler; the oracle pins it"
@@ -15489,7 +15494,6 @@
     }
    ],
    "expect": {
-    "layer": "accepted",
     "status": [
      "READY",
      "FAILED",

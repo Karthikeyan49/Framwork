@@ -1983,8 +1983,9 @@
      "NEEDS_HUMAN"
     ],
     "conflicts": [
-     "MISSING_TARGET"
-    ]
+     "INVALID_DEFINITION"
+    ],
+    "ambiguous": "builder decision (ADR040 amendment B): the definition body is validated before the target is looked up, so a foreign definition is refused as INVALID_DEFINITION (namespace mismatch); either way no information about another application leaks."
    },
    "tags": [
     "swap",

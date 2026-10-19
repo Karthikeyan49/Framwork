@@ -129,7 +129,7 @@ func (g *gateway) RunPatch(ctx context.Context, in PatchInput) (PatchRun, error)
 	}
 
 	res := g.loop(ctx, runSpec{task: TaskApplicationPatch, context: in.Context, schema: schema, budget: in.Budget, now: g.clock(in.Now), evaluate: evaluate})
-	run := PatchRun{Status: res.status, Attempts: res.attempts, Usage: res.usage, Diagnostics: capDiagnostics(res.last.diags)}
+	run := PatchRun{Status: res.status, Attempts: res.attempts, Usage: res.usage, Diagnostics: capDiagnostics(res.diags)}
 	if res.err != nil {
 		return run, res.err
 	}
@@ -188,7 +188,7 @@ func (g *gateway) RunRequirements(ctx context.Context, in RequirementInput) (Req
 		return parseFailure(perr, payload)
 	}
 	res := g.loop(ctx, runSpec{task: TaskRequirementCapture, context: in.Context, schema: RequirementOutputSchema(), budget: in.Budget, now: g.clock(in.Now), evaluate: evaluate})
-	run := RequirementRun{Status: res.status, Attempts: res.attempts, Usage: res.usage, Diagnostics: capDiagnostics(res.last.diags)}
+	run := RequirementRun{Status: res.status, Attempts: res.attempts, Usage: res.usage, Diagnostics: capDiagnostics(res.diags)}
 	if res.err != nil {
 		return run, res.err
 	}

@@ -176,6 +176,7 @@ func jsonFields(t reflect.Type) map[string]fieldInfo {
 var (
 	rawMessageType = reflect.TypeOf(json.RawMessage(nil))
 	definitionType = reflect.TypeOf(metadata.Definition{})
+	operationType  = reflect.TypeOf(PatchOperation{})
 )
 
 func sortedKeys(obj map[string]any) []string {
@@ -236,6 +237,10 @@ func checkClosed(node any, t reflect.Type, path string, requireKeys bool) *Propo
 			sort.Strings(names)
 			for _, name := range names {
 				if _, present := obj[name]; !present && !fields[name].omitEmpty {
+					// An add carries no expected hash: the key may be absent or empty.
+					if name == "expected_hash" && t == operationType && obj["op"] == "add" {
+						continue
+					}
 					return proposalErr(ErrSchema, safePath(path+"/"+name), "required field is missing")
 				}
 			}

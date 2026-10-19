@@ -151,7 +151,7 @@ func PatchOutputSchema(documentSchemaVersion string) (json.RawMessage, error) {
 	}
 	hash := obj("type", "string", "pattern", "^[0-9a-f]{64}$")
 	defs["operation"] = obj("type", "object", "additionalProperties", false,
-		"required", []any{"op", "target", "expected_hash", "rationale"},
+		"required", []any{"op", "target", "rationale"},
 		"properties", obj(
 			"op", obj("enum", []any{"add", "update", "delete"}),
 			"target", obj("type", "string", "maxLength", maxTargetBytes, "pattern", "^("+strings.Join(allowedKinds, "|")+")\\."+idPatternText+"$"),
@@ -162,9 +162,9 @@ func PatchOutputSchema(documentSchemaVersion string) (json.RawMessage, error) {
 			obj("if", obj("properties", obj("op", obj("const", "add")), "required", []any{"op"}),
 				"then", obj("required", []any{"definition"}, "properties", obj("expected_hash", obj("const", ""), "definition", ref("definition")))),
 			obj("if", obj("properties", obj("op", obj("const", "update")), "required", []any{"op"}),
-				"then", obj("required", []any{"definition"}, "properties", obj("expected_hash", hash, "definition", ref("definition")))),
+				"then", obj("required", []any{"definition", "expected_hash"}, "properties", obj("expected_hash", hash, "definition", ref("definition")))),
 			obj("if", obj("properties", obj("op", obj("const", "delete")), "required", []any{"op"}),
-				"then", obj("properties", obj("expected_hash", hash, "definition", obj("type", "null")))),
+				"then", obj("required", []any{"expected_hash"}, "properties", obj("expected_hash", hash, "definition", obj("type", "null")))),
 		})
 	defs["risk_flag"] = obj("type", "object", "additionalProperties", false, "required", []any{"code", "detail"},
 		"properties", obj("code", obj("type", "string", "pattern", "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"), "detail", text(0, MaxTextRunes)))

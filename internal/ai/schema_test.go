@@ -74,7 +74,7 @@ func TestParsePatchProposalRejects(t *testing.T) {
 		{"missing assumptions", mutate(func(m map[string]any) { delete(m, "assumptions") }), "schema"},
 		{"missing risk_flags", mutate(func(m map[string]any) { delete(m, "risk_flags") }), "schema"},
 		{"missing op", mutate(func(m map[string]any) { delete(op(m), "op") }), "schema"},
-		{"missing expected_hash", mutate(func(m map[string]any) { delete(op(m), "expected_hash") }), "schema"},
+		{"update without expected_hash", mutate(func(m map[string]any) { op(m)["op"] = "update"; delete(op(m), "expected_hash") }), "schema"},
 		{"missing rationale", mutate(func(m map[string]any) { delete(op(m), "rationale") }), "schema"},
 		{"null list", mutate(func(m map[string]any) { m["assumptions"] = nil }), "schema"},
 		{"null scalar", mutate(func(m map[string]any) { op(m)["rationale"] = nil }), "schema"},
@@ -309,3 +309,23 @@ func TestParsePatchProposalErrorsDoNotEchoModelText(t *testing.T) {
 }
 
 var _ = metadata.SchemaVersion
+
+// TestParsePatchProposalAddMayOmitTheExpectedHash: an add carries no expected hash, so
+// the key may be absent or empty, and both spellings are one canonical proposal.
+func TestParsePatchProposalAddMayOmitTheExpectedHash(t *testing.T) {
+	doc := fixtureDoc(t, exWorkflow)
+	with := proposalMap(addPageOp(t, doc, "page.contact.summary", "Summary"))
+	without := deepCopy(t, with)
+	delete(without["operations"].([]any)[0].(map[string]any), "expected_hash")
+	a, _, err := CanonicalPatch(parseOK(t, with))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := CanonicalPatch(parseOK(t, without))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) || !strings.Contains(string(b), `"expected_hash":""`) {
+		t.Fatalf("two spellings of an add differ:\n%s\n%s", a, b)
+	}
+}

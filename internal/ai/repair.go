@@ -45,6 +45,7 @@ type loopResult struct {
 	usage    Usage
 	status   RunStatus // READY, FAILED or BUDGET_EXCEEDED; the caller refines FAILED
 	last     attemptEval
+	diags    []compiler.Diagnostic // the last problems found, kept when a later provider failure ends the run
 	err      error
 }
 
@@ -213,6 +214,9 @@ func (g *gateway) loop(ctx context.Context, spec runSpec) loopResult {
 		}
 		res.attempts = append(res.attempts, at)
 		res.last = ev
+		if len(ev.diags) > 0 {
+			res.diags = ev.diags
+		}
 		switch {
 		case ev.err != nil:
 			res.status, res.err = RunFailed, ev.err

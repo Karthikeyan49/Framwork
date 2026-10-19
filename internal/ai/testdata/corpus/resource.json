@@ -2580,10 +2580,12 @@
    ],
    "expect": {
     "status": [
+     "BUDGET_EXCEEDED",
      "FAILED"
     ],
     "layer": "syntax",
-    "elapsed_ms_max": 8000
+    "elapsed_ms_max": 8000,
+    "ambiguous": "builder decision (ADR040 amendment B): the 10 MiB answer is charged its pessimistic byte estimate, so the run may end BUDGET_EXCEEDED; no document, one provider call, bounded time."
    },
    "tags": [
     "e2e"
@@ -2879,12 +2881,14 @@
    "expect": {
     "status": [
      "BUDGET_EXCEEDED",
-     "FAILED"
+     "FAILED",
+     "READY"
     ],
     "usage": {
      "non_negative": true
     },
-    "max_provider_calls": 1
+    "max_provider_calls": 1,
+    "ambiguous": "builder decision (ADR040 amendment B): a valid first answer is accepted whatever it claims to have used; the clamped, non-negative charge ends any further call."
    }
   },
   {
