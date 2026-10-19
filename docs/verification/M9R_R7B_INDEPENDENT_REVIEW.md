@@ -120,3 +120,83 @@ Full `make check test build`, both browser suites and unchanged numeric-read/
 implementation agent's final gates. The independent review remains FAIL until
 the two findings are fixed and independently reverified. No production-readiness,
 main merge, broader R7/M9R completion or M10 authorization follows.
+
+## Corrective review at46646b4 — fresh-entry fixes pass; cutover remains open
+
+ADR063 was committed before correction at`a98cb40`. Independent review of
+`46646b4` verifies that migration00056 rejects fresh non-RC event authority and
+that event callbacks use RC without a shared-snapshot certificate. The original
+raw RR/imported-snapshot attacks now deny, RC live revocation and receipt expiry
+still pass, ordinary API callbacks remain RR/certified, and the independent
+workflow ticket/callback control remains RR/certified. RR, SERIALIZABLE and READ
+UNCOMMITTED entry all deny; a bound RC transaction cannot switch to RR. The
+semantic policy probe now denies the zero-delay helper and changed values for
+inputs0,-1,21,2147483647,-2147483648 and7; restored helpers recover readiness,
+and all three runtime roles still cannot invoke the helper directly.
+
+IR-R7b-02's demonstrated semantic false positive is closed at this checkpoint.
+IR-R7b-01 is **partially closed**, because independent execution found that the
+claim about already-bound contexts across a live cutover is false:
+
+- At schema55, bind a raw RR event transaction and prepare/read the envelope.
+  Keep it open while applying56. Eight durable-table manifests remain unchanged.
+- After cutover the old transaction reads visibility1 through both its retained
+  prepared statement and a new envelope statement; a new direct authority query
+  also returns1. `pg_get_functiondef` sees the new RC guard, so source inspection
+  alone does not prove that retained execution paths have adopted it.
+- A new inbox INSERT after cutover denies42501; write survival was **not**
+  demonstrated. A fresh backend importing a snapshot exported before cutover
+  also denies binding. Do not generalize the retained-reader result to all fresh
+  callers or unrestricted data access.
+- A fixture-only relation-policy replacement cannot safely be assumed online:
+  an open reader causes a server lock_timeout55P03; the same DDL succeeds after
+  the reader drains. An earlier client-deadline diagnostic incorrectly treated
+  cancellation as known abort, then encountered duplicate-policy42710. That
+  fixture failure is retained; the corrected probe uses a bounded operator
+  transaction, exact server55P03 and rollback before the positive control.
+
+The supported migration must require a proven drain/cutover barrier rather than
+claim automatic revocation of all old execution plans. Root plans a new ADR
+amendment, forward migration00057 with a NOWAIT barrier and direct restrictive
+RC event policies, and readiness verification of those policies. This is a
+proposed remedy, not executed acceptance. Do not edit pushed55/56 or silently
+terminate unknown sessions. Stop delivery and report a failed barrier; an
+operator must complete the reviewed drain before retrying.
+
+### IR-R7b-03 — LOW: readiness invokes an unsafe helper before rejecting it
+
+The new SECURITY DEFINER policy probe executes its private dependency before Go
+checks that dependency's immutable/owner/ACL contract. In an explicitly
+operator-owned deployment-drift fixture, a VOLATILE helper keeps the normal
+timing outputs but inserts into a private marker table. All runtime readiness
+roles eventually deny, yet their calls commit75 marker writes through the
+schema-owner probe. No customer table or durable consumer effect is modified.
+
+This is operator deployment drift, not ordinary runtime credentials replacing
+SQL. Check the policy's own trusted metadata and the dependency's shape/owner/
+private grants **before** invoking the semantic probe. It cannot prove integrity
+against an administrator changing code between the checks. Root plans a Go-only
+ordering correction; it remains unverified at this checkpoint.
+
+Additional executed commands:
+
+```sh
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestR7bReview' -v ./tests/integration
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestR7bReviewAlreadyBoundSnapshotLosesAuthorityAtCutover$' -v ./tests/integration
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestR7bReview(AlreadyBound|PreCutover)' -v ./tests/integration
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestR7bReview(AlreadyBound|PreCutover|RelationPolicy)' -v ./tests/integration
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestR7bReviewRelationPolicyRequiresDrainedReaders$' -v ./tests/integration
+```
+
+| Corrective execution | Actual result |
+| --- | --- |
+| All independent R7b groups at46646b4 | FAIL28.789s: original attacks and new API/workflow/closed-isolation/semantic-variant controls pass; retained-reader cutover and unsafe invocation fail |
+| Isolated retained-reader confirmation | FAIL2.042s: prepared1/fresh1/direct authority1 despite visible new guard; inbox INSERT denied42501 |
+| Retained-reader and pre-cutover export controls | FAIL6.209s: reader remains; exported-before/fresh-import bind denial PASS1.53s; initial fixture-only DDL hit its client deadline |
+| Final reader/export/lock command before fixture correction | FAIL6.093s: reader persists, exported snapshot denial PASS1.46s; lock fixture fails42710 from unconfirmed earlier DDL cancellation |
+| Corrected server-lock/drained-reader control | PASS3.302s: exact55P03 under held reader, known rollback, same DDL succeeds after drain |
+| `make docs-verify` and `git diff --check` at initial review commit | PASS;84 retained and43 V3 checksums |
+
+**Current independent status: FAIL pending safe cutover and readiness ordering
+corrections.** No final full/browser/reference gates or repeated600-second test
+at the corrected source have been run by this reviewer.
