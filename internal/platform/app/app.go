@@ -54,7 +54,7 @@ func newToolGateway(c config.Config) (*tools.Gateway, error) {
 	return tools.NewGateway(options)
 }
 
-// loadToolCatalog reads the operator-owned registry (ADR036). No path means no
+// loadToolCatalog reads the operator-owned registry (ADR100). No path means no
 // tools; an unreadable or invalid file stops startup rather than registering a
 // partial catalog. Tenants, requests and metadata can never alter it.
 func loadToolCatalog(c config.Config) (tools.Catalog, error) {

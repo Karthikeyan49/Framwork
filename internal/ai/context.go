@@ -12,7 +12,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 )
 
-// The semantic context bundle (ADR040 section 4 and amendment B). The bundle is a
+// The semantic context bundle (ADR104 section 4 and amendment B). The bundle is a
 // fixed sequence of named segments. Exactly one is TRUSTED: the instruction text of
 // the template set, which is a constant. Every byte derived from a person, a tool,
 // a document or the draft is carried in an UNTRUSTED segment that the builder

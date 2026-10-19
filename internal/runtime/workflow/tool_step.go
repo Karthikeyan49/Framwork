@@ -17,7 +17,7 @@ import (
 )
 
 // minimumSendMS refuses to start a send that could not complete, and have its
-// outcome recorded, inside the remaining lease (ADR036 #5).
+// outcome recorded, inside the remaining lease (ADR100 #5).
 const minimumSendMS = 250
 
 // toolDispatch is the committed intent of one bounded attempt. It is executed
@@ -49,7 +49,7 @@ type toolLedger struct {
 const MaxLedgerAttempts = 20
 
 // ToolContractOf derives the database-enforced contract pinned beside a
-// definition hash (ADR036 Amendment A1).
+// definition hash (ADR100 Amendment A1).
 func ToolContractOf(d tools.Definition) ToolContract {
 	c := ToolContract{SideEffect: d.SideEffect, Approval: d.Approval, IdempotencyMode: d.Delivery.IdempotencyMode, RetryMode: d.Delivery.RetryMode, ReplayWindowMS: d.Delivery.ReplayWindowMS, TimeoutMS: d.Connector.TimeoutMS}
 	if d.Connector.Lookup != nil {

@@ -1,4 +1,4 @@
--- M14 AI proposals, traceability and budgets (ADR040 amendments A1-A4). Additive and
+-- M14 AI proposals, traceability and budgets (ADR104 amendments A1-A4). Additive and
 -- forward-only. A model holds no authority and has no identity: proposals, their
 -- per-attempt trace and the per-tenant daily usage are written ONLY through definer
 -- ports that derive tenant and actor from the leased session settings, exactly like the
@@ -6,7 +6,7 @@
 -- happens outside any transaction (begin -> provider -> record + finish). Raw prompts and
 -- raw model output are never columns here: hashes, the validated canonical body and
 -- server-derived facts only.
--- Replaced functions: none (the worker drift guard of migration 52 is derived and needs no extension).
+-- Replaced functions: none (the worker drift guard of migration 87 is derived and needs no extension).
 -- +goose Up
 CREATE TABLE control.ai_usage(
  tenant_id uuid NOT NULL,usage_day date NOT NULL,
@@ -97,7 +97,7 @@ BEGIN
   RAISE EXCEPTION 'AI records are written only through the AI ports' USING ERRCODE='42501';END IF;
  RETURN NEW;
 END $$;
--- Status moves only along the ADR040 A4 machine and nothing already set is edited.
+-- Status moves only along the ADR104 A4 machine and nothing already set is edited.
 CREATE FUNCTION control.ai_proposal_step() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
 BEGIN
  IF ROW(NEW.tenant_id,NEW.app_id,NEW.id,NEW.kind,NEW.requester_id,NEW.request_hash,NEW.source_revision,NEW.draft_hash,NEW.usage_day,NEW.reserved_tokens,NEW.created_at,NEW.expires_at)
@@ -237,7 +237,7 @@ END $$;
 -- APPLY and CONFIRM name the result the caller just wrote in this transaction (the
 -- appended metadata revision, or requirement-set version) and the port checks that it is
 -- the current head, carries the stated hash and was written by this very human. The
--- decider need not be the requester (ADR040 A3).
+-- decider need not be the requester (ADR104 A3).
 CREATE FUNCTION control.ai_decide(p_app text,p_proposal uuid,p_decision text,p_expected_revision bigint,p_result_revision bigint,p_result_hash text,p_reject_reason text,p_decision_hash text) RETURNS text
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
 DECLARE t uuid:=iam.current_tenant_id();actor uuid:=iam.authenticated_actor();r record;head bigint;ver record;st text;
@@ -286,7 +286,7 @@ GRANT EXECUTE ON FUNCTION control.ai_begin(text,text,text,bigint,text,bigint,big
  control.ai_record_attempt(text,uuid,integer,text,text,text,text,text,text,bigint,bigint,integer,text,text,text),
  control.ai_finish(text,uuid,text,bytea,text,jsonb,jsonb,text,text,text,integer,bigint,bigint),
  control.ai_decide(text,uuid,text,bigint,bigint,text,text,text) TO framework_app;
--- The worker drift guard is derived since migration 52 (control.worker_grants_safe refuses every relation of control,
+-- The worker drift guard is derived since migration 87 (control.worker_grants_safe refuses every relation of control,
 -- runtime, iam and audit that it does not list): the AI tables grant the worker nothing, so it needs no extension.
 -- Fail the migration if any runtime role (or PUBLIC) can still write the AI tables
 -- directly, if a worker can read them, if a permissive write policy remains, or if the

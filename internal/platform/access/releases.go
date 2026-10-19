@@ -25,7 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Release builder routes (ADR038, M12) and approval/promotion routes (ADR039,
+// Release builder routes (ADR102, M12) and approval/promotion routes (ADR103,
 // M13, promote.go). They exist only where preview exists. The POST allowlist
 // must accept exactly the POST patterns below (promote_test.go compares them).
 var releasePOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/(requirements|acceptance-specs|candidates|candidates/[0-9a-f]{64}/(approve|reject|activate)|releases/rollback)$`)
@@ -74,7 +74,7 @@ func (a API) stageGate(ctx context.Context, u identity.User, access tenant.Acces
 const releaseRetryAfter = 2 * time.Second
 
 // busyReply is the typed refusal of a request that would start a cold recomputation
-// beyond the bound (ADR038 amendment 10): 429 when the tenant's bound is reached, 503
+// beyond the bound (ADR102 amendment 10): 429 when the tenant's bound is reached, 503
 // when the process-wide one is, both with Retry-After. Nothing was computed or written.
 func busyReply(b *promotion.BusyError) reply {
 	status := 503
@@ -346,7 +346,7 @@ type CandidateView struct {
 	VerificationReport  json.RawMessage         `json:"verification_report,omitempty"`
 	Stale               *bool                   `json:"stale,omitempty"`
 	StaleReasons        []promotion.StaleReason `json:"stale_reasons,omitempty"`
-	// Lifecycle (ADR039), derived from the recorded decisions and the pointer on
+	// Lifecycle (ADR103), derived from the recorded decisions and the pointer on
 	// every read and never stored. ApprovalsRequired is the stricter of the
 	// bundle's separation and the database quorum floor.
 	Status            promotion.Status             `json:"status"`

@@ -66,7 +66,7 @@ type State struct {
 	UserActive           *bool  `json:"user_active,omitempty"`
 	MembershipActive     *bool  `json:"membership_active,omitempty"`
 
-	// Promotion evidence (ADR039): hashes, closed codes and counts only.
+	// Promotion evidence (ADR103): hashes, closed codes and counts only.
 	ReleaseGeneration int64    `json:"release_generation,omitempty"`
 	ApprovalCount     int64    `json:"approval_count,omitempty"`
 	ApprovalsRequired int64    `json:"approvals_required,omitempty"`
@@ -77,7 +77,7 @@ type State struct {
 	RollbackClass     string   `json:"rollback_class,omitempty"`
 	StaleReasons      []string `json:"stale_reasons,omitempty"`
 
-	// AI proposal evidence (ADR040 A10): ids, hashes, closed codes, labels and
+	// AI proposal evidence (ADR104 A10): ids, hashes, closed codes, labels and
 	// counts only. A prompt, a request text, model output or definition text is
 	// never an audit field.
 	AIProposalID      string `json:"ai_proposal_id,omitempty"`
@@ -97,7 +97,7 @@ type State struct {
 	AIOutputTokens    int64  `json:"ai_output_tokens,omitempty"`
 	AISourceRevision  int64  `json:"ai_source_revision,omitempty"`
 
-	// Release refusal evidence (ADR038 amendments 8 and 10): why a request was
+	// Release refusal evidence (ADR102 amendments 8 and 10): why a request was
 	// refused, as a closed upper-case code, and the hash of the risk assessment a
 	// refused build was judged by. Never free text, never an actor id.
 	RefusalCode    string `json:"refusal_code,omitempty"`
@@ -190,7 +190,7 @@ func encodeEntry(e Entry) ([]any, error) {
 	return []any{e.ActorID, e.TenantID, e.Action, e.Resource, e.Allow, e.DecisionID, e.PolicyVersion, e.RequestID, e.TraceID, state}, nil
 }
 
-// validPromotionEvidence bounds the ADR039 fields. A rejection note is free
+// validPromotionEvidence bounds the ADR103 fields. A rejection note is free
 // text and never enters audit state; the reason is a closed code.
 func validPromotionEvidence(s State) bool {
 	if s.ReleaseGeneration < 0 || s.ReleaseGeneration > 9007199254740991 || s.ApprovalCount < 0 || s.ApprovalCount > 1000000 || s.ApprovalsRequired < 0 || s.ApprovalsRequired > 8 {
@@ -211,7 +211,7 @@ func validPromotionEvidence(s State) bool {
 	return true
 }
 
-// validAIEvidence bounds the ADR040 fields. Labels (provider, model, template) are
+// validAIEvidence bounds the ADR104 fields. Labels (provider, model, template) are
 // short [A-Za-z0-9._:/@+-] strings; kinds, statuses and failures are closed codes.
 func validAIEvidence(s State) bool {
 	if len(s.AIProposalID) > 36 || s.AIAttempts < 0 || s.AIAttempts > 16 || s.AIInputTokens < 0 || s.AIInputTokens > 100000000 || s.AIOutputTokens < 0 || s.AIOutputTokens > 100000000 ||

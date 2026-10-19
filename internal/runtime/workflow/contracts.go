@@ -163,7 +163,7 @@ type Store struct {
 	Audit            audit.Writer
 	Events           events.LifecycleWriter
 	Activity         LocalActivity
-	// Tools executes governed external effects outside transactions (ADR036).
+	// Tools executes governed external effects outside transactions (ADR100).
 	// ToolCatalog is trusted operator configuration; plans pin its hashes.
 	Tools       tools.Executor
 	ToolCatalog tools.Catalog

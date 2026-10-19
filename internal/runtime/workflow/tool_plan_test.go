@@ -341,7 +341,7 @@ func TestMatchesDefinitionComparesToolPlansWithoutAHash(t *testing.T) {
 }
 
 // legacyToolPlan is a DSL 2.1.0 tool plan produced by the M10 compiler before
-// ADR036 Amendment A1 (captured from toolProgram at a9d4d66). Stored plans
+// ADR100 Amendment A1 (captured from toolProgram at a9d4d66). Stored plans
 // must keep restoring byte-for-byte and still match their authored source.
 const legacyToolPlan = `{"dsl_version":"2.1.0","id":"workflow.item","entity_id":"entity.item","version":"1.0.0","trigger":"manual","timeout_ms":60000,"initial_state":"state.start","fields":[{"id":"field.item.id","type":{"kind":"string"},"required":true},{"id":"field.item.note","type":{"kind":"string"},"required":false},{"id":"field.item.qty","type":{"kind":"integer"},"required":false}],"states":[{"id":"state.call","type":"activity","transitions":[{"to":"state.done","on":"always"}],"activity":{"tool_ref":"tool.vendor_lookup","version":"1.0.0","inputs":{"vendor_id":"field.item.id"},"retry":{"max_attempts":2,"initial_backoff_ms":100,"max_backoff_ms":1000}},"tool_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},{"id":"state.done","type":"complete","transitions":[]},{"id":"state.start","type":"start","transitions":[{"to":"state.call","on":"always"}]}]}`
 const legacyToolPlanHash = "146aba5d07a63abbe11269d64c997ef127fb832b8cdfce5e030741383d35fd7a"

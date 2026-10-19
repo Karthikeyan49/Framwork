@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// CatalogVersion identifies the operator-owned tool catalog contract (ADR036).
+// CatalogVersion identifies the operator-owned tool catalog contract (ADR100).
 // Tools are registered by the platform operator, never by tenant metadata,
 // requests or AI output. Tenants only reference a registered ref/version.
 const CatalogVersion = "tool-catalog-v1"
@@ -62,7 +62,7 @@ type Lookup struct {
 	// original send's deadline a write can still become visible. A 404 lookup
 	// proves absence only when it starts after send start + timeout + SettleMS;
 	// without a declaration a lookup can find an effect but never prove absence
-	// (ADR036 Amendment A4). Omitted when zero, so existing hashes are unchanged.
+	// (ADR100 Amendment A4). Omitted when zero, so existing hashes are unchanged.
 	SettleMS int `json:"settle_ms,omitempty"`
 }
 
@@ -366,7 +366,7 @@ func validateDefinition(d Definition) (Definition, error) {
 		// A sandbox never shares the production HOST (another port of the same host is
 		// still the production system) and its credential is always distinct from the
 		// production one. Only TEST_ACCOUNT carries a credential: REROUTE and READ_ONLY
-		// use the sandbox endpoint alone (ADR036 decision 9).
+		// use the sandbox endpoint alone (ADR100 decision 9).
 		if s.Endpoint == nil || !validEndpoint(*s.Endpoint) || len(s.Output) > 0 || s.Endpoint.Host == c.Host {
 			return d, bad
 		}

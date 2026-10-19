@@ -7,7 +7,7 @@
 --   M13R-05  rejection notes may not carry U+061C, U+200B, U+200E, U+200F or U+FEFF (port check and table constraint;
 --            rows written before this migration are not re-validated). U+200C and U+200D stay legal (emoji, scripts).
 -- Replaces: control.reject_release(text,text,text,text), control.activate_release(text,text,text,bigint) and
--- control.rollback_release(text,text,text,bigint,text,boolean), all from 00049 (no later migration replaced them).
+-- control.rollback_release(text,text,text,bigint,text,boolean), all from 00084 (no later migration replaced them).
 -- Adds: control.release_fences, control.release_rollback_class(uuid,text,text).
 -- +goose Up
 CREATE TABLE control.release_fences(

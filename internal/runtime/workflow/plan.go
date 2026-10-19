@@ -20,15 +20,15 @@ import (
 
 const Version = "2.0.0"
 
-// ToolDSLVersion marks plans with at least one ADR036 tool activity whose
+// ToolDSLVersion marks plans with at least one ADR100 tool activity whose
 // state pins the tool contract (approval requirement and delivery capability)
-// so the database can enforce it without the catalog (ADR036 Amendment A1).
+// so the database can enforce it without the catalog (ADR100 Amendment A1).
 // Plans without tools keep Version and byte-identical encoding.
 const ToolDSLVersion = "2.2.0"
 
 // LegacyToolDSLVersion is the M10 tool DSL without a pinned contract. Stored
 // plans keep restoring byte-for-byte; the compiler never emits it again and
-// the database derives conservative rules for it (ADR036 Amendment A1).
+// the database derives conservative rules for it (ADR100 Amendment A1).
 const LegacyToolDSLVersion = "2.1.0"
 const ActivityVersion = "1.0.0"
 const MaxToolInputs = 32
@@ -58,7 +58,7 @@ type State struct {
 	ApprovalRoles     []string           `json:"approval_roles,omitempty"`
 	TimerMS           int                `json:"timer_ms,omitempty"`
 	ApprovalTimeoutMS int                `json:"approval_timeout_ms,omitempty"`
-	// ToolHash pins the trusted catalog definition's canonical hash (ADR036).
+	// ToolHash pins the trusted catalog definition's canonical hash (ADR100).
 	// Runtime resolves only Lookup(ref, version, ToolHash); a changed or removed
 	// definition never replaces the pin.
 	ToolHash string `json:"tool_hash,omitempty"`
@@ -88,10 +88,10 @@ func validToolContract(c ToolContract) bool {
 		c.SettleMS >= 0 && c.SettleMS <= MaxSettleMS && (c.SettleMS == 0 || c.IdempotencyMode == "LOOKUP_BY_REFERENCE") && c.TimeoutMS >= 1 && c.TimeoutMS <= 2000
 }
 
-// MaxSettleMS bounds a declared provider settle interval (ADR036 Amendment A4).
+// MaxSettleMS bounds a declared provider settle interval (ADR100 Amendment A4).
 const MaxSettleMS = tools.MaxSettleMS
 
-// IsTool reports an ADR036 tool activity state.
+// IsTool reports an ADR100 tool activity state.
 func (s State) IsTool() bool {
 	return s.Type == "activity" && s.Activity != nil && s.Activity.ToolRef != ""
 }
@@ -304,7 +304,7 @@ func validatePlan(p Plan) error {
 			}
 			if a.ToolRef != "" {
 				// Only the tool DSLs admit tools. A tool has no local ref, timeout
-				// (the trusted catalog bounds it) or compensation (deferred, ADR036).
+				// (the trusted catalog bounds it) or compensation (deferred, ADR100).
 				if !withTools || len(a.ToolRef) > 160 || !toolRefPattern.MatchString(a.ToolRef) || !versionPattern.MatchString(a.Version) || !toolHashPattern.MatchString(s.ToolHash) || a.LocalRef != "" || a.CompensationLocalRef != "" || a.CompensationToolRef != "" || a.TimeoutMS != 0 || !validToolInputs(a.Inputs, declared) {
 					return ErrInvalid
 				}

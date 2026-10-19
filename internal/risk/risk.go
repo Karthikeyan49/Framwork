@@ -1,5 +1,5 @@
 // Package risk maps server-derived release facts to a risk verdict under a
-// versioned, hashed policy (release-risk-v1, ADR038 section 3).
+// versioned, hashed policy (release-risk-v1, ADR102 section 3).
 //
 // The package is pure: it reads no clock, randomness, database, tool catalog or
 // compiler state and imports only the standard library. Callers reduce trusted

@@ -35,7 +35,7 @@ type GatewayOptions struct {
 	// resolver makes every secret-bearing endpoint fail as not_sent.
 	Secrets SecretResolver
 	// AllowInternal is the process-level opt-in for endpoints declared
-	// network "internal". Production composition must reject it (ADR036 #8).
+	// network "internal". Production composition must reject it (ADR100 #8).
 	AllowInternal bool
 	// RootCAs replaces the system roots when non-nil (operator CA file).
 	RootCAs *x509.CertPool
@@ -386,7 +386,7 @@ func typedAnswer(h http.Header) bool {
 	return true
 }
 
-// classifyResponse maps a received response to an outcome (ADR036 #6).
+// classifyResponse maps a received response to an outcome (ADR100 #6).
 func classifyResponse(ctx context.Context, def Definition, kind string, resp *http.Response) Result {
 	status := resp.StatusCode
 	switch {

@@ -29,7 +29,7 @@ func concrete(pattern string) (method, path string) {
 }
 
 // TestReleasePatternsRegistrationAndPOSTAllowlistAgree is the drift guard of
-// ADR039 section 7: every release pattern is registered exactly as listed (so
+// ADR103 section 7: every release pattern is registered exactly as listed (so
 // the action map and the dispatch see it), and the body allowlist accepts the
 // path of a POST pattern and nothing else.
 func TestReleasePatternsRegistrationAndPOSTAllowlistAgree(t *testing.T) {
@@ -63,7 +63,7 @@ func TestReleasePatternsRegistrationAndPOSTAllowlistAgree(t *testing.T) {
 			t.Errorf("AcceptsPOST(%s) admits a body for a route that takes none", path)
 		}
 	}
-	// The M13 routes and their actions are exactly ADR039 section 7.
+	// The M13 routes and their actions are exactly ADR103 section 7.
 	want := map[string]string{approvePattern: "releases.approve", rejectPattern: "releases.approve", activatePattern: "releases.activate",
 		rollbackPattern: "releases.rollback", historyPattern: "releases.read", activePattern: "releases.read"}
 	for pattern, action := range want {
@@ -179,7 +179,7 @@ func forbiddenCalls(t *testing.T, roots func(file string, fn *ast.FuncDecl) bool
 }
 
 // TestPromotionHandlersNeverCompile protects "no recompile after approval"
-// (ADR039 section 1): nothing reachable from promote.go compiles source or reads
+// (ADR103 section 1): nothing reachable from promote.go compiles source or reads
 // or parses a source revision. Only stored bytes are restored.
 func TestPromotionHandlersNeverCompile(t *testing.T) {
 	if found := forbiddenCalls(t, func(file string, _ *ast.FuncDecl) bool { return file == "promote.go" }); len(found) > 0 {

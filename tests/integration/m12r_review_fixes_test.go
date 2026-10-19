@@ -4,10 +4,10 @@ package integration
 
 // Regression tests for the independent M12 database-layer review
 // (docs/verification/M12_DB_INDEPENDENT_REVIEW.md), findings F2, F3, F4 and F5
-// as they stand after migrations 49 and 50. F1 and F6 were closed by those
+// as they stand after migrations 84 and 85. F1 and F6 were closed by those
 // migrations and keep their own tests (TestM13Ports*, TestM10R02*). Each test is
-// built from the reviewer's probe and asserts the contract of migration 52 and
-// the ADR038 amendment; the group is named TestM12R*.
+// built from the reviewer's probe and asserts the contract of migration 87 and
+// the ADR102 amendment; the group is named TestM12R*.
 
 import (
 	"bytes"
@@ -209,7 +209,7 @@ func TestM12RRequirementAndAcceptancePortsRefuseAmbiguousBodies(t *testing.T) {
 	}
 }
 
-// The allow-lists in migration 52 are the key sets of the Go types, in both
+// The allow-lists in migration 87 are the key sets of the Go types, in both
 // directions: a field added to a 2.0.0 struct (which would also break Restore of
 // every stored bundle) cannot silently make honest bodies unstageable, and a key
 // the Go type does not have cannot be allowed.
@@ -270,7 +270,7 @@ func TestM12RBodyKeyListsMatchTheGoStructs(t *testing.T) {
 
 // ---------------------------------------------------------------------- F3
 
-// F3: staging bytes that are already staged is a replay (ADR038 Amendment 8,
+// F3: staging bytes that are already staged is a replay (ADR102 Amendment 8,
 // release.candidate_replayed) however far the world has moved since: the row is
 // immutable evidence and the staleness of a candidate is derived on read, never
 // decided at write. Bytes that were never staged and name a base that is no

@@ -1,4 +1,4 @@
--- Preserve applied 45/46. The retention trigger referenced invocation columns
+-- Preserve applied 80/81. The retention trigger referenced invocation columns
 -- while firing on the attempts table; PL/pgSQL resolves record fields per
 -- statement, so each table gets its own branch. Owner and trigger set unchanged.
 -- +goose Up

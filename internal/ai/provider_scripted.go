@@ -25,7 +25,7 @@ type ScriptStep struct {
 	Func    func(ProviderRequest) ([]byte, error)
 }
 
-// ScriptedProvider is the deterministic in-memory provider of ADR040 section 3. It
+// ScriptedProvider is the deterministic in-memory provider of ADR104 section 3. It
 // is safe for concurrent use and records every request it receives.
 type ScriptedProvider struct {
 	mu       sync.Mutex

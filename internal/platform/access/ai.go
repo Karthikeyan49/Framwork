@@ -30,7 +30,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// AI builder routes (ADR040 amendments A5-A11, M14). They exist only where preview
+// AI builder routes (ADR104 amendments A5-A11, M14). They exist only where preview
 // exists. A model holds no authority: the requesting human is the actor of record in
 // every exchange, a proposal is data, and apply / confirm / reject are separate
 // authenticated requests. The POST allowlist (aiPOST) must accept exactly the POST
@@ -51,7 +51,7 @@ var aiPatterns = map[string]string{
 
 var aiPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/ai/(patch-proposals|requirement-proposals|proposals/[0-9a-f-]{36}/(apply|confirm|reject))$`)
 
-// AIConfig is the optional AI builder wiring (ADR040 A11). The zero value means
+// AIConfig is the optional AI builder wiring (ADR104 A11). The zero value means
 // "not configured": every AI route then answers 503 ai_unavailable and nothing else
 // changes. It lives here so that only this file imports the ai package.
 type AIConfig struct {
@@ -64,7 +64,7 @@ func (a API) registerAI(mux *http.ServeMux) {
 	}
 }
 
-// Body caps of ADR040 A5.
+// Body caps of ADR104 A5.
 const (
 	aiCreateBody  = 32 << 10
 	aiApplyBody   = 128 << 10
@@ -147,7 +147,7 @@ type aiErrorBody struct {
 	Sensitive   []string              `json:"sensitive,omitempty"`
 }
 
-// aiReply maps the typed refusals of the ai package (ADR040 A7) to HTTP. A refusal
+// aiReply maps the typed refusals of the ai package (ADR104 A7) to HTTP. A refusal
 // is returned as a requestRejection so its transaction rolls back; an error that is
 // none of them is returned unchanged and becomes 503 service_unavailable.
 func aiReply(r *http.Request, err error) (reply, error) {
@@ -238,7 +238,7 @@ func aiReply(r *http.Request, err error) (reply, error) {
 }
 
 // ai is the standard-transaction handler of the seven routes. Creation continues in
-// reply.next after this transaction commits (ADR040 A8).
+// reply.next after this transaction commits (ADR104 A8).
 func (a API) ai(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry) (reply, error) {
 	app := r.PathValue("app")
 	evidence.State.MetadataApp = app
@@ -286,7 +286,7 @@ func (a API) ai(ctx context.Context, q postgres.Executor, r *http.Request, u ide
 }
 
 // aiCompose evaluates the capability the underlying write needs in addition to the
-// AI action, so delegating ai.apply alone never bypasses it (ADR040 A6). A denial
+// AI action, so delegating ai.apply alone never bypasses it (ADR104 A6). A denial
 // records its own decision id in the audit evidence.
 func (a API) aiCompose(ctx context.Context, u identity.User, access tenant.Access, action, resourceType, app string, evidence *audit.Entry) error {
 	d := enforce(a.Policy.Decide(ctx, policy.Subject{User: u, Access: access}, action, policy.Resource{TenantID: access.TenantID(), Type: resourceType, AppID: app},
@@ -407,7 +407,7 @@ const aiResultMargin = 10 * time.Second
 
 // aiAuthorize re-authenticates the bearer token of the request in a new transaction
 // and re-evaluates policy for the action: identity, tenant membership and policy are
-// decided again in every exchange (ADR040 A8). A refusal is returned as a reply.
+// decided again in every exchange (ADR104 A8). A refusal is returned as a reply.
 func (a API) aiAuthorize(ctx context.Context, tx postgres.Executor, r *http.Request, action, app string) (identity.User, tenant.Access, audit.Entry, *reply, error) {
 	evidence := audit.Entry{Action: "authentication.denied", Resource: "identity", RequestID: httpserver.RequestID(r.Context()), TraceID: trace.SpanContextFromContext(r.Context()).TraceID().String(), PolicyVersion: policy.Version}
 	unauthenticated, forbidden := denied(401, "unauthenticated", "Authentication is required"), denied(403, "forbidden", "Access is denied")

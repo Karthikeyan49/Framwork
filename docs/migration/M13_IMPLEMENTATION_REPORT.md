@@ -2,10 +2,10 @@
 
 Date: 16–17 October 2026 (UTC). Source: `claude/m13-approval-promotion` (based on the M12 branch
 `claude/m12-candidate-builder`). Decisions, amendments and recovery are in
-[ADR039](../adr/039-m13-approval-and-promotion.md). **M13 is PARTIAL against the roadmap line
+[ADR103](../adr/103-m13-approval-and-promotion.md). **M13 is PARTIAL against the roadmap line
 "Approval + Promotion":** the approval, rejection, activation and rollback *authority* is built and
 tested; there is **no production data plane** (no production datasets, no execution of storage
-migrations, no release-pinned production routes — ADR039 §10). An activated release is an auditable
+migrations, no release-pinned production routes — ADR103 §10). An activated release is an auditable
 pointer and nothing serves it. This is a development/test preview capability, not production ready.
 
 ## What changed
@@ -15,7 +15,7 @@ directly: `framework_app` could INSERT approvals and INSERT/UPDATE the active-re
 the only database rules were two RLS policies. A buggy or compromised API runtime could approve
 anything and point the pointer at any approved hash, stale or never activated.
 
-- **Migration 49** (additive, forward-only): `framework_app` loses INSERT/UPDATE on
+- **Migration 84** (additive, forward-only): `framework_app` loses INSERT/UPDATE on
   `control.release_approvals` and `control.active_releases` (table and column level). New
   append-only `control.release_rejections` and `control.release_history`. SECURITY DEFINER ports
   `approve_release`, `reject_release`, `activate_release`, `rollback_release` (owner
@@ -44,7 +44,7 @@ anything and point the pointer at any approved hash, stale or never activated.
 
 ## Commands executed and results
 
-Executed on the merged tree (M10 review fixes, M11/M12 review fixes, migrations 49–53) on 2026-10-19,
+Executed on the merged tree (M10 review fixes, M11/M12 review fixes, migrations 84–88) on 2026-10-19,
 one process at a time on an otherwise idle 4-core host, integration groups against the isolated M13 stack
 (reset from this tree first; every test also builds its own disposable database from the tree's migrations).
 
@@ -61,7 +61,7 @@ one process at a time on an otherwise idle 4-core host, integration groups again
 | Full integration suite, `make check`, `make test-unit`, `make build`, `make test-e2e` | run on the M14 tree, which contains this branch: see "Final gate" below |
 
 Defects found by running the merged tree (none by the branches alone) and fixed here:
-- Migration 52 derives the worker grant guard for control, runtime, iam and audit and refuses every relation it does
+- Migration 87 derives the worker grant guard for control, runtime, iam and audit and refuses every relation it does
   not list. The M8 and M9 test fixtures created effect-probe tables in `runtime` with a worker grant, so
   `worker_grants_safe()` was false in every disposable database and every worker-claiming test (M8–M11, M9R) failed
   with "worker job denied". The probe tables now live in their own schemas (`m8_fixture`, `m9_fixture`).
@@ -76,14 +76,14 @@ Independent adversarial review of M13 (a separate agent, 2026-10-19): **PASS WIT
 
 | Finding | Disposition | Where |
 |---|---|---|
-| M13R-01 MEDIUM an acknowledged rejection did not stop an activation that started earlier | FIXED: per-hash fence row written by both ports, the older snapshot aborts with 40001 | migration 53, ADR039 amendment 12, `TestM13R01*` |
-| M13R-02 MEDIUM rollback class gate read only the current release | FIXED: gate covers every release the pointer crosses | migration 53, `promote.go`, ADR039 amendment 12, `TestM13R02*` |
-| M13R-03 LOW demoted approver still counts toward quorum | FIXED in the Go layer after the first fix round: only approvers whose current role grants `releases.approve` count at activation and in the derived status; the database floor is unchanged | `promote.go` (`holdingApprovers`), `policy/holds.go`, `promotion/approver_roles.go`, ADR039 amendment 13, `TestM13R03*` |
+| M13R-01 MEDIUM an acknowledged rejection did not stop an activation that started earlier | FIXED: per-hash fence row written by both ports, the older snapshot aborts with 40001 | migration 88, ADR103 amendment 12, `TestM13R01*` |
+| M13R-02 MEDIUM rollback class gate read only the current release | FIXED: gate covers every release the pointer crosses | migration 88, `promote.go`, ADR103 amendment 12, `TestM13R02*` |
+| M13R-03 LOW demoted approver still counts toward quorum | FIXED in the Go layer after the first fix round: only approvers whose current role grants `releases.approve` count at activation and in the derived status; the database floor is unchanged | `promote.go` (`holdingApprovers`), `policy/holds.go`, `promotion/approver_roles.go`, ADR103 amendment 13, `TestM13R03*` |
 | M13R-04 LOW U+017F / U+212A alias a key | FIXED: request keys must be ASCII snake_case | `promote.go`, `TestM13R04*` |
-| M13R-05 LOW invisible marks in notes | FIXED in Go, port and table constraint (U+200C/U+200D stay legal) | migration 53, `TestM13R05*` |
+| M13R-05 LOW invisible marks in notes | FIXED in Go, port and table constraint (U+200C/U+200D stay legal) | migration 88, `TestM13R05*` |
 | M13R-06 LOW runtime components never compared with the binary | FIXED by the M12 API fixes (`RUNTIME_CHANGED` staleness) | `TestM13R06*` |
-| FR-01 LOW a worker can set status/termination/failure of its leased instance | DOCUMENTED (ADR024 residual) | ADR039 amendment 13 |
-| FR-02 LOW an exemption band between the verifier probes passed | FIXED: ratio probes, verifier version `verifier-v2` | ADR038 amendment 9, `TestExemptionBandBetweenBoundaryProbesFails` |
+| FR-01 LOW a worker can set status/termination/failure of its leased instance | DOCUMENTED (ADR024 residual) | ADR103 amendment 13 |
+| FR-02 LOW an exemption band between the verifier probes passed | FIXED: ratio probes, verifier version `verifier-v2` | ADR102 amendment 9, `TestExemptionBandBetweenBoundaryProbesFails` |
 
 These fixes are NOT independently reviewed. No separate reviewer has re-verified them.
 
@@ -114,7 +114,7 @@ the isolated M14 database stack reset from that tree. The branch itself was prov
 
 ## Follow-up: M13R-03 closed in the Go layer (2026-10-19)
 
-Only approvers whose current role grants `releases.approve` count at activation and in the derived status (ADR039
+Only approvers whose current role grants `releases.approve` count at activation and in the derived status (ADR103
 amendment 13). Written failing-first: with `promote.go` reverted, `TestM13R03DemotedApproverNoLongerCounts`,
 `...ReassignedCustomApproverNoLongerCounts` and `...CriticalQuorumNeedsBothApproversToHold` answered 200 on the approval
 of a demoted member, and `...DeactivatedApproverNoLongerCounts` showed `APPROVED` for a candidate the port then refused.
@@ -180,5 +180,5 @@ tests were run for this addition.
 - A HIGH candidate needs three distinct people, CRITICAL two more approvers; tenants must add members.
 - Tool-catalog staleness at view, approve and activate is executed through the HTTP handlers (`TestM13ToolPin*`, see the
   follow-up section); it was unit-tested only in the first gate and listed as not covered by the M12 API and M13 reviews.
-- Not built (ADR039 §10): production data plane, approval expiry, configurable approver roles (R5e),
+- Not built (ADR103 §10): production data plane, approval expiry, configurable approver roles (R5e),
   volume measurement, a separate verifier credential, UI, release lifecycle events.

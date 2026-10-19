@@ -1,4 +1,4 @@
--- M12 candidate release builder (ADR038). Additive and forward-only.
+-- M12 candidate release builder (ADR102). Additive and forward-only.
 -- Requirement sets, acceptance specs, the candidate index and release bundles
 -- are written only through definer ports that bind every authority-bearing
 -- value to DB-stamped rows (requirement decider, acceptance author, frozen
@@ -109,7 +109,7 @@ END $$;
 -- (the authenticated actor), risk/HighRisk consistency, the exact requirement
 -- set, acceptance spec (and its independent DB author), frozen sandbox evidence,
 -- the stored source revision and the current active base. promotion.Restore
--- recomputes risk and verification from the stored bytes (ADR038 section 6).
+-- recomputes risk and verification from the stored bytes (ADR102 section 6).
 CREATE FUNCTION control.stage_candidate(p_app text,p_hash text,p_body bytea) RETURNS boolean
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
 DECLARE t uuid:=iam.current_tenant_id();actor uuid:=iam.authenticated_actor();b jsonb;lvl text;rev bigint;src record;rs record;acc record;ev record;evdoc jsonb;n bigint;
@@ -140,7 +140,7 @@ BEGIN
  IF NOT FOUND OR acc.body_hash IS DISTINCT FROM b->'Acceptance'->>'Hash' OR acc.requirements_hash IS DISTINCT FROM rs.body_hash
   OR b->'Acceptance'->>'RequirementsHash' IS DISTINCT FROM rs.body_hash OR acc.author_id::text IS DISTINCT FROM b->'Acceptance'->>'AuthorID' THEN
   RAISE EXCEPTION 'stored acceptance spec required' USING ERRCODE='55000';END IF;
- -- Separation of duties at build time (ADR038 section 5), from DB-stamped identities.
+ -- Separation of duties at build time (ADR102 section 5), from DB-stamped identities.
  IF acc.author_id=actor OR acc.author_id=src.created_by THEN
   RAISE EXCEPTION 'acceptance must be authored independently of the requester and the source author' USING ERRCODE='42501';END IF;
  SELECT e.body,e.body_hash,e.frozen_by INTO ev FROM runtime.sandbox_evidence e JOIN runtime.sandboxes s ON s.tenant_id=e.tenant_id AND s.app_id=e.app_id AND s.dataset_id=e.dataset_id

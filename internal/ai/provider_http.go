@@ -18,7 +18,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
-// HTTPJSONProvider is the one generic adapter of ADR040 section 3 (kind https-json):
+// HTTPJSONProvider is the one generic adapter of ADR104 section 3 (kind https-json):
 // an operator-controlled HTTPS endpoint that accepts the ProviderRequest as JSON and
 // answers the envelope {"payload", "model", "usage"}. It holds no vendor format and
 // no credential: the credential file is read at call time and never retained. The

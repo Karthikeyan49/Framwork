@@ -19,7 +19,7 @@ Additional business adapters need their own policy/data contracts; M10 owns tool
 States: READY, WAITING_TIMER, WAITING_APPROVAL, RETRY_WAIT, SUCCEEDED, FAILED,
 CANCELLED, TIMED_OUT, DEAD, RECONCILE, COMPENSATING, COMPENSATION_FAILED.
 Timers/deadlines use PostgreSQL time. Known local rollback permits bounded retry;
-unknown effect outcomes pause for reviewed reconciliation. Tool steps (ADR036
+unknown effect outcomes pause for reviewed reconciliation. Tool steps (ADR100
 Amendments): every fresh non-success outcome is counted, backed off and bounded
 by `max_attempts`; a tool step with an unknown outcome outstanding ends in
 RECONCILE, never DEAD; worker state changes must follow an `always` transition

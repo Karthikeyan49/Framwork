@@ -13,7 +13,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-// The three human decisions on a stored proposal (ADR040 A9). Each is one ordinary
+// The three human decisions on a stored proposal (ADR104 A9). Each is one ordinary
 // transaction with the audit row of the standard envelope; each additionally
 // requires the capability of the underlying write, so ai.apply alone never bypasses
 // metadata.write or requirements.decide.

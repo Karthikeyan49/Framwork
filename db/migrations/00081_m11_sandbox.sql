@@ -1,7 +1,7 @@
--- M11 sandbox identity and enforcement (ADR037). Additive and forward-only.
+-- M11 sandbox identity and enforcement (ADR101). Additive and forward-only.
 -- A sandbox is an EMPTY synthetic dataset whose environment, tool ceiling and
 -- freeze evidence are server-owned. Nothing here touches preview datasets,
--- records or production credentials; tool sends stay governed by migration 45.
+-- records or production credentials; tool sends stay governed by migration 80.
 -- +goose Up
 ALTER TABLE runtime.datasets DROP CONSTRAINT datasets_environment_check;
 ALTER TABLE runtime.datasets ADD CONSTRAINT datasets_environment_check CHECK(environment IN('preview','sandbox'));

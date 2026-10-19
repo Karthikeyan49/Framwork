@@ -1,6 +1,6 @@
 package ai
 
-// Additional ceilings and defaults of ADR040 (amendment A1). As with the constants
+// Additional ceilings and defaults of ADR104 (amendment A1). As with the constants
 // of contract.go, configuration may lower a ceiling, never raise it.
 const (
 	// DefaultMaxOutputTokens is used when neither the budget nor the provider

@@ -1,8 +1,8 @@
 // Package promotion owns release integrity contracts: hash-bound bundles and
 // their restore, server-built candidates, staleness, and the store wrappers of
 // the database ports that stage, approve, reject, activate and roll back them
-// (ADR038, ADR039). Nothing serves an activated release yet: the production
-// data plane is a later milestone (ADR039 section 10).
+// (ADR102, ADR103). Nothing serves an activated release yet: the production
+// data plane is a later milestone (ADR103 section 10).
 package promotion
 
 import (

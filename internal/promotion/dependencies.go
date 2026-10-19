@@ -16,7 +16,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/verification"
 )
 
-// Derived dependencies of a candidate (ADR038 section 2). None is declared by a
+// Derived dependencies of a candidate (ADR102 section 2). None is declared by a
 // caller: each is computed from trusted artifacts so approval can recompute it.
 
 // ToolPin is one governed tool activity pin found in the compiled workflows.

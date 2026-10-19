@@ -1,4 +1,4 @@
--- M13 approval and promotion control plane (ADR039). Additive and forward-only.
+-- M13 approval and promotion control plane (ADR103). Additive and forward-only.
 -- Approval, rejection, activation and rollback are written only through definer
 -- ports that derive every authority-bearing value from DB-stamped rows: the
 -- authenticated actor and tenant, live memberships, the M12 candidate index and

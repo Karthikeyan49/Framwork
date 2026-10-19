@@ -1,6 +1,6 @@
 # M12 design appendix — rule tables and contracts
 
-Companion to [ADR038](../adr/038-m12-candidate-release-builder.md). The ADR owns
+Companion to [ADR102](../adr/102-m12-candidate-release-builder.md). The ADR owns
 decisions; this appendix fixes the detailed tables so independently built pure
 packages agree. Tables are data: changing one means publishing a new version
 (`release-risk-v2`, `requirement-policy-v2`, `verifier-v2`), never editing v1.

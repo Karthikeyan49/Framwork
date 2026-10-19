@@ -336,7 +336,7 @@ func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.R
 	case errors.Is(err, workflow.ErrConflict):
 		return reply{}, &requestRejection{response: denied(409, "workflow_conflict", "Reload workflow state before retrying")}
 	case frozenSandboxFence(err):
-		// The database fence of a frozen sandbox (migration 51, M11 review R03): its workflows
+		// The database fence of a frozen sandbox (migration 86, M11 review R03): its workflows
 		// are evidence and take no signal, step or receipt any more.
 		return reply{}, &requestRejection{response: denied(409, "sandbox_frozen", "The sandbox is frozen; its workflows are read-only")}
 	default:

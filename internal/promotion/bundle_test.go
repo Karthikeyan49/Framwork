@@ -47,7 +47,7 @@ func candidateFixture(t *testing.T) (Candidate, metadata.Source, compiler.Progra
 	return c, s, p
 }
 
-// M6R's in-process approval token and activation check are gone (ADR039
+// M6R's in-process approval token and activation check are gone (ADR103
 // section 9): a 1.0.0 bundle stays restorable and identified by its exact hash,
 // but it can no longer be staged, so it never gets a candidate row the
 // approval and activation ports would accept.

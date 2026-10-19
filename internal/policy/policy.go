@@ -17,7 +17,7 @@ import (
 // requirements.decide, acceptance.author and candidates.build; M13 (v10) adds
 // releases.read (all roles) and owner/admin releases.approve (approve and
 // reject), releases.activate and releases.rollback; M14 (v11) adds ai.read (all
-// roles) and owner/admin ai.propose and ai.apply (ADR040 A6).
+// roles) and owner/admin ai.propose and ai.apply (ADR104 A6).
 // Retained evidence keeps its original version.
 const Version = "m14-native-v11"
 
@@ -84,7 +84,7 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			// M12/M13: release content and promotion authority stays with tenant
 			// administrators by default; custom roles may be granted these
 			// explicitly (never viewer). The database ports re-check membership,
-			// separation of duties and quorum (ADR039).
+			// separation of duties and quorum (ADR103).
 			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
 				return true
 			}

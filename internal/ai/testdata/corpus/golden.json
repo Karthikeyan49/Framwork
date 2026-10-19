@@ -936,7 +936,7 @@
    "adr": [
     "\u00a710"
    ],
-   "description": "builder decision (ADR040 amendment B): a requirement in a category the verifier does not understand is not a draft; the proposal is refused with a diagnostic that sends it to the open questions, so the run ends NEEDS_HUMAN and nothing is stored as a requirement.",
+   "description": "builder decision (ADR104 amendment B): a requirement in a category the verifier does not understand is not a draft; the proposal is refused with a diagnostic that sends it to the open questions, so the run ends NEEDS_HUMAN and nothing is stored as a requirement.",
    "task": "requirement_capture",
    "fixture": "orders",
    "request": "Orders must be delivered within two days.",

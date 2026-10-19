@@ -14,7 +14,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/ai/corpus"
 )
 
-// Provider-swap evaluation (ADR040 section 14): the corpus items tagged "swap" run
+// Provider-swap evaluation (ADR104 section 14): the corpus items tagged "swap" run
 // through (a) the ScriptedProvider and (b) the HTTPJSONProvider against a local TLS test
 // server that replays the same bytes. The validation outcomes must be identical and
 // the declared properties must hold for both. This demonstrates substitutability of the

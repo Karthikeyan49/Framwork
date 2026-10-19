@@ -1,4 +1,4 @@
--- M10 governed tool execution (ADR036). Additive and forward-only. The worker
+-- M10 governed tool execution (ADR100). Additive and forward-only. The worker
 -- changes the tool ledger only through ports bound to its exact authenticated
 -- lease; attempts are immutable once finished; no bodies, headers or secrets.
 -- +goose Up

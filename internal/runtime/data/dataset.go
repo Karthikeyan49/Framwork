@@ -25,7 +25,7 @@ type Dataset struct {
 	State            string `json:"state"`
 	VerifiedRows     int64  `json:"verified_rows"`
 	ManifestHash     string `json:"manifest_hash"`
-	// Sandbox is server-derived (ADR037); it is never accepted from a request.
+	// Sandbox is server-derived (ADR101); it is never accepted from a request.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 }
 

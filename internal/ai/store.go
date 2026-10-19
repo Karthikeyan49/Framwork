@@ -15,8 +15,8 @@ import (
 )
 
 // Persistence of AI proposals, their per-attempt trace and the daily budget
-// (ADR040 amendments A1-A4). Every write goes through a SECURITY DEFINER port of
-// migration 60 that derives tenant and actor from the leased session settings;
+// (ADR104 amendments A1-A4). Every write goes through a SECURITY DEFINER port of
+// migration 89 that derives tenant and actor from the leased session settings;
 // this code never sets a requester, a decider, a tenant or a status itself, and
 // the runtime role has no DML on the tables. These wrappers reject malformed
 // arguments before SQL and translate SQLSTATEs into typed errors. They are not
@@ -25,13 +25,13 @@ import (
 // ProposalKind is which pipeline produced a proposal.
 type ProposalKind string
 
-// ProposalKind values (migration 60 CHECK).
+// ProposalKind values (migration 89 CHECK).
 const (
 	ProposalPatch        ProposalKind = "patch"
 	ProposalRequirements ProposalKind = "requirements"
 )
 
-// ProposalStatus is the ADR040 A4 status machine.
+// ProposalStatus is the ADR104 A4 status machine.
 type ProposalStatus string
 
 // ProposalStatus values. NEEDS_HUMAN, FAILED, EXPIRED, APPLIED, CONFIRMED and
@@ -65,7 +65,7 @@ const (
 // RejectReasons is the closed vocabulary of a human rejection.
 var RejectReasons = []string{"NOT_WANTED", "INCORRECT", "UNSAFE", "SUPERSEDED", "OTHER"}
 
-// Bounds of the arguments and reads (migration 60 ceilings).
+// Bounds of the arguments and reads (migration 89 ceilings).
 const (
 	// MaxListRows is the most proposals one list returns (newest first).
 	MaxListRows = MaxListItems
@@ -113,7 +113,7 @@ type PortError struct {
 func (e *PortError) Error() string   { return e.Kind.Error() }
 func (e *PortError) Unwrap() []error { return []error{e.Kind, e.Cause} }
 
-// classifyPort maps the SQLSTATEs of ADR040 A3; anything else (transport,
+// classifyPort maps the SQLSTATEs of ADR104 A3; anything else (transport,
 // unknown SQLSTATE) is returned unchanged.
 func classifyPort(err error) error {
 	if err == nil {
@@ -144,7 +144,7 @@ func classifyPort(err error) error {
 	return &PortError{Kind: kind, Detail: pg.Detail, Cause: err}
 }
 
-// Store reads and writes AI proposals through the migration-60 ports.
+// Store reads and writes AI proposals through the migration-89 ports.
 type Store struct{}
 
 // apiDigest is the lowercase hex SHA-256 used for every hash this package stores.
@@ -454,7 +454,7 @@ func (Store) Head(ctx context.Context, q postgres.Executor, a tenant.Access, app
 	return revision, err
 }
 
-// Ready checks the migration-60 contract without reading or writing a proposal:
+// Ready checks the migration-89 contract without reading or writing a proposal:
 // the four ports are definer functions this role may execute, and the three
 // tables are forced-RLS, readable and not writable. Missing migrations or
 // grants fail closed.

@@ -2,7 +2,7 @@
 
 package integration
 
-// HTTP-level tests of the ADR039 routes (approve, reject, activate, rollback,
+// HTTP-level tests of the ADR103 routes (approve, reject, activate, rollback,
 // release history, active release) and of the candidate lifecycle view. They
 // reuse the M13 fixture (m13_fixture_test.go) and drive the API only; the
 // operator connection reads evidence and changes memberships, never release

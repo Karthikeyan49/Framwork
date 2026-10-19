@@ -15,7 +15,7 @@ source at execution. SupportedIRVersions returns the explicit runtime matrix.
 Stored restoration verifies source/plan/field/calendar/type/hash agreement and
 preserves historical compiler provenance. See ADR021 and rules_test.go.
 
-ADR036 adds opt-in schema/IR 1.3.0. `Catalog.ToolCatalog` (excluded from
+ADR100 adds opt-in schema/IR 1.3.0. `Catalog.ToolCatalog` (excluded from
 `CatalogHash`, so existing IR hashes are unchanged) resolves each tool activity in
 the operator-owned `tools.Catalog`, type-checks its input mapping against the
 workflow entity, and requires an approval state's `approved` transition on every
@@ -26,7 +26,7 @@ identical bytes. Restore never recompiles: it requires a well-formed pin, and th
 runtime re-resolves the pin against the live catalog and checks the tenant
 allowlist before any send.
 
-## Release diff and storage classification (M12, ADR038)
+## Release diff and storage classification (M12, ADR102)
 
 `ComputeDiff(base, target)` compares two compiled or restored programs of one
 application and returns a deterministic `Diff` (`diff-v1`). A zero base is the

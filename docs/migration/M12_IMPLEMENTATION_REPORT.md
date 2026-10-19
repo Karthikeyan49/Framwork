@@ -2,7 +2,7 @@
 
 Date: 15 October 2026 (UTC). Source: `claude/m12-candidate-builder` (based on
 `claude/m10-m11-tools-sandbox` at `633d44b`). Decisions, amendments and
-recovery are in [ADR038](../adr/038-m12-candidate-release-builder.md) and the
+recovery are in [ADR102](../adr/102-m12-candidate-release-builder.md) and the
 [design appendix](M12_DESIGN_APPENDIX.md). M13 (approval, activation, production
 volume) and M14 (AI capture) are not started. This is a development/test preview
 capability with no production exposure; it is not production ready.
@@ -36,7 +36,7 @@ server**, and the database refuses every other writer.
   tool pins, whole-tenant policy bundle hash and runtime components hash;
   derived staleness; release store; version dispatch in `Restore` (1.0.0 stays
   readable but can no longer be staged).
-- Migration 48: `control.requirement_sets`, `acceptance_specs`, `release_candidates`
+- Migration 83: `control.requirement_sets`, `acceptance_specs`, `release_candidates`
   (forced RLS, immutability and TRUNCATE guards); definer ports
   `append_requirements`, `author_acceptance` and `stage_candidate`; `INSERT` on
   `release_bundles` revoked from `framework_app`; worker drift guard extended.
@@ -58,13 +58,13 @@ No new Go or npm dependency. No UI change.
 |---|---|
 | Unit packages per slice (`risk`, `compiler`, `metadata`, `intent`, `verification`, `promotion`, `policy`) | PASS (golden risk pins, monotonicity property test, ~50 bundle tamper mutations, verifier mutation fixtures, oracle currency tables) |
 | `go vet -tags=integration ./tests/integration` | PASS after porting the M6R release test |
-| `-run TestM12` (5 tests), early runs | FAIL: release routes were registered but not dispatched; replay and rejection audits were miscounted by the test; `stage_candidate` did not bind the sandbox freezer (real defect, fixed in migration 48); the worker-guard check ran as the wrong role. Each fixed, then 5/5 PASS (25.4 s) |
+| `-run TestM12` (5 tests), early runs | FAIL: release routes were registered but not dispatched; replay and rejection audits were miscounted by the test; `stage_candidate` did not bind the sandbox freezer (real defect, fixed in migration 83); the worker-guard check ran as the wrong role. Each fixed, then 5/5 PASS (25.4 s) |
 | `make check` (docs checksums, format, vet, `mod verify`) | PASS for docs/format/vet/mod verify; web lint needs `node_modules` in this worktree (symlinked afterwards) |
 | Go unit tests `./cmd/... ./internal/... ./tests/...` with `-race` | PASS |
 | Full `go test -race -tags=integration ./tests/integration` (978.6 s) | One FAIL of the whole suite: `TestM9RRecordAccessCanonicalDatasetGeneration` (stale policy-version assertion in a binary built before `bf70752` was merged); the merged test plus `TestM12*` then PASS (31.7 s). A final full run on the review-fixed tree is still required |
 | `make build` | PASS |
 | `make test-e2e` | PASS, 5 tests (20.8 s) |
-| Migrations 1–48 applied to a freshly created isolated database (new compose project, empty volume) | PASS — confirms the committed migration 48 (including the sandbox-freezer check added after the first local apply) applies from scratch; TestM12*, TestM8* (except the Redis-restart test, which is coupled to the main compose project) and TestM11* then PASS on it (147.9 s) |
+| Migrations 1–44 and 80–83 (then numbered 1–48) applied to a freshly created isolated database (new compose project, empty volume) | PASS — confirms the committed migration 83 (including the sandbox-freezer check added after the first local apply) applies from scratch; TestM12*, TestM8* (except the Redis-restart test, which is coupled to the main compose project) and TestM11* then PASS on it (147.9 s) |
 
 Evidence gap: the pre-fix exploit (a hand-built PASS bundle inserted by
 `framework_app`) was removed with the M6R test that exercised it; it was not
@@ -104,7 +104,7 @@ bodies refused with 22023/55000/42501).
   answers 409 `candidate_failed_verification`. Evidence: unit regression tests
   (`internal/promotion/verify_base_test.go`) and
   `TestM12CoordinatedForgeryIsRefusedWhenLoaded`, which failed with HTTP 200 and
-  `high_risk:false` before the fix and passes after. ADR038 Amendment 2 and the
+  `high_risk:false` before the fix and passes after. ADR102 Amendment 2 and the
   promotion README were corrected; the claim "`Restore` recomputes the diff" in the
   earlier text of this report was wrong.
 
@@ -112,18 +112,18 @@ bodies refused with 22023/55000/42501).
 
 All five M12 reviews are complete (reports in `docs/verification/`):
 
-- **Database layer** (`M12_DB_INDEPENDENT_REVIEW.md`): PASS WITH FINDINGS, F1–F6. F1 was closed by migration 49
-  (M13), F6 is M10R-02 (migration 50), F2–F5 are fixed by migration 52 (ADR038 amendment 12; `TestM12R*`).
+- **Database layer** (`M12_DB_INDEPENDENT_REVIEW.md`): PASS WITH FINDINGS, F1–F6. F1 was closed by migration 84
+  (M13), F6 is M10R-02 (migration 85), F2–F5 are fixed by migration 87 (ADR102 amendment 12; `TestM12R*`).
 - **Deterministic logic** (`M12_VERIFIER_INDEPENDENT_REVIEW.md`): F1 HIGH fixed (see above); F2–F5 and F7 fixed in
-  the verifier (ADR038 amendment 9); F6 and F8 are documentation. A later re-verification found an exemption band
+  the verifier (ADR102 amendment 9); F6 and F8 are documentation. A later re-verification found an exemption band
   that passed (FR-02): ratio probes were added and the verifier version is now `verifier-v2`.
 - **API, policy, audit** (`M12_API_INDEPENDENT_REVIEW.md`): F1–F12 each dispositioned in its fix-status section; F9
   (MEDIUM, uncached full recomputation inside the request transaction) is fixed by a memo of the pure recomputation
   plus per-tenant and per-process admission; F4, F8 and F11 are documented.
-- **Contract-honesty audit** (`CONTRACT_HONESTY_AUDIT.md`): the certain corrections were applied to ADR036–038, the
+- **Contract-honesty audit** (`CONTRACT_HONESTY_AUDIT.md`): the certain corrections were applied to ADR100–102, the
   design appendix and the sandbox README.
 - **Foundation finding status** (`docs/migration/M9R_FINDING_STATUS.md`, `FOUNDATION_GAP_ANALYSIS.md`): audited by a
   separate agent; the audit keeps N-01 (the remediation line is not merged) open.
 
-The migration 52 fixes, the API fixes and `verifier-v2` are not independently reviewed. The M10 fixes and the verifier
+The migration 87 fixes, the API fixes and `verifier-v2` are not independently reviewed. The M10 fixes and the verifier
 fixes F2–F5/F7 were re-verified by a separate agent and held (`FIX_REVERIFICATION.md`).

@@ -12,7 +12,7 @@ import (
 )
 
 // Persistence of requirement sets, acceptance specs and candidates. Every write
-// goes through a SECURITY DEFINER port (migration 48) that stamps the authenticated
+// goes through a SECURITY DEFINER port (migration 83) that stamps the authenticated
 // actor; this code never sets an author, decider or requester itself.
 
 var ErrNotFound = errors.New("release artifact not found")

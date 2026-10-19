@@ -11,7 +11,7 @@ import (
 )
 
 // Regression tests for the independent gateway review (findings F1-F8; F9 is a
-// documentation alignment, see ADR036 decision 6 and the README outcome table) and
+// documentation alignment, see ADR100 decision 6 and the README outcome table) and
 // for M11-R07. Each one fails on the code before its fix.
 
 // F1: encoding/json folds U+017F ("long s", already lower case) onto "s", so a second

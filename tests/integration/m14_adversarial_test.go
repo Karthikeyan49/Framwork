@@ -2,7 +2,7 @@
 
 package integration
 
-// End-to-end attacks on the AI builder (ADR040 section 13) through the real routes,
+// End-to-end attacks on the AI builder (ADR104 section 13) through the real routes,
 // the real database and the real gateway. The model is a ScriptedProvider replaying the
 // adversarial corpus (internal/ai/testdata/corpus); no real model exists here. This is
 // builder-side adversarial evidence, not an independent review.

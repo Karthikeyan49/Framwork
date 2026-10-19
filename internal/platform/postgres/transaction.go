@@ -51,7 +51,7 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
 
 // WithRuntimeIsolation is WithRuntime at an explicit isolation level. Only a port whose own
 // contract needs a fresh snapshot per statement after it holds its locks (runtime.freeze_sandbox,
-// ADR037 Amendment 2) uses READ COMMITTED; everything else keeps REPEATABLE READ.
+// ADR101 Amendment 2) uses READ COMMITTED; everything else keeps REPEATABLE READ.
 func WithRuntimeIsolation(parent context.Context, db *sql.DB, level sql.IsolationLevel, run func(context.Context, Executor) error) (result error) {
 	if db == nil || run == nil || level != sql.LevelRepeatableRead && level != sql.LevelReadCommitted {
 		return ErrUnavailable

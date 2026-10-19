@@ -5,7 +5,7 @@ package integration
 // Regression tests for the independent M10 review findings M10R-01..M10R-05
 // (docs/verification/M10_INDEPENDENT_REVIEW.md). Each test was built from the
 // reviewer's executed probe and failed on the reviewed code; it asserts the
-// ADR036 contract (including its Amendments section).
+// ADR100 contract (including its Amendments section).
 
 import (
 	"context"

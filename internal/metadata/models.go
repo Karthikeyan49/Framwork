@@ -10,7 +10,7 @@ const SchemaVersion = "1.0.0"
 const RuleSchemaVersion = "1.1.0"
 const WorkflowSchemaVersion = "1.2.0"
 
-// ToolWorkflowSchemaVersion is the opt-in ADR036 authoring contract: identical
+// ToolWorkflowSchemaVersion is the opt-in ADR100 authoring contract: identical
 // to WorkflowSchemaVersion except that an activity may reference a tool.
 const ToolWorkflowSchemaVersion = "1.3.0"
 

@@ -6,7 +6,7 @@ import (
 )
 
 // Modes are resolved by the trusted runtime from the server-derived execution
-// environment (ADR036/ADR037), never from requests, metadata or AI output.
+// environment (ADR100/ADR101), never from requests, metadata or AI output.
 const (
 	ModeLive        = "LIVE"
 	ModeReroute     = "REROUTE"

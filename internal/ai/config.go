@@ -53,7 +53,7 @@ var providerKeys = []string{"version", "kind", "endpoint", "model", "credential_
 
 var modelLabel = regexp.MustCompile(`^[A-Za-z0-9._:/@+-]{1,128}$`)
 
-// maxDailyTokenBudget is the database ceiling of a daily budget (migration 60).
+// maxDailyTokenBudget is the database ceiling of a daily budget (migration 89).
 const maxDailyTokenBudget = 100_000_000
 
 // readBounded reads a regular file of at most limit bytes.

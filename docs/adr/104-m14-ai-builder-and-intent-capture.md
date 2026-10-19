@@ -1,11 +1,11 @@
-# ADR040: M14 AI Builder and Intent Capture — proposals only, never authority
+# ADR104: M14 AI Builder and Intent Capture — proposals only, never authority
 
 Status: accepted for implementation on `claude/m14-ai-builder`.
 Date: 2026-10-18. Scope: M14 model gateway, semantic context, application-patch and
 requirement proposals, bounded compiler repair loop, human-gated apply/confirm.
 M14 is a **development/test preview capability**. It delivers the machinery that
 makes model output safe to consume; it does **not** claim any property of a real
-language model (see §15). No production data plane exists (ADR039 §10).
+language model (see §15). No production data plane exists (ADR103 §10).
 
 ## Authorization
 
@@ -17,7 +17,7 @@ On 2026-10-18 the user asked to spawn 7 agents to finish the interrupted work an
 `19_APPLICATION_PATCH_REBASE.md`, `docs/specs/53_AI_BUILDER.md`,
 `54_MODEL_GATEWAY.md`, `docs/risks/25_AI_CORRECTNESS.md`,
 `35_PROMPT_INJECTION_AGENCY.md`, `37_AI_LOCKIN_COST_LATENCY.md`.
-Foundation items R3b–R3d, R5d, R5e, R6 and R7 remain open (ADR036).
+Foundation items R3b–R3d, R5d, R5e, R6 and R7 remain open (ADR100).
 
 ## Context — what exists (verified in the tree, not assumed)
 
@@ -210,7 +210,7 @@ not model quality.
 - Synchronous request/response only (bounded by a wall clock below the HTTP
   server limits); async authoring, streaming, embeddings, UI, multi-turn chat,
   autonomous agents and AI workflow activities are out of scope.
-- Identity binding of the requester is the API process's (ADR039 residual).
+- Identity binding of the requester is the API process's (ADR103 residual).
 
 ### 16. Process
 Builders work on separate branches and exchange only through this ADR,
@@ -240,12 +240,12 @@ all AI; proposals and traces are never deleted.
 
 These specify §8, §11 and §12 down to tables, ports, statuses, HTTP and numbers. They
 supersede any looser wording above. Implementation: migration
-`db/migrations/00060_m14_ai_proposals.sql`, `internal/ai/store*.go`,
+`db/migrations/00089_m14_ai_proposals.sql`, `internal/ai/store*.go`,
 `internal/ai/service*.go`, `internal/platform/access/ai*.go`, policy `m14-native-v11`,
 `internal/platform/app/ai.go`. Everything here is a development/test preview; the
 provider seam, not a real model, is what is exercised.
 
-### A1. Tables (migration 00060)
+### A1. Tables (migration 00089)
 
 All three: tenant-inclusive keys, `FORCE ROW LEVEL SECURITY` via `runtime.install_tenant_rls`
 (owner `framework_schema_owner`), `SELECT` for `framework_app` only through the tenant scope
@@ -288,7 +288,7 @@ DELETE and TRUNCATE are refused. **No prompt, no segment text and no model outpu
 only ever grow). `usage_day` is the UTC date of `clock_timestamp()`; a new day is a new row
 (the daily rollover is the key, nothing is reset). DELETE and TRUNCATE are refused.
 
-`control.worker_grants_safe()` is replaced from its latest definition (migration 49) with the
+`control.worker_grants_safe()` is replaced from its latest definition (migration 84) with the
 three tables added; the migration ends with a self-check that fails it if any runtime role
 keeps a direct privilege or an extra policy on them.
 
@@ -416,7 +416,7 @@ with the route's `app`.
 | stored custom role | per grants | per grants (never a role named `viewer`) | per grants (never `viewer`) |
 | any other / unknown | deny | deny | deny |
 
-Rationale for `member`: ADR040 §12 grants propose/apply "where metadata write is allowed
+Rationale for `member`: ADR104 §12 grants propose/apply "where metadata write is allowed
 today"; `metadata.write` is owner/admin, so a member gets read only (a member who could apply
 would write metadata the member cannot write). `ai.apply` covers `apply`, `confirm` and
 `reject`. Composition, enforced by the handler with a second `Decide` (its decision id is
@@ -552,7 +552,7 @@ a provider or a gateway directly.
 
 ### A12. Residuals stated plainly
 
-- The ports bind the actor from the API's session settings (ADR039 residual): a compromised
+- The ports bind the actor from the API's session settings (ADR103 residual): a compromised
   API can open, finish and decide proposals as any member whose identity it can bind. It
   gains no authority it did not have: a decision requires an append of the very revision or
   requirement-set version the port checks, and the human could already write both.
@@ -593,10 +593,10 @@ code is the source of truth for each of them.
    retained or logged. Loopback exists only through a test-only option that configuration cannot set.
 6. **A proposal of the wrong kind is `409 proposal_wrong_kind`** (applying a requirement proposal or
    confirming a patch). Rejecting a proposal needs `ai.apply` only.
-7. **Worker drift guard.** Migration 00060 does not replace `control.worker_grants_safe()`: since migration 52
+7. **Worker drift guard.** Migration 00089 does not replace `control.worker_grants_safe()`: since migration 87
    the guard is derived and refuses every unlisted relation of control, runtime, iam and audit, and the AI
-   tables grant the worker nothing. (An earlier draft replaced the guard from its migration-49 definition,
-   which the merge with migration 52 would have undone.)
+   tables grant the worker nothing. (An earlier draft replaced the guard from its migration-84 definition,
+   which the merge with migration 87 would have undone.)
 8. **Test evidence added by the builder side** (not independent review): a 412-item attack corpus run against
    the pure pipeline and, for 62 items, through the real routes; a provider-swap comparison over 145 items;
    architecture rules ARCH-01..10; eleven mutation checks (`docs/verification/M14_ADVERSARIAL_PLAN.md`).

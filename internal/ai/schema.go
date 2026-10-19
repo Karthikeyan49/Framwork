@@ -16,7 +16,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 )
 
-// Strict decoding of model output (ADR040 section 5). A payload is accepted only if
+// Strict decoding of model output (ADR104 section 5). A payload is accepted only if
 //
 //  1. it is one well-formed JSON document inside the size, depth and node bounds with
 //     no duplicate or case-folded duplicate key (the metadata.DecodeJSON rules);

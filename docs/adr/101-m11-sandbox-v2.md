@@ -1,4 +1,4 @@
-# ADR037: M11 Sandbox V2 — server-owned synthetic sandboxes
+# ADR101: M11 Sandbox V2 — server-owned synthetic sandboxes
 
 Status: accepted for implementation on `claude/m10-m11-tools-sandbox`.
 Date: 2026-10-15. Scope: M11 (sandbox identity, data isolation, tool-mode
@@ -7,7 +7,7 @@ approval and activation. M11 never produces a PASS.
 
 ## Authorization
 
-Same 2026-10-15 user authorization as ADR036 (M10 and M11 together). M11 reuses
+Same 2026-10-15 user authorization as ADR100 (M10 and M11 together). M11 reuses
 M10's governed gateway; it adds no production data path and no production
 credentials.
 
@@ -91,7 +91,7 @@ so no event subscriber can send from a sandbox.
 Integration tests cover EMPTY-only creation, isolation from preview records,
 viewer/cross-tenant denial, replay and ceiling-conflict, direct-DML denial,
 freeze/evidence immutability, frozen write refusal, ceiling enforcement against a
-forged worker mode, and sandbox tool modes against a fake provider. Migration 46
+forged worker mode, and sandbox tool modes against a fake provider. Migration 81
 is additive and forward-only. Recover by revoking `EXECUTE` on the sandbox ports
 (creation/freezing stops; evidence stays) and forward-fixing; never delete
 evidence or reopen a frozen sandbox.
@@ -99,7 +99,7 @@ evidence or reopen a frozen sandbox.
 ## Amendments
 
 Date: 2026-10-19. Trigger: `docs/verification/M11_INDEPENDENT_REVIEW.md` R01-R07. Enforced by
-migration 00051 (additive, forward-only; 46 and 50 unchanged) and `tests/integration/m11r_review_fixes_test.go`
+migration 00086 (additive, forward-only; 81 and 85 unchanged) and `tests/integration/m11r_review_fixes_test.go`
 (`TestM11R*`), which failed on the reviewed code. Not independently reviewed.
 
 1. **A frozen sandbox is read-only in the database (R01, R03, R04; amends #5 and Consequences).**
@@ -135,5 +135,5 @@ migration 00051 (additive, forward-only; 46 and 50 unchanged) and `tests/integra
    Stored bodies are immutable and keep the order they were hashed in (no `manifest_order` field = the
    database default collation of that time); nothing recomputes a manifest (M12 binds the stored body hash),
    so no body needs migrating.
-5. **R07** was fixed by gateway F4 (see ADR036 amendment of 2026-10-19); the ceiling now removes the
+5. **R07** was fixed by gateway F4 (see ADR100 amendment of 2026-10-19); the ceiling now removes the
    test-account credential, which `TestNarrowedTestAccountToolNeverResolvesItsSandboxCredential` pins.

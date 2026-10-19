@@ -12,7 +12,7 @@ import (
 )
 
 // The tests of the memo and of the admission bound of the pure recomputation
-// (independent review M12-API-F9, ADR038 amendment 10).
+// (independent review M12-API-F9, ADR102 amendment 10).
 
 func tenantCtx(id string) context.Context { return WithTenant(context.Background(), id) }
 

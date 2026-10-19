@@ -3,8 +3,8 @@
 package integration
 
 // Regression tests for the independent M11 review (docs/verification/M11_INDEPENDENT_REVIEW.md,
-// R01-R07), migration 00051 and ADR037 Amendments. Each test is built from the reviewer's
-// repro and fails on the code before the fixes (migration 50, REPEATABLE READ freeze).
+// R01-R07), migration 00086 and ADR101 Amendments. Each test is built from the reviewer's
+// repro and fails on the code before the fixes (migration 85, REPEATABLE READ freeze).
 
 import (
 	"context"
@@ -545,9 +545,9 @@ func TestM11RManifestsAreOrderedBytewise(t *testing.T) {
 
 // ------------------------------------------------------------------ integrity
 
-// TestM11RMigration51KeepsEveryGuardOfTheFunctionsItReplaces: the replaced functions keep the
+// TestM11RMigration86KeepsEveryGuardOfTheFunctionsItReplaces: the replaced functions keep the
 // markers of the older definitions and carry the new ones; the fence triggers exist and are enabled.
-func TestM11RMigration51KeepsEveryGuardOfTheFunctionsItReplaces(t *testing.T) {
+func TestM11RMigration86KeepsEveryGuardOfTheFunctionsItReplaces(t *testing.T) {
 	m8Database(t)
 	f := newIAM(t)
 	def := func(signature string) string {

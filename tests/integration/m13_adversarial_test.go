@@ -2,13 +2,13 @@
 
 package integration
 
-// Adversarial end-to-end tests for ADR039 (M13 approval and promotion). The
+// Adversarial end-to-end tests for ADR103 (M13 approval and promotion). The
 // attacker controls the API process (direct port calls with identity GUCs it
 // sets itself), is a rogue or demoted approver, or races honest clients. Every
 // test is named TestM13Adversarial... and runs on the isolated database.
 //
 // Division of labour proven here:
-//   - The database alone (ports of migration 49) stops: approvals/activations by
+//   - The database alone (ports of migration 84) stops: approvals/activations by
 //     non-members, viewers, disabled users and other tenants; the HIGH/CRITICAL
 //     separation floors on DB-stamped parties (requester, acceptance author,
 //     sandbox freezer); quorum re-counted under lock; base/pointer staleness;
@@ -164,7 +164,7 @@ func m13Forge(t *testing.T, raw []byte) (promotion.BundleV2, []byte) {
 // directly through stage_candidate. The HTTP approve/reject/activate routes
 // recompute it from the stored bytes and the candidate's own base and refuse
 // it (candidate_failed_verification) without writing any row. The raw ports
-// cannot recompute and accept it: that is the documented ADR039 residual.
+// cannot recompute and accept it: that is the documented ADR103 residual.
 func TestM13AdversarialCompromisedAPIForgedCandidate(t *testing.T) {
 	e := m13Setup(t)
 	m13RequireStack(t, e, true)
@@ -253,7 +253,7 @@ func TestM13AdversarialCompromisedAPIForgedCandidate(t *testing.T) {
 	if m13Refused(t, "requester approves the honest HIGH candidate through the port", err, "42501"); m13Detail(err) != "requester" {
 		t.Errorf("separation detail: %q", m13Detail(err))
 	}
-	// ...but RESIDUAL (ADR039 Consequences): the database cannot recompute the
+	// ...but RESIDUAL (ADR103 Consequences): the database cannot recompute the
 	// verifier, so the forged LOW candidate is self-approved and activated by its
 	// requester alone when the API process skips Go recomputation.
 	if n, err := e.approvePort(e.carol.subject, hash); err != nil || n != 1 {
@@ -302,7 +302,7 @@ func TestM13AdversarialRogueApproverMatrix(t *testing.T) {
 	tmpl := e.template()
 	m13Rogues(e)
 	order := []string{"carol", "bob", "alice", "viewer", "frank", "gina", "hank", "ivan", "dave"}
-	// Database floor (ADR039 section 3): LOW/MEDIUM none; HIGH requester and
+	// Database floor (ADR103 section 3): LOW/MEDIUM none; HIGH requester and
 	// acceptance author; CRITICAL also the freezer. Non-members, viewers and
 	// disabled users never. A member-role user passes the database floor; only
 	// the Go policy (owner/admin) refuses it.
@@ -665,7 +665,7 @@ func m13Race(fns ...func() error) []error {
 	return errs
 }
 
-// m13LostRace is how a losing racer may fail (ADR039 section 8; CONTRACT_CHANGES
+// m13LostRace is how a losing racer may fail (ADR103 section 8; CONTRACT_CHANGES
 // m13-db 6): the CAS/state refusal, a serialization or deadlock abort, or the
 // runtime lock timeout. All map to 409 without retry.
 var m13LostRace = []string{"55000", "40001", "40P01", "55P03"}
@@ -1235,7 +1235,7 @@ func TestM13AdversarialRollbackAbuse(t *testing.T) {
 
 // ------------------------------------------------- 8. cross-tenant / -app
 
-// m13Routes calls every ADR039 route under root for hash and returns the replies.
+// m13Routes calls every ADR103 route under root for hash and returns the replies.
 func (e *m13Env) m13Routes(root, token, hash string) map[string]*httptest.ResponseRecorder {
 	return map[string]*httptest.ResponseRecorder{
 		"approve":  e.postAt(root, "/candidates/"+hash+"/approve", token, map[string]any{"artifact_hash": hash}),
@@ -1312,7 +1312,7 @@ func TestM13AdversarialCrossTenantAndCrossApplication(t *testing.T) {
 	e.unchanged("cross-tenant and cross-application requests", before)
 }
 
-// RESIDUAL (not listed in ADR039 Consequences): the ports take the actor from
+// RESIDUAL (not listed in ADR103 Consequences): the ports take the actor from
 // identity GUCs that the API process sets (AGENTS.md: GUCs are not
 // credentials). A compromised API process that has seen another member's
 // issuer/subject binds them and approves and activates the requester's HIGH
@@ -1393,7 +1393,7 @@ func TestM13AdversarialReplayAndIdempotency(t *testing.T) {
 // ----------------------------------- 10. replacement end-to-end (HTTP only)
 
 // Replaces the deleted M6R-store flow of TestM12ApprovalActivationStaleness
-// AndRollbackOnBuilderCandidates through the ADR039 routes only: build, approve,
+// AndRollbackOnBuilderCandidates through the ADR103 routes only: build, approve,
 // activate, a second release on the active base, rollback, and staleness of a
 // candidate built on the replaced base.
 func TestM13AdversarialEndToEndReleaseFlowOverHTTP(t *testing.T) {

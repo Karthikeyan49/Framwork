@@ -1,4 +1,4 @@
-# ADR036: M10 Tool Registry V2 — governed tool execution
+# ADR100: M10 Tool Registry V2 — governed tool execution
 
 Status: accepted for implementation on `claude/m10-m11-tools-sandbox`.
 Date: 2026-10-15. Scope: M10 (tools, gateway, governed HTTP connector).
@@ -118,7 +118,7 @@ decision rules; integration tests cover each idempotency mode under duplicate
 delivery, timeout, crash after send, delayed/late response, unknown outcome and
 reconciliation, approval/freshness and raw worker SQL denial. Policy revocation
 mid-flight is implemented (`tools.invoke` in the SQL decision) but not covered by an
-integration test yet. Migration 45 is additive and forward-only. Recover by removing a tool
+integration test yet. Migration 80 is additive and forward-only. Recover by removing a tool
 from the catalog (pinned plans fail closed without I/O) or revoking
 `tools.invoke`; never delete ledger/attempt evidence.
 
@@ -127,7 +127,7 @@ from the catalog (pinned plans fail closed without I/O) or revoking
 Date: 2026-10-16/17. Trigger: the independent M10 review
 ([M10_INDEPENDENT_REVIEW.md](../verification/M10_INDEPENDENT_REVIEW.md))
 findings M10R-01..05 and candidate C6. Each amendment is enforced by migration
-00050 (additive, forward-only; 45-48 unchanged) and has a regression test in
+00085 (additive, forward-only; 80-83 unchanged) and has a regression test in
 `tests/integration/m10r_review_fixes_test.go` that failed on the reviewed code.
 
 - **A1 (M10R-02, amends #2 and #7): the database owns the approval gate.** Plans
@@ -149,7 +149,7 @@ findings M10R-01..05 and candidate C6. Each amendment is enforced by migration
   compromised worker inside an approved lease can still lie about a provider
   response (unchanged ADR024 residual).
 - **A2 (M10R-01, amends #6): unknown outcomes are durable.** `tool_invocations`
-  gains `unknown_outstanding` (NULL for pre-00050 rows, derived conservatively
+  gains `unknown_outstanding` (NULL for pre-00085 rows, derived conservatively
   from retained attempts and materialized by the next port). The invocation
   state describes the write: a failed, rejected or rate-limited lookup, or any
   non-success attempt while an outcome is unknown, leaves it UNKNOWN. While it

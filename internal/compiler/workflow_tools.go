@@ -9,7 +9,7 @@ import (
 )
 
 // toolInputKinds maps a trusted tool input type to the entity field types that
-// may feed it (ADR036). Integers, exact decimals and booleans accept only their
+// may feed it (ADR100). Integers, exact decimals and booleans accept only their
 // own kind; money, lists and every other type are rejected.
 var toolInputKinds = map[string][]string{
 	"string":  {"string", "enum", "reference", "date", "datetime"},

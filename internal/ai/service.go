@@ -17,7 +17,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-// The orchestration of ADR040 amendments A5-A9. A Service turns one authenticated
+// The orchestration of ADR104 amendments A5-A9. A Service turns one authenticated
 // human's request into a stored, hashed proposal and a human decision into a draft
 // revision or a requirement-set version. It holds no authority of its own: every
 // write is a definer port (store.go) or the existing metadata / requirement paths
@@ -30,7 +30,7 @@ const (
 	// APIWallClockCeiling bounds the provider phase of one request: the contract's
 	// DefaultWallClock. The phase holds no transaction; the route extends the
 	// connection's write deadline for it (the HTTP server's own is 10 s), and a proxy
-	// in front of the API may still impose a smaller limit of its own (ADR040 A5).
+	// in front of the API may still impose a smaller limit of its own (ADR104 A5).
 	APIWallClockCeiling = DefaultWallClock
 	// leaseMargin is added to the wall clock to form a PENDING proposal's lease: it
 	// covers the admission and result transactions.
@@ -41,7 +41,7 @@ const (
 	maxDiagnosticRunes = 300
 )
 
-// ServiceLimits are the server-side numbers of ADR040 A5. Zero values take the
+// ServiceLimits are the server-side numbers of ADR104 A5. Zero values take the
 // defaults; configuration may lower a ceiling and never raise it.
 type ServiceLimits struct {
 	MaxAttempts       int
@@ -116,7 +116,7 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
-// Typed refusals of the human-facing steps. The HTTP layer maps them (ADR040 A7).
+// Typed refusals of the human-facing steps. The HTTP layer maps them (ADR104 A7).
 var (
 	ErrNoDraft               = errors.New("ai: the application has no draft")
 	ErrDraftChanged          = errors.New("ai: the draft moved")
@@ -285,7 +285,7 @@ func (s *Service) Admit(ctx context.Context, q postgres.Executor, a tenant.Acces
 }
 
 // Prepare builds the semantic context inside the caller's tenant scope. The
-// context is metadata only (ADR040 section 4); a bundle over the size cap is
+// context is metadata only (ADR104 section 4); a bundle over the size cap is
 // ErrContextTooLarge, never truncated.
 func (s *Service) Prepare(adm *Admission, in PlatformInputs) error {
 	if !s.Ready() || adm == nil || in.Compile == nil || !apiHex(in.CompilerHash) {

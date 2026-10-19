@@ -17,7 +17,7 @@ import (
 // Memoisation and admission of the pure recomputation (independent review M12-API-F9).
 //
 // Restore re-derives risk, verification and the dependency hashes of a stored
-// candidate, and VerifyWithBase re-derives its diff from the base release (ADR038
+// candidate, and VerifyWithBase re-derives its diff from the base release (ADR102
 // amendment 2). Both are pure functions of immutable, content-addressed bytes and of
 // the code of this binary. Every read of a candidate, every approve and activate and
 // every build of a successor repeated them inside the request transaction, so a few

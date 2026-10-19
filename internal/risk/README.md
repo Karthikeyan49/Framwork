@@ -1,6 +1,6 @@
 # risk
 
-Pure, versioned release-risk policy (ADR038 section 3, design appendix D).
+Pure, versioned release-risk policy (ADR102 section 3, design appendix D).
 
 `Evaluate(Facts)` maps server-derived facts to a level (LOW < MEDIUM < HIGH <
 CRITICAL), a separate BLOCKED verdict, a separation-of-duties requirement and a

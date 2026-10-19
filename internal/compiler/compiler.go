@@ -22,7 +22,7 @@ const RuleCompilerVersion = "1.1.0"
 const WorkflowIRVersion = "1.2.0"
 const WorkflowCompilerVersion = "1.2.0"
 
-// ToolWorkflowIRVersion is emitted only for opt-in schema 1.3.0 (ADR036).
+// ToolWorkflowIRVersion is emitted only for opt-in schema 1.3.0 (ADR100).
 const ToolWorkflowIRVersion = "1.3.0"
 const ToolWorkflowCompilerVersion = "1.3.0"
 
@@ -41,7 +41,7 @@ type Catalog struct {
 	Version     string   `json:"version"`
 	Permissions []string `json:"permissions"`
 	Tools       []string `json:"tools"`
-	// ToolCatalog is the operator-owned trusted tool registry (ADR036). It is
+	// ToolCatalog is the operator-owned trusted tool registry (ADR100). It is
 	// excluded from CatalogHash: each resolved definition's canonical hash is
 	// pinned inside the workflow plan instead, so existing IR hashes are stable.
 	ToolCatalog tools.Catalog `json:"-"`

@@ -17,18 +17,18 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// M13 approval and promotion (ADR039). Every write goes through a SECURITY
-// DEFINER port of migration 49 that derives tenant, actor, membership,
+// M13 approval and promotion (ADR103). Every write goes through a SECURITY
+// DEFINER port of migration 84 that derives tenant, actor, membership,
 // separation floors, quorum, the candidate's bound base and the pointer
 // compare-and-set from database-stamped rows. These wrappers only reject
 // malformed arguments before SQL and translate SQLSTATEs into typed errors.
 // They are not an authorization decision: callers first run policy.Decide,
 // LoadCandidate (Restore) and Staleness in the same REPEATABLE READ transaction
-// (ADR039 section 1), and they append their own audit entry in that
+// (ADR103 section 1), and they append their own audit entry in that
 // transaction. Nothing here sets an actor, a risk level, a quorum or a
 // generation itself.
 
-// RejectReason is the closed vocabulary of a rejection (ADR039 section 2).
+// RejectReason is the closed vocabulary of a rejection (ADR103 section 2).
 type RejectReason string
 
 const (
@@ -114,7 +114,7 @@ var (
 	// (SQLSTATE 22023). It wraps ErrGate, so existing ErrGate mappings hold.
 	ErrInvalid = fmt.Errorf("%w: invalid release decision", ErrGate)
 	// ErrRecoveryRequired: a rollback plan that requires recovery is never
-	// executed by a pointer move (ADR039 section 5). It wraps ErrInvalid.
+	// executed by a pointer move (ADR103 section 5). It wraps ErrInvalid.
 	ErrRecoveryRequired = fmt.Errorf("%w: rollback requires an assessed recovery", ErrInvalid)
 	// errPortResult reports a port result that contradicts its own contract; it
 	// is deliberately not one of the typed refusals (an internal error).
@@ -134,7 +134,7 @@ type PortError struct {
 func (e *PortError) Error() string   { return e.Kind.Error() }
 func (e *PortError) Unwrap() []error { return []error{e.Kind, e.Cause} }
 
-// classify maps the SQLSTATEs of ADR039 section 7 to typed errors; anything
+// classify maps the SQLSTATEs of ADR103 section 7 to typed errors; anything
 // else (transport, unknown SQLSTATE) is returned unchanged.
 func classify(err error) error {
 	if err == nil {
@@ -268,7 +268,7 @@ func (Store) ActivateRelease(ctx context.Context, q postgres.Executor, a tenant.
 	return generation, nil
 }
 
-// Acknowledged is the p_plan_ack of ADR039 section 5: storage compatible,
+// Acknowledged is the p_plan_ack of ADR103 section 5: storage compatible,
 // external effects reviewed and no recovery required.
 func (p RollbackPlan) Acknowledged() bool {
 	return p.StorageCompatible && p.ExternalEffectsReviewed && !p.RecoveryRequired
@@ -368,7 +368,7 @@ func (Store) History(ctx context.Context, q postgres.Executor, a tenant.Access, 
 
 // WasActivated reports whether the exact hash appears in the application's
 // history, i.e. was activated (or rolled back to) at some point. Pointers set
-// before M13 have no history row (ADR039 section 2).
+// before M13 have no history row (ADR103 section 2).
 func (Store) WasActivated(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash string) (bool, error) {
 	if !validScope(a, app) || !ValidHash(hash) {
 		return false, ErrInvalid
@@ -462,7 +462,7 @@ func DeriveStatus(rejections, approvals, required int, active, everActivated boo
 	return StatusStaged
 }
 
-// RequiredApprovals is the database quorum floor of ADR039 section 4: two
+// RequiredApprovals is the database quorum floor of ADR103 section 4: two
 // distinct eligible approvals for CRITICAL, otherwise one. An unknown level
 // fails closed to the CRITICAL quorum. A restored bundle's own Separation may
 // demand more; risk.CheckSeparation applies it in Go.
@@ -475,7 +475,7 @@ func RequiredApprovals(level string) int {
 }
 
 // FloorRoles lists the separation roles the database floor excludes from
-// approving at level (ADR039 section 3.5): none for LOW and MEDIUM, requester and
+// approving at level (ADR103 section 3.5): none for LOW and MEDIUM, requester and
 // acceptance author for HIGH, also the sandbox freezer for CRITICAL. An unknown
 // level fails closed to the CRITICAL exclusions.
 func FloorRoles(level string) []string {

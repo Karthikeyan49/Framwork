@@ -439,7 +439,7 @@ func TestSecondReleaseBindsAndVerifiesAgainstItsBase(t *testing.T) {
 	}
 }
 
-// The M6R in-process Approve/ValidateActivation token is gone (ADR039 section
+// The M6R in-process Approve/ValidateActivation token is gone (ADR103 section
 // 9); the header and the floor the approval port enforces are derived from the
 // stored body alone.
 func TestHeaderAndDatabaseFloorsOfABuiltCandidate(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 )
 
-// Requirement sets and acceptance specs (ADR038 section 4, appendix E). They are
+// Requirement sets and acceptance specs (ADR102 section 4, appendix E). They are
 // typed, strictly parsed, canonical, hash-addressed artifacts. Nothing here reads
 // an IR, a compiled plan or a source revision: the requirement owner and the
 // independent acceptance author state business intent, and only the verifier

@@ -18,13 +18,13 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/verification"
 )
 
-// BundleVersion2 is the server-built candidate (ADR038). It supersedes 1.0.0 for
+// BundleVersion2 is the server-built candidate (ADR102). It supersedes 1.0.0 for
 // staging; 1.0.0 bytes still restore. No field is a caller claim: every
 // authority-bearing value is derived from trusted artifacts and re-derived by
 // Restore, or is bound to a database row that the stage port checks.
 //
 // JSON keys are the Go field names (no tags) because migration 11's
-// approval_insert policy and migration 48's stage_candidate port read HighRisk,
+// approval_insert policy and migration 83's stage_candidate port read HighRisk,
 // RequesterID, Risk.Level and friends by those names.
 const BundleVersion2 = "2.0.0"
 

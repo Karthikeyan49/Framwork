@@ -11,17 +11,17 @@ import (
 // Store reads and writes release artifacts inside the caller's transaction.
 // Since M13 the runtime role has no direct write on release approvals or the
 // active pointer: approval, rejection, activation and rollback go only through
-// the ADR039 ports wrapped in decisions.go.
+// the ADR103 ports wrapped in decisions.go.
 //
 // Store writes no audit entry: the API handler appends its own, correlated with the
-// request and the policy decision, in the same transaction (ADR038 amendment 8).
+// request and the policy decision, in the same transaction (ADR102 amendment 8).
 type Store struct {
 	// Recompute remembers the pure recomputation of stored candidates and bounds the
 	// cold ones; nil is the process default.
 	Recompute *Recompute
 }
 
-// RollbackPlan is the caller's assessment of a rollback (ADR039 section 5). The
+// RollbackPlan is the caller's assessment of a rollback (ADR103 section 5). The
 // port requires it acknowledged (see Acknowledged) unless the current release
 // is POINTER_SAFE; a plan that requires recovery is never executed.
 type RollbackPlan struct {

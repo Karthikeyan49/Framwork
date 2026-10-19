@@ -1,8 +1,8 @@
-# ADR039: M13 Approval and Promotion — database-enforced release authority
+# ADR103: M13 Approval and Promotion — database-enforced release authority
 
 Status: accepted for implementation on `claude/m13-approval-promotion`.
 Date: 2026-10-15. Scope: M13 **control plane** — approval, rejection, activation
-and rollback of the server-built candidates of ADR038, with an append-only
+and rollback of the server-built candidates of ADR102, with an append-only
 activation history. M13 does **not** deliver a production data plane (see §10);
 the milestone is therefore reported PARTIAL against the roadmap line
 "M13 Approval + Promotion".
@@ -12,7 +12,7 @@ the milestone is therefore reported PARTIAL against the roadmap line
 On 2026-10-15 the user asked to continue the interrupted work and to "finish the
 next milestone too" after M12. M13 is the next roadmap milestone
 (`docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md`). Foundation items R3b–R3d,
-R5d, R5e, R6 and R7 are still open (ADR036); that is why the production data
+R5d, R5e, R6 and R7 are still open (ADR100); that is why the production data
 plane is excluded (§10).
 
 ## Context — what exists and what is wrong with it (verified, not assumed)
@@ -35,7 +35,7 @@ writes. Verified against the migrated database:
 - `Store.Approve/Activate/Rollback` take caller-built `Candidate` values and a
   `Gate` that the composition root can set to `true`.
 
-ADR038 deliberately left authority enforcement to M13: separation of duties,
+ADR102 deliberately left authority enforcement to M13: separation of duties,
 quorum, staleness re-evaluation inside the approval and activation transactions,
 and recomputation of the candidate from its stored bytes.
 
@@ -57,12 +57,12 @@ and recomputation of the candidate from its stored bytes.
    `framework_app`) enforce everything the database can know from DB-stamped rows,
    so a compromised API still cannot exceed the floors in §3–§5. What the database
    cannot recompute (verifier report, policy bundle hash, tool pins) stays a Go
-   recomputation backstop, exactly as in ADR038 §6; this is a documented residual.
+   recomputation backstop, exactly as in ADR102 §6; this is a documented residual.
 4. **Tables:** `framework_app` loses direct `INSERT`/`UPDATE` on
    `control.release_approvals` and `control.active_releases`; all release
    authority tables are append-only (or CAS pointer) and written only by ports.
 
-### 2. Data model (migration 49, additive, forward-only)
+### 2. Data model (migration 84, additive, forward-only)
 
 - `control.release_rejections(tenant_id, app_id, artifact_hash, actor_id uuid
   DEFAULT iam.authenticated_actor(), reason text, note text, rejected_at)` —
@@ -180,7 +180,7 @@ through rollback (M6R `ExecutionPin`, unchanged).
 stored custom roles may include them, never a role named `viewer`
 (`supportedRoleAction`). Native policy version becomes `m13-native-v10`;
 retained evidence keeps its original version. Resource type is `preview` with the
-route's `app` (same as ADR038 actions). Separate actions let a tenant split
+route's `app` (same as ADR102 actions). Separate actions let a tenant split
 approving from activating.
 
 ### 7. API (preview-gated, exact-pattern routes, strict bodies)
@@ -194,7 +194,7 @@ approving from activating.
 | `GET …/preview/{app}/releases` | `releases.read` | history, newest first, ≤ 50 |
 | `GET …/preview/{app}/releases/active` | `releases.read` | active candidate view + generation |
 
-`GET …/candidates/{candidate}` (ADR038) gains `status`
+`GET …/candidates/{candidate}` (ADR102) gains `status`
 (`STAGED|APPROVED|REJECTED|ACTIVE|SUPERSEDED`, derived), `approvals`
 (actor id + time), `approvals_required`, `rejections` and `active`.
 Authority-bearing fields (actor, risk, parties, quorum, generation) are never
@@ -220,7 +220,7 @@ racing activation is safe because activation re-counts approvals under the lock.
 
 `promotion.Store.Approve/Activate/Rollback` (direct DML with a caller `Gate`) and the
 M6R pure `Approve`/`ValidateActivation`/`Approval` token are removed: the runtime
-role no longer has the privileges they need. `Gate` and `Store.Stage` (ADR038) stay
+role no longer has the privileges they need. `Gate` and `Store.Stage` (ADR102) stay
 unchanged, as do `Candidate`, `Restore`, `ExecutionPin`, `Store.Active` /
 `ActiveBase` (they read the pointer) and `CheckActiveCompatibility`.
 `cmd/release-check` keeps rejecting unsupported active IR.
@@ -248,7 +248,7 @@ These supersede the matching sentences above where they differ.
    restores. `LoadCandidate` therefore also runs `Candidate.VerifyWithBase` against the
    candidate's own base release, and every M13 handler loads through it. A failure is a 409
    `candidate_failed_verification`; a 1.0.0 bundle (no candidate row) is a 404.
-2. **Extra database guards (migration 49, §2).** Beyond the ADR: `control.active_releases`
+2. **Extra database guards (migration 84, §2).** Beyond the ADR: `control.active_releases`
    refuses DELETE and TRUNCATE; an UPDATE must change the hash and raise the generation by
    exactly one; a deferred constraint trigger refuses, at commit, any pointer INSERT/UPDATE
    without the matching `release_history` row; `release_history` must extend its previous
@@ -268,7 +268,7 @@ These supersede the matching sentences above where they differ.
    `SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER` on the listed tables (the M12 DB
    review found REFERENCES/TRIGGER grants went unnoticed) and lists the four release
    authority tables.
-6. **Ports read the jsonb view.** `stage_candidate` (migration 48) and the activation and
+6. **Ports read the jsonb view.** `stage_candidate` (migration 83) and the activation and
    rollback ports read the stored body through `jsonb`, where the last of duplicate keys
    wins. The database does not enforce canonical JSON; `Restore` (canonical re-encoding) is
    the backstop and runs before any decision reaches a port. A compromised API process can
@@ -293,7 +293,7 @@ These supersede the matching sentences above where they differ.
    `rollback_target_rejected` (found by the adversarial suite).
 10. **Decoder hardening found on the way.** `metadata.DecodeJSON` now rejects keys that differ
    only by Unicode case folding (they previously decoded to the last spelling).
-11. **Bounded recomputation (after the M12 API review, F9; ADR038 Amendment 10).** Approve,
+11. **Bounded recomputation (after the M12 API review, F9; ADR102 Amendment 10).** Approve,
    reject, activate and rollback load the candidate through the same memoised
    `LoadCandidate`. A cold recomputation beyond the per-tenant or per-process bound is refused
    before any port call with 429 / 503 `release_busy` and `Retry-After`, audited with the closed
@@ -301,7 +301,7 @@ These supersede the matching sentences above where they differ.
    closed (`TestM12APIColdRecomputationIsBoundedTypedAndAudited`). Staleness, approvals and the
    pointer are read again on every request and never remembered.
 
-12. **Independent review fixes (2026-10-19; `docs/verification/M13_INDEPENDENT_REVIEW.md`, migration 53).**
+12. **Independent review fixes (2026-10-19; `docs/verification/M13_INDEPENDENT_REVIEW.md`, migration 88).**
    - *M13R-01, a veto is not overtaken (§3, §4, §8).* `reject_release` and `activate_release` both write
      one `control.release_fences` row per hash (an upsert that bumps a counter). Under REPEATABLE READ the
      transaction with the older snapshot therefore aborts with `40001` (mapped as the other concurrency
@@ -396,6 +396,6 @@ role; `worker_grants_safe`; SECURITY DEFINER hygiene (owner, `search_path`,
 `PUBLIC` execute); API flow with forged fields, role matrix, stale-at-approve and
 stale-at-activate (policy, tool, base), and a self-consistent forged candidate
 staged directly through `stage_candidate` that `Restore` must refuse at approval.
-Migration 49 is additive and forward-only. Recovery: revoke `EXECUTE` on the four
+Migration 84 is additive and forward-only. Recovery: revoke `EXECUTE` on the four
 ports (authority stops, history and approvals stay) and forward-fix; never delete
 approvals, rejections or history, and never edit an applied migration.

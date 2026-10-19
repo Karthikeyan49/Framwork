@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Strictness of every AI body and of the unconfigured deployment (ADR040 A7).
+// Strictness of every AI body and of the unconfigured deployment (ADR104 A7).
 
 // TestM14APIBodiesAreStrict feeds every POST route the bodies a hostile caller would
 // try. Nothing may be stored, called or changed, and every refusal is a 4xx.

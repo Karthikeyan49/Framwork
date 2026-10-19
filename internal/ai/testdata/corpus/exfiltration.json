@@ -1785,7 +1785,7 @@
      "canary:api_key_sk"
     ],
     "severity_if_failed": "LOW",
-    "ambiguous": "ADR040 redacts the context, not the output; whether a secret-shaped token in model output is stripped before storage is unspecified. The test reports what happens."
+    "ambiguous": "ADR104 redacts the context, not the output; whether a secret-shaped token in model output is stripped before storage is unspecified. The test reports what happens."
    }
   },
   {
@@ -1985,7 +1985,7 @@
     "conflicts": [
      "INVALID_DEFINITION"
     ],
-    "ambiguous": "builder decision (ADR040 amendment B): the definition body is validated before the target is looked up, so a foreign definition is refused as INVALID_DEFINITION (namespace mismatch); either way no information about another application leaks."
+    "ambiguous": "builder decision (ADR104 amendment B): the definition body is validated before the target is looked up, so a foreign definition is refused as INVALID_DEFINITION (namespace mismatch); either way no information about another application leaks."
    },
    "tags": [
     "swap",

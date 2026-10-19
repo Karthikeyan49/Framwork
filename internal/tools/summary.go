@@ -3,7 +3,7 @@ package tools
 import "sort"
 
 // Summary is the only view of a tool that leaves the platform toward a model
-// provider (ADR040 section 4): identity, side-effect class, approval requirement
+// provider (ADR104 section 4): identity, side-effect class, approval requirement
 // and the names of the declared input and output fields. It deliberately has no
 // field for an endpoint, host, path, credential reference, delivery contract,
 // sandbox endpoint or simulated output.

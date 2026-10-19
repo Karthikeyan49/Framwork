@@ -189,7 +189,7 @@ var ErrTooManyRoles = errors.New("role head limit reached")
 
 // ActionCatalogHash is the sha256 of the sorted action names the engine knows.
 // A new or removed capability changes it, so candidates built before the change
-// become stale (ADR038 section 2).
+// become stale (ADR102 section 2).
 func ActionCatalogHash() string { return catalogHash(strings.Fields(actionCatalog)) }
 
 func catalogHash(names []string) string {

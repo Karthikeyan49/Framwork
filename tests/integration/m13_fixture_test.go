@@ -2,10 +2,10 @@
 
 package integration
 
-// Shared multi-actor fixture for M13 (ADR039: approval, rejection, activation
+// Shared multi-actor fixture for M13 (ADR103: approval, rejection, activation
 // and rollback). It extends the M12 fixture with extra tenant-A members, a
 // doctored-candidate stager, raw callers for the four database ports, HTTP
-// helpers for the six ADR039 routes and operator-side readers. Everything is raw
+// helpers for the six ADR103 routes and operator-side readers. Everything is raw
 // SQL and HTTP so it compiles without the M13 Go store or handlers.
 
 import (
@@ -337,7 +337,7 @@ func (e *m13Env) rollbackPort(subject, target, expectedCurrent string, expectedG
 
 // --------------------------------------------------------------------- HTTP
 
-// m13Plan is the rollback acknowledgement body of ADR039 section 7.
+// m13Plan is the rollback acknowledgement body of ADR103 section 7.
 type m13Plan struct {
 	StorageCompatible       bool   `json:"storage_compatible"`
 	ExternalEffectsReviewed bool   `json:"external_effects_reviewed"`
@@ -390,7 +390,7 @@ func (e *m13Env) httpCandidate(token, hash string) *httptest.ResponseRecorder {
 }
 
 // m13Reply is the generic decoded JSON reply (error code, stale reasons and the
-// ADR039 candidate detail fields), decoded without the Go response types.
+// ADR103 candidate detail fields), decoded without the Go response types.
 type m13Reply struct {
 	Code              string            `json:"code"`
 	Message           string            `json:"message"`
@@ -513,7 +513,7 @@ func (e *m13Env) unchanged(what string, before m13State) {
 	}
 }
 
-// checkHistory asserts the ADR039 history invariants: seq dense from 1,
+// checkHistory asserts the ADR103 history invariants: seq dense from 1,
 // generation strictly +1 per row (starting at the first recorded generation),
 // previous_hash chaining and the pointer equal to the last row.
 func (e *m13Env) checkHistory() []m13HistoryRow {
@@ -544,7 +544,7 @@ func (e *m13Env) checkHistory() []m13HistoryRow {
 // ------------------------------------------------------------------- guards
 
 // m13RequireStack skips (loudly) until the M13 ports and, when routes is true,
-// the ADR039 routes exist. Once they exist it never skips.
+// the ADR103 routes exist. Once they exist it never skips.
 func m13RequireStack(t *testing.T, e *m13Env, routes bool) {
 	t.Helper()
 	var ports int
@@ -562,7 +562,7 @@ func m13RequireStack(t *testing.T, e *m13Env, routes bool) {
 	}
 	w := e.httpActive(e.alice)
 	if w.Code == 501 || w.Code == 404 && m13Decode(w).Message == "Route not found" {
-		t.Skipf("ADR039 routes are not registered yet (GET releases/active: %d): merge claude/m13-api", w.Code)
+		t.Skipf("ADR103 routes are not registered yet (GET releases/active: %d): merge claude/m13-api", w.Code)
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
-// Reviewed pre-ADR036 identities (commit a6889dd). Adding schema 1.3.0 must not
+// Reviewed pre-ADR100 identities (commit a6889dd). Adding schema 1.3.0 must not
 // change any existing source, IR or plan byte.
 const (
 	workflowV12IRHash   = "ea566c0483e6b67ecf2d9b94a9e99c75b397d1c4f16ca6c929ed5c8052c32f8b"

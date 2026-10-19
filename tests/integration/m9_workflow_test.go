@@ -84,7 +84,7 @@ func m9Setup(t *testing.T, change func(*metadata.Workflow)) *m9Fixture {
 	if e = tx.Commit(); e != nil {
 		t.Fatal(e)
 	}
-	// Outside the four schemas the worker drift guard (migration 52) derives its allowed privileges for.
+	// Outside the four schemas the worker drift guard (migration 87) derives its allowed privileges for.
 	if _, e = f.operator.Exec(`CREATE SCHEMA m9_fixture; GRANT USAGE ON SCHEMA m9_fixture TO framework_worker; GRANT USAGE,CREATE ON SCHEMA m9_fixture TO framework_schema_owner;
  CREATE TABLE m9_fixture.effects(tenant_id uuid NOT NULL,instance_id uuid NOT NULL,step_key text NOT NULL,PRIMARY KEY(tenant_id,instance_id,step_key));
  ALTER TABLE m9_fixture.effects ENABLE ROW LEVEL SECURITY; ALTER TABLE m9_fixture.effects FORCE ROW LEVEL SECURITY;

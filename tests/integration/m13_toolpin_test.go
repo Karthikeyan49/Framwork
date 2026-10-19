@@ -2,7 +2,7 @@
 
 package integration
 
-// Tool-pin staleness through the HTTP handlers (ADR038 section 2, ADR039 section 4). The pure rule
+// Tool-pin staleness through the HTTP handlers (ADR102 section 2, ADR103 section 4). The pure rule
 // (promotion.Staleness) is unit tested; the closure that asks the operator catalog about each pin lives
 // in the API (releases.go: staleness) and was reviewed by reading only (M12 API and M13 reviews, "not
 // covered"). These tests build a real candidate whose IR pins an operator tool and move the catalog.

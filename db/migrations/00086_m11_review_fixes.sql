@@ -1,8 +1,8 @@
--- M11 independent-review fixes (ADR037 Amendments; docs/verification/M11_INDEPENDENT_REVIEW.md
--- R01-R06). Additive and forward-only; 46, 47, 50 are preserved and the changed functions are
+-- M11 independent-review fixes (ADR101 Amendments; docs/verification/M11_INDEPENDENT_REVIEW.md
+-- R01-R06). Additive and forward-only; 81, 82, 85 are preserved and the changed functions are
 -- replaced in place with the same signatures, owner and ACLs, each from its LATEST definition:
---   runtime.register_sandbox, runtime.freeze_sandbox, runtime.guard_sandbox_dataset_update (all 00046)
---   control.tool_begin, control.tool_finish, control.tool_abandon, control.tool_reconcile (all 00050).
+--   runtime.register_sandbox, runtime.freeze_sandbox, runtime.guard_sandbox_dataset_update (all 00081)
+--   control.tool_begin, control.tool_finish, control.tool_abandon, control.tool_reconcile (all 00085).
 -- Every guard the older definitions had is kept; the additions are marked M11R-0n.
 --
 -- R01  tool_finish/abandon/reconcile refuse a frozen sandbox, and freeze_sandbox refuses while a
@@ -16,7 +16,7 @@
 -- R04  fence triggers on record_links, dataset_bindings and dataset_generations; the dataset row of a
 --      frozen sandbox accepts no update at all (this also fences the epoch bumps of share/owner
 --      mirrors, so record shares of a frozen sandbox are refused at the SQL layer).
--- R05  register_sandbox and freeze_sandbox require an owner/admin membership (ADR037 #5).
+-- R05  register_sandbox and freeze_sandbox require an owner/admin membership (ADR101 #5).
 -- R06  the evidence manifests are ordered bytewise (COLLATE "C"); new bodies say so in
 --      "manifest_order". Stored v1 bodies are immutable and keep the order they were hashed in;
 --      nothing recomputes a manifest (M12 binds the stored body hash).

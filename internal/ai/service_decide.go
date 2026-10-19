@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Human decisions (ADR040 A9). A decision is always a separate, authenticated
+// Human decisions (ADR104 A9). A decision is always a separate, authenticated
 // request: nothing here runs as part of a proposal. Apply re-validates against the
 // CURRENT draft and never trusts the stored result; confirm calls the M12
 // requirement port as the confirming human. Both finish with the ai_decide port in

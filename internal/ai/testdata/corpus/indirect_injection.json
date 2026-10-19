@@ -1672,7 +1672,7 @@
      "NEEDS_HUMAN",
      "READY"
     ],
-    "ambiguous": "builder decision (ADR040 amendment B): a draft with a NUL label cannot exist in the registry; the context builder must not crash on it, and a run over it ends NEEDS_HUMAN because the patched draft cannot validate (a human must repair the draft)."
+    "ambiguous": "builder decision (ADR104 amendment B): a draft with a NUL label cannot exist in the registry; the context builder must not crash on it, and a run over it ends NEEDS_HUMAN because the patched draft cannot validate (a human must repair the draft)."
    }
   },
   {
@@ -3745,7 +3745,7 @@
     "\u00a77",
     "\u00a713"
    ],
-   "description": "A real compile error whose path carries an author-chosen, instruction-like id (ids are pattern-restricted but 160 characters of words fit). The repair segment is TRUSTED by ADR040 section 7: a documented residual.",
+   "description": "A real compile error whose path carries an author-chosen, instruction-like id (ids are pattern-restricted but 160 characters of words fit). The repair segment is TRUSTED by ADR104 section 7: a documented residual.",
    "task": "application_patch",
    "fixture": "orders",
    "request": "Add a page.",

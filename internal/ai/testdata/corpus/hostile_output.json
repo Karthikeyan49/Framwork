@@ -764,7 +764,7 @@
     ],
     "max_provider_calls": 3,
     "layer": "syntax",
-    "ambiguous": "builder decision (ADR040 amendment B): a 10 MiB answer is charged its pessimistic byte estimate (about 2.6 million tokens), which exhausts the 1 million token budget of this case, so the run may end BUDGET_EXCEEDED instead of retrying; either way no document and a single provider call."
+    "ambiguous": "builder decision (ADR104 amendment B): a 10 MiB answer is charged its pessimistic byte estimate (about 2.6 million tokens), which exhausts the 1 million token budget of this case, so the run may end BUDGET_EXCEEDED instead of retrying; either way no document and a single provider call."
    },
    "tags": [
     "e2e"
@@ -1317,7 +1317,7 @@
     ],
     "max_provider_calls": 3,
     "layer": "schema",
-    "ambiguous": "builder decision (ADR040 amendment B): a number the shared strict decoder cannot represent exactly (number_limit) is classified SCHEMA_ERROR, not PARSE_ERROR; it is rejected before ApplyProposal either way."
+    "ambiguous": "builder decision (ADR104 amendment B): a number the shared strict decoder cannot represent exactly (number_limit) is classified SCHEMA_ERROR, not PARSE_ERROR; it is rejected before ApplyProposal either way."
    }
   },
   {
@@ -1351,7 +1351,7 @@
     ],
     "max_provider_calls": 3,
     "layer": "schema",
-    "ambiguous": "builder decision (ADR040 amendment B): a number the shared strict decoder cannot represent exactly (number_limit) is classified SCHEMA_ERROR, not PARSE_ERROR; it is rejected before ApplyProposal either way."
+    "ambiguous": "builder decision (ADR104 amendment B): a number the shared strict decoder cannot represent exactly (number_limit) is classified SCHEMA_ERROR, not PARSE_ERROR; it is rejected before ApplyProposal either way."
    }
   },
   {

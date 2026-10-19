@@ -2,7 +2,7 @@
 
 This package holds two layers. `delivery.go` (M6R) declares native keys, reference
 lookup, dedupe windows and non-idempotent providers and validates that a declaration can
-be reconciled (`Delivery.Validate`). M10 (ADR036) adds the operator catalog and the
+be reconciled (`Delivery.Validate`). M10 (ADR100) adds the operator catalog and the
 gateway that actually performs a governed HTTPS call. Which attempt may follow which
 outcome is decided by the workflow runtime over the durable ledger
 (`internal/runtime/workflow.decideTool`, with its own table test), not here: an earlier
@@ -23,7 +23,7 @@ keys, unknown fields, trailing data and unsafe definitions:
 - delivery passes `Delivery.Validate`; `NATIVE_KEY`/`DEDUPE_WINDOW` declare a
   replay window, `LOOKUP_BY_REFERENCE` declares a `{key}` lookup path and may
   declare `lookup.settle_ms` (0..600000, omitted when zero): only with it can a
-  404 lookup prove absence (ADR036 Amendment A4);
+  404 lookup prove absence (ADR100 Amendment A4);
 - literal DNS hosts only (no IP literals or numeric shorthand), HTTPS, timeout
   at most 2000 ms, response at most 16 KiB, per-tool rate, typed scalar inputs
   and outputs, path templates of whole `{name}` segments used exactly once;
@@ -107,7 +107,7 @@ connector limit, and parses a single strict flat JSON object (no duplicate keys)
 | 2xx with oversize or invalid body, a content coding other than identity, or a media type other than `application/json` (charset utf-8 only) | `UNKNOWN` `invalid_response` |
 | 2xx with a valid typed body | `SUCCESS` with the declared output only |
 
-These are attempt outcomes. The ledger (`control.tool_finish`, ADR036
+These are attempt outcomes. The ledger (`control.tool_finish`, ADR100
 Amendments A2-A4) keeps the invocation UNKNOWN while an earlier send's outcome
 is unknown: a lookup that is not a valid 2xx or a settled 404 never settles it,
 and the database refuses a resend unless the pinned capability permits it.
@@ -125,8 +125,8 @@ newline, accepts visible ASCII only, and never puts a path or value in an error.
 
 ## Not in this package
 
-Asynchronous provider callbacks and webhooks are out of scope (ADR036 decision
+Asynchronous provider callbacks and webhooks are out of scope (ADR100 decision
 10). M10 has one generic HTTPS connector; M17 adds provider breadth. The intent
 ledger, reconciliation routing, approval freshness and the compiler integration
 belong to the workflow runtime and use `Executor`, `Catalog` and `Delivery`. See
-ADR-020, ADR036 and `delivery_test.go`.
+ADR-020, ADR100 and `delivery_test.go`.

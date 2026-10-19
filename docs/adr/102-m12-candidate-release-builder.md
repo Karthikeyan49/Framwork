@@ -1,4 +1,4 @@
-# ADR038: M12 Candidate Release Builder — server-built, recomputable candidates
+# ADR102: M12 Candidate Release Builder — server-built, recomputable candidates
 
 Status: accepted for implementation on `claude/m12-candidate-builder`.
 Date: 2026-10-15. Scope: M12 (candidate bundle assembly, server-derived risk,
@@ -8,10 +8,10 @@ and rollback. M14 owns AI intent capture. No production exposure.
 ## Authorization
 
 On 2026-10-15 the user asked to "complete the other milestone too" after
-authorizing M10 and M11 (ADR036/037). M12 is the next roadmap milestone
+authorizing M10 and M11 (ADR100/101). M12 is the next roadmap milestone
 (`docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md`), so this is read as M12. No
 other milestone, approval service, activation, or production path is authorized.
-The foundation gate caveats of ADR036 still apply (R3b–R3d, R5d/R5e, R7 open).
+The foundation gate caveats of ADR100 still apply (R3b–R3d, R5d/R5e, R7 open).
 
 ## Context
 
@@ -42,7 +42,7 @@ REPEATABLE READ transaction:
 1. source and builder identity from `control.metadata_versions` (DB-stamped);
 2. the IR from the **trusted compiler** with the operator tool catalog (never a
    caller-supplied IR), required to be `Compile`-minted;
-3. the **frozen** sandbox evidence for `sandbox_id` (ADR037), required to match
+3. the **frozen** sandbox evidence for `sandbox_id` (ADR101), required to match
    the compiled `metadata_revision`, `ir_hash`, target storage schema hash and
    `SYNTHETIC_SEPARATE` data mode;
 4. the base release from `control.active_releases` (callers may only assert
@@ -251,7 +251,7 @@ intent is unchanged.
 6. **Role grants (§9).** `requirements.decide`, `acceptance.author` and
    `candidates.build` are owner/admin in the native policy; stored custom roles
    may include them (never `viewer`). `sandbox.manage` is owner/admin only and
-   cannot be delegated (`policy.supportedRoleAction`); ADR037 wording is
+   cannot be delegated (`policy.supportedRoleAction`); ADR101 wording is
    corrected accordingly. Native policy version is `m12-native-v9`.
 7. **Staging row bindings (§6).** `stage_candidate` additionally binds the
    frozen sandbox evidence text and freezer, the requirement set row hash, the
@@ -351,8 +351,8 @@ written by the builder and are NOT independently reviewed.
 ## Amendment after the independent database review (2026-10-19)
 
 Recorded by the fixes for `docs/verification/M12_DB_INDEPENDENT_REVIEW.md` (the "Fix status" section of that
-report maps every finding to its disposition, commit and test). Enforced by migration 00052 (additive,
-forward-only; 48, 49 and 50 unchanged). Written by the builder agent, NOT independently reviewed.
+report maps every finding to its disposition, commit and test). Enforced by migration 00087 (additive,
+forward-only; 83, 84 and 85 unchanged). Written by the builder agent, NOT independently reviewed.
 
 12. **The definer ports read the bytes Go reads (F2), replay is idempotent (F3), embedded documents are the
     stored rows (F4), the worker guard is derived (F5).**
@@ -382,8 +382,8 @@ forward-only; 48, 49 and 50 unchanged). Written by the builder agent, NOT indepe
     migration is refused by default, and a migration that deliberately gives the worker a privilege must add it to the
     list (`TestM12RWorkerGuardClassifiesEveryRelation` compares the list with the live catalog). Test fixtures that
     grant the worker anything (the M8 consumer-effects table) are revoked by the tests that assert the guard is safe.
-    F1 (direct approval/activation by `framework_app`) was closed by migration 00049 (`TestM13AdversarialLegacyWritePathsAreClosed`,
-    `TestM13PortsCloseTheM6RWriteGap`) and F6 (worker-asserted approval flag) by migration 00050 (`TestM10R02*`);
+    F1 (direct approval/activation by `framework_app`) was closed by migration 00084 (`TestM13AdversarialLegacyWritePathsAreClosed`,
+    `TestM13PortsCloseTheM6RWriteGap`) and F6 (worker-asserted approval flag) by migration 00085 (`TestM10R02*`);
     neither is touched here.
 
 ## Consequences

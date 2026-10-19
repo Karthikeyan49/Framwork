@@ -1,6 +1,6 @@
--- M10 independent-review fixes (ADR036 Amendments). Additive and forward-only.
--- Migrations 45-48 are preserved; changed ports are replaced in place with the
--- same signatures, owner and ACLs. 49 belongs to another branch (gap intended).
+-- M10 independent-review fixes (ADR100 Amendments). Additive and forward-only.
+-- Migrations 80-83 are preserved; changed ports are replaced in place with the
+-- same signatures, owner and ACLs. 84 belongs to the M13 line (gap intended).
 -- +goose Up
 
 -- M10R-02: the database derives the approval requirement from the pinned plan.

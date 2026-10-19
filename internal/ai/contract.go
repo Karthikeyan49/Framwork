@@ -1,5 +1,5 @@
 // Package ai is the model gateway, the semantic context builder and the
-// proposal pipeline of ADR040. A model holds no authority and has no identity:
+// proposal pipeline of ADR104. A model holds no authority and has no identity:
 // everything it returns is parsed into a closed, typed, hashed proposal that an
 // authenticated human applies or rejects through an ordinary endpoint.
 //

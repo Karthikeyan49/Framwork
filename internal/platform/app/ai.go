@@ -13,7 +13,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 )
 
-// newAI builds the AI builder from AI_PROVIDER_FILE (ADR040 A11): the single place
+// newAI builds the AI builder from AI_PROVIDER_FILE (ADR104 A11): the single place
 // that turns operator configuration into a provider. With no file the builder stays
 // unconfigured: every AI route answers 503 ai_unavailable, the readiness probe is
 // trivially ok and nothing else changes. A configured but invalid file stops startup

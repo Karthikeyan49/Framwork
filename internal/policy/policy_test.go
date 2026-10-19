@@ -237,7 +237,7 @@ func TestActionCatalogHashIsStableAndSensitive(t *testing.T) {
 		t.Fatal("catalog hash depends on declaration order or mutated its input")
 	}
 	// The M13 actions changed the catalog, so candidates built under the M12
-	// catalog are stale (POLICY_CHANGED) and must be rebuilt (ADR038 section 2).
+	// catalog are stale (POLICY_CHANGED) and must be rebuilt (ADR102 section 2).
 	m13 := slices.DeleteFunc(append([]string(nil), names...), func(a string) bool { return strings.HasPrefix(a, "ai.") })
 	if len(m13) != len(names)-3 || catalogHash(m13) == h {
 		t.Fatal("action catalog hash is not sensitive to the M14 actions")
@@ -251,7 +251,7 @@ func TestActionCatalogHashIsStableAndSensitive(t *testing.T) {
 	}
 }
 
-// TestAICapabilities pins ADR040 A6: ai.read for every built-in role, ai.propose and
+// TestAICapabilities pins ADR104 A6: ai.read for every built-in role, ai.propose and
 // ai.apply for owner and admin only, never for viewer or an unknown role, only on the
 // preview resource of an application, never across tenants; a stored custom role may
 // be granted any of them except that a role named viewer may be granted ai.read only.

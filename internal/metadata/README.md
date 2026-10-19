@@ -24,13 +24,13 @@ Its rules require DSL2.0.0 and may contain pinned calendar snapshots and typed
 literals. Schema1.0.0 is retained verbatim. Migration17 derives schema_version from
 the inserted envelope without extending runtime column grants or mutating history.
 
-ADR036 adds opt-in schema 1.3.0 (`ToolWorkflowSchemaVersion`): identical to 1.2.0
+ADR100 adds opt-in schema 1.3.0 (`ToolWorkflowSchemaVersion`): identical to 1.2.0
 except a workflow activity may be `{tool_ref, version, inputs{name: field}, retry}`
 with no timeout or compensation. `WorkflowSchema(v)` is true for 1.2.0 and 1.3.0;
 use it wherever 1.2.0 selects workflow/rule V2 semantics. Schemas 1.0.0-1.2.0 are
 unchanged.
 
-## Patch rebase (M12 hardening, ADR038 section 8)
+## Patch rebase (M12 hardening, ADR102 section 8)
 
 `ApplicationPatch.Rebase` is a true three-way merge of whole definitions over
 base (what the patch author saw), current (the draft now) and theirs (the

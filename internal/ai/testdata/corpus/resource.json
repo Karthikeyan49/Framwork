@@ -2585,7 +2585,7 @@
     ],
     "layer": "syntax",
     "elapsed_ms_max": 8000,
-    "ambiguous": "builder decision (ADR040 amendment B): the 10 MiB answer is charged its pessimistic byte estimate, so the run may end BUDGET_EXCEEDED; no document, one provider call, bounded time."
+    "ambiguous": "builder decision (ADR104 amendment B): the 10 MiB answer is charged its pessimistic byte estimate, so the run may end BUDGET_EXCEEDED; no document, one provider call, bounded time."
    },
    "tags": [
     "e2e"
@@ -2730,7 +2730,7 @@
     "usage": {
      "min_total_tokens": 10000
     },
-    "ambiguous": "ADR040 section 11 records usage 'from the provider response and clamped to the budget estimate if absent': under-reporting that is not absent may be trusted"
+    "ambiguous": "ADR104 section 11 records usage 'from the provider response and clamped to the budget estimate if absent': under-reporting that is not absent may be trusted"
    },
    "tags": [
     "e2e"
@@ -2888,7 +2888,7 @@
      "non_negative": true
     },
     "max_provider_calls": 1,
-    "ambiguous": "builder decision (ADR040 amendment B): a valid first answer is accepted whatever it claims to have used; the clamped, non-negative charge ends any further call."
+    "ambiguous": "builder decision (ADR104 amendment B): a valid first answer is accepted whatever it claims to have used; the clamped, non-negative charge ends any further call."
    }
   },
   {

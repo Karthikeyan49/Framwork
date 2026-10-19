@@ -27,7 +27,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// Port-level tests of migration 49 (ADR039 sections 2-5 and 8). Everything here
+// Port-level tests of migration 84 (ADR103 sections 2-5 and 8). Everything here
 // calls the SQL ports directly with doctored arguments; no HTTP handler and no Go
 // promotion store is involved, so the database floors are tested on their own.
 
@@ -572,7 +572,7 @@ func TestM13PortsActivationCompareAndSet(t *testing.T) {
 	unapproved := p.stage(t, "LOW", nil)
 	_, err = p.activate(p.f.bobSubject, unapproved, "", 0)
 	wantState(t, "activation without any approval", err, "55000")
-	// A body without a storage class can no longer be staged at all: migration 52 checks the typed fields
+	// A body without a storage class can no longer be staged at all: migration 87 checks the typed fields
 	// the activation port reads. (The activation port keeps its own 55000 guard for a body staged earlier;
 	// no port can create such a body any more, so that guard is not exercised here.)
 	{
@@ -1045,7 +1045,7 @@ func portsDatabaseAt(t *testing.T, version int64) *goose.Provider {
 }
 
 func TestM13PortsCloseTheM6RWriteGap(t *testing.T) {
-	provider := portsDatabaseAt(t, 48)
+	provider := portsDatabaseAt(t, 83)
 	f := newIAM(t)
 	p := &portsEnv{m12Env: &m12Env{t: t, f: f, app: "app.legacy_" + strings.ReplaceAll(uuid(t), "-", "")}}
 	legacy := p.legacyBundleRow(t, p.app)
@@ -1065,20 +1065,20 @@ func TestM13PortsCloseTheM6RWriteGap(t *testing.T) {
 			return err
 		})
 	}
-	// Before migration 49 the runtime role writes approvals and moves the pointer directly.
+	// Before migration 84 the runtime role writes approvals and moves the pointer directly.
 	for _, w := range writes {
 		if err := exec(w.query); err != nil {
 			t.Fatalf("M12 schema refused %s: %v (the gap this milestone closes is gone?)", w.name, err)
 		}
 	}
 	if _, err := provider.Up(context.Background()); err != nil {
-		t.Fatal("migration 49 over populated M6R rows", err)
+		t.Fatal("migration 84 over populated M6R rows", err)
 	}
 	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 0 {
 		t.Fatal("migration repeatability", err)
 	}
 	for _, w := range writes {
-		wantState(t, "after migration 49: "+w.name, exec(w.query), "42501")
+		wantState(t, "after migration 84: "+w.name, exec(w.query), "42501")
 	}
 	// M6R rows are untouched; the legacy hash is not a candidate and not a rollback target.
 	var approvals int

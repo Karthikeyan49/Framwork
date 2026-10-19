@@ -180,7 +180,7 @@ func (c Case) Check(r Result, w Wrapper) Report {
 	}
 	for _, name := range x.CanonicalAbsent {
 		if v := c.canaryOf(name); v != "" && strings.Contains(r.Canonical, v) {
-			note("OBSERVED: the stored proposal body contains the secret-shaped token %s (ADR040 redacts the context, not the output; severity %s)", name, x.Severity)
+			note("OBSERVED: the stored proposal body contains the secret-shaped token %s (ADR104 redacts the context, not the output; severity %s)", name, x.Severity)
 		}
 	}
 	c.checkContext(r, w, fail)

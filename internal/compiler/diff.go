@@ -14,7 +14,7 @@ import (
 )
 
 // DiffVersion identifies the diff contract. A change to the aspect vocabulary or
-// the comparison rules needs a new version, never an edit (ADR038, appendix B).
+// the comparison rules needs a new version, never an edit (ADR102, appendix B).
 const DiffVersion = "diff-v1"
 
 // MaxDiffDefinitions bounds either side of a diff; larger programs fail closed.

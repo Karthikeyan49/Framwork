@@ -21,7 +21,7 @@ import (
 // http.Server with the production timeouts (httpserver.New: 10 s read and write). A scripted
 // answer that takes 11 s -- longer than the server's write timeout, shorter than the 60 s
 // wall clock of the contract -- must still arrive as a stored READY proposal: the route moves
-// the write deadline of its own connection for the provider phase (ADR040 A5). The httptest
+// the write deadline of its own connection for the provider phase (ADR104 A5). The httptest
 // recorders of the other tests have no deadlines, so only this test proves the claim.
 func TestM14APIProviderPhaseOutlivesTheServerWriteTimeout(t *testing.T) {
 	if testing.Short() {
@@ -37,7 +37,7 @@ func TestM14APIProviderPhaseOutlivesTheServerWriteTimeout(t *testing.T) {
 	}
 	server := httpserver.New(listener.Addr().String(), e.h)
 	if server.WriteTimeout != 10*time.Second || server.ReadTimeout != 10*time.Second {
-		t.Fatalf("the production server timeouts changed (read %v, write %v): re-derive the margins of ADR040 A5", server.ReadTimeout, server.WriteTimeout)
+		t.Fatalf("the production server timeouts changed (read %v, write %v): re-derive the margins of ADR104 A5", server.ReadTimeout, server.WriteTimeout)
 	}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
@@ -93,7 +93,7 @@ func TestM14APIProviderPhaseOutlivesTheServerWriteTimeout(t *testing.T) {
 // TestM14APIClientGoneDuringProviderPhaseStillRecordsTheOutcome: a client (or a proxy in front of
 // the API) that gives up while the provider phase runs must not leave the proposal PENDING or
 // call the provider again. The result transaction is detached from the client's cancellation,
-// so the row reaches a final state and frees its in-flight slot (ADR040 A5, A8).
+// so the row reaches a final state and frees its in-flight slot (ADR104 A5, A8).
 func TestM14APIClientGoneDuringProviderPhaseStillRecordsTheOutcome(t *testing.T) {
 	e := m14Setup(t, m14Options{limits: ai.ServiceLimits{InFlightPerTenant: 1}})
 	doc := e.draft("500")

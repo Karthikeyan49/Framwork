@@ -123,17 +123,17 @@ func TestM13IntegrationRuntimeContractChangeStalesOlderCandidates(t *testing.T) 
 	e.checkHistory()
 }
 
-// TestM13IntegrationUpgradeFrom48KeepsM12DataAndStillPromotes: the database is migrated to 00048 only, M12
+// TestM13IntegrationUpgradeFrom83KeepsM12DataAndStillPromotes: the database is migrated to 00083 only, M12
 // data is created through the HTTP API of this binary (source revision, frozen sandbox, requirement set,
-// acceptance spec), then migrations 49 and later are applied on top of that data. The data must survive
+// acceptance spec), then migrations 84 and later are applied on top of that data. The data must survive
 // unchanged, and a candidate built afterwards from those very rows must go through approve and activate.
-func TestM13IntegrationUpgradeFrom48KeepsM12DataAndStillPromotes(t *testing.T) {
-	m8MigrateTo = 48
+func TestM13IntegrationUpgradeFrom83KeepsM12DataAndStillPromotes(t *testing.T) {
+	m8MigrateTo = 83
 	e12 := m12Setup(t)
 	m8MigrateTo = 0
 	var applied int64
-	if err := e12.f.operator.QueryRow(`SELECT max(version_id) FROM goose_db_version`).Scan(&applied); err != nil || applied != 48 {
-		t.Fatal("the rehearsal must start at migration 48", applied, err)
+	if err := e12.f.operator.QueryRow(`SELECT max(version_id) FROM goose_db_version`).Scan(&applied); err != nil || applied != 83 {
+		t.Fatal("the rehearsal must start at migration 83", applied, err)
 	}
 	art := e12.prepare("500", 0, 0, e12.alice, e12.bob)
 	type snapshot struct{ sets, specs, evidence, versions int }
@@ -153,7 +153,7 @@ func TestM13IntegrationUpgradeFrom48KeepsM12DataAndStillPromotes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The upgrade: every migration after 48, on top of the data.
+	// The upgrade: every migration after 83, on top of the data.
 	ctx := context.Background()
 	migrator, err := postgres.Open(os.Getenv("MIGRATION_DATABASE_URL"))
 	if err != nil {
@@ -165,8 +165,8 @@ func TestM13IntegrationUpgradeFrom48KeepsM12DataAndStillPromotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) < 2 || results[0].Source.Version != 49 {
-		t.Fatalf("upgrade from 48: %d migrations, first %v, %v", len(results), results, err)
+	if err != nil || len(results) < 2 || results[0].Source.Version != 84 {
+		t.Fatalf("upgrade from 83: %d migrations, first %v, %v", len(results), results, err)
 	}
 	if after := take(); after != before {
 		t.Fatalf("the upgrade changed M12 data: %+v -> %+v", before, after)

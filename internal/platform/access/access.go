@@ -43,15 +43,15 @@ type API struct {
 	WorkflowsEnabled bool
 	// Trusted platform configuration, never selected by a request or metadata.
 	CompilerCatalog *compiler.Catalog
-	// ToolCatalog is the operator-owned tool registry (ADR036); it feeds
+	// ToolCatalog is the operator-owned tool registry (ADR100); it feeds
 	// sandbox evidence and, with the compiler, tool admission.
 	ToolCatalog tools.Catalog
-	// AI is the optional AI builder (ADR040). The zero value leaves every AI route
+	// AI is the optional AI builder (ADR104). The zero value leaves every AI route
 	// answering 503 ai_unavailable.
 	AI AIConfig
 
 	// Recompute remembers the pure recomputation of stored release candidates and
-	// bounds the cold ones per tenant and per process (ADR038 amendment 10). Nil is
+	// bounds the cold ones per tenant and per process (ADR102 amendment 10). Nil is
 	// the process default.
 	Recompute *promotion.Recompute
 }
@@ -145,7 +145,7 @@ type reply struct {
 	body          any
 	issues        []metadata.Issue
 	// next, when set, continues the request after the first transaction committed
-	// (the AI provider phase and its result transaction, ADR040 A8). Its reply
+	// (the AI provider phase and its result transaction, ADR104 A8). Its reply
 	// replaces this one.
 	next func(context.Context) reply
 	// nextWithin, when positive, moves the connection's write deadline to that long

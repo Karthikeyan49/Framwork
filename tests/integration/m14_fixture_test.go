@@ -2,7 +2,7 @@
 
 package integration
 
-// Shared fixture for the M14 AI builder tests (ADR040). It extends the M12 fixture
+// Shared fixture for the M14 AI builder tests (ADR104). It extends the M12 fixture
 // with the real routes of the access API wired to an ai.Service whose gateway runs a
 // ScriptedProvider: no model and no network exist in this environment, so every
 // "model answer" below is a scripted byte string. Nothing here is evidence about the

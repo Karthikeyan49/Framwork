@@ -37,7 +37,7 @@ func (g *gateway) clock(override func() time.Time) func() time.Time {
 	return time.Now
 }
 
-// RunPatch is the repair loop of ADR040 section 7 for TaskApplicationPatch: provider
+// RunPatch is the repair loop of ADR104 section 7 for TaskApplicationPatch: provider
 // call, strict parse, allowlist and expected-hash CAS on an in-memory copy of the
 // draft, real compile, diagnostics fed back, at most Budget.MaxAttempts calls. No
 // outcome mutates the draft. It returns an error only for a caller bug (no compile

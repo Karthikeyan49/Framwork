@@ -39,7 +39,7 @@ type Config struct {
 	ToolSecretsDir    string
 	ToolCAFile        string
 	ToolAllowInternal bool
-	// AIProviderFile names an ai-provider-v1 file (ADR040); empty leaves the AI
+	// AIProviderFile names an ai-provider-v1 file (ADR104); empty leaves the AI
 	// builder unconfigured (its routes answer 503). A path, never a secret.
 	AIProviderFile string
 }

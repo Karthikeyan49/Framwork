@@ -121,7 +121,7 @@ func TestM12APIColdRecomputationIsBoundedTypedAndAudited(t *testing.T) {
 	e.checkHistory()
 }
 
-// TestM12APIStageWritesOneCorrelatedAuditRow (F1): ADR038 amendment 8 names one audit row
+// TestM12APIStageWritesOneCorrelatedAuditRow (F1): ADR102 amendment 8 names one audit row
 // for a stage, release.candidate_staged, and one for a replay. The M6R store-level row
 // release.staged (no request id, a stale contract version) is gone.
 func TestM12APIStageWritesOneCorrelatedAuditRow(t *testing.T) {
@@ -151,7 +151,7 @@ func TestM12APIStageWritesOneCorrelatedAuditRow(t *testing.T) {
 	}
 }
 
-// TestM12APIRejectedBuildAuditsReasonAndAssessmentHash (F6): ADR038 amendment 8 promises
+// TestM12APIRejectedBuildAuditsReasonAndAssessmentHash (F6): ADR102 amendment 8 promises
 // the report and assessment hashes of a rejection; the closed reason and the hash of the
 // risk assessment were missing from the audit row.
 func TestM12APIRejectedBuildAuditsReasonAndAssessmentHash(t *testing.T) {
@@ -495,7 +495,7 @@ func m13Raw(h http.Handler, path, token, body string) *httptest.ResponseRecorder
 // TestM12APIAuthoringEnvelopeIsTheMetadataBudget (F4): the effective body limit of every
 // release authoring request is metadata.MaxBytes + 4096 bytes (260 KiB), not the 1 MiB of the
 // outer transport cap or of intent.MaxAcceptanceBytes and the database CHECK, which are upper
-// bounds of storage that this route cannot reach. ADR038 amendment 11 states it; this test
+// bounds of storage that this route cannot reach. ADR102 amendment 11 states it; this test
 // pins the boundary so that the statement and the code cannot drift apart.
 func TestM12APIAuthoringEnvelopeIsTheMetadataBudget(t *testing.T) {
 	e := m13Setup(t)
@@ -516,7 +516,7 @@ func TestM12APIAuthoringEnvelopeIsTheMetadataBudget(t *testing.T) {
 // TestM12APIReadersSeeOpaqueActorIdsButNotMemberships (F11): release reads disclose the opaque
 // ids of the requester, the acceptance author, the sandbox freezer and the requirement decider
 // to every role that holds the read action, because approvers need them for separation of
-// duties; the membership list stays owner/admin only. ADR038 amendment 11 records it.
+// duties; the membership list stays owner/admin only. ADR102 amendment 11 records it.
 func TestM12APIReadersSeeOpaqueActorIdsButNotMemberships(t *testing.T) {
 	e := m13Setup(t)
 	m13RequireStack(t, e, true)

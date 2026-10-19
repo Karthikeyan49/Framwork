@@ -1,6 +1,6 @@
 package ai_test
 
-// Architecture test for ADR040 section 2 and risk 37: a pure go/parser walk over
+// Architecture test for ADR104 section 2 and risk 37: a pure go/parser walk over
 // the whole module (no build, no database, no network). It is the builder-side
 // adversarial boundary check written by m14-adv; it is not an independent review.
 //
@@ -222,7 +222,7 @@ var archDeterministic = []string{
 }
 
 // archVendorWords are path elements of model-vendor SDKs. Real vendor adapters are
-// not shipped and not claimed (ADR040 section 3); adding one is a contract change.
+// not shipped and not claimed (ADR104 section 3); adding one is a contract change.
 var archVendorWords = []string{"anthropic", "openai", "generative-ai", "genai", "cohere", "mistral", "ollama", "langchain", "langchaingo", "bedrock", "vertexai", "aiplatform", "huggingface", "replicate", "groq", "togetherai", "gemini", "llama", "claude"}
 
 var archAdapterNames = map[string]bool{"NewProvider": true, "NewScriptedProvider": true, "ScriptedProvider": true, "NewHTTPJSONProvider": true, "HTTPJSONProvider": true}

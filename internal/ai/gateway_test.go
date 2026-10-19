@@ -16,7 +16,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 )
 
-// Tests of the repair loop (ADR040 section 7). Every "model answer" is a scripted
+// Tests of the repair loop (ADR104 section 7). Every "model answer" is a scripted
 // byte string: nothing here says anything about a real model.
 
 const testDraftHash = "30a8809169a283477a35ef7855493077798a31b44ca0be00ce34dc3b4025a8bd"

@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Port-level tests of migration 00060 (ADR040 A1-A4). Everything here calls the SQL
+// Port-level tests of migration 00089 (ADR104 A1-A4). Everything here calls the SQL
 // ports directly with doctored arguments; no HTTP handler is involved, so the database
 // floors are tested on their own.
 
@@ -619,7 +619,7 @@ func TestM14PortsTablesAreAppendOnlyIsolatedAndHygienic(t *testing.T) {
  AND NOT has_function_privilege('public',p.oid,'EXECUTE') AND NOT has_function_privilege('framework_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('framework_dispatcher',p.oid,'EXECUTE')`).Scan(&good); err != nil || good != 4 {
 		t.Fatalf("%d of 4 ports are in the expected shape (%v)", good, err)
 	}
-	// The worker drift guard (extended by migration 60) still passes for a worker session.
+	// The worker drift guard (extended by migration 89) still passes for a worker session.
 	var safe bool
 	if err = portsRole(t, "WORKER_DATABASE_URL").QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe); err != nil || !safe {
 		t.Fatalf("worker_grants_safe = %v (%v)", safe, err)

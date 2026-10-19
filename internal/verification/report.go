@@ -1,5 +1,5 @@
 // Package verification is the deterministic independent-acceptance verifier of
-// release candidates (ADR038 section 4).
+// release candidates (ADR102 section 4).
 //
 // Verify is a pure function. It reads no clock, randomness, network, database or
 // file, never compiles anything, and spawns no goroutine: it runs the stored,

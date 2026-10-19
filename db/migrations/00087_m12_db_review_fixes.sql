@@ -1,12 +1,12 @@
--- M12 database-layer review fixes (ADR038 Amendments; docs/verification/M12_DB_INDEPENDENT_REVIEW.md
--- F2, F3, F4, F5). Additive and forward-only; 48, 49 and 50 are preserved. Replaced in place, each from
+-- M12 database-layer review fixes (ADR102 Amendments; docs/verification/M12_DB_INDEPENDENT_REVIEW.md
+-- F2, F3, F4, F5). Additive and forward-only; 83, 84 and 85 are preserved. Replaced in place, each from
 -- its LATEST definition, with every guard of that definition kept:
---   control.append_requirements, control.author_acceptance, control.stage_candidate (00048)
---   control.worker_grants_safe (00049)
+--   control.append_requirements, control.author_acceptance, control.stage_candidate (00083)
+--   control.worker_grants_safe (00084)
 -- New: control.candidate_body_keys, control.strict_candidate_json, control.keys_within,
 --   control.worker_guard_granted, control.worker_guard_denied.
--- F1 (framework_app approving/activating directly) was closed by 00049 and F6 (worker-asserted approval flag)
--- by 00050; they get no change here.
+-- F1 (framework_app approving/activating directly) was closed by 00084 and F6 (worker-asserted approval flag)
+-- by 00085; they get no change here.
 --
 -- F2  The ports store bytes that Go later re-reads. The jsonb view keeps the last of two equal keys and is
 --     case-sensitive, Go's decoder is case-insensitive and rejects numbers such as 0e0. The ports now refuse a
@@ -138,7 +138,7 @@ BEGIN
  IF b->'Source'->'JSON' IS DISTINCT FROM src.document OR b->'Requirements'->'JSON' IS DISTINCT FROM convert_from(rs.body,'UTF8')::jsonb
   OR b->'Acceptance'->'JSON' IS DISTINCT FROM convert_from(acc.body,'UTF8')::jsonb THEN
   RAISE EXCEPTION 'embedded document is not the stored row' USING ERRCODE='55000';END IF;
- -- Separation of duties at build time (ADR038 section 5), from DB-stamped identities.
+ -- Separation of duties at build time (ADR102 section 5), from DB-stamped identities.
  IF acc.author_id=actor OR acc.author_id=src.created_by THEN
   RAISE EXCEPTION 'acceptance must be authored independently of the requester and the source author' USING ERRCODE='42501';END IF;
  SELECT e.body,e.body_hash,e.frozen_by INTO ev FROM runtime.sandbox_evidence e JOIN runtime.sandboxes s ON s.tenant_id=e.tenant_id AND s.app_id=e.app_id AND s.dataset_id=e.dataset_id
@@ -168,7 +168,7 @@ END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
 -- The direct grants of framework_worker on the relations of control, runtime, iam and audit, exactly as
--- the migrations through 00051 gave them (rel, privilege, column; NULL = table level). A test compares
+-- the migrations through 00086 gave them (rel, privilege, column; NULL = table level). A test compares
 -- this list with the live catalog in both directions.
 CREATE FUNCTION control.worker_guard_granted() RETURNS TABLE(rel text,priv text,col text) LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
  SELECT * FROM (VALUES

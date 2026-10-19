@@ -12,7 +12,7 @@ import (
 )
 
 // Redaction of secret-shaped tokens from author-controlled text before it leaves the
-// platform inside a model request (ADR040 section 4). It is a safety net for the
+// platform inside a model request (ADR104 section 4). It is a safety net for the
 // accident (a key pasted into a label, a DSN in a description), not a data-loss
 // prevention system: a deliberate exfiltration through free text is outside its
 // threat model and is covered by the operator's decision to enable a provider at all.

@@ -11,7 +11,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 )
 
-// The bounded loop shared by RunPatch and RunRequirements (ADR040 section 7 and
+// The bounded loop shared by RunPatch and RunRequirements (ADR104 section 7 and
 // amendment B). It owns the budgets, the provider calls, the usage accounting and
 // the trace; what a payload means is decided by the evaluate function of the caller.
 // Nothing here opens a transaction, touches a database or mutates a draft.

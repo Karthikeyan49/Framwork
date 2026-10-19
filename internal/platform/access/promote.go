@@ -20,13 +20,13 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
-// Approval and promotion routes (ADR039, M13). Like the M12 builder routes they
+// Approval and promotion routes (ADR103, M13). Like the M12 builder routes they
 // exist only where preview exists. They never compile source or IR ("no
 // recompile after approval"): each request restores the stored bytes
 // (promotion.Store.LoadCandidate / Release), re-evaluates staleness against the
 // live pointer, policy roles and operator tool catalog inside the API's
 // REPEATABLE READ transaction, pre-checks separation of duties in Go and only
-// then calls the SECURITY DEFINER port of migration 49, which re-derives actor,
+// then calls the SECURITY DEFINER port of migration 84, which re-derives actor,
 // tenant, floors, quorum and the pointer compare-and-set from database-stamped
 // rows. promote_test.go guards the no-compile rule statically.
 const (
@@ -363,7 +363,7 @@ func (a API) refuseUndecidable(ctx context.Context, q postgres.Executor, r *http
 	return nil, nil
 }
 
-// lifecycle fills the derived ADR039 fields of a candidate view. Nothing here is
+// lifecycle fills the derived ADR103 fields of a candidate view. Nothing here is
 // stored: status is recomputed from the recorded decisions and the pointer.
 func (a API) lifecycle(ctx context.Context, q postgres.Executor, access tenant.Access, app string, view *CandidateView, au authority) error {
 	store := a.store()
@@ -569,7 +569,7 @@ func (a API) rejectCandidate(ctx context.Context, q postgres.Executor, r *http.R
 	if refusal != nil || err != nil {
 		return derefReply(refusal), err
 	}
-	// A veto is always safe (ADR039 section 3): no staleness or separation check.
+	// A veto is always safe (ADR103 section 3): no staleness or separation check.
 	recorded, err := a.store().RejectRelease(ctx, q, access, app, hash, promotion.RejectReason(body.Reason), body.Note)
 	if err != nil {
 		return reply{}, err

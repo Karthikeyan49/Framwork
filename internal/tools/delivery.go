@@ -1,5 +1,5 @@
 // Package tools declares delivery guarantees (Delivery.Validate), the operator catalog and the governed gateway
-// that performs a tool call (M10, ADR036). Which attempt may follow which outcome is decided by the workflow
+// that performs a tool call (M10, ADR100). Which attempt may follow which outcome is decided by the workflow
 // runtime over the durable ledger (internal/runtime/workflow.decideTool), never by a rule declared here.
 package tools
 

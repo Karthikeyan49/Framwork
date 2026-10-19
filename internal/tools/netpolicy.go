@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Network policy (ADR036 decision 8). Every address a connector host resolves
+// Network policy (ADR100 decision 8). Every address a connector host resolves
 // to is classified before any connection is opened; the connection is made to
 // the validated literal address only, so a second DNS answer (rebinding) can
 // never change the destination.

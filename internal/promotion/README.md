@@ -5,7 +5,7 @@ Two bundle formats share one hash-bound restore path:
 - **1.0.0 (M6R)** — caller-declared fields. Still restorable (stored artifacts and
   `cmd/release-check`), but tenants can no longer stage it, and it has no
   candidate row, so it can no longer be approved or activated.
-- **2.0.0 (M12, [ADR038](../../docs/adr/038-m12-candidate-release-builder.md))** — built
+- **2.0.0 (M12, [ADR102](../../docs/adr/102-m12-candidate-release-builder.md))** — built
   only by `BuildCandidate` from server-derived inputs: the stored source revision,
   the trusted compiler's IR, a stored requirement set and acceptance spec, a frozen
   sandbox evidence, and the active base. `Restore` recomputes everything that does
@@ -28,14 +28,14 @@ writes bundle plus index together. The DB cannot recompute the verifier, so
 `LoadCandidate` recomputation (Restore plus the base verification) is the
 backstop.
 
-## Approval and promotion (M13, [ADR039](../../docs/adr/039-m13-approval-and-promotion.md))
+## Approval and promotion (M13, [ADR103](../../docs/adr/103-m13-approval-and-promotion.md))
 
-`decisions.go` wraps the four migration-49 ports. Each is SECURITY DEFINER,
+`decisions.go` wraps the four migration-84 ports. Each is SECURITY DEFINER,
 owned by `framework_schema_owner`, executable only by `framework_app`, and
 derives tenant, actor, membership, risk level, parties, base and generation from
 database-stamped rows; the wrappers never pass an actor, a level or a quorum.
 
-| Store method | Port | Database floor (ADR039 §3–§5) |
+| Store method | Port | Database floor (ADR103 §3–§5) |
 |---|---|---|
 | `ApproveRelease` → approvals | `control.approve_release` | active non-viewer member; 2.0.0 candidate row exists; not rejected; bound base still current; HIGH excludes requester and acceptance author, CRITICAL also the sandbox freezer; idempotent per actor |
 | `RejectRelease` → recorded | `control.reject_release` | member; closed reason; note ≤ 280 characters without control characters; permanent for the exact hash; no separation exclusion |
@@ -67,7 +67,7 @@ same REPEATABLE READ transaction that then appends the audit entry. The
 wrappers do not audit. The database cannot recompute the verifier, the policy
 bundle hash or tool pins; `LoadCandidate` and `Staleness` in Go remain the only
 backstop against a self-consistent forged body staged by a compromised API
-(ADR039 residual).
+(ADR103 residual).
 
 The M6R write paths (`Store.Approve/Activate/Rollback`, the pure `Approve` /
 `ValidateActivation` and the `Approval` token) are removed: the runtime role no
@@ -77,7 +77,7 @@ longer holds INSERT/UPDATE on `control.release_approvals` or
 
 ## Database ports and the Go recomputation
 
-`control.stage_candidate`, `append_requirements` and `author_acceptance` (migration 00052) accept only a body that is one
+`control.stage_candidate`, `append_requirements` and `author_acceptance` (migration 00087) accept only a body that is one
 object, has no duplicate member at any depth, spells no number with an exponent or leading zero, uses the key sets of the Go
 types (`control.candidate_body_keys`, compared with the struct tags by `TestM12RBodyKeyListsMatchTheGoStructs`; add a field to a
 2.0.0 struct and the key list must change in a new migration) and embeds the stored source, requirement set and acceptance
@@ -86,7 +86,7 @@ risk, verification, the diff or the IR: `Restore` and `VerifyWithBase` (called b
 
 ## Not built
 
-The production data plane (ADR039 §10): nothing serves an activated release;
+The production data plane (ADR103 §10): nothing serves an activated release;
 activation records desired state and the storage class but executes no storage
 migration; no production datasets, routes, consumers or tool execution; volume
 stays `UNVERIFIED`; no approval expiry, configurable approver roles, lifecycle

@@ -18,7 +18,7 @@ func (e *m14Env) answerFor(revision int64, build func(metadata.Document) []byte)
 		Func: func(ai.ProviderRequest) ([]byte, error) { return build(e.storedDoc(revision)), nil }}
 }
 
-// TestM14APISliceProposeApply is the vertical slice of ADR040: a scripted provider
+// TestM14APISliceProposeApply is the vertical slice of ADR104: a scripted provider
 // answer becomes a stored READY proposal; a human apply with the (empty) acknowledge
 // list appends a new DRAFT revision as that human; the decision happens once.
 func TestM14APISliceProposeApply(t *testing.T) {
@@ -82,7 +82,7 @@ func TestM14APISliceProposeApply(t *testing.T) {
 
 // ---------------------------------------------------------------- policy matrix
 
-// TestM14APIPolicyMatrix pins ADR040 A6 through the real routes: ai.read for every
+// TestM14APIPolicyMatrix pins ADR104 A6 through the real routes: ai.read for every
 // member, ai.propose and ai.apply for owner and admin, nothing for an outsider or an
 // anonymous caller, custom roles by grant, and the composition rule (apply needs
 // metadata.write, confirm needs requirements.decide) on top of ai.apply.

@@ -129,7 +129,7 @@ func m8Database(t *testing.T) {
 		t.Fatal("legacy fixture")
 	}
 	if m8MigrateTo > 0 {
-		// An upgrade rehearsal (TestM13IntegrationUpgradeFrom48...) stops at an earlier version and
+		// An upgrade rehearsal (TestM13IntegrationUpgradeFrom83...) stops at an earlier version and
 		// applies the rest itself.
 		if _, e = p.UpTo(ctx, m8MigrateTo); e != nil {
 			t.Fatal("partial migration", e)
@@ -148,7 +148,7 @@ func m8Database(t *testing.T) {
 		t.Fatal("legacy intent was rewritten or broadcast")
 	}
 	// The consumer-effects probe lives outside control/runtime/iam/audit: the worker drift guard
-	// (migration 52) derives the worker's allowed privileges for those four schemas and refuses every
+	// (migration 87) derives the worker's allowed privileges for those four schemas and refuses every
 	// relation it does not list, so a test-only table with a worker grant cannot live in them.
 	if _, e = m.Exec(`CREATE SCHEMA m8_fixture; GRANT USAGE ON SCHEMA m8_fixture TO framework_worker; GRANT USAGE,CREATE ON SCHEMA m8_fixture TO framework_schema_owner;
  CREATE TABLE m8_fixture.effects(tenant_id uuid NOT NULL,event_id uuid NOT NULL,PRIMARY KEY(tenant_id,event_id));
