@@ -150,7 +150,7 @@ Checked and found consistent (no finding):
   sandbox, release-builder, index and workflow route is registered only inside
   `if a.PreviewEnabled && a.Registry != nil` (`internal/platform/access/access.go:64-108`).
   The routes outside that block are tenant administration and metadata authoring
-  (`access.go:109-125`: roles, teams, members, session, access, metadata). Production
+  (`internal/platform/access/access.go:109-125`: roles, teams, members, session, access, metadata). Production
   mode also refuses workflows and events (`internal/config/config.go:57,67`) and tool
   internal-network opt-in (`config.go:93`).
 - Functions never called (exported, no production caller): only `Store.Approve`,
@@ -316,7 +316,7 @@ or slice that should carry the work.
 
 ### N-11 (MEDIUM) tested retry contract is dead code
 
-- Evidence. `Delivery.MayRetry` (`internal/tools/delivery.go:40-70`) is covered by
+- Evidence. `Delivery.MayRetry` (`internal/tools/delivery.go:40-61`) is covered by
   `delivery_test.go:12-28` and has no production caller; `decideTool` encodes different
   rules. The test therefore passes while production is wrong in exactly the way the test
   forbids (N-04). Same pattern risk for `Delivery.Validate`, which is used by the catalog.
