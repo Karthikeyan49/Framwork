@@ -13,6 +13,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/risk"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
@@ -211,8 +212,9 @@ func (au authority) bars(actor string) (role string, barred bool) {
 }
 
 // eligible returns the distinct recorded approvers that no separation role bars,
-// in recorded order. The activation port additionally drops approvers who are no
-// longer active non-viewer members, so this is an upper bound of its count.
+// in recorded order. holdingApprovers narrows them to those who still hold the
+// authority, and the activation port additionally drops approvers who are no
+// longer active non-viewer members, so this is an upper bound of both counts.
 func (au authority) eligible(approvals []promotion.Decision) []string {
 	out := []string{}
 	seen := map[string]bool{}
@@ -227,6 +229,49 @@ func (au authority) eligible(approvals []promotion.Decision) []string {
 		}
 	}
 	return out
+}
+
+// holdingApprovers narrows the eligible approvers to those who hold releases.approve now
+// (M13R-03): an active member whose current role grants the action on the application. The
+// database floor counts every active non-viewer member, so a member demoted to a role without
+// the authority would still count there; the policy is the only place that can say so. The
+// check runs in the request's REPEATABLE READ transaction, the same snapshot in which the
+// activation port later locks and recounts the approvers' memberships. A rejection is not
+// narrowed this way: a veto stays a veto.
+func (a API) holdingApprovers(ctx context.Context, q postgres.Executor, access tenant.Access, app, hash string, eligible []string) ([]string, error) {
+	if len(eligible) == 0 {
+		return eligible, nil
+	}
+	roles, err := a.store().ApproverRoles(ctx, q, access, app, hash)
+	if err != nil {
+		return nil, err
+	}
+	resource := policy.Resource{TenantID: access.TenantID(), Type: "preview", AppID: app}
+	granted := map[string]bool{}
+	holding := []string{}
+	for _, id := range eligible {
+		role, member := roles[strings.ToLower(id)]
+		if !member {
+			continue // removed or deactivated since approving
+		}
+		holds, known := granted[role]
+		if !known {
+			// releases.approve names no owner, so the answer depends on the role alone.
+			if a.PolicyLoader != nil {
+				holds, err = (policy.RoleStore{}).Holds(ctx, q, access, id, role, "releases.approve", resource)
+			} else {
+				holds = policy.NativeHolds(access.TenantID(), id, role, "releases.approve", resource)
+			}
+			if err != nil {
+				return nil, err
+			}
+			granted[role] = holds
+		}
+		if holds {
+			holding = append(holding, id)
+		}
+	}
+	return holding, nil
 }
 
 // promotable is a candidate restored and recomputed from its stored bytes in
@@ -340,7 +385,16 @@ func (a API) lifecycle(ctx context.Context, q postgres.Executor, access tenant.A
 		return err
 	}
 	active := current == hash
-	view.Status = promotion.DeriveStatus(len(rejections), len(au.eligible(approvals)), au.required(), active, ever)
+	// Only an undecided candidate's status depends on how many approvals count.
+	counted := 0
+	if len(rejections) == 0 && !active && !ever {
+		holding, err := a.holdingApprovers(ctx, q, access, app, hash, au.eligible(approvals))
+		if err != nil {
+			return err
+		}
+		counted = len(holding)
+	}
+	view.Status = promotion.DeriveStatus(len(rejections), counted, au.required(), active, ever)
 	view.Approvals, view.ApprovalsRequired, view.Rejections, view.Active = approvals, au.required(), rejections, active
 	return nil
 }
@@ -565,7 +619,10 @@ func (a API) activateCandidate(ctx context.Context, q postgres.Executor, r *http
 	if err != nil {
 		return reply{}, err
 	}
-	eligible := p.authority.eligible(approvals)
+	eligible, err := a.holdingApprovers(ctx, q, access, app, hash, p.authority.eligible(approvals))
+	if err != nil {
+		return reply{}, err
+	}
 	required := p.authority.required()
 	evidence.State.ApprovalCount, evidence.State.ApprovalsRequired = int64(len(eligible)), int64(required)
 	if risk.CheckSeparation(risk.Separation{Approvals: required, Excluded: p.authority.excluded()}, p.authority.parties, eligible) != nil {

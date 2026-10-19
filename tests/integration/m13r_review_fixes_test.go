@@ -16,8 +16,11 @@ import (
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
+	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
 // m13rHold runs query as subject in tenant A: it takes the REPEATABLE READ snapshot,
@@ -247,18 +250,173 @@ func TestM13R05NoteMarksAreRefusedByThePort(t *testing.T) {
 	}
 }
 
-// M13R-03 (pin of a documented residual): an approver demoted to a role that cannot approve (HTTP 403) still counts toward quorum.
-func TestM13R03DemotedApproverStillCounts(t *testing.T) {
+// M13R-03: an approval counts at activation only while its approver still holds releases.approve. The database
+// floor counts every active non-viewer member; the Go layer now asks the policy about the approver's CURRENT role,
+// so a member demoted through the role administration route stops counting, the candidate reads STAGED again and
+// restoring the role restores the approval (the record itself is never changed).
+func TestM13R03DemotedApproverNoLongerCounts(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	root := "/v1/tenants/" + e.f.tenantA
+	c1, _ := e.build("500", nil, e.carol)
+	m13Code(t, "approve", e.httpApprove(e.dave.token, c1), 201)
+	if st := m13Decode(e.httpCandidate(e.viewer, c1)).Status; st != "APPROVED" {
+		t.Fatalf("one approval of a HIGH candidate reads %q, want APPROVED", st)
+	}
+	r5Assign(t, e.h, root, e.alice, e.dave.id, "member", 200)
+	m13Code(t, "dave can no longer approve", e.httpApprove(e.dave.token, c1), 403)
+	before := e.state()
+	m13Code(t, "activation on the approval of a member who lost releases.approve", e.httpActivate(e.erin.token, c1, "", 0), 409, "approval_quorum_not_met")
+	e.unchanged("refused activation", before)
+	if st := m13Decode(e.httpCandidate(e.viewer, c1)).Status; st != "STAGED" {
+		t.Errorf("a candidate whose only approver lost the authority reads %q, want STAGED", st)
+	}
+	r5Assign(t, e.h, root, e.alice, e.dave.id, "admin", 200)
+	if st := m13Decode(e.httpCandidate(e.viewer, c1)).Status; st != "APPROVED" {
+		t.Errorf("restoring the role must restore the approval: status %q", st)
+	}
+	m13Code(t, "activation after the role is restored", e.httpActivate(e.erin.token, c1, "", 0), 200)
+}
+
+// M13R-03: a deactivated approver does not count either, and the view agrees with the refusal.
+func TestM13R03DeactivatedApproverNoLongerCounts(t *testing.T) {
 	e := m13Setup(t)
 	m13RequireStack(t, e, true)
 	c1, _ := e.build("500", nil, e.carol)
 	m13Code(t, "approve", e.httpApprove(e.dave.token, c1), 201)
-	e.setRole(e.dave.id, "member")
-	m13Code(t, "dave can no longer approve", e.httpApprove(e.dave.token, c1), 403)
-	// Documented residual (ADR039 amendment 12): the database floor counts active non-viewer members, so the
-	// approval of a member who has lost releases.approve still counts at activation.
-	if w := e.httpActivate(e.erin.token, c1, "", 0); w.Code != 200 {
-		t.Errorf("M13R-03 pin: the documented floor changed (HTTP %d); update ADR039 amendment 12", w.Code)
+	e.operatorExec("deactivate dave", `UPDATE iam.memberships SET active=false WHERE tenant_id=$1 AND user_id=$2`, e.f.tenantA, e.dave.id)
+	m13Code(t, "activation on the approval of a deactivated member", e.httpActivate(e.erin.token, c1, "", 0), 409, "approval_quorum_not_met")
+	if st := m13Decode(e.httpCandidate(e.viewer, c1)).Status; st != "STAGED" {
+		t.Errorf("a candidate whose only approver was deactivated reads %q, want STAGED", st)
+	}
+}
+
+// M13R-03: a stored custom role carries the authority through its grants; reassigning the member to a role
+// without the grant removes the approval from the count, and the role administration route is the real path.
+func TestM13R03ReassignedCustomApproverNoLongerCounts(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	e.useAPI(func(a *access.API) { a.PolicyLoader = (policy.RoleStore{}).Load })
+	// Role heads are part of the candidate's policy bundle: publish them before the candidate is built.
+	e.publishRole("release_approver", 0, "releases.read", "releases.approve")
+	e.publishRole("release_reader", 0, "releases.read")
+	root := "/v1/tenants/" + e.f.tenantA
+	frank := e.member("frank", "viewer")
+	r5Assign(t, e.h, root, e.alice, frank.id, "release_approver", 200)
+	c1, _ := e.build("500", nil, e.carol)
+	m13Code(t, "frank approves through the stored role", e.httpApprove(frank.token, c1), 201)
+	if st := m13Decode(e.httpCandidate(e.viewer, c1)).Status; st != "APPROVED" {
+		t.Fatalf("status %q, want APPROVED", st)
+	}
+	r5Assign(t, e.h, root, e.alice, frank.id, "release_reader", 200)
+	m13Code(t, "frank can no longer approve", e.httpApprove(frank.token, c1), 403)
+	m13Code(t, "activation on the approval of a member reassigned to a reader", e.httpActivate(e.erin.token, c1, "", 0), 409, "approval_quorum_not_met")
+	if st := m13Decode(e.httpCandidate(e.viewer, c1)).Status; st != "STAGED" {
+		t.Errorf("status %q, want STAGED", st)
+	}
+	r5Assign(t, e.h, root, e.alice, frank.id, "release_approver", 200)
+	m13Code(t, "activation once the role is back", e.httpActivate(e.erin.token, c1, "", 0), 200)
+}
+
+// M13R-03: a CRITICAL release needs two approvals that BOTH still hold the authority.
+func TestM13R03CriticalQuorumNeedsBothApproversToHold(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	root := "/v1/tenants/" + e.f.tenantA
+	required := func(on bool) func(*metadata.Document) {
+		return func(d *metadata.Document) {
+			for i := range d.Definitions {
+				if d.Definitions[i].ID == "field.order.note" && d.Definitions[i].Field != nil {
+					d.Definitions[i].Field.Required = on
+				}
+			}
+		}
+	}
+	c1, _ := e.build("500", required(true), e.carol)
+	m13Code(t, "approve c1", e.httpApprove(e.dave.token, c1), 201)
+	m13Code(t, "activate c1", e.httpActivate(e.erin.token, c1, "", 0), 200)
+	c2 := m13apiBuildMigration(t, e, required(false), e.carol) // CRITICAL
+	m13Code(t, "approve c2 dave", e.httpApprove(e.dave.token, c2), 201)
+	m13Code(t, "approve c2 erin", e.httpApprove(e.erin.token, c2), 201)
+	r5Assign(t, e.h, root, e.alice, e.erin.id, "member", 200)
+	m13Code(t, "one of two approvers lost the authority", e.httpActivate(e.dave.token, c2, c1, 1), 409, "approval_quorum_not_met")
+	if st := m13Decode(e.httpCandidate(e.viewer, c2)).Status; st != "STAGED" {
+		t.Errorf("status %q, want STAGED", st)
+	}
+	r5Assign(t, e.h, root, e.alice, e.erin.id, "admin", 200)
+	m13Code(t, "both hold again", e.httpActivate(e.dave.token, c2, c1, 1), 200)
+}
+
+// M13R-03: policy.RoleStore.Holds, which activation uses for approvers who are not the caller, answers exactly
+// what the real approve route answers for a member of each role (built-in, custom allowed on all applications,
+// allowed on another application only, allowed with an explicit DENY on this application, read only).
+func TestM13R03HoldsMatchesDecide(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	e.useAPI(func(a *access.API) { a.PolicyLoader = (policy.RoleStore{}).Load })
+	custom := func(name string, grants ...map[string]any) {
+		t.Helper()
+		def := map[string]any{"schema_version": "tenant-capabilities-v1", "name": name, "grants": grants}
+		w := m5Call(e.h, "/v1/tenants/"+e.f.tenantA+"/roles", e.alice, map[string]any{"operation_id": uuid(t), "expected_version": 0, "active": true, "definition": def})
+		if w.Code/100 != 2 {
+			t.Fatal("publish role", name, w.Code, w.Body.String())
+		}
+	}
+	all := map[string]string{"app_id": "*", "entity_id": "*", "field_id": "*"}
+	here := map[string]string{"app_id": e.app, "entity_id": "*", "field_id": "*"}
+	other := map[string]string{"app_id": "app.other_app", "entity_id": "*", "field_id": "*"}
+	custom("holds_everywhere", map[string]any{"effect": "ALLOW", "actions": []string{"releases.approve"}, "resource": all})
+	custom("holds_elsewhere", map[string]any{"effect": "ALLOW", "actions": []string{"releases.approve"}, "resource": other})
+	custom("holds_but_denied_here", map[string]any{"effect": "ALLOW", "actions": []string{"releases.approve"}, "resource": all}, map[string]any{"effect": "DENY", "actions": []string{"releases.approve"}, "resource": here})
+	custom("reads_only", map[string]any{"effect": "ALLOW", "actions": []string{"releases.read", "candidates.read"}, "resource": all})
+	root := "/v1/tenants/" + e.f.tenantA
+	roles := []struct {
+		role string
+		who  m13Actor
+		want bool
+	}{
+		{"owner", e.person("alice"), true},
+		{"admin", e.dave, true},
+		{"member", e.member("mia", "member"), false},
+		{"viewer", e.member("vera", "viewer"), false},
+		{"holds_everywhere", e.member("cora", "viewer"), true},
+		{"holds_elsewhere", e.member("otto", "viewer"), false},
+		{"holds_but_denied_here", e.member("dina", "viewer"), false},
+		{"reads_only", e.member("rita", "viewer"), false},
+	}
+	for _, r := range roles {
+		if r.role != "owner" && r.role != "admin" && r.role != "member" && r.role != "viewer" {
+			r5Assign(t, e.h, root, e.alice, r.who.id, r.role, 200)
+		}
+	}
+	c1, _ := e.build("500", nil, e.carol) // HIGH: only carol (requester) and bob (acceptance author) are barred from approving
+	resource := policy.Resource{TenantID: e.f.tenantA, Type: "preview", AppID: e.app}
+	granted := 0
+	for _, r := range roles {
+		w := e.httpApprove(r.who.token, c1)
+		viaRoute := w.Code == 201 || w.Code == 200
+		if !viaRoute && (w.Code != 403 || m13Decode(w).Code != "forbidden") {
+			t.Fatalf("%s: approve answered %d %s (a policy denial is 403 forbidden)", r.role, w.Code, w.Body.String())
+		}
+		var viaHolds bool
+		if err := e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) (err error) {
+			viaHolds, err = (policy.RoleStore{}).Holds(ctx, q, a, r.who.id, r.role, "releases.approve", resource)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if viaRoute != viaHolds || viaRoute != r.want {
+			t.Errorf("%s: approve route allows=%v, Holds=%v, expected %v", r.role, viaRoute, viaHolds, r.want)
+		}
+		if built := r.role == "owner" || r.role == "admin" || r.role == "member" || r.role == "viewer"; built && policy.NativeHolds(e.f.tenantA, r.who.id, r.role, "releases.approve", resource) != r.want {
+			t.Errorf("%s: NativeHolds disagrees with the route", r.role)
+		}
+		if viaHolds {
+			granted++
+		}
+	}
+	if granted != 3 {
+		t.Fatalf("%d roles hold the authority, want owner, admin and the custom role that is not denied here", granted)
 	}
 }
 

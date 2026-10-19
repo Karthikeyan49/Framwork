@@ -491,9 +491,11 @@ func TestM13APIRoleMatrixCustomRoleTenantAndAppScope(t *testing.T) {
 			t.Errorf("custom approver %s: %d %s", name, w.Code, w.Body.String())
 		}
 	}
-	// Approving and activating are separate authorities: the owner activates on
-	// the strength of the custom approver's approval, which the database counts.
-	if r := m13apiRelease(t, e.httpActivate(e.alice, c, "", 0), 200); r.Generation != 1 || r.Candidate == nil || len(r.Candidate.Approvals) != 1 || r.Candidate.Approvals[0].ActorID != frank.id {
+	// Approving and activating are separate authorities: the owner activates on the strength of the
+	// custom approver's approval, which the database counts and the policy confirms. The activation
+	// goes through the same loader-configured handler: a handler that knows only the built-in roles
+	// would (correctly) not count the approval of a member who holds a custom role.
+	if r := m13apiRelease(t, m5Call(hp, e.root+"/candidates/"+c+"/activate", e.alice, map[string]any{"artifact_hash": c, "expected_base": "", "expected_generation": 0}), 200); r.Generation != 1 || r.Candidate == nil || len(r.Candidate.Approvals) != 1 || r.Candidate.Approvals[0].ActorID != frank.id {
 		t.Fatalf("activation on a custom-role approval: %+v", r)
 	}
 
@@ -734,11 +736,15 @@ func TestM13APICriticalQuorumOnATransformRelease(t *testing.T) {
 	if v = viewOf(t, e.httpApprove(e.erin.token, c2), 201); v.Status != "APPROVED" || len(v.Approvals) != 2 {
 		t.Fatalf("two approvals: %+v", v)
 	}
-	// Go cannot see that erin was demoted; the activation port re-counts live
-	// memberships under its lock and refuses (55000 -> 409).
+	// erin is demoted: the handler narrows the quorum to approvers who still hold releases.approve
+	// (M13R-03) and refuses before the port. The port's own re-count of live memberships under its
+	// lock is what the direct port tests and the concurrent demotion tests cover.
 	e.setRole(e.erin.id, "viewer")
 	before = e.state()
-	m13apiExpect(t, "activation after an approver was demoted", e.httpActivate(e.dave.token, c2, c1, 1), 409, "release_conflict")
+	m13apiExpect(t, "activation after an approver was demoted", e.httpActivate(e.dave.token, c2, c1, 1), 409, "approval_quorum_not_met")
+	if v = viewOf(t, e.httpCandidate(e.viewer, c2), 200); v.Status != "STAGED" || len(v.Approvals) != 2 {
+		t.Fatalf("the view must agree with the refusal and keep the recorded approvals: %+v", v)
+	}
 	e.unchanged("quorum re-check", before)
 	e.setRole(e.erin.id, "admin")
 	r := m13apiRelease(t, e.httpActivate(e.dave.token, c2, c1, 1), 200)

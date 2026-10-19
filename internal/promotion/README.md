@@ -42,8 +42,9 @@ database-stamped rows; the wrappers never pass an actor, a level or a quorum.
 | `ActivateRelease` → generation | `control.activate_release` | pointer row locked; expected base and generation equal the candidate's bound base and the pointer; quorum (CRITICAL 2, else 1) of approvers who still pass the floor and are still members; compare-and-set write plus an `ACTIVATE` history row |
 | `RollbackRelease` → generation | `control.rollback_release` | pointer equals the expected current at the expected generation; target appears in history; unless the current release is `POINTER_SAFE`, an acknowledged plan with a hash; `ROLLBACK` history row |
 
-Reads: `Approvals`, `Rejections`, `History` (newest first, at most 50) and
-`WasActivated`. Pure rules: `RequiredApprovals`, `FloorRoles`, `FloorExcluded`,
+Reads: `Approvals`, `Rejections`, `History` (newest first, at most 50),
+`WasActivated` and `ApproverRoles` (the role each recorded approver holds now; the handler asks the policy whether
+that role still grants `releases.approve`, M13R-03). Pure rules: `RequiredApprovals`, `FloorRoles`, `FloorExcluded`,
 `FloorExclusion` (names the excluded role, never another actor's id),
 `CountEligible`, `DeriveStatus` (REJECTED > ACTIVE > SUPERSEDED > APPROVED >
 STAGED), `RollbackClassNeedsPlan` and `RollbackPlan.Acknowledged`.
