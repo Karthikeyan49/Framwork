@@ -20,7 +20,7 @@ import (
 // role lists, hash agreement) is enforced by the decoders and ApplyProposal only.
 
 const (
-	idPatternText     = `[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*`
+	idPatternText     = `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*`
 	itemIDPatternText = `^[a-z][a-z0-9_.-]{0,63}$`
 )
 

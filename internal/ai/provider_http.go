@@ -225,7 +225,7 @@ func parseEnvelope(raw []byte) (envelope, error) {
 	}
 	var text string
 	switch {
-	case json.Unmarshal(env.Payload, &text) == nil:
+	case len(env.Payload) > 0 && env.Payload[0] == '"' && json.Unmarshal(env.Payload, &text) == nil:
 		env.Payload = json.RawMessage(text)
 	case len(env.Payload) > 0 && env.Payload[0] == '{':
 		var compact bytes.Buffer

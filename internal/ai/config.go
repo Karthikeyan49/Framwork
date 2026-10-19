@@ -265,7 +265,11 @@ func credentialRef(path string) (dir, ref string, err error) {
 func NewProvider(cfg ProviderConfig) (Provider, error) {
 	switch cfg.Kind {
 	case KindHTTPSJSON:
-		return newHTTPJSONProvider(cfg, httpOptions{})
+		p, err := newHTTPJSONProvider(cfg, httpOptions{})
+		if err != nil {
+			return nil, err // never a typed nil inside the interface
+		}
+		return p, nil
 	case KindScripted:
 		steps, err := LoadScript(cfg.ScriptFile)
 		if err != nil {
