@@ -32,6 +32,12 @@ import (
 // Every M8 test owns a disposable database; no customer rows or old event due
 // times are changed to make dispatch tests convenient.
 func m8Database(t *testing.T) {
+	m8DatabaseAt(t, 0)
+}
+
+// A positive target creates a fresh old-schema database for forward rehearsals;
+// it never downgrades or switches the target of an existing database.
+func m8DatabaseAt(t *testing.T, target int64) {
 	t.Helper()
 	if environment := os.Getenv("APP_ENV"); environment != "development" && environment != "test" {
 		t.Fatal("M8 integration fixtures require explicit development/test environment")
@@ -124,12 +130,21 @@ func m8Database(t *testing.T) {
 	if _, e = m.Exec(`INSERT INTO runtime.outbox_intents(tenant_id,id,actor_id,app_id,metadata_revision,ir_hash,entity_id,record_id,record_version,event_type) VALUES($1,$2,$3,'app.legacy',1,$4,'entity.legacy',$5,1,'record.created')`, legacyTenant, legacyID, uuid(t), strings.Repeat("a", 64), uuid(t)); e != nil {
 		t.Fatal("legacy fixture")
 	}
-	if _, e = p.Up(ctx); e != nil {
-		t.Fatal("M8 migration", e)
+	apply := func(repeat bool) {
+		if target > 0 {
+			applied, err := p.UpTo(ctx, target)
+			if err != nil || repeat && len(applied) != 0 {
+				t.Fatal("target migration/repeatability")
+			}
+		} else {
+			applied, err := p.Up(ctx)
+			if err != nil || repeat && len(applied) != 0 {
+				t.Fatal("migration/repeatability")
+			}
+		}
 	}
-	if applied, e := p.Up(ctx); e != nil || len(applied) != 0 {
-		t.Fatal("migration repeatability")
-	}
+	apply(false)
+	apply(true)
 	var state string
 	var n int
 	if e = m.QueryRow(`SELECT state,(SELECT count(*) FROM runtime.event_envelopes) FROM control.event_deliveries WHERE tenant_id=$1 AND id=$2`, legacyTenant, legacyID).Scan(&state, &n); e != nil || state != "LEGACY_PAUSED" || n != 0 {
@@ -438,11 +453,11 @@ func TestM8LeaseFencingBoundedRetriesDeadLetterAndReplay(t *testing.T) {
 	if dispatch.Finish(context.Background(), first, true) == nil {
 		t.Fatal("stale dispatcher confirmed")
 	}
-	for attempt := 2; attempt <= 5; attempt++ {
+	for attempt := 2; attempt <= events.MaxDeliveryAttempts; attempt++ {
 		if e := dispatch.Finish(context.Background(), p, false); e != nil {
 			t.Fatal(e)
 		}
-		if attempt < 5 {
+		if attempt < events.MaxDeliveryAttempts {
 			m8Expire(t, f.operator, p)
 			p = m8Claim(t, dispatch)
 		}
@@ -472,7 +487,7 @@ func TestM8LeaseFencingBoundedRetriesDeadLetterAndReplay(t *testing.T) {
 	// Reaching DEAD from an expired SENT lease returns no new routing row. That
 	// empty result must commit the terminal update, rather than roll it back.
 	m5Create(t, h, base, token, "receipt timeout")
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < events.MaxDeliveryAttempts; attempt++ {
 		p = m8Claim(t, dispatch)
 		if e := dispatch.Finish(context.Background(), p, true); e != nil {
 			t.Fatal(e)
@@ -797,11 +812,11 @@ func TestM8DeadPendingMessagesDoNotStarveAnotherTenant(t *testing.T) {
 		if sender.Publish(ctx, p) != nil {
 			t.Fatal("dead reference publication")
 		}
-		for attempt := 1; attempt <= 5; attempt++ {
+		for attempt := 1; attempt <= events.MaxDeliveryAttempts; attempt++ {
 			if dispatch.Finish(ctx, p, false) != nil {
 				t.Fatal("dead budget")
 			}
-			if attempt < 5 {
+			if attempt < events.MaxDeliveryAttempts {
 				m8Expire(t, f.operator, p)
 				p = m8Claim(t, dispatch)
 			}

@@ -226,8 +226,8 @@ func TestM8CrashRecovery(t *testing.T) {
 			if e := m8Consumer(w).Consume(context.Background(), old); e != events.ErrNotReady {
 				t.Fatal("unconfirmed publisher became consumable")
 			}
-			// Let the actual PostgreSQL-time lease expire; no test clock alteration here.
-			time.Sleep(5100 * time.Millisecond)
+			// Let the actual 5s publication lease plus first 500ms retry backoff expire; no test clock alteration here.
+			time.Sleep(5600 * time.Millisecond)
 			again := m8Claim(t, dispatch)
 			if again.EventID != old.EventID || again.BodyHash != old.BodyHash || again.Generation <= old.Generation {
 				t.Fatal("crash recovery changed immutable event or fence")

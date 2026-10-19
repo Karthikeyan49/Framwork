@@ -15,8 +15,12 @@ Historic intents are LEGACY_PAUSED, retained without invented payloads or dates.
 The dispatcher claims one PostgreSQL-time five-second lease, with token/generation
 fencing and SKIP LOCKED. Network publishing runs after the transaction. Known
 serialization-aborted lease claims may retry four times; unknown commits wait for
-lease expiry. Five delivery attempts, 500ms exponential retry backoff and a
-five-second receipt deadline apply. SENT events without inbox completion are
+lease expiry. ADR062 now separates the five-second publication lease from the
+15-minute receipt window, with20 attempts and500ms exponential backoff capped
+at60 seconds. LEASED retries wait until lease expiry plus backoff; positively
+known publish failures use backoff directly. Issued rows keep their existing
+deadlines across migration00055; only a later claim/finish uses the new policy.
+SENT events without inbox completion are
 republished, including after broker loss. The database records attempts and DEAD
 state. Delivery is at least once, not universal exactly-once remote execution.
 
@@ -49,5 +53,12 @@ Correlated OTel publish/consume spans include event/tenant/source/request/attemp
 audit evidence records event and consumer IDs. No DSNs, payloads or secrets appear
 in warnings. Alerting, retention automation and scale tuning remain M15/M18.
 
-See [ADR022](../../docs/adr/022-m8-transactional-delivery.md) and the M8 verification
-reports. Stop after M8; do not start workflow behavior without a new task.
+See [ADR022](../../docs/adr/022-m8-transactional-delivery.md) and the historical M8
+verification reports for the original protocol. Current work follows the M9R
+remediation plan; do not start M10 automatically.
+
+Current M9R timing authority is [ADR062](../../docs/adr/062-m9r-event-outage-budgets.md).
+See the [outage runbook](../../docs/operations/R7B_EVENT_DELIVERY_RUNBOOK.md) for
+finite retry/receipt budgets, the longer broker-loss repair delay, controlled
+forward migration and the real `make test-event-outage` rehearsal. This does not
+add production consumers, workflow renewal, replay privileges or external tools.

@@ -26,6 +26,9 @@ func Ready(ctx context.Context, db *sql.DB, role string) error {
 	} else {
 		return ErrDelivery
 	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*)=1 AND coalesce(bool_and(version=$1 AND lease_ms=$2 AND receipt_ms=$3 AND max_attempts=$4 AND retry_base_ms=$5 AND retry_cap_ms=$6),false) FROM control.event_delivery_policy()`, DeliveryPolicyVersion, PublishLease.Milliseconds(), ReceiptWindow.Milliseconds(), MaxDeliveryAttempts, RetryBase.Milliseconds(), RetryCap.Milliseconds()).Scan(&ok); err != nil || !ok {
+		return ErrDelivery
+	}
 	err := db.QueryRowContext(ctx, `WITH event_tables AS(
  SELECT c.oid,c.relrowsecurity,c.relforcerowsecurity,c.relowner,n.nspname||'.'||c.relname AS name FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
  WHERE n.nspname||'.'||c.relname IN('runtime.event_sequences','runtime.event_envelopes','runtime.event_inbox','control.event_deliveries','control.event_attempts','control.event_replays','control.event_quarantine','runtime.outbox_intents'))

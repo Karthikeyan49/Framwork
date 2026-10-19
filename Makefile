@@ -107,6 +107,11 @@ test-rules-fuzz:
 test-events-fuzz:
 	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzPointer$$' -fuzztime=10s -parallel=2 ./internal/events
 
+.PHONY: test-event-outage
+# Real ten-minute consumer absence and fixture-owned Redis sender rejection.
+test-event-outage:
+	node scripts/with-env.mjs $(GO) test -race -tags=integration,eventoutage -timeout=15m -count=1 -run '^TestR7bRealTenMinuteEventOutage$$' -v ./tests/integration
+
 .PHONY: test-workflows-fuzz
 test-workflows-fuzz:
 	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzWorkflowRestore$$' -fuzztime=10s -parallel=2 ./internal/runtime/workflow
