@@ -558,3 +558,36 @@ a provider or a gateway directly.
 - The 6 s clamp makes real provider latencies unusable; this slice proves the seam, the
   durability and the authority model, not model quality (§15).
 - The independent review of M14 has not run: everything here is builder-side evidence.
+
+## Amendment B — pipeline decisions and corrections (2026-10-19)
+
+Decisions made while building `internal/ai`, and corrections of numbers stated earlier in this ADR. The
+code is the source of truth for each of them.
+
+1. **Repair diagnostics are `UNTRUSTED` data (corrects §7).** Compiler diagnostics can echo strings that an
+   author controlled (paths and identifiers), so the repair segment is labelled `UNTRUSTED`; only the
+   repair lead-in text is `TRUSTED`. The data/instruction split of the system template covers it
+   (`template.go`).
+2. **Token reservation (corrects A5).** `reserve = attempts × (ceil((min(draft+request+4096, MaxContextBytes) +
+   schema + 26 KiB repair overhead)/4) + MaxOutputTokens)`, capped; the schema text is part of every request
+   and so of the reservation (`service.go: reserveFor`).
+3. **Output token numbers (corrects A5).** The default is 8192 (`DefaultMaxOutputTokens`) and the ceiling is
+   `MaxOutputBytes/4` = 65536 (`MaxOutputTokensCeiling`), not 4096 and 16384. Attempts remain capped at 3.
+4. **Redaction rules.** Before anything reaches a prompt, free text passes these rules, each replaced by a
+   class marker: PEM blocks, URLs with credentials, JWTs, API-key shapes (`sk-`, `rk-`, `pk-`, live/test
+   keys, GitHub tokens), AWS key ids, bearer tokens, `authorization:` values, `name = value` assignments with
+   a secret-like name, hex runs of 32+ characters and high-entropy base64 runs of 40+ characters. It is a
+   mechanical filter, not a guarantee that no secret survives (§15).
+5. **HTTP provider.** HTTPS only; a guarded dialer refuses private, link-local, loopback and metadata
+   addresses at dial time; no redirect is followed, including a redirect to the same origin (the credential
+   is never sent twice); request and response are bounded; the credential file is read per call and never
+   retained or logged. Loopback exists only through a test-only option that configuration cannot set.
+6. **A proposal of the wrong kind is `409 proposal_wrong_kind`** (applying a requirement proposal or
+   confirming a patch). Rejecting a proposal needs `ai.apply` only.
+7. **Worker drift guard.** Migration 00060 does not replace `control.worker_grants_safe()`: since migration 52
+   the guard is derived and refuses every unlisted relation of control, runtime, iam and audit, and the AI
+   tables grant the worker nothing. (An earlier draft replaced the guard from its migration-49 definition,
+   which the merge with migration 52 would have undone.)
+8. **Test evidence added by the builder side** (not independent review): a 412-item attack corpus run against
+   the pure pipeline and, for 62 items, through the real routes; a provider-swap comparison over 145 items;
+   architecture rules ARCH-01..10; eleven mutation checks (`docs/verification/M14_ADVERSARIAL_PLAN.md`).
