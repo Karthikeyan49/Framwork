@@ -80,6 +80,8 @@ func refusalCode(ctx context.Context, err error) string {
 		return "RECOMPUTE_BUSY_" + strings.ToUpper(busy.Scope)
 	case ctx.Err() != nil:
 		return "TIMEOUT"
+	case errors.Is(err, policy.ErrDefinition):
+		return "ROLE_HEADS_EXCEEDED"
 	}
 	return ""
 }
@@ -104,6 +106,10 @@ func releaseReply(ctx context.Context, err error) (reply, error) {
 		return reply{}, &requestRejection{response: timeout}
 	case errors.As(err, &violation):
 		return reply{}, &requestRejection{response: denied(400, "invalid_release_artifact", "Release artifact rejected: "+violation.Code)}
+	case errors.Is(err, policy.ErrDefinition):
+		// The tenant's role snapshot is above policy.MaxRoleHeads, so no policy bundle can
+		// be derived (review F10): typed and audited, not an unexplained outage.
+		return reply{}, &requestRejection{response: denied(409, "release_policy_snapshot_too_large", "The tenant has more role definitions than a release policy snapshot can carry; release candidates cannot be built or decided until an operator reduces them")}
 	case errors.Is(err, promotion.ErrNotFound), errors.Is(err, metadata.ErrNotFound), errors.Is(err, data.ErrNotFound):
 		status, code = 404, "not_found"
 	case errors.Is(err, promotion.ErrRecoveryRequired):
@@ -132,9 +138,30 @@ func releaseReply(ctx context.Context, err error) (reply, error) {
 		}
 	}
 	if status != 0 {
-		return reply{}, &requestRejection{response: denied(status, code, "Release request rejected; reload the artifacts before retrying")}
+		return reply{}, &requestRejection{response: denied(status, code, "Release request rejected; reload the artifacts before retrying"), cause: err}
 	}
 	return reply{}, err
+}
+
+// releaseIdempotentPOST are the release POSTs whose repetition with the same body is a
+// replay by construction: a candidate is addressed by the hash of its bytes, an acceptance
+// spec by the hash of its body and its author. Requirement appends are compare-and-set on
+// the head and are deliberately not repeated: a second identical append is a real conflict.
+var releaseIdempotentPOST = map[string]bool{
+	"POST /v1/tenants/{tenant}/preview/{app}/candidates":       true,
+	"POST /v1/tenants/{tenant}/preview/{app}/acceptance-specs": true,
+}
+
+// releaseKnownAbort is postgres.KnownAbort plus the unique violation of a concurrent
+// identical insert into the release tables: the repeated attempt sees the committed row and
+// answers as a replay. Anything else, and a third failure, stays a 409.
+func releaseKnownAbort(err error) bool {
+	if postgres.KnownAbort(err) {
+		return true
+	}
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "23505" && pg.SchemaName == "control" &&
+		(pg.TableName == "acceptance_specs" || pg.TableName == "release_bundles" || pg.TableName == "release_candidates")
 }
 
 func (a API) release(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry) (reply, error) {

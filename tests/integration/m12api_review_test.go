@@ -9,13 +9,21 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
+	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
 // refusalAudit counts the audit rows of e.app that carry a refusal code.
@@ -195,5 +203,246 @@ func TestM12APIRejectedBuildAuditsReasonAndAssessmentHash(t *testing.T) {
 	last := states[1]
 	if last["refusal_code"] != promotion.RejectVerificationFailed || !isHash(last["assessment_hash"]) || !isHash(last["artifact_hash"]) || last["verifier_outcome"] != "FAIL" {
 		t.Errorf("the verifier rejection lacks its reason or hashes: %v", last)
+	}
+}
+
+// ------------------------------------------------------------------ F7
+
+// concurrently runs n copies of fn at once and returns their results in order.
+func concurrently[T any](n int, fn func() T) []T {
+	out := make([]T, n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range out {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			out[i] = fn()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return out
+}
+
+// TestM12APIConcurrentIdenticalRequestsConvergeOnTheReplay (F7): idempotency held only for
+// sequential retries; of four concurrent identical builds three got 409 and an audit row
+// "rejected" for a request that is a replay. Identical candidate builds and acceptance posts
+// now converge (one 201, the others replay), while the compare-and-set append of a
+// requirement set keeps exactly one winner.
+func TestM12APIConcurrentIdenticalRequestsConvergeOnTheReplay(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	// The admission bound of F9 would answer three of four concurrent builds of one tenant with
+	// 429 (a typed refusal that converges on retry); this test is about the database race that
+	// remains when they are admitted, so it admits all four.
+	e.useAPI(func(a *access.API) { a.Recompute = promotion.NewRecompute(promotion.Limits{Process: 8, Tenant: 8}) })
+	for round, threshold := range []string{"500", "510", "520"} {
+		art := e.prepareDoc(orderDocument(e.app, threshold), threshold, e.person("alice"), e.person("bob"))
+		codes := concurrently(4, func() int { return e.candidate(e.carol.token, art).Code })
+		created, replayed := 0, 0
+		for _, c := range codes {
+			switch c {
+			case 201:
+				created++
+			case 200:
+				replayed++
+			}
+		}
+		if created != 1 || replayed != 3 {
+			t.Fatalf("round %d: four concurrent identical builds answered %v, want one 201 and three 200", round, codes)
+		}
+	}
+	if n := e.auditCount("release.candidate_staged"); n != 3 {
+		t.Errorf("staged audit rows: %d", n)
+	}
+	if n := e.auditCount("release.candidate_replayed"); n != 9 {
+		t.Errorf("replay audit rows: %d", n)
+	}
+	if n := e.auditCount("candidates.build.rejected"); n != 0 {
+		t.Errorf("a replay was audited as a rejection: %d", n)
+	}
+	var candidates int
+	if err := e.f.operator.QueryRow(`SELECT count(*) FROM control.release_candidates WHERE tenant_id=$1 AND app_id=$2`, e.f.tenantA, e.app).Scan(&candidates); err != nil || candidates != 3 {
+		t.Errorf("candidates staged: %d %v", candidates, err)
+	}
+
+	// Four identical acceptance posts by one author: one spec, the same answer for all.
+	_, requirements := e.heads()
+	set := thresholdSet(e.app, "530")
+	var stored promotion.StoredRequirements
+	if w := e.requirements(e.alice, set, requirements); w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &stored) != nil {
+		t.Fatal("requirements", w.Code, w.Body.String())
+	}
+	bob := e.person("bob").token
+	specs := concurrently(4, func() *httptest.ResponseRecorder {
+		return e.acceptance(bob, stored.Version, acceptanceFor(set, "530.01"))
+	})
+	ids := map[string]bool{}
+	for _, r := range specs {
+		var s promotion.StoredAcceptance
+		if r.Code != 201 || json.Unmarshal(r.Body.Bytes(), &s) != nil {
+			t.Fatalf("a concurrent acceptance post answered %d %s", r.Code, r.Body.String())
+		}
+		ids[s.ID] = true
+	}
+	if len(ids) != 1 {
+		t.Errorf("concurrent identical acceptance posts created %d specs", len(ids))
+	}
+
+	// The compare-and-set append is NOT repeated: of four identical appends one wins.
+	next := thresholdSet(e.app, "540")
+	append4 := concurrently(4, func() int { return e.requirements(e.alice, next, stored.Version).Code })
+	won := 0
+	for _, c := range append4 {
+		if c == 201 {
+			won++
+		} else if c != 409 {
+			t.Errorf("a losing append answered %d", c)
+		}
+	}
+	if won != 1 {
+		t.Errorf("four concurrent appends on one head: %v", append4)
+	}
+}
+
+// ------------------------------------------------------------------ F2, F12
+
+// requestIDOf is the request id of an error response.
+func requestIDOf(w *httptest.ResponseRecorder) string {
+	var body struct {
+		RequestID string `json:"request_id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	return body.RequestID
+}
+
+// auditByRequest returns "action|resource|tenant|allowed" of the audit rows of one request.
+func (e *m13Env) auditByRequest(requestID string) []string {
+	e.t.Helper()
+	rows, err := e.f.operator.Query(`SELECT action||'|'||resource||'|'||coalesce(tenant_id::text,'-')||'|'||allowed FROM audit.entries WHERE request_id=$1 ORDER BY occurred_at`, requestID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err = rows.Scan(&s); err != nil {
+			e.t.Fatal(err)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// TestM12APIReleaseRoutesEndingInRolesAreNotRoleRoutes (F2): the authorization action was
+// chosen by a path suffix, so a release artifact whose last path segment is "roles" was
+// authorized, answered and audited as a role operation.
+func TestM12APIReleaseRoutesEndingInRolesAreNotRoleRoutes(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	for _, path := range []string{"/candidates/roles", "/requirements/roles", "/acceptance-specs/roles", "/candidates/x%2Froles"} {
+		for who, token := range map[string]string{"owner": e.alice, "viewer": e.viewer} {
+			w := e.get(path, token)
+			r := m13Decode(w)
+			if r.Code == "invalid_role" || r.Code == "forbidden" || w.Code != 404 && w.Code != 400 {
+				t.Errorf("%s GET %s: %d %s", who, path, w.Code, w.Body.String())
+			}
+			var resource string
+			for _, row := range e.auditByRequest(requestIDOf(w)) {
+				resource += row + ";"
+			}
+			if strings.Contains(resource, "roles.") || strings.Contains(resource, "|role|") || !strings.Contains(resource, "|preview|") {
+				t.Errorf("%s GET %s was audited as %q", who, path, resource)
+			}
+		}
+	}
+	// The role routes themselves are unchanged.
+	e.publishRole("auditor", 0, "candidates.read")
+	if w := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/roles/auditor", e.alice, 0, nil); w.Code != 200 {
+		t.Errorf("GET role: %d %s", w.Code, w.Body.String())
+	}
+	if w := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/roles/auditor", e.viewer, 0, nil); w.Code != 403 {
+		t.Errorf("a viewer read a role: %d", w.Code)
+	}
+}
+
+// TestM12APIInvalidApplicationIsAuditedAsATenantRequest (F12): an authenticated,
+// tenant-resolved request with a malformed application id was recorded as
+// authentication.denied with no tenant.
+func TestM12APIInvalidApplicationIsAuditedAsATenantRequest(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	w := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/preview/app.X/candidates", e.alice, 0, nil)
+	r := m13Decode(w)
+	if w.Code != 400 || r.Code != "invalid_application" || requestIDOf(w) == "" {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	rows := e.auditByRequest(requestIDOf(w))
+	want := "candidates.read.rejected|preview|" + e.f.tenantA + "|false"
+	if len(rows) != 1 || rows[0] != want {
+		t.Errorf("audit rows %v, want [%s]", rows, want)
+	}
+}
+
+// ------------------------------------------------------------------ F10
+
+// TestM12APIRoleHeadLimitIsTypedAndAudited (F10): past policy.MaxRoleHeads no policy bundle
+// can be derived, so building and every detail read answered an unaudited 503, and a tenant
+// could publish its way into it with no way back (heads cannot be retired). Publication of
+// the head above the bound is refused (409 role_limit), and a tenant that is above it anyway
+// (a raced publication, a direct port call) gets a typed, audited 409.
+func TestM12APIRoleHeadLimitIsTypedAndAudited(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	hash, art := e.build("500", nil, e.carol)
+
+	var heads int
+	count := func() int {
+		if err := e.f.operator.QueryRow(`SELECT count(*) FROM control.role_heads WHERE tenant_id=$1`, e.f.tenantA).Scan(&heads); err != nil {
+			t.Fatal(err)
+		}
+		return heads
+	}
+	for i := 0; count() < policy.MaxRoleHeads; i++ {
+		e.publishRole(fmt.Sprintf("bulk_%04d", i), 0, "candidates.read")
+	}
+	// At the bound everything still works and an existing role can still be changed.
+	viewOf(t, e.httpCandidate(e.viewer, hash), 200)
+	e.publishRole("bulk_0000", 1, "candidates.read", "requirements.read")
+	// The head above the bound is refused, typed and audited, and writes nothing.
+	def := map[string]any{"schema_version": "tenant-capabilities-v1", "name": "one_too_many", "grants": []any{map[string]any{"effect": "ALLOW", "actions": []string{"candidates.read"},
+		"resource": map[string]string{"app_id": "*", "entity_id": "*", "field_id": "*"}}}}
+	w := m5Call(e.h, "/v1/tenants/"+e.f.tenantA+"/roles", e.alice, map[string]any{"operation_id": uuid(t), "expected_version": 0, "active": true, "definition": def})
+	m13apiExpect(t, "the head above the bound", w, 409, "role_limit")
+	if count() != policy.MaxRoleHeads {
+		t.Fatalf("the refused head was written: %d", heads)
+	}
+
+	// A head beyond the bound by any other way (here a direct call of the definer port).
+	err := e.run(e.f.aliceSubject, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
+		raw, _ := json.Marshal(def)
+		sum := sha256.Sum256(raw)
+		_, err := q.ExecContext(ctx, `SELECT control.publish_role($1,$2,$3,$4,$5,$6,$7)`, a.TenantID(), "one_too_many", uuid(t), 0, raw, hex.EncodeToString(sum[:]), true)
+		return err
+	})
+	if err != nil {
+		t.Skip("the definer port refused the direct publication:", err) // the bound then holds in the database as well
+	}
+	for _, request := range []func() *httptest.ResponseRecorder{
+		func() *httptest.ResponseRecorder { return e.httpCandidate(e.viewer, hash) },
+		func() *httptest.ResponseRecorder { return e.candidate(e.carol.token, art) },
+		func() *httptest.ResponseRecorder { return e.httpApprove(e.dave.token, hash) },
+	} {
+		w = request()
+		m13apiExpect(t, "a request above the bound", w, 409, "release_policy_snapshot_too_large")
+	}
+	if n := e.refusalAudit("ROLE_HEADS_EXCEEDED"); n != 3 {
+		t.Errorf("the refusals must be audited: %d", n)
+	}
+	if n := e.auditCount("candidates.read"); n != 1 {
+		t.Logf("allowed candidate reads: %d", n)
 	}
 }

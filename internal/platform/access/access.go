@@ -148,9 +148,15 @@ type reply struct {
 type requestRejection struct {
 	response reply
 	evidence *audit.Entry
+	// cause is the error the response was mapped from, when a retry may depend on it.
+	cause error
 }
 
 func (e *requestRejection) Error() string { return "request rejected" }
+
+// Unwrap exposes the database error a handler mapped to its typed response, so that the
+// retry of an idempotent request can recognise a known abort.
+func (e *requestRejection) Unwrap() error { return e.cause }
 
 func denied(status int, code, message string) reply {
 	return reply{status: status, code: code, message: message}
@@ -188,6 +194,18 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The POSTs of the release builder that are idempotent by content (a candidate with the
+	// same bytes, an acceptance spec with the same body) repeat after a known abort, so that
+	// concurrent identical requests converge on the replay instead of one 409 each (review F7).
+	retryRelease := releaseIdempotentPOST[r.Pattern] && r.Body != nil
+	if retryRelease {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		if err != nil || len(body) > 1<<20 {
+			httpserver.Error(w, r, 400, "invalid_release_request", "Request body is invalid")
+			return
+		}
+	}
 	parentContext := r.Context()
 	if localCommand {
 		var cancel context.CancelFunc
@@ -197,7 +215,7 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	run := func(parent context.Context) error {
 		response, rejectedEvidence = reply{}, audit.Entry{}
 		p, authErr = identity.Principal{}, identity.ErrUnauthenticated
-		if localCommand {
+		if localCommand || retryRelease {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		return a.transaction(parent, func(ctx context.Context, tx postgres.Executor) error {
@@ -234,6 +252,8 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		if postgres.KnownAbort(err) {
 			err = &requestRejection{response: denied(409, "concurrent_conflict", "Concurrent changes prevented this command; reconcile its key and reload before retrying")}
 		}
+	} else if retryRelease {
+		err = postgres.RetryLocalWhen(parentContext, run, releaseKnownAbort)
 	} else {
 		err = run(parentContext)
 	}
@@ -411,7 +431,10 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			action = releaseAction
 		}
 	}
-	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") {
+	// Exact registered patterns only (as for teams below): a path suffix would capture
+	// any route whose last variable segment is literally "roles", for example a release
+	// artifact id (M12 API review F2).
+	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || rolePatterns[r.Pattern] {
 		resource = "role"
 		action = "roles.read"
 		if r.Method == http.MethodPost {
@@ -434,6 +457,11 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	if resource == "preview" || resource == "metadata" {
 		appID = r.PathValue("app")
 		if len(appID) > 160 || !metadataAppID.MatchString(appID) {
+			// An authenticated, tenant-resolved request: record it as such (tenant, the
+			// action it asked for) and not as an authentication failure (review F12).
+			evidence.TenantID = access.TenantID()
+			evidence.Action = action + ".rejected"
+			evidence.Resource = resource
 			return denied(400, "invalid_application", "Invalid application selection"), evidence, nil
 		}
 		evidence.State.MetadataApp = appID
@@ -507,6 +535,10 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		}{access.TenantID(), access.Roles(), d}
 	}
 	return reply{status: 200, body: result}, evidence, nil
+}
+
+var rolePatterns = map[string]bool{
+	"POST /v1/tenants/{tenant}/roles": true,
 }
 
 var teamPatterns = map[string]bool{
