@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -112,4 +113,64 @@ func ctxError(ctx context.Context) error {
 		return fmt.Errorf("%w: %v", ErrProviderTimeout, ctx.Err())
 	}
 	return ctx.Err()
+}
+
+// scriptFile is the on-disk shape of a development script (kind scripted).
+type scriptFile struct {
+	Steps []scriptFileStep `json:"steps"`
+}
+
+type scriptFileStep struct {
+	Payload json.RawMessage `json:"payload"`
+	Usage   Usage           `json:"usage"`
+	Model   string          `json:"model"`
+	DelayMS int64           `json:"delay_ms"`
+	Error   string          `json:"error"`
+}
+
+// LoadScript reads a development script: {"steps":[{"payload":<string or JSON
+// value>,"usage":{...},"model":"...","delay_ms":0,"error":"unavailable|timeout|
+// refused|malformed"}]}. A string payload is used byte for byte; any other JSON value
+// is used as its compact encoding. At most MaxScriptSteps steps.
+func LoadScript(path string) ([]ScriptStep, error) {
+	raw, err := readBounded(path, MaxConfigBytes)
+	if err != nil {
+		return nil, err
+	}
+	var f scriptFile
+	if err = decodeStrictObject(raw, MaxConfigBytes, &f, []string{"steps"}); err != nil {
+		return nil, err
+	}
+	if len(f.Steps) == 0 || len(f.Steps) > MaxScriptSteps {
+		return nil, fmt.Errorf("%w: a script has 1..%d steps", ErrInvalidInput, MaxScriptSteps)
+	}
+	steps := make([]ScriptStep, 0, len(f.Steps))
+	for _, s := range f.Steps {
+		step := ScriptStep{Usage: s.Usage, Model: s.Model}
+		if s.DelayMS < 0 || s.DelayMS > DefaultWallClock.Milliseconds() {
+			return nil, fmt.Errorf("%w: step delay out of range", ErrInvalidInput)
+		}
+		step.Delay = time.Duration(s.DelayMS) * time.Millisecond
+		switch s.Error {
+		case "":
+			payload := []byte(s.Payload)
+			var text string
+			if json.Unmarshal(s.Payload, &text) == nil {
+				payload = []byte(text)
+			}
+			step.Payload = payload
+		case "unavailable":
+			step.Err = ErrProviderUnavailable
+		case "timeout":
+			step.Err = ErrProviderTimeout
+		case "refused":
+			step.Err = ErrProviderRefused
+		case "malformed":
+			step.Err = ErrProviderMalformed
+		default:
+			return nil, fmt.Errorf("%w: unknown step error", ErrInvalidInput)
+		}
+		steps = append(steps, step)
+	}
+	return steps, nil
 }
