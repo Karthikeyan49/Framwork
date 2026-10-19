@@ -110,18 +110,20 @@ bodies refused with 22023/55000/42501).
 
 ## Independent review
 
-Status (partial, 2026-10-16). Reports are in `docs/verification/`:
+All five M12 reviews are complete (reports in `docs/verification/`):
 
-- **M12 database layer** (`M12_DB_INDEPENDENT_REVIEW.md`): PASS WITH FINDINGS. The runtime role could
-  still approve and activate releases directly in SQL (closed by migration 49 of the M13
-  branch, not by M12); the ports read the jsonb view and rely on `Restore` for canonical
-  form; `worker_grants_safe()` misses REFERENCES/TRIGGER grants and unlisted tables
-  (hardening in migration 49).
-- **Deterministic logic** (`M12_VERIFIER_INDEPENDENT_REVIEW.md`, in progress): F1 HIGH
-  (`Restore` accepts a forged diff) — fixed, see above; the byte-level leaf sweep, the
-  randomised verifier mutation testing and the risk monotonicity property tests did not complete.
-- **API/policy/audit review:** not completed (no findings recorded).
-- **Contract-honesty audit** (`CONTRACT_HONESTY_AUDIT.md`, in progress): H1 (same finding) and
-  M1–M9 documentation defects; the certain corrections were applied to ADR036–038, the design appendix and the
-  sandbox README.
-Not run to completion: the API review, the rest of the verifier review, and the foundation finding-status audit.
+- **Database layer** (`M12_DB_INDEPENDENT_REVIEW.md`): PASS WITH FINDINGS, F1–F6. F1 was closed by migration 49
+  (M13), F6 is M10R-02 (migration 50), F2–F5 are fixed by migration 52 (ADR038 amendment 12; `TestM12R*`).
+- **Deterministic logic** (`M12_VERIFIER_INDEPENDENT_REVIEW.md`): F1 HIGH fixed (see above); F2–F5 and F7 fixed in
+  the verifier (ADR038 amendment 9); F6 and F8 are documentation. A later re-verification found an exemption band
+  that passed (FR-02): ratio probes were added and the verifier version is now `verifier-v2`.
+- **API, policy, audit** (`M12_API_INDEPENDENT_REVIEW.md`): F1–F12 each dispositioned in its fix-status section; F9
+  (MEDIUM, uncached full recomputation inside the request transaction) is fixed by a memo of the pure recomputation
+  plus per-tenant and per-process admission; F4, F8 and F11 are documented.
+- **Contract-honesty audit** (`CONTRACT_HONESTY_AUDIT.md`): the certain corrections were applied to ADR036–038, the
+  design appendix and the sandbox README.
+- **Foundation finding status** (`docs/migration/M9R_FINDING_STATUS.md`, `FOUNDATION_GAP_ANALYSIS.md`): audited by a
+  separate agent; the audit keeps N-01 (the remediation line is not merged) open.
+
+The migration 52 fixes, the API fixes and `verifier-v2` are not independently reviewed. The M10 fixes and the verifier
+fixes F2–F5/F7 were re-verified by a separate agent and held (`FIX_REVERIFICATION.md`).
