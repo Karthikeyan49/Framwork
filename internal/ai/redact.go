@@ -132,6 +132,24 @@ func redactText(s string) (string, int) {
 	return s, n
 }
 
+// redactStructural is the part of the redactor that also applies to identifier-shaped
+// strings: the credential formats with a recognisable prefix and long hex runs. An
+// identifier-shaped string is structure (ids, references, versions), so the generic
+// assignment and base64-entropy heuristics skip it, but a lower-case token such as
+// "ghp_..." or a 64-digit digest starting with a letter is shaped like an identifier
+// too and must not slip through on that account.
+func redactStructural(s string) (string, int) {
+	n := 0
+	count := func(class string) func(string) string {
+		return func(string) string { n++; return marker(class) }
+	}
+	for _, r := range redactRules {
+		s = r.re.ReplaceAllStringFunc(s, count(r.class))
+	}
+	s = longHex.ReplaceAllStringFunc(s, count("hex"))
+	return s, n
+}
+
 // dirtyRune reports a rune that never reaches a model or a reviewer: C0/C1 controls
 // other than newline and tab, bidirectional overrides and isolates, line and
 // paragraph separators, zero-width space, word joiner, byte-order mark and Unicode
@@ -178,7 +196,7 @@ func redactTree(node any) (any, int) {
 	case string:
 		v = sanitizeText(v)
 		if identifierLike.MatchString(v) {
-			return v, 0
+			return redactStructural(v)
 		}
 		return redactText(v)
 	case []any:
@@ -199,6 +217,26 @@ func redactTree(node any) (any, int) {
 		return v, total
 	}
 	return node, 0
+}
+
+// redactString sanitizes and redacts one author-supplied string. Identifier-shaped
+// strings are structure and stay.
+func redactString(s string) string {
+	s = sanitizeText(s)
+	if identifierLike.MatchString(s) {
+		out, _ := redactStructural(s)
+		return out
+	}
+	out, _ := redactText(s)
+	return out
+}
+
+// redactRaw encodes an author-controlled value as compact JSON with every string
+// sanitized and redacted. Server-built values (hashes, revisions) are never passed
+// through it: a 64-digit digest is exactly what the hex rule removes from author text.
+func redactRaw(v any) (json.RawMessage, error) {
+	out, _, err := redactedJSON(v)
+	return json.RawMessage(out), err
 }
 
 // redactedJSON encodes v as compact JSON with every string sanitized and redacted.

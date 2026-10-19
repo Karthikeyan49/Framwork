@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/tools"
@@ -156,13 +155,7 @@ func (p *HTTPJSONProvider) dialContext(ctx context.Context, _, addr string) (net
 			return nil, errDenied
 		}
 	}
-	dialer := net.Dialer{Timeout: 10 * time.Second, KeepAlive: -1, ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
-		target, err := netip.ParseAddrPort(address)
-		if err != nil || p.denied(target.Addr()) || int(target.Port()) != p.port {
-			return errDenied
-		}
-		return nil
-	}}
+	dialer := net.Dialer{Timeout: 10 * time.Second, KeepAlive: -1, ControlContext: tools.AddressGuard(p.port, p.denied)}
 	for _, ip := range addrs {
 		conn, err := dialer.DialContext(ctx, "tcp", netip.AddrPortFrom(ip.Unmap(), uint16(p.port)).String())
 		if err == nil {

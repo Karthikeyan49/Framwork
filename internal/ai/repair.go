@@ -242,7 +242,7 @@ func capDiagnostics(in []compiler.Diagnostic) []compiler.Diagnostic {
 		if len(out) >= MaxDiagnostics {
 			break
 		}
-		out = append(out, compiler.Diagnostic{Path: clip(d.Path, 200), Code: clip(d.Code, 64), Message: clip(d.Message, 300)})
+		out = append(out, compiler.Diagnostic{Path: redactString(clip(d.Path, 200)), Code: redactString(clip(d.Code, 64)), Message: redactString(clip(d.Message, 300))})
 	}
 	return out
 }

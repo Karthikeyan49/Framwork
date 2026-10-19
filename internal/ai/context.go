@@ -48,13 +48,15 @@ const (
 	maxRowTextRunes        = 160
 )
 
-// wrapUntrusted encodes v as redacted compact JSON between the wrapper markers.
+// wrapUntrusted encodes v as compact JSON between the wrapper markers. Every
+// author-controlled string in v must already have passed redactString or redactRaw;
+// the encoder itself escapes <, > and & and emits no raw newline.
 func wrapUntrusted(v any) (string, error) {
-	body, _, err := redactedJSON(v)
+	body, err := json.Marshal(v)
 	if err != nil {
 		return "", err
 	}
-	return wrapperBegin + "\n" + body + "\n" + wrapperEnd, nil
+	return wrapperBegin + "\n" + string(body) + "\n" + wrapperEnd, nil
 }
 
 // clip shortens author text to n runes after sanitizing it; the clip is visible to a
@@ -72,12 +74,12 @@ func clip(s string, n int) string {
 }
 
 type definitionRow struct {
-	ID         string               `json:"id"`
-	Kind       string               `json:"kind"`
-	Label      string               `json:"label"`
-	Hash       string               `json:"hash,omitempty"`
-	Editable   *bool                `json:"editable,omitempty"`
-	Definition *metadata.Definition `json:"definition,omitempty"`
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	Label      string          `json:"label"`
+	Hash       string          `json:"hash,omitempty"` // server-computed: never redacted
+	Editable   *bool           `json:"editable,omitempty"`
+	Definition json.RawMessage `json:"definition,omitempty"` // redacted
 }
 
 type applicationSegment struct {
@@ -158,21 +160,24 @@ func (g *gateway) BuildContext(in ContextInput) (Context, error) {
 	patch := in.Task == TaskApplicationPatch
 	rows := make([]definitionRow, 0, len(in.Draft.Definitions))
 	for _, d := range in.Draft.Definitions {
-		row := definitionRow{ID: d.ID, Kind: d.Kind, Label: clip(d.Label, maxLabelRunes)}
+		row := definitionRow{ID: redactString(clip(d.ID, maxRowTextRunes)), Kind: redactString(clip(d.Kind, 32)), Label: redactString(clip(d.Label, maxLabelRunes))}
 		if patch {
 			row.Hash = metadata.DefinitionHash(d)
 			editable := kindAllowed(d.Kind)
 			row.Editable = &editable
 			if editable {
-				full := d
-				row.Definition = &full
+				body, rerr := redactRaw(d)
+				if rerr != nil {
+					return Context{}, fmt.Errorf("ai: a definition cannot be encoded: %w", rerr)
+				}
+				row.Definition = body
 			}
 		}
 		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
-	application := applicationSegment{SchemaVersion: in.Draft.SchemaVersion, Namespace: in.Draft.Namespace, AppID: in.Draft.AppID,
-		Revision: in.DraftRevision, DraftHash: in.DraftHash, Definitions: rows}
+	application := applicationSegment{SchemaVersion: redactString(clip(in.Draft.SchemaVersion, 32)), Namespace: redactString(clip(in.Draft.Namespace, maxRowTextRunes)),
+		AppID: redactString(clip(in.Draft.AppID, maxRowTextRunes)), Revision: in.DraftRevision, DraftHash: in.DraftHash, Definitions: rows}
 
 	diff := diffSegment{Against: "none", Changes: []diffRow{}}
 	if in.BaseProgram != nil && in.BaseProgram.Valid() {
@@ -182,7 +187,10 @@ func (g *gateway) BuildContext(in ContextInput) (Context, error) {
 				diff.Against = "active_release"
 				for _, c := range d.Changes {
 					aspects := append([]string{}, c.Aspects...)
-					diff.Changes = append(diff.Changes, diffRow{ID: c.ID, Kind: c.Kind, Change: c.Change, Aspects: aspects})
+					for i := range aspects {
+						aspects[i] = redactString(clip(aspects[i], 64))
+					}
+					diff.Changes = append(diff.Changes, diffRow{ID: redactString(clip(c.ID, maxRowTextRunes)), Kind: redactString(clip(c.Kind, 32)), Change: redactString(clip(c.Change, 32)), Aspects: aspects})
 				}
 			}
 		}
@@ -208,7 +216,7 @@ func (g *gateway) BuildContext(in ContextInput) (Context, error) {
 
 	roleSet := map[string]bool{}
 	for _, r := range in.RoleNames {
-		if r = clip(r, maxRoleRunes); r != "" {
+		if r = redactString(clip(r, maxRoleRunes)); r != "" {
 			roleSet[r] = true
 		}
 	}
@@ -228,7 +236,7 @@ func (g *gateway) BuildContext(in ContextInput) (Context, error) {
 			if patch && r.Status != intent.StatusOpenQuestion {
 				continue
 			}
-			reqs = append(reqs, requirementRow{ID: clip(r.ID, maxRowTextRunes), Category: clip(r.Category, maxRowTextRunes), Status: clip(r.Status, maxRowTextRunes)})
+			reqs = append(reqs, requirementRow{ID: redactString(clip(r.ID, maxRowTextRunes)), Category: redactString(clip(r.Category, maxRowTextRunes)), Status: redactString(clip(r.Status, maxRowTextRunes))})
 		}
 	}
 	sort.Slice(reqs, func(i, j int) bool { return reqs[i].ID < reqs[j].ID })
@@ -244,7 +252,7 @@ func (g *gateway) BuildContext(in ContextInput) (Context, error) {
 	}{
 		{SegmentRequest, struct {
 			Request string `json:"request"`
-		}{request}},
+		}{redactString(request)}},
 		{SegmentApplication, application},
 		{SegmentReleaseDiff, diff},
 		{SegmentTools, toolList},
@@ -279,12 +287,12 @@ func cleanTool(t ToolSummary) ToolSummary {
 			if i >= 64 {
 				break
 			}
-			out = append(out, clip(n, maxRowTextRunes))
+			out = append(out, redactString(clip(n, maxRowTextRunes)))
 		}
 		return out
 	}
-	return ToolSummary{Ref: clip(t.Ref, maxRowTextRunes), Version: clip(t.Version, 32), SideEffect: clip(t.SideEffect, 64), Approval: clip(t.Approval, 64),
-		Input: names(t.Input), Output: names(t.Output)}
+	return ToolSummary{Ref: redactString(clip(t.Ref, maxRowTextRunes)), Version: redactString(clip(t.Version, 32)), SideEffect: redactString(clip(t.SideEffect, 64)),
+		Approval: redactString(clip(t.Approval, 64)), Input: names(t.Input), Output: names(t.Output)}
 }
 
 // contextHash is the SHA-256 of the canonical encoding of the version and the

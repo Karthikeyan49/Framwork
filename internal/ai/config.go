@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -223,7 +222,7 @@ func parseEndpoint(endpoint string) (host string, port int, u *url.URL, err erro
 		u.Host = "[" + host + "]"
 	}
 	if portText != "" {
-		u.Host = net.JoinHostPort(host, portText)
+		u.Host += ":" + portText
 	}
 	return host, port, u, nil
 }

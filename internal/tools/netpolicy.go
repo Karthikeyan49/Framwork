@@ -270,3 +270,18 @@ func newDialer() net.Dialer {
 func endpointAddr(e Endpoint) string {
 	return net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
 }
+
+// AddressGuard returns a net.Dialer ControlContext that refuses, immediately before
+// connect(2), every literal address for which denied reports true and every port other
+// than port. Packages outside tools that dial a pinned endpoint (the AI provider
+// adapter) use it so the last-moment re-validation is the same code as the tool
+// gateway's, without importing syscall themselves.
+func AddressGuard(port int, denied func(netip.Addr) bool) func(context.Context, string, string, syscall.RawConn) error {
+	return func(_ context.Context, _, address string, _ syscall.RawConn) error {
+		target, err := netip.ParseAddrPort(address)
+		if err != nil || denied(target.Addr()) || int(target.Port()) != port {
+			return errNetworkPolicy
+		}
+		return nil
+	}
+}
