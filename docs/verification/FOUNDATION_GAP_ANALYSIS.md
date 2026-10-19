@@ -17,6 +17,8 @@ R2a to R2c, R3a to R3d, R5a to R5e) and the code added by M10 to M12.
 - [x] Remediation slices R0 to R7 classified (same file).
 - [x] Fake-assumption scan, executed probes, newly discovered gaps N-01 to N-15 (below).
 - [x] Ranked order of work (last section).
+- [x] Re-audit at the integrated tree `e6b7877` on 2026-10-19 (section "Update at the integrated tree"): rows and gaps
+  re-judged, correctness tests executed on the MAIN stack, new gaps N-16 to N-23 added.
 
 Finding-status audit STATUS: COMPLETE. Every row is classified from code and tests.
 Nothing that needs a database was executed (see "What could not be verified").
@@ -352,6 +354,64 @@ or slice that should carry the work.
 - N-15 retire or wire `runtime.unique_projections`; keep `Store.Approve/Activate/Rollback`
   unreachable until the M13 ports replace them.
 
+## Update at the integrated tree `e6b7877` (2026-10-19)
+
+Baseline for this section: `e6b7877` (M0 to M13 + M10 fixes + verifier fixes, 64 commits after `dbc4b5b`), read from the
+worktree `/home/user/review-m13` and with `git show`. Executed this time (alone, `nice -n 10`, disposable databases):
+`TestM9R*` 73 PASS, five M1/M2 isolation tests PASS, `TestM13*` 31 PASS, `TestM10R*` 11 PASS, twelve unit packages PASS.
+The ledger carries the per-finding table (`docs/migration/M9R_FINDING_STATUS.md`, "Re-audit at the integrated tree").
+Sources of the new items: the independent M13 review (`review/m13-final`, `docs/verification/M13_INDEPENDENT_REVIEW.md`,
+pinned `e6b7877`) and the fix re-verification (`docs/verification/FIX_REVERIFICATION.md`, same branch).
+
+### Status of the tracked gaps
+
+| ID | At `dbc4b5b` | At `e6b7877` | Evidence |
+|---|---|---|---|
+| N-01 | MEDIUM, gate blocker | OPEN | `git merge-base --is-ancestor origin/remediation/m9r-foundation e6b7877` is false; 31 commits after the split at `e6305df`; migrations 45/46, ADR 036 to 039 and the `1.3.0` / `2.1.0` tokens still collide. Inside the M10 to M13 line the numbers are unique (45 to 50; `00050:3` records the gap at 49) |
+| N-02 | HIGH | CLOSED | approval requirement derived from the pinned plan (`00050:12-22,67`), caller flag ignored (`00050:50`); `TestM10R02WorkerCannotSkipApprovalInsideOwnLease` PASS. Residual FR-I1: the derivation trusts `workflow_bindings.plan_body`, which `framework_app` may insert with only a hash check (`00020:24`) |
+| N-03 | MEDIUM | PARTIAL | worker `state_id` changes follow the plan (`00050:205-216`); worker status, termination and failure writes are accepted (N-22); the API role keeps its grant (`00020:38`) |
+| N-04 | HIGH | CLOSED | M10R-01/03/04/05 fixed; 11 regression tests PASS; 9 variants HELD (expired window, idempotency-less write, lookup 500, pre-fix ledger row) |
+| N-05 | MEDIUM | CLOSED at the SQL floor, with findings | `00049:53-60`; floor held against over 100 direct attempts; control-plane defects N-16, N-17 |
+| N-06 | LOW | PARTIAL | `releaseGate` still returns `true` (`internal/platform/access/releases.go:53-55`) and is used only by `Stage` (`:397`); M13 handlers write their own audit entry with the real decision (`internal/platform/access/access.go:427-431`); `Store.evidence` still hard-codes `Allow: true` and `m6r-release-contract-v1` for `release.staged` (`internal/promotion/store.go:26-32`) |
+| N-07 | LOW | OPEN | migration 48 is unchanged (applied migrations are immutable); ADR039 amendment 6 now states that the ports read the jsonb view and that the database does not enforce canonical JSON |
+| N-08 | MEDIUM (documentation) | OPEN | `AGENTS.md`, `CLAUDE.md`, `README.md`, the plan and the supersession map are byte-identical to `dbc4b5b` |
+| N-09 | MEDIUM | OPEN | `.github`, `Makefile` unchanged |
+| N-10 | LOW | OPEN | `internal/config` unchanged |
+| N-11 | MEDIUM | PARTIAL | `decideTool` now has a table test (`internal/runtime/workflow/tool_decide_test.go:12`) and the retry rules were rewritten; `Delivery.MayRetry` still has no production caller and `delivery_test.go` still pins it |
+| N-12 | LOW | OPEN, narrower | every M13 decision recomputes the candidate (`internal/platform/access/promote.go:246-269`); the verifier is still not a separate credential |
+| N-13 | LOW | PARTIAL | `internal/policy/policy_test.go:130-241` pins `requirements.*`, `acceptance.*`, `candidates.*` and `releases.*` including viewer exclusion and custom-role delegation; `tools.invoke`, `sandbox.read`, `sandbox.manage` still have no test in any `_test.go` |
+| N-14 | LOW | PARTIAL | REFERENCES/TRIGGER and the release tables added (`00049:252-254`); still a fixed denylist |
+| N-15 | LOW | PARTIAL | `Store.Approve/Activate/Rollback` removed (`0c148f0`); `runtime.unique_projections` still has no writer |
+
+Fake assumptions: FA-1 CLOSED (N-02); FA-2 PARTIAL (N-03, N-22); FA-3 PARTIAL (N-11); FA-4 PARTIAL (N-06); FA-5 documented
+in ADR039 amendment 6, migration comment unchanged; FA-6 to FA-10 unchanged; FA-11 CLOSED (the M6R write paths were
+removed and the routes exist); FA-12 PARTIAL (N-13); FA-13 PARTIAL (N-14); FA-14 PARTIAL (N-12).
+
+### Newly discovered gaps at `e6b7877`
+
+| Rank | ID | Severity | Gap | Owner |
+|---|---|---|---|---|
+| 1 | N-16 | MEDIUM | An acknowledged rejection does not stop an activation whose REPEATABLE READ transaction began earlier (write skew; 4 of 4 overlapping HTTP trials left a rejected hash active). Source: M13R-01; same class as M12 API F8; the project's own precedent (migration 38, R5a review) needs a real row UPDATE fence | M13 follow-up |
+| 2 | N-17 | MEDIUM | The rollback class gate reads only the current release, so a rollback across an earlier DATA_NOT_REVERSIBLE release (c3 to c1 over a TRANSFORM c2) needs no plan. Source: M13R-02 | M13 follow-up |
+| 3 | N-18 | LOW | An approver demoted to a role without release authority still counts toward quorum. Source: M13R-03 | M13 / R5e |
+| 4 | N-19 | LOW | "Body keys must be spelled exactly" is false for U+017F and U+212A (a single aliased key is accepted). Source: M13R-04; recorded as a residual of M12 API F3 | M12 / M13 follow-up |
+| 5 | N-20 | LOW | Rejection note validation misses U+200E, U+200F, U+061C, U+200B, U+FEFF. Source: M13R-05 | M13 follow-up |
+| 6 | N-21 | LOW | The recorded runtime components are never compared with the running binary. Source: M13R-06; M12 verifier review F8 | M13 follow-up |
+| 7 | N-22 | LOW | A worker inside its lease can set instance status, termination and failure without a transition. Source: FR-01 (executed) | M10 follow-up (N-03) |
+| 8 | N-23 | LOW | The verifier's probes miss an exemption band that lies between the derived probes (600 to 900 USD passes); the threshold field's own constants are not mined. Source: FR-02 (executed) | R6 / M12 follow-up |
+
+Items still being fixed or reviewed on other branches and therefore tracked outside this analysis: M11 R01 to R07
+(`docs/verification/M11_INDEPENDENT_REVIEW.md`), M12 API F1 to F12 (F9 MEDIUM: an uncached recomputation lets a viewer load
+the API), M12 DB findings, gateway F5 to F9 (LOW). The M14 independent review is NOT RUN.
+
+### Re-ordered work (changes to the list below)
+
+1. N-01 stays first and is now the only thing between the integrated line and a clean foundation gate: run the full
+   integration, browser and performance suites once on the merged tree.
+2. N-16 and N-17 before any data plane or UI consumes the pointer (a rejected release must not become active; a rollback
+   must not hide an irreversible release).
+3. N-09 (gates in CI) and N-08 (agent contract) are unchanged.
+
 ## What could not be verified
 
 - NOT RUN (no database by design): every integration test, the three performance
@@ -359,6 +419,9 @@ or slice that should carry the work.
   ledger says "recorded PASS" or "read". The attacks in F01 are verified as present and
   asserting denial, not as passing today.
 - NOT RUN: frontend and browser tests (F10, R5c UI), `make check`, `make build`.
+- Update at `e6b7877`: with a database the audit executed `TestM9R*` (73), five M1/M2 tests, `TestM13*` (31) and
+  `TestM10R*` (11). STILL NOT RUN: the three `performance`-tagged floors, the frontend and browser tests, `make check`,
+  `make build`, and the integration files for M3 to M8 and the other M10 to M12 suites.
 - Spot-checked only, by `git show` (no checkout, no execution): R5d, R5e and R5f on
   `origin/remediation/m9r-foundation`; migration 49, ADR039 and the promotion routes on
   `claude/m13-approval-promotion`; migration 50 on `claude/m10-fixes`. Their own
