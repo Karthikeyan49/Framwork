@@ -58,7 +58,7 @@ the explicit injected-driver-panic/R7 diagnostic remains unresolved.
 `API_DB_CONCURRENCY` bounds access API database transactions (integer 1..10,
 default 4), with the existing 128-place FIFO queue. The pool remains 10 and all
 queue/statement/transaction deadlines remain. This does not limit health probes,
-Redis sign-in or other processes and does not complete rate limiting. Capacity
+Redis sign-in or other processes; request admission is described below. Capacity
 checks require `make reference-up` after ordinary infrastructure startup: the
 explicit PostgreSQL reference profile v2 uses four CPUs, 8GiB/no swap, 2GiB shared
 buffers, 6GiB effective cache estimate, 4MiB work memory and random_page_cost1.1.
@@ -67,6 +67,21 @@ acceptance, not production capacity proof. Ordinary `make infra-up` restores lig
 do not run it between selecting the reference profile and performance checks.
 `make test-aggregate-performance` exercises unmapped and current/retained mapped
 generations; its larger total suite timeout does not increase query budgets.
+
+[R7a request admission](docs/migration/M9R_R7A_IMPLEMENTATION_REPORT.md) adds
+bounded process-local quotas before protected API signature/database work.
+Defaults are 300 requests/second with a 600-request burst per socket peer and
+verified issuer/subject, and 1000/second with a 2000-request global burst.
+Invalid bearer traffic has a separate 1/second, burst 20 peer budget and
+10/second, burst 50 global budget. Rejections return HTTP 429 and `Retry-After`,
+increment closed-cardinality counters and use aggregated redacted access logs;
+they do not open a transaction or append denial audit rows. Admitted requests
+retain live authentication, membership, policy and atomic audit. Forwarding
+headers cannot select the peer. See `.env.example` and ADR061 for bounded
+operator tuning. Proxy clients share the socket bucket, and replicas/restarts
+change the aggregate allowance: verified edge controls and durable telemetry
+remain deployment work. This does not close R6 or the rest of R7.
+
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,

@@ -398,6 +398,17 @@ release and rollback preserves its true data/side-effect limitations.
 Owners: events/workflow, DevOps and security engineering. Final production gate;
 any earlier M10 dependency must be delivered before the relevant tool ships.
 
+**R7a is pulled forward independently of R6:** ADR061 and the
+[implementation report](M9R_R7A_IMPLEMENTATION_REPORT.md) cover bounded
+pre-database protected API admission. Stable product `8f9805e` and independent
+review/tests `cf45300` pass the adversarial review, including a checksum-pinned
+real API before/after attack. Final root checks/build pass 283 integration groups
+without failures/skips, 126 frontend tests, browser suites 11 + 7 and all eight
+unchanged reference targets. This closes only local request admission. It does
+not establish distributed
+edge quotas, durable rejection retention or the other R7 requirements below.
+No M10 or production promotion is introduced.
+
 - Separate broker delivery and consumer processing deadlines; retry based on
   outage budgets with backoff. Provide least-privilege reviewed replay/quarantine
   controls and explain aggregate ordering consequences. Test at least a ten-minute
@@ -409,8 +420,9 @@ any earlier M10 dependency must be delivered before the relevant tool ships.
   lease renewal and fencing if activities outlive leases. Choose snapshot versus
   current-record approval explicitly, with invalidation on changed records where
   required. Deduplicate immutable IR storage only after retention/refcount design.
-- Add rate limits before expensive authentication DB/audit work; bounded security
-  telemetry must still retain meaningful denial evidence. Separate immutable
+- Preserve R7a rate limits before expensive authentication DB/audit work and
+  verify deployment edge/proxy quotas separately. Bounded security telemetry
+  must still retain meaningful denial evidence. Separate immutable
   business audit from high-volume decision diagnostics, with retention, partition,
   export and deletion authority appropriate to each class.
 - Diagnose the R5c UI full-regression worker-policy EXPLAIN timeout under the
@@ -465,8 +477,9 @@ start another milestone automatically.
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
 governed numeric, text/civil-date, enum/reference, datetime/boolean and bounded full-text search R3b, R5a/R5b, R5c server and preview UI administration, R5d and
 R5e, bounded R5f sign-in, R5g local role UI/deployment preparation, bounded R3c
-uniqueness and bounded R3d SQL aggregation independently verified with final root
-gates. Production R2 execution, broader query/search/uniqueness lifecycle, external
+uniqueness, bounded R3d SQL aggregation and R7a process-local request admission
+independently verified with final root gates. Production R2 execution, broader
+query/search/uniqueness lifecycle, external
 identity deployment and R6–R7 remain open. External provider verification is
 deferred at user request; local conformance is not production SSO certification.
 The complete foundation gate and broader review findings are not accepted as resolved.**

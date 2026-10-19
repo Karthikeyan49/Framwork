@@ -1,6 +1,19 @@
 # External review finding status
 
-Current checkpoint, 19 October 2026: [R5g role administration](M9R_R5G_IMPLEMENTATION_REPORT.md)
+Current checkpoint, 19 October 2026: [R7a protected request admission](M9R_R7A_IMPLEMENTATION_REPORT.md)
+passes bounded independent review at product `8f9805e`, review `cf45300`, and
+final root checks/build with 283 integration groups without failures/skips,
+126 frontend tests, browser suites 11 + 7 and all eight unchanged reference targets.
+The actual pinned old API produced 40 denial audits for 40 malformed requests;
+the fixed API produces 20 denial audits plus 20 HTTP 429 responses, with zero
+audit rows for rejected requests. The 24 aggregate workload cases have exact
+results and zero errors, worst HTTP p95 505.454ms; deliberate forced-generic-plan
+diagnostic timeouts remain recorded as failures of that diagnostic mode.
+This is process-local protection, not distributed abuse capacity or durable
+security retention. R6 and the other
+R7 requirements remain open. Overall M9R remains PARTIAL; no M10/main merge.
+
+Previous checkpoint, 19 October 2026: [R5g role administration](M9R_R5G_IMPLEMENTATION_REPORT.md)
 completes the remaining local R5 UI and deployment preparation. Product fix
 `5c05d0b` and independent review/regressions `ba21eb0` close one demonstrated
 MEDIUM receipt-integrity finding and one LOW connection-preparation finding.
@@ -144,7 +157,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Workflow approval uses start snapshot, not current document | Existing snapshot semantics retained | Before business side effects, bind current-document version or explicitly approve a snapshot and validate freshness |
 | Rules have no consumer | Original statement corrected: preview and workflow conditions consume rule plans | Business tools remain later work; a rule result never grants authorization |
 | External exactly-once and AI steps | No external tool/AI implementation or universal exactly-once claim | M10 per-tool delivery/reconciliation; AI milestones preserve deterministic authority |
-| Rate limiting / invalid authentication DB amplification | Still open | R7 bounded admission before expensive DB work, with safe denial evidence and abuse tests |
+| Rate limiting / invalid authentication DB amplification | [R7a](M9R_R7A_IMPLEMENTATION_REPORT.md) implements bounded process-local peer/global/verified-subject admission and invalid-bearer budgets before SQL, with closed rejection counters and aggregated redacted429 logs. Independent actual before/after binary attack, queued expiry/cancellation, known-abort retries and parallel abuse tests pass | Distributed gateway/proxy quotas, deployed abuse envelope, telemetry export/tail loss and durable security retention remain R7/deployment work. Valid signed but unprovisioned users still require live SQL under general quotas; no negative membership cache |
 | Per-request compile / repeated validator construction / catalog checks | R3c/ADR045 profiles and removes repeated construction of immutable embedded JSON-Schema graphs only; concurrent validation and final read/write gates pass. Per-request source compilation and live catalog checks remain | Broader R7 profiling/admission/caching still open; preserve exact immutable keys, live membership/revocation and privilege drift detection |
 | Two conflicting rulebooks / missing supersession map | R0 map and concise agent rules implemented; source kits retained verbatim | Keep clause-level authority and current capability inventory updated |
 | No numeric verification gates / migration ownership | R2–R4 ADRs and reference targets now explicit | Execution must pass those gates; design and numbers alone are insufficient |
@@ -164,7 +177,9 @@ and final root gates, including all eight reference capacity targets. Broader
 search, aggregate/report UI, general query planning and uniqueness administration/
 removal/evolution remain separate. The bounded APIs do not complete product search
 or general query capacity. R5 local role UI and deployment preparation now pass;
-external provider verification is deferred. R6/R7 remain separate
+external provider verification is deferred. R7a local request admission now
+passes independent/full/browser/all-eight capacity gates; R6 and other R7 remain
+separate
 product/security/operations deliverables. R5b closes the bounded raw-worker
 capability gap; its synthetic receipt test has a narrow timeout margin and is
 not a wider capacity guarantee. The independent report records which final

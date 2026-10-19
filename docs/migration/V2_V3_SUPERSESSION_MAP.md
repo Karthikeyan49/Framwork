@@ -52,6 +52,14 @@ Current remediation evidence is maintained in the
 baseline table. [R3c](M9R_R3C_IMPLEMENTATION_REPORT.md) adds independently verified
 schema/IR1.4 unique-field declarations, governed claims and private live-authority
 permits over retained physical records. This is a preview/API foundation;
-constraint administration UI/removal/evolution and R3d aggregate expansion are
-separate work. The V2 source kit remains unchanged; no tenant-defined generated
+constraint administration UI/removal/evolution remain separate work.
+[R3d](M9R_R3D_IMPLEMENTATION_REPORT.md) subsequently verifies bounded SQL
+count/exact sums, with broader query/report features still open. The V2 source
+kit remains unchanged; no tenant-defined generated
 columns or shared DDL is reinstated.
+
+[R7a](M9R_R7A_IMPLEMENTATION_REPORT.md) adds process-local protected API admission
+with independent before/after evidence (`8f9805e`, review `cf45300`). It does
+not grant identity/capabilities or replace live transaction authorization.
+Deployed edge quotas, durable security retention and other R7 operations remain
+separate gates. Refer to the report for final root verification and limitations.

@@ -89,6 +89,10 @@ belongs to `internal/platform/app`.
   behavior. Injected driver/tracer panic is an unresolved R7 recovery limitation;
   do not claim database/sql can repair its leaked locks.
   API_DB_CONCURRENCY is trusted1..10/default4 with FIFO128; it is not rate limiting.
+  ADR061 adds bounded process-local peer/global/verified-subject admission before
+  protected API work. Never trust forwarding headers or unverified claims as quota
+  identity; preserve live transaction-time authentication and denial audit for
+  admitted requests. HTTP429 is not a safe automatic write retry.
   Reference capacity needs make reference-up and actual connected profile checks;
   ordinary infra-up resets lightweight defaults. Mapped/retained and all earlier
   read/write/unique gates plus independent review are required for acceptance.
