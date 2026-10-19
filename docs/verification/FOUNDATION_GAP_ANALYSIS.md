@@ -456,3 +456,29 @@ the API), M12 DB findings, gateway F5 to F9 (LOW). The M14 independent review is
 8. Hardening: N-10, N-13, N-14, N-15, N-07.
 
 Finding-status audit STATUS: COMPLETE
+
+## Update at `7fc2cb0` (milestone line only, 2026-10-19)
+
+Appended after the fixes of the milestone line; the tables above keep the statuses they were written with. Only items the
+milestone line owns are listed. The remediation line's items (N-08, N-09, N-10, the R3 and R7 slices) are not re-audited
+here. Evidence names tests or migrations present at `7fc2cb0`; the full gate on `3987baa` is in
+`docs/migration/M14_IMPLEMENTATION_REPORT.md`.
+
+| ID | Status at `7fc2cb0` | Evidence |
+|---|---|---|
+| N-01 | OPEN, quantified | trial merge with `origin/remediation/m9r-foundation` (`0a4f7d2`): 21 conflicting files, duplicate migration versions 45 to 53, ADR numbers 036 to 040 on both lines, `metadata 1.3.0` defined twice; `docs/migration/LINE_INTEGRATION_PLAN.md` |
+| N-02, N-04 | CLOSED | unchanged from the table above (`TestM10R*`) |
+| N-03, N-22 | PARTIAL, accepted residual | a worker inside its lease can still set status, termination and failure of its instance (ADR024); the API role keeps its column grant |
+| N-05 | CLOSED at the SQL floor | migration 49; the control-plane defects N-16, N-17 and N-18 below are fixed |
+| N-06 | CLOSED | the stage gate carries the request's own `candidates.build` decision (`TestReleaseGateOpensOnlyForTheRequestsOwnDecision`); `promotion.Store` writes no audit entry, the handler records the real decision |
+| N-07 | OPEN, documented | migration 48 is immutable; ADR039 amendment 6 states that the ports read the jsonb view |
+| N-11 | CLOSED | `Delivery.MayRetry` removed; `decideTool` owns the rules (`TestDecideToolRoutesFreshOutcomesAndRefusesBlindResends`) |
+| N-12 | OPEN, narrower | every decision recomputes the candidate; the verifier is still not a separate credential |
+| N-13 | CLOSED | `TestToolInvokeCapability`, `TestSandboxCapabilities`, `TestToolAndSandboxGrantsInCustomRoles` |
+| N-14 | CLOSED | `control.worker_grants_safe()` is derived from the catalogs (migration 52; `TestM12RWorkerGuardTripsOnEveryExtraGrant`, `TestM12RWorkerGuardClassifiesEveryRelation`) |
+| N-15 | PARTIAL | `Store.Approve/Activate/Rollback` are gone; `runtime.unique_projections` still has no writer on this line (the remediation line replaces it) |
+| N-16 | CLOSED | migration 53 fence rows (`TestM13R01*`) |
+| N-17 | CLOSED | migration 53 and `promote.go` (`TestM13R02*`) |
+| N-18 | CLOSED | `holdingApprovers`, `policy.RoleStore.Holds` (`TestM13R03*`, ADR039 amendment 13) |
+| N-19, N-20, N-21 | CLOSED | ASCII request keys, note marks, `RUNTIME_CHANGED` staleness (`TestM13R04*`, `TestM13R05*`, `TestM13R06*`) |
+| N-23 | CLOSED | verifier `verifier-v2` ratio probes (`TestExemptionBandBetweenBoundaryProbesFails`) |
