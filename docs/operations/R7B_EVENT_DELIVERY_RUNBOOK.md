@@ -12,8 +12,9 @@ not a production deployment or an external-action guarantee.
   uncertain and may be republished with a new attempt.
 - Successful finish:15-minute receipt window. Only the assigned tenant worker
   can resolve that exact event/hash/token/generation during the window. Live
-  membership, assignment, policy and RLS still apply. Consumer transactions
-  remain3 seconds, SQL2 seconds and lock waits500ms.
+  membership, assignment, policy and RLS still apply. Trusted Go consumer
+  transactions remain3 seconds, SQL2 seconds and lock waits500ms; this is not a
+  new processing-lease protocol or raw-credential process-liveness guarantee.
 - Known publish failure:500ms exponential retry, capped at60 seconds. Expired
   publication leases also wait this backoff after expiry. Maximum20 attempts;
   immediate known failures cannot exhaust the budget before about783.5 seconds.

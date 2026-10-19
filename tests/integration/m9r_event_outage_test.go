@@ -16,7 +16,10 @@ import (
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/events"
+	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -54,6 +57,24 @@ func TestR7bConsumerOutageFirstThirtySeconds(t *testing.T) {
 	r7bRealOutage(t, 30*time.Second)
 }
 
+// Make the real publish-before-database-confirmation window observable. A
+// receiver must leave that pointer pending until Finish confirms publication.
+type r7bConfirmationGap struct{ events.Transport }
+
+func (g r7bConfirmationGap) Publish(ctx context.Context, p events.Pointer) error {
+	if err := g.Transport.Publish(ctx, p); err != nil {
+		return err
+	}
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // Called with fixed30s or600s durations by separate explicit test targets. The
 // receipt/retry policy is never shortened and PostgreSQL time is not altered.
 func r7bRealOutage(t *testing.T, absence time.Duration) {
@@ -72,13 +93,16 @@ func r7bRealOutage(t *testing.T, absence time.Duration) {
 	base := strings.Replace(baseA, f.tenantA, f.tenantB, 1)
 	db, wrongWorker := m8Roles(t)
 	worker := m9RSecondPrincipal(t, &m9Fixture{f: f})
+	// The long rehearsal naturally exceeds the normal five-minute idle lifetime.
+	// Exercise a cold worker connection in the short diagnostic too.
+	worker.SetConnMaxIdleTime(time.Second)
 	var audience string
 	if err := worker.QueryRow(`SELECT session_user`).Scan(&audience); err != nil {
 		t.Fatal("worker audience")
 	}
 	receiver := m9RBroker(t, worker)
 	sender, operator, senderUser := r7bSender(t, audience)
-	dispatch := events.Dispatcher{DB: db, Transport: sender}
+	dispatch := events.Dispatcher{DB: db, Transport: r7bConfirmationGap{sender}}
 	firstRecord := m5Create(t, h, base, bob, "consumer absent")
 	first := m8Claim(t, dispatch)
 	if first.TenantID != f.tenantB || first.Audience != audience || sender.Publish(context.Background(), first) != nil || dispatch.Finish(context.Background(), first, true) != nil {
@@ -141,6 +165,7 @@ func r7bRealOutage(t *testing.T, absence time.Duration) {
 	recovery, stop := context.WithTimeout(context.Background(), 90*time.Second)
 	defer stop()
 	seen := map[string]bool{}
+	notReady := 0
 	for len(seen) < 3 && recovery.Err() == nil {
 		message, err := receiver.Read(recovery)
 		if err != nil {
@@ -157,6 +182,29 @@ func r7bRealOutage(t *testing.T, absence time.Duration) {
 			t.Fatal("original broker publication disappeared")
 		}
 		if err := m8Consumer(worker).Handle(recovery, receiver, message); err != nil {
+			if errors.Is(err, events.ErrNotReady) {
+				// Same contract as RunConsumer: the real broker can expose a
+				// reference before Finish commits. Retain it unacked for reclaim.
+				a, b, c := m8Counts(t, f.operator, f.tenantB)
+				pending, pendingErr := operator.XPending(recovery, events.StreamPrefix+audience, events.Group).Result()
+				if a != len(seen) || b != len(seen) || c != len(seen) || pendingErr != nil || pending.Count < 1 {
+					t.Fatal("unconfirmed pointer produced effects or lost its pending reference")
+				}
+				notReady++
+				continue
+			}
+			kind, state := "other", ""
+			for label, target := range map[string]error{"delivery": events.ErrDelivery, "not_ready": events.ErrNotReady, "dead": events.ErrDead, "job": jobs.ErrJob, "unavailable": postgres.ErrUnavailable, "commit_unknown": postgres.ErrCommitUnknown} {
+				if errors.Is(err, target) {
+					kind = label
+				}
+			}
+			var pg *pgconn.PgError
+			if errors.As(err, &pg) {
+				state = pg.Code
+			}
+			_, completed, ready, dead, ticketErr := jobs.EventTicket(context.Background(), worker, pointer.TenantID, pointer.EventID, pointer.BodyHash, pointer.ConsumerID, pointer.Generation, pointer.LeaseToken)
+			t.Logf("consume_failure first=%v completed_before=%d kind=%s SQLSTATE=%s ticket_lookup_ok=%v ticket_completed=%v ticket_ready=%v ticket_dead=%v", pointer.EventID == first.EventID, len(seen), kind, state, ticketErr == nil, completed, ready, dead)
 			t.Fatal("delayed event did not converge")
 		}
 		seen[pointer.EventID] = true
@@ -174,5 +222,5 @@ func r7bRealOutage(t *testing.T, absence time.Duration) {
  (SELECT count(*) FROM control.event_attempts WHERE tenant_id=$1)`, f.tenantB).Scan(&complete, &intents, &attempts); err != nil || complete != 3 || intents != 3 || attempts < 4 {
 		t.Fatal("recovery lost durable delivery/evidence")
 	}
-	t.Logf("recovery PASS real_absence_s=%.3f total_elapsed_s=%.3f completed=3 inbox=3 effects=3 audits=3 immutable_intents=3 attempts_retained=%d", absence.Seconds(), time.Since(start).Seconds(), attempts)
+	t.Logf("recovery PASS real_absence_s=%.3f total_elapsed_s=%.3f completed=3 inbox=3 effects=3 audits=3 immutable_intents=3 attempts_retained=%d unconfirmed_redeliveries=%d", absence.Seconds(), time.Since(start).Seconds(), attempts, notReady)
 }

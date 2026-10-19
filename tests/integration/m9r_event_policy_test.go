@@ -11,6 +11,7 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/db/migrations"
 	"github.com/Karthikeyan49/Framwork/internal/events"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pressly/goose/v3"
 )
@@ -167,6 +168,52 @@ func TestR7bReadinessRejectsPolicyDrift(t *testing.T) {
 	}
 	if events.Ready(context.Background(), f.db, "framework_app") == nil {
 		t.Fatal("missing policy grant ready")
+	}
+}
+
+func TestR7bReadinessRequiresPrivateRetryDependency(t *testing.T) {
+	for _, fault := range []string{"missing", "runtime_grant", "custom_worker_grant"} {
+		t.Run(fault, func(t *testing.T) {
+			m8Database(t)
+			f, h, base, token, _ := m5Fixture(t)
+			m5Create(t, h, base, token, "dependency fixture")
+			db, worker := m8Roles(t)
+			roles := map[string]*sql.DB{"framework_app": f.db, "framework_worker": worker, "framework_dispatcher": db}
+			if events.Ready(context.Background(), db, "framework_dispatcher") != nil {
+				t.Fatal("positive readiness control")
+			}
+			statement := `DROP FUNCTION control.event_retry_delay(integer)`
+			if fault == "runtime_grant" {
+				statement = `GRANT EXECUTE ON FUNCTION control.event_retry_delay(integer) TO framework_dispatcher`
+			}
+			if fault == "custom_worker_grant" {
+				custom := m9RSecondPrincipal(t, &m9Fixture{f: f})
+				var principal string
+				if err := custom.QueryRow(`SELECT session_user`).Scan(&principal); err != nil || events.Ready(context.Background(), custom, "framework_worker") != nil {
+					t.Fatal("custom worker positive control")
+				}
+				statement = `GRANT EXECUTE ON FUNCTION control.event_retry_delay(integer) TO ` + pgx.Identifier{principal}.Sanitize()
+				t.Cleanup(func() {
+					if _, err := f.operator.Exec(`REVOKE EXECUTE ON FUNCTION control.event_retry_delay(integer) FROM ` + pgx.Identifier{principal}.Sanitize()); err != nil {
+						t.Error("owned helper grant cleanup")
+					}
+				})
+				roles = map[string]*sql.DB{"framework_worker": custom}
+			}
+			if _, err := f.operator.Exec(statement); err != nil {
+				t.Fatal("owned dependency drift fixture")
+			}
+			if fault == "missing" {
+				if _, found, err := (events.Dispatcher{DB: db}).Claim(context.Background()); err == nil || found {
+					t.Fatal("populated claim did not expose missing dependency")
+				}
+			}
+			for role, connection := range roles {
+				if events.Ready(context.Background(), connection, role) == nil {
+					t.Fatal("dependency/grant drift reported ready", role)
+				}
+			}
+		})
 	}
 }
 

@@ -43,8 +43,10 @@ execution or automatic side-effect retry is introduced.
 The receipt deadline is also the existing event capability's expiry. Extending
 it deliberately permits the assigned worker to resolve that exact immutable
 event during the receipt window; it does not extend workflow/activity leases or
-grant record DML. Each consumer callback remains a3-second bounded transaction
-with2-second SQL/500ms lock budgets, live authorization and per-use RLS. All
+grant record DML. Each trusted Go consumer callback remains a3-second bounded
+transaction with2-second SQL/500ms lock budgets, live authorization and per-use
+RLS. These are not a new raw-credential processing-lease protocol or proof of
+liveness against a compromised process. All
 current wrong-tenant/audience/token/generation/revocation tests must remain.
 
 ## Compatibility and recovery
