@@ -111,7 +111,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Write retries / duplicate effects / unknown COMMIT | Bounded R4 independently PASS: known-abort retries, owned receipts and commit-response/browser reconciliation verified | External delivery is not covered; first historical 503 cause remains unconfirmed |
 | Late command rejection can commit a record without receipt/outbox | Independently reproduced fault and independently closed; real RLS-policy regression verifies zero business facts on rejection | Preserve whole-command rollback |
 | Same-login navigation loses an in-flight command key | Independently reproduced and closed; actor-owned pre-dispatch journal/navigation/account recovery verified | Browser-restart persistence intentionally absent |
-| Custom field indexes / unique projections | Integer/decimal/money, string/civil-date, enum/reference, datetime/boolean and fixed plain full-text indexes plus [R3c typed unique-field enforcement](M9R_R3C_IMPLEMENTATION_REPORT.md) independently verified; source JSONB, existing records, old readers/cursors and immutable releases retained. Populated backfill, conflict rollback, private permits, raw roles, concurrent claims/receipt replay and 100k/32-client gates pass | Uniqueness UI/READY removal/constraint-preserving evolution and search UI/ranking/languages/broad-term capacity remain separate; aggregates/planning remain R3d |
+| Custom field indexes / unique projections | Integer/decimal/money, string/civil-date, enum/reference, datetime/boolean and fixed plain full-text indexes plus [R3c typed unique-field enforcement](M9R_R3C_IMPLEMENTATION_REPORT.md) independently verified; source JSONB, existing records, old readers/cursors and immutable releases retained. Populated backfill, conflict rollback, private permits, raw roles, concurrent claims/receipt replay and 100k/32-client gates pass | Uniqueness UI/READY removal/constraint-preserving evolution and search UI/ranking/languages/broad-term capacity remain separate. Bounded R3d aggregation now passes; wider planner features remain outside that acceptance |
 | Aggregates and bounded join planner | [R3d](M9R_R3D_IMPLEMENTATION_REPORT.md) bounded PASS: opt-in exact SQL count/sums, transactional numeric validity witness, certified physical/canonical snapshot planning and configurable bounded API concurrency. Independent23-group race review, full269 integration groups, browser9+7, all24 aggregate capacity cases and all eight reference targets pass; earlier failures retained | No arbitrary expressions, GROUP BY, join expansion, aggregate/report UI or general workload guarantee. Worst aggregate p95 leaves only37.970ms headroom. Injected driver-panic recovery remains R7; production active-runtime wiring remains R6/M11–M14 |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
 | Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
@@ -143,9 +143,10 @@ Bounded R4 and the configured numeric, text/civil-date, enum/reference,
 datetime/boolean and selective full-text search R3b HTTP gates are independently verified.
 R2c preview dataset evolution now passes independent fault/capacity tests, the
 full root suite/build and browser regressions. Preserve those regressions.
-Bounded R3c uniqueness now also passes independent and final root gates. Broader
-search and aggregates stay explicit R3b/R3d work; uniqueness administration/removal/
-evolution remain separate. The bounded search API does not complete product search
+Bounded R3c uniqueness and R3d SQL aggregation now also pass independent review
+and final root gates, including all eight reference capacity targets. Broader
+search, aggregate/report UI, general query planning and uniqueness administration/
+removal/evolution remain separate. The bounded APIs do not complete product search
 or general query capacity. R5–R7 remain separate
 product/security/operations deliverables. R5b closes the bounded raw-worker
 capability gap; its synthetic receipt test has a narrow timeout margin and is
@@ -153,6 +154,8 @@ not a wider capacity guarantee. The independent report records which final
 checks used existing tests and which new probes were not run.
 Production, AI and external ERP actions are not enabled by a foundation PASS.
 
-M10 stays paused until the foundation gate and final backend/frontend/integration/
-browser regressions pass. Do not erase failed runs, weaken assertions or substitute
-contract-only tests for wired product behavior.
+The bounded foundation gate and final backend/frontend/integration/browser
+regressions now pass. M10 remains paused pending a separate user task; it must
+not depend on unfinished capabilities or imply production readiness. Do not erase
+failed runs, weaken assertions or substitute contract-only tests for wired
+product behavior.
