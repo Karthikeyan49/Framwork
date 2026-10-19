@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"github.com/Karthikeyan49/Framwork/internal/tools"
@@ -44,7 +46,14 @@ type API struct {
 	// ToolCatalog is the operator-owned tool registry (ADR036); it feeds
 	// sandbox evidence and, with the compiler, tool admission.
 	ToolCatalog tools.Catalog
+	// Recompute remembers the pure recomputation of stored release candidates and
+	// bounds the cold ones per tenant and per process (ADR038 amendment 10). Nil is
+	// the process default.
+	Recompute *promotion.Recompute
 }
+
+// store is the release store of this API: its recomputations share one memo.
+func (a API) store() promotion.Store { return promotion.Store{Recompute: a.Recompute} }
 
 func (a API) catalog() compiler.Catalog {
 	if a.CompilerCatalog != nil {
@@ -130,6 +139,8 @@ type reply struct {
 	code, message string
 	body          any
 	issues        []metadata.Issue
+	// retryAfter, when positive, is sent as a Retry-After header in whole seconds.
+	retryAfter time.Duration
 }
 
 // A service rejection must roll back its entire business transaction before
@@ -262,6 +273,9 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	// No protected response or security success is sent before the outer commit.
 	if response.status == 401 {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="framework"`)
+	}
+	if response.retryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int((response.retryAfter+time.Second-1)/time.Second)))
 	}
 	if len(response.issues) > 0 {
 		httpserver.JSON(w, response.status, struct {

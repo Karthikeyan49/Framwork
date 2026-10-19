@@ -319,19 +319,26 @@ func toRisk(a risk.Assessment, facts risk.Facts) RiskV2 {
 // A non-nil *Rejection means the evidence says the candidate must not be staged;
 // any other error is an invalid input. It never writes anything.
 func BuildCandidate(in BuildInput) (Candidate, error) {
+	c, _, err := buildCandidate(in)
+	return c, err
+}
+
+// buildCandidate is BuildCandidate that also returns the program its self-check
+// restored, so a caller can remember the outcome (Store.Build).
+func buildCandidate(in BuildInput) (Candidate, compiler.Program, error) {
 	supported := compiler.SupportedIRVersions()
 	if !tenant.ValidID(in.TenantID) || !tenant.ValidID(in.RequesterID) || in.SourceRevision < 1 || !in.Target.Valid() || !in.Target.MatchesSource(in.Source) || len(in.Source.JSON()) == 0 {
-		return Candidate{}, gateError("identities, source or program are invalid")
+		return Candidate{}, compiler.Program{}, gateError("identities, source or program are invalid")
 	}
 	ir := in.Target.IR()
 	if ir.Application.AppID != in.AppID || in.Source.AppID() != in.AppID {
-		return Candidate{}, gateError("application does not match the compiled program")
+		return Candidate{}, compiler.Program{}, gateError("application does not match the compiled program")
 	}
 	base := compiler.Program{}
 	baseRelease, baseGeneration := "", int64(0)
 	if in.Base != nil {
 		if !ValidHash(in.Base.ArtifactHash) || in.Base.Generation < 1 || !in.Base.Program.Valid() {
-			return Candidate{}, gateError("base release is invalid")
+			return Candidate{}, compiler.Program{}, gateError("base release is invalid")
 		}
 		base, baseRelease, baseGeneration = in.Base.Program, in.Base.ArtifactHash, in.Base.Generation
 	}
@@ -341,44 +348,44 @@ func BuildCandidate(in BuildInput) (Candidate, error) {
 
 	set, setJSON, setHash, err := intent.ParseRequirementSet(in.Requirements.Body)
 	if err != nil || !bytes.Equal(setJSON, in.Requirements.Body) || setHash != in.Requirements.Hash || set.AppID != in.AppID || in.Requirements.Version < 1 {
-		return Candidate{}, gateError("stored requirement set is not canonical or does not match its row")
+		return Candidate{}, compiler.Program{}, gateError("stored requirement set is not canonical or does not match its row")
 	}
 	spec, specJSON, specHash, err := intent.ParseAcceptanceSpec(in.Acceptance.Body)
 	if err != nil || !bytes.Equal(specJSON, in.Acceptance.Body) || specHash != in.Acceptance.Hash || spec.RequirementsHash != setHash || in.Acceptance.RequirementsHash != setHash || !tenant.ValidID(in.Acceptance.ID) || !tenant.ValidID(in.Acceptance.AuthorID) {
-		return Candidate{}, gateError("stored acceptance spec is not canonical or does not match its row")
+		return Candidate{}, compiler.Program{}, gateError("stored acceptance spec is not canonical or does not match its row")
 	}
 	if err = intent.ValidateAcceptance(spec, set); err != nil {
-		return Candidate{}, gateError("acceptance spec rejected: %v", err)
+		return Candidate{}, compiler.Program{}, gateError("acceptance spec rejected: %v", err)
 	}
 	if in.Acceptance.AuthorID == in.RequesterID {
-		return Candidate{}, gateError("acceptance must be authored by someone other than the requester")
+		return Candidate{}, compiler.Program{}, gateError("acceptance must be authored by someone other than the requester")
 	}
 	_, targetSchema, err := compiler.Storage(in.Target)
 	if err != nil {
-		return Candidate{}, gateError("target has no storage layout")
+		return Candidate{}, compiler.Program{}, gateError("target has no storage layout")
 	}
 	if err = checkEvidence(in.Sandbox, in.AppID, in.Target.Hash(), in.SourceRevision, targetSchema); err != nil {
-		return Candidate{}, err
+		return Candidate{}, compiler.Program{}, err
 	}
 
 	delta := compiler.ClassifyStorage(base, in.Target, in.Intent)
 	if delta.Class == compiler.StorageBreaking {
-		return Candidate{}, &Rejection{Reason: RejectStorageBreaking}
+		return Candidate{}, compiler.Program{}, &Rejection{Reason: RejectStorageBreaking}
 	}
 	if delta.Class == compiler.StorageEqual && (len(in.Intent.Renames) > 0 || len(in.Intent.Backfills) > 0) {
-		return Candidate{}, &Rejection{Reason: RejectInvalidIntent}
+		return Candidate{}, compiler.Program{}, &Rejection{Reason: RejectInvalidIntent}
 	}
 	var evolution *EvolutionV2
 	if delta.EvolutionPlanHash != "" {
 		plan, perr := compiler.PlanEvolution(base, in.Target, in.Intent)
 		if perr != nil || plan.Hash() != delta.EvolutionPlanHash {
-			return Candidate{}, gateError("evolution plan cannot be derived")
+			return Candidate{}, compiler.Program{}, gateError("evolution plan cannot be derived")
 		}
 		evolution = &EvolutionV2{Hash: plan.Hash(), JSON: plan.JSON()}
 	}
 	diff, err := compiler.ComputeDiff(base, in.Target)
 	if err != nil {
-		return Candidate{}, gateError("diff cannot be computed")
+		return Candidate{}, compiler.Program{}, gateError("diff cannot be computed")
 	}
 
 	pins := ToolPins(ir)
@@ -386,40 +393,40 @@ func BuildCandidate(in BuildInput) (Candidate, error) {
 	facts := ReduceFacts(FactsInput{Diff: diff, Storage: delta, TargetPins: pins, Definitions: defs, TenantID: in.TenantID, Volume: in.Volume, AcceptanceAuthorIsRequester: in.Acceptance.AuthorID == in.RequesterID})
 	assessment, err := risk.Evaluate(facts)
 	if err != nil {
-		return Candidate{}, gateError("risk facts are invalid: %v", err)
+		return Candidate{}, compiler.Program{}, gateError("risk facts are invalid: %v", err)
 	}
 	if assessment.Blocked {
-		return Candidate{}, &Rejection{Reason: RejectBlockedByRisk, Assessment: &assessment}
+		return Candidate{}, compiler.Program{}, &Rejection{Reason: RejectBlockedByRisk, Assessment: &assessment}
 	}
 	catalog := tools.EmptyCatalog()
 	if len(defList) > 0 {
 		if catalog, err = tools.NewCatalog(defList); err != nil {
-			return Candidate{}, gateError("tool definitions are invalid")
+			return Candidate{}, compiler.Program{}, gateError("tool definitions are invalid")
 		}
 	}
 	report, err := verification.Verify(verification.Input{Program: in.Target, Requirements: set, Acceptance: spec, StorageClass: delta.Class, Changed: ChangedFor(diff, delta),
 		Tools: catalog, TenantID: in.TenantID, SandboxEvidenceHash: in.Sandbox.EvidenceHash})
 	if err != nil {
-		return Candidate{}, gateError("verification input is invalid: %v", err)
+		return Candidate{}, compiler.Program{}, gateError("verification input is invalid: %v", err)
 	}
 	if report.Outcome != verification.Pass {
 		reason := RejectVerificationFailed
 		if report.Outcome == verification.Blocked {
 			reason = RejectVerificationBlocked
 		}
-		return Candidate{}, &Rejection{Reason: reason, Report: &report, Assessment: &assessment}
+		return Candidate{}, compiler.Program{}, &Rejection{Reason: reason, Report: &report, Assessment: &assessment}
 	}
 
 	policyHash, err := PolicyBundleHash(in.Policy)
 	if err != nil {
-		return Candidate{}, gateError("policy bundle is invalid")
+		return Candidate{}, compiler.Program{}, gateError("policy bundle is invalid")
 	}
 	components, componentsHash := RuntimeComponents()
 	baseSchema := ""
 	if in.Base != nil {
 		_, baseSchema, err = compiler.Storage(in.Base.Program)
 		if err != nil {
-			return Candidate{}, gateError("base has no storage layout")
+			return Candidate{}, compiler.Program{}, gateError("base has no storage layout")
 		}
 	}
 	b := BundleV2{
@@ -439,14 +446,14 @@ func BuildCandidate(in BuildInput) (Candidate, error) {
 	}
 	raw, err := json.Marshal(b)
 	if err != nil || len(raw) > MaxBundleBytes {
-		return Candidate{}, gateError("candidate exceeds its size budget")
+		return Candidate{}, compiler.Program{}, gateError("candidate exceeds its size budget")
 	}
-	c := Candidate{raw, Hash(raw)}
 	// Self-check: what was just built must restore and recompute identically.
-	if _, err = Restore(raw, c.hash, supported); err != nil {
-		return Candidate{}, err
+	c, program, err := restoreProgram(raw, Hash(raw), supported)
+	if err != nil {
+		return Candidate{}, compiler.Program{}, err
 	}
-	return c, nil
+	return c, program, nil
 }
 
 func checkEvidence(s FrozenSandbox, app, irHash string, revision int64, schemaHash string) error {
@@ -474,78 +481,78 @@ func checkEvidence(s FrozenSandbox, app, irHash string, revision int64, schemaHa
 // restoreV2 re-derives everything a 2.0.0 candidate claims that does not need
 // the base release's bytes, and requires byte equality. The diff is the one
 // artifact it can only check structurally; VerifyAgainstBase recomputes it.
-func restoreV2(raw []byte, hash string, supported []string) (Candidate, error) {
+func restoreV2(raw []byte, hash string, supported []string) (Candidate, compiler.Program, error) {
 	var b BundleV2
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&b) != nil || d.More() || b.Version != BundleVersion2 {
-		return Candidate{}, gateError("bundle 2.0.0 does not match its schema")
+		return Candidate{}, compiler.Program{}, gateError("bundle 2.0.0 does not match its schema")
 	}
 	if canonical, err := json.Marshal(b); err != nil || !bytes.Equal(canonical, raw) {
-		return Candidate{}, gateError("bundle 2.0.0 is not canonical")
+		return Candidate{}, compiler.Program{}, gateError("bundle 2.0.0 is not canonical")
 	}
 	if !tenant.ValidID(b.TenantID) || !tenant.ValidID(b.RequesterID) || !tenant.ValidID(b.Acceptance.AuthorID) || !tenant.ValidID(b.Acceptance.ID) || !tenant.ValidID(b.Sandbox.DatasetID) || !tenant.ValidID(b.Sandbox.FrozenBy) ||
 		b.Acceptance.AuthorID == b.RequesterID {
-		return Candidate{}, gateError("identities are invalid or not separated")
+		return Candidate{}, compiler.Program{}, gateError("identities are invalid or not separated")
 	}
 	if (b.BaseRelease == "") != (b.BaseGeneration == 0) || b.BaseRelease != "" && (!ValidHash(b.BaseRelease) || b.BaseGeneration < 1) {
-		return Candidate{}, gateError("base binding is invalid")
+		return Candidate{}, compiler.Program{}, gateError("base binding is invalid")
 	}
 	program, err := compiler.Restore(b.IR.JSON, b.IR.Hash, supported)
 	ir := program.IR()
 	if err != nil || b.IR.Version != ir.IRVersion || b.IR.CompilerVersion != ir.CompilerVersion || b.AppID != ir.Application.AppID {
-		return Candidate{}, gateError("stored IR is invalid or does not match its identity")
+		return Candidate{}, compiler.Program{}, gateError("stored IR is invalid or does not match its identity")
 	}
 	v, err := metadata.NewValidator()
 	if err != nil {
-		return Candidate{}, gateError("metadata validator unavailable")
+		return Candidate{}, compiler.Program{}, gateError("metadata validator unavailable")
 	}
 	source, err := v.Parse(b.Source.JSON)
 	if err != nil || source.Hash() != b.Source.Hash || source.AppID() != b.AppID || b.Source.Revision < 1 || b.Source.SchemaVersion != ir.Application.SchemaVersion || !compiler.MatchesStoredSource(program, source) {
-		return Candidate{}, gateError("stored source does not match the IR")
+		return Candidate{}, compiler.Program{}, gateError("stored source does not match the IR")
 	}
 	if b.RuntimeContract.Version != RuntimeContractVersion || b.RuntimeContract.ComponentsHash != hashComponents(b.RuntimeContract.Components) {
-		return Candidate{}, gateError("runtime contract is inconsistent")
+		return Candidate{}, compiler.Program{}, gateError("runtime contract is inconsistent")
 	}
 
 	// Dependencies.
 	pins := ToolPins(ir)
 	if !reflect.DeepEqual(pins, b.Dependencies.ToolPins) || b.Dependencies.ToolsHash != ToolsHash(pins) {
-		return Candidate{}, gateError("tool pins are not derived from the IR")
+		return Candidate{}, compiler.Program{}, gateError("tool pins are not derived from the IR")
 	}
 	policyHash, err := PolicyBundleHash(b.Dependencies.PolicyBundle)
 	if err != nil || policyHash != b.Dependencies.PolicyBundleHash {
-		return Candidate{}, gateError("policy bundle hash is inconsistent")
+		return Candidate{}, compiler.Program{}, gateError("policy bundle hash is inconsistent")
 	}
 	targetSchemaStruct, targetSchema, err := compiler.Storage(program)
 	if err != nil || b.Dependencies.TargetSchemaHash != targetSchema || b.Dependencies.SchemaLayout != targetSchemaStruct.Layout || ir.SchemaSnapshot != targetSchemaStruct.Layout {
-		return Candidate{}, gateError("target schema hash is inconsistent")
+		return Candidate{}, compiler.Program{}, gateError("target schema hash is inconsistent")
 	}
 	if (b.BaseRelease == "") != (b.Dependencies.BaseSchemaHash == "") || b.Dependencies.BaseSchemaHash != "" && !ValidHash(b.Dependencies.BaseSchemaHash) {
-		return Candidate{}, gateError("base schema binding is inconsistent")
+		return Candidate{}, compiler.Program{}, gateError("base schema binding is inconsistent")
 	}
 
 	// Diff and storage.
 	diff, err := compiler.ParseDiff(b.Diff.JSON, b.Diff.Hash)
 	if err != nil || b.Diff.Version != compiler.DiffVersion || diff.TargetIRHash != b.IR.Hash || diff.FirstRelease != (b.BaseRelease == "") || (diff.BaseIRHash == "") != (b.BaseRelease == "") {
-		return Candidate{}, gateError("diff is not bound to this candidate")
+		return Candidate{}, compiler.Program{}, gateError("diff is not bound to this candidate")
 	}
 	st := b.Storage
 	if st.Class == compiler.StorageBreaking || st.TargetSchemaHash != targetSchema || st.BaseSchemaHash != b.Dependencies.BaseSchemaHash || st.FirstRelease != (b.BaseRelease == "") {
-		return Candidate{}, gateError("storage classification is inconsistent")
+		return Candidate{}, compiler.Program{}, gateError("storage classification is inconsistent")
 	}
 	if st.FirstRelease && st.Class != compiler.StorageAdditive || !st.FirstRelease && (st.Class == compiler.StorageEqual) != (st.BaseSchemaHash == targetSchema) {
-		return Candidate{}, gateError("storage class contradicts the schema hashes")
+		return Candidate{}, compiler.Program{}, gateError("storage class contradicts the schema hashes")
 	}
 	switch {
 	case st.EvolutionPlanHash == "" && b.Evolution != nil, st.EvolutionPlanHash != "" && b.Evolution == nil:
-		return Candidate{}, gateError("evolution plan presence is inconsistent")
+		return Candidate{}, compiler.Program{}, gateError("evolution plan presence is inconsistent")
 	case b.Evolution != nil:
 		var plan compiler.EvolutionArtifact
 		dec := json.NewDecoder(bytes.NewReader(b.Evolution.JSON))
 		dec.DisallowUnknownFields()
 		if dec.Decode(&plan) != nil || sha(b.Evolution.JSON) != b.Evolution.Hash || b.Evolution.Hash != st.EvolutionPlanHash || plan.TargetIRHash != b.IR.Hash || plan.SchemaHash != targetSchema || plan.BaseSchemaHash != b.Dependencies.BaseSchemaHash {
-			return Candidate{}, gateError("evolution plan is not bound to this candidate")
+			return Candidate{}, compiler.Program{}, gateError("evolution plan is not bound to this candidate")
 		}
 	}
 
@@ -567,43 +574,43 @@ func restoreV2(raw []byte, hash string, supported []string) (Candidate, error) {
 	for _, def := range b.Dependencies.ToolDefinitions {
 		key := DefinitionKey(def.Ref, def.Version, def.Hash())
 		if !referenced[key] {
-			return Candidate{}, gateError("tool definition %s is not pinned", def.Ref)
+			return Candidate{}, compiler.Program{}, gateError("tool definition %s is not pinned", def.Ref)
 		}
 		defs[key] = def
 	}
 	if len(defs) != len(b.Dependencies.ToolDefinitions) {
-		return Candidate{}, gateError("duplicate tool definitions")
+		return Candidate{}, compiler.Program{}, gateError("duplicate tool definitions")
 	}
 	for _, p := range pins {
 		def, ok := defs[DefinitionKey(p.Ref, p.Version, p.Hash)]
 		if !ok || !def.AllowsTenant(b.TenantID) {
-			return Candidate{}, gateError("tool pin %s@%s does not resolve for the tenant", p.Ref, p.Version)
+			return Candidate{}, compiler.Program{}, gateError("tool pin %s@%s does not resolve for the tenant", p.Ref, p.Version)
 		}
 	}
 	catalog := tools.EmptyCatalog()
 	if len(defs) > 0 {
 		if catalog, err = tools.NewCatalog(b.Dependencies.ToolDefinitions); err != nil {
-			return Candidate{}, gateError("tool definitions are invalid")
+			return Candidate{}, compiler.Program{}, gateError("tool definitions are invalid")
 		}
 	}
 
 	// Requirements and independent acceptance.
 	set, setJSON, setHash, err := intent.ParseRequirementSet(b.Requirements.JSON)
 	if err != nil || !bytes.Equal(setJSON, b.Requirements.JSON) || setHash != b.Requirements.Hash || set.AppID != b.AppID || b.Requirements.Version < 1 || b.Requirements.PolicyVersion != intent.RequirementPolicyVersion {
-		return Candidate{}, gateError("requirement set is not canonical or does not match its hash")
+		return Candidate{}, compiler.Program{}, gateError("requirement set is not canonical or does not match its hash")
 	}
 	if err = intent.CheckFloors(set, st.Class); err != nil {
-		return Candidate{}, gateError("requirement floors: %v", err)
+		return Candidate{}, compiler.Program{}, gateError("requirement floors: %v", err)
 	}
 	spec, specJSON, specHash, err := intent.ParseAcceptanceSpec(b.Acceptance.JSON)
 	if err != nil || !bytes.Equal(specJSON, b.Acceptance.JSON) || specHash != b.Acceptance.Hash || spec.RequirementsHash != setHash || b.Acceptance.RequirementsHash != setHash {
-		return Candidate{}, gateError("acceptance spec is not canonical or not bound to the requirement set")
+		return Candidate{}, compiler.Program{}, gateError("acceptance spec is not canonical or not bound to the requirement set")
 	}
 	if err = intent.ValidateAcceptance(spec, set); err != nil {
-		return Candidate{}, gateError("acceptance spec: %v", err)
+		return Candidate{}, compiler.Program{}, gateError("acceptance spec: %v", err)
 	}
 	if err = checkEvidence(FrozenSandbox{b.Sandbox.DatasetID, b.Sandbox.EvidenceHash, b.Sandbox.FrozenBy, b.Sandbox.Evidence}, b.AppID, b.IR.Hash, b.Source.Revision, targetSchema); err != nil {
-		return Candidate{}, err
+		return Candidate{}, compiler.Program{}, err
 	}
 
 	// Risk is recomputed from the stored facts, and the facts from the stored diff.
@@ -613,29 +620,29 @@ func restoreV2(raw []byte, hash string, supported []string) (Candidate, error) {
 	gotFacts, err := risk.Normalize(b.Risk.Facts)
 	wantFacts, werr := risk.Normalize(want)
 	if err != nil || werr != nil || risk.CheckCanonical(b.Risk.Facts) != nil || !reflect.DeepEqual(gotFacts, wantFacts) {
-		return Candidate{}, gateError("risk facts do not match the diff")
+		return Candidate{}, compiler.Program{}, gateError("risk facts do not match the diff")
 	}
 	level, err := risk.ParseLevel(b.Risk.Level)
 	if err != nil {
-		return Candidate{}, gateError("risk level is invalid")
+		return Candidate{}, compiler.Program{}, gateError("risk level is invalid")
 	}
 	assessment := risk.Assessment{PolicyVersion: b.Risk.PolicyVersion, PolicyHash: b.Risk.PolicyHash, Level: level, Reasons: b.Risk.Reasons, FactsHash: b.Risk.FactsHash, Separation: b.Risk.Separation, Rollback: b.Risk.Rollback}
 	if err = risk.Verify(assessment, b.Risk.Facts); err != nil || b.HighRisk != assessment.HighRisk() {
-		return Candidate{}, gateError("risk assessment does not recompute")
+		return Candidate{}, compiler.Program{}, gateError("risk assessment does not recompute")
 	}
 
 	// Verification is recomputed from the stored artifacts.
 	if b.Verification.Outcome != verification.Pass || b.Verification.VerifierVersion != verification.VerifierVersion || b.Verification.VocabularyVersion != intent.VocabularyVersion || sha(b.Verification.Report) != b.Verification.ReportHash {
-		return Candidate{}, gateError("verification claim is invalid")
+		return Candidate{}, compiler.Program{}, gateError("verification claim is invalid")
 	}
 	input := verification.Input{Program: program, Requirements: set, Acceptance: spec, StorageClass: st.Class, Changed: ChangedFor(diff, st), Tools: catalog, TenantID: b.TenantID, SandboxEvidenceHash: b.Sandbox.EvidenceHash}
 	if err = verification.Recompute(input, b.Verification.Report); err != nil {
-		return Candidate{}, gateError("verification does not recompute: %v", err)
+		return Candidate{}, compiler.Program{}, gateError("verification does not recompute: %v", err)
 	}
 	if Hash(raw) != hash {
-		return Candidate{}, gateError("hash mismatch")
+		return Candidate{}, compiler.Program{}, gateError("hash mismatch")
 	}
-	return Candidate{append([]byte(nil), raw...), hash}, nil
+	return Candidate{append([]byte(nil), raw...), hash}, program, nil
 }
 
 // BaseResolver returns the executable program of a stored release (any bundle
@@ -681,6 +688,12 @@ func (c Candidate) VerifyAgainstBase(base compiler.Program, supported []string) 
 	if err != nil {
 		return ErrGate
 	}
+	return verifyAgainstBase(b, base, target)
+}
+
+// verifyAgainstBase is the recomputation proper, over the decoded body, the base
+// program and the program restored from the candidate's own IR.
+func verifyAgainstBase(b BundleV2, base, target compiler.Program) error {
 	if b.BaseRelease == "" {
 		if base.Valid() {
 			return gateError("a first release has no base")

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
@@ -54,14 +56,52 @@ type releaseGate struct{}
 
 func (releaseGate) AuthorizeRelease(string, string, string, string) bool { return true }
 
-func releaseReply(err error) (reply, error) {
+// releaseRetryAfter is what a request that timed out is told to wait.
+const releaseRetryAfter = 2 * time.Second
+
+// busyReply is the typed refusal of a request that would start a cold recomputation
+// beyond the bound (ADR038 amendment 10): 429 when the tenant's bound is reached, 503
+// when the process-wide one is, both with Retry-After. Nothing was computed or written.
+func busyReply(b *promotion.BusyError) reply {
+	status := 503
+	if b.Scope == "tenant" {
+		status = 429
+	}
+	r := denied(status, "release_busy", "Release artifacts are being verified; retry after the indicated delay")
+	r.retryAfter = b.RetryAfter
+	return r
+}
+
+// refusalCode is the closed audit code of a refusal that has no other evidence.
+func refusalCode(ctx context.Context, err error) string {
+	var busy *promotion.BusyError
+	switch {
+	case errors.As(err, &busy):
+		return "RECOMPUTE_BUSY_" + strings.ToUpper(busy.Scope)
+	case ctx.Err() != nil:
+		return "TIMEOUT"
+	}
+	return ""
+}
+
+func releaseReply(ctx context.Context, err error) (reply, error) {
 	if err == nil {
 		return reply{}, nil
 	}
 	status, code := 0, ""
 	var pg *pgconn.PgError
 	var violation *intent.Violation
+	var busy *promotion.BusyError
 	switch {
+	case errors.As(err, &busy):
+		return reply{}, &requestRejection{response: busyReply(busy)}
+	case ctx.Err() != nil:
+		// The request transaction ran out of its budget (or the client left) while the
+		// handler was working. Nothing was committed; say so, typed and audited, rather
+		// than as an unexplained outage.
+		timeout := denied(503, "release_timeout", "The request did not finish in time; nothing was changed, retry after the indicated delay")
+		timeout.retryAfter = releaseRetryAfter
+		return reply{}, &requestRejection{response: timeout}
 	case errors.As(err, &violation):
 		return reply{}, &requestRejection{response: denied(400, "invalid_release_artifact", "Release artifact rejected: "+violation.Code)}
 	case errors.Is(err, promotion.ErrNotFound), errors.Is(err, metadata.ErrNotFound), errors.Is(err, data.ErrNotFound):
@@ -103,6 +143,8 @@ func (a API) release(ctx context.Context, q postgres.Executor, r *http.Request, 
 	}
 	app := r.PathValue("app")
 	evidence.State.MetadataApp = app
+	// Cold recomputations of this request count against its tenant's bound.
+	ctx = promotion.WithTenant(ctx, access.TenantID())
 	var result reply
 	var err error
 	switch r.Pattern {
@@ -114,7 +156,7 @@ func (a API) release(ctx context.Context, q postgres.Executor, r *http.Request, 
 		result, err = a.postAcceptance(ctx, q, r, access, app, evidence)
 	case "GET /v1/tenants/{tenant}/preview/{app}/acceptance-specs/{spec}":
 		var s promotion.StoredAcceptance
-		if s, err = (promotion.Store{}).Acceptance(ctx, q, access, app, r.PathValue("spec")); err == nil {
+		if s, err = a.store().Acceptance(ctx, q, access, app, r.PathValue("spec")); err == nil {
 			evidence.State.AcceptanceID = s.ID
 			result = reply{status: 200, body: s}
 		}
@@ -122,7 +164,7 @@ func (a API) release(ctx context.Context, q postgres.Executor, r *http.Request, 
 		result, err = a.postCandidate(ctx, q, r, access, app, evidence)
 	case "GET /v1/tenants/{tenant}/preview/{app}/candidates":
 		var rows []promotion.CandidateRow
-		if rows, err = (promotion.Store{}).Candidates(ctx, q, access, app); err == nil {
+		if rows, err = a.store().Candidates(ctx, q, access, app); err == nil {
 			result = reply{status: 200, body: struct {
 				Candidates []promotion.CandidateRow `json:"candidates"`
 			}{rows}}
@@ -145,7 +187,12 @@ func (a API) release(ctx context.Context, q postgres.Executor, r *http.Request, 
 		return denied(404, "not_found", "Unknown release route"), nil
 	}
 	if err != nil {
-		return releaseReply(err)
+		refused, rejection := releaseReply(ctx, err)
+		var rejected *requestRejection
+		if errors.As(rejection, &rejected) && evidence.State.RefusalCode == "" {
+			evidence.State.RefusalCode = refusalCode(ctx, err)
+		}
+		return refused, rejection
 	}
 	return result, nil
 }
@@ -165,7 +212,7 @@ func (a API) postRequirements(ctx context.Context, q postgres.Executor, r *http.
 	if set.AppID != app {
 		return denied(400, "app_mismatch", "The requirement set must name the application of the route"), nil
 	}
-	stored, err := (promotion.Store{}).AppendRequirements(ctx, q, access, app, body.ExpectedVersion, canonical)
+	stored, err := a.store().AppendRequirements(ctx, q, access, app, body.ExpectedVersion, canonical)
 	if err != nil {
 		return reply{}, err
 	}
@@ -182,7 +229,7 @@ func (a API) getRequirements(ctx context.Context, q postgres.Executor, r *http.R
 		}
 		version = n
 	}
-	stored, err := (promotion.Store{}).Requirements(ctx, q, access, app, version)
+	stored, err := a.store().Requirements(ctx, q, access, app, version)
 	if err != nil {
 		return reply{}, err
 	}
@@ -198,7 +245,7 @@ func (a API) postAcceptance(ctx context.Context, q postgres.Executor, r *http.Re
 	if readDatasetRequest(r, &body) != nil || body.RequirementsVersion < 1 || body.RequirementsVersion >= 1000000 {
 		return denied(400, "invalid_release_request", "Request body is invalid"), nil
 	}
-	row, err := (promotion.Store{}).Requirements(ctx, q, access, app, body.RequirementsVersion)
+	row, err := a.store().Requirements(ctx, q, access, app, body.RequirementsVersion)
 	if err != nil {
 		return reply{}, err
 	}
@@ -217,7 +264,7 @@ func (a API) postAcceptance(ctx context.Context, q postgres.Executor, r *http.Re
 	if err = intent.ValidateAcceptance(spec, set); err != nil {
 		return reply{}, err
 	}
-	stored, err := (promotion.Store{}).AuthorAcceptance(ctx, q, access, app, row.Hash, canonical)
+	stored, err := a.store().AuthorAcceptance(ctx, q, access, app, row.Hash, canonical)
 	if err != nil {
 		return reply{}, err
 	}
@@ -278,17 +325,16 @@ func viewOf(c promotion.Candidate, staged bool) CandidateView {
 // activeBase reads the active release and restores its program; both are empty
 // when nothing is active.
 func (a API) activeBase(ctx context.Context, q postgres.Executor, access tenant.Access, app string) (string, int64, compiler.Program, error) {
-	store := promotion.Store{}
+	store := a.store()
 	hash, generation, err := store.ActiveBase(ctx, q, access, app)
 	if err != nil || hash == "" {
 		return "", 0, compiler.Program{}, err
 	}
-	base, err := store.Release(ctx, q, access, app, hash, compiler.SupportedIRVersions())
+	_, program, err := store.ReleaseProgram(ctx, q, access, app, hash, compiler.SupportedIRVersions())
 	if err != nil {
 		return "", 0, compiler.Program{}, err
 	}
-	program, err := base.Program(compiler.SupportedIRVersions())
-	return hash, generation, program, err
+	return hash, generation, program, nil
 }
 
 func (a API) policyBundle(ctx context.Context, q postgres.Executor, access tenant.Access) (promotion.PolicyBundleInput, error) {
@@ -324,7 +370,7 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 	if readDatasetRequest(r, &body) != nil || body.Revision < 1 || body.Revision > 1e9 || body.RequirementVersion < 1 || !tenant.ValidID(body.AcceptanceSpecID) || !tenant.ValidID(body.SandboxID) {
 		return denied(400, "invalid_release_request", "Request body is invalid; authority-bearing fields are derived by the server"), nil
 	}
-	store := promotion.Store{}
+	store := a.store()
 	version, err := a.Registry.Get(ctx, q, access, app, body.Revision)
 	if err != nil {
 		return reply{}, err
@@ -374,16 +420,20 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 	if baseHash != "" {
 		in.Base = &promotion.BaseRelease{ArtifactHash: baseHash, Generation: baseGeneration, Program: baseProgram}
 	}
-	candidate, err := promotion.BuildCandidate(in)
+	candidate, err := store.Build(ctx, in)
 	var rejected *promotion.Rejection
 	if errors.As(err, &rejected) {
+		// The audit row says why the build was refused: the closed reason, the verifier
+		// report hash and the hash of the risk assessment, never the free-text findings.
 		evidence.State.ArtifactHash = ""
+		evidence.State.RefusalCode = rejected.Reason
 		if rejected.Report != nil {
 			evidence.State.VerifierOutcome = rejected.Report.Outcome
 			evidence.State.ArtifactHash = rejected.Report.Hash()
 		}
 		if rejected.Assessment != nil {
 			evidence.State.RiskLevel = rejected.Assessment.Level.String()
+			evidence.State.AssessmentHash = assessmentHash(*rejected.Assessment)
 		}
 		return reply{status: 422, body: struct {
 			Reason     string               `json:"reason"`
@@ -416,6 +466,16 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 		return reply{}, err
 	}
 	return reply{status: status, body: view}, nil
+}
+
+// assessmentHash is the digest of the canonical encoding of a risk assessment, which
+// binds the level, the reasons, the facts hash and the policy that produced them.
+func assessmentHash(a risk.Assessment) string {
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return ""
+	}
+	return promotion.Hash(raw)
 }
 
 func (a API) getCandidate(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
