@@ -281,3 +281,61 @@ filtered183.118/481.529, OWNER131.417/352.292, SHARE92.366/261.093.
 The filtered source still scans38008 blocks despite the fence, so no avoidance
 claim is made. The mapped100k adoption/evolution/current/retained fixture remains
 running; raw success alone does not accept R3d or the provisional profile.
+
+## Completed aggregate capacity and independent re-verification
+
+On source e406966, `make test-aggregate-performance` attempt3 PASS619.747s:
+raw101.08s and real mapped514.72s. Actual adoption verifies100000 records;
+shadow evolution copies/verifies100000, matches manifests and activates before
+current/retained checks. Governed owner/share/deletion plus current-only money101
+versus historical1 distinguish authority from physical values. All six numeric
+indexes are READY. No manual VACUUM, forced GC or quiet-period wait was used.
+All24 cases have100 measured requests, ten clients, exact independent oracles
+and zero errors. Three warmups/case remain separate from measured samples.
+
+| Generation | Case | SQL p95 ms | HTTP p95 ms | HTTP p99 ms | Requests/s | Errors |
+|---|---|---:|---:|---:|---:|---:|
+| unmapped | count | 48.569 | 153.745 | 169.109 | 77.82 | 0 |
+| unmapped | point_count | 44.775 | 143.219 | 151.365 | 83.35 | 0 |
+| unmapped | sum_integer | 162.154 | 416.369 | 445.537 | 26.37 | 0 |
+| unmapped | sum_decimal | 153.148 | 401.688 | 445.252 | 28.97 | 0 |
+| unmapped | sum_money | 136.947 | 387.787 | 433.602 | 31.08 | 0 |
+| unmapped | filtered_money | 183.118 | 481.529 | 509.913 | 24.04 | 0 |
+| unmapped | owner_money | 131.417 | 352.292 | 376.728 | 33.08 | 0 |
+| unmapped | share_count | 92.366 | 261.093 | 271.002 | 45.92 | 0 |
+| current | count | 137.504 | 382.441 | 397.578 | 31.69 | 0 |
+| current | point_count | 70.395 | 233.091 | 247.725 | 53.08 | 0 |
+| current | sum_integer | 227.842 | 697.988 | 749.954 | 18.19 | 0 |
+| current | sum_decimal | 236.861 | 656.619 | 667.731 | 18.57 | 0 |
+| current | sum_money | 218.296 | 608.082 | 626.957 | 19.41 | 0 |
+| current | filtered_money | 205.072 | 592.823 | 609.157 | 20.23 | 0 |
+| current | owner_money | 190.579 | 503.588 | 531.001 | 23.28 | 0 |
+| current | share_count | 231.952 | 586.160 | 607.232 | 19.23 | 0 |
+| retained | count | 115.274 | 319.578 | 329.256 | 36.76 | 0 |
+| retained | point_count | 60.617 | 196.298 | 206.239 | 59.63 | 0 |
+| retained | sum_integer | 229.045 | 584.479 | 615.844 | 20.50 | 0 |
+| retained | sum_decimal | 224.552 | 588.620 | 616.006 | 19.61 | 0 |
+| retained | sum_money | 202.182 | 555.638 | 597.003 | 20.99 | 0 |
+| retained | filtered_money | 236.004 | 712.030 | 731.130 | 17.10 | 0 |
+| retained | owner_money | 179.678 | 474.502 | 482.935 | 23.76 | 0 |
+| retained | share_count | 180.421 | 492.594 | 539.337 | 23.77 | 0 |
+
+Worst HTTP p95 is712.030ms, leaving only37.970ms to the750ms gate;
+no wider hardware, traffic, cardinality or arbitrary-query guarantee follows.
+Per-case resource observations are passive boundary samples, not proof of the
+cause of older tails. An independent LOW diagnostic finding (IR-R3d-02) showed
+cluster-wide autovacuum workers could be confused with fixture-local activity;
+f9cb4fa scopes that outside-timing query to the fixture. No aggregate SQL,
+resource profile, measured workload or latency assertion changed after the pass.
+
+Independent commit1f73033 verifies stable product f9cb4fa. All23 ordinary race
+groups PASS60.415s with zero skips and checksum-pinned old executable; stronger
+nested OWNER+CONDITION and included/excluded rare core-ID filters on100001
+physical rows PASS12.831s; config race tests PASS1.019s. See the exact commands
+and preserved failures in the [review](../verification/M9R_R3D_INDEPENDENT_REVIEW.md).
+IR-R3d-01 driver-panic/R7 remains unresolved, not relabelled as a passing check.
+
+Root final `make check test build`, both browser suites and the seven earlier
+capacity gates are now running serially against this source/profile. Their
+results are pending. The joint ADR058 profile and R3d are not accepted merely
+because aggregate capacity passes; all required regressions must finish first.
