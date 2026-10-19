@@ -10,13 +10,19 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/internal/audit"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/platform/access"
+	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
+	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
 )
 
@@ -145,4 +151,12 @@ func (e *m13Env) m12apiParallelReads(n, attempts int, token, path string, pause 
 	}
 	wg.Wait()
 	return out
+}
+
+// useAPI rebuilds the HTTP handler of the fixture with the production-shaped API of
+// m12Setup changed by mutate (a different Recompute, a PolicyLoader, ...).
+func (e *m12Env) useAPI(mutate func(*access.API)) {
+	api := access.API{DB: e.f.db, Auth: e.f.verifier, Policy: policy.Native{}, Audit: audit.Postgres{}, Registry: m3Registry(e.t), PreviewEnabled: true, WorkflowsEnabled: true}
+	mutate(&api)
+	e.h = httpserver.Handler(httpserver.Options{Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Register: api.Register, AllowPOST: api.AcceptsPOST})
 }
