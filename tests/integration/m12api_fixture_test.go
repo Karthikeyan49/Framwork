@@ -103,7 +103,14 @@ func (e *m13Env) m12apiPrepareBig(threshold string, bulk, cases int) m12Artifact
 func (e *m13Env) m12apiBigRelease(threshold string, activate bool) string {
 	t := e.t
 	t.Helper()
-	art := e.m12apiPrepareBig(threshold, 14, 1000)
+	bulk, cases := 14, 1000
+	if raceBuild {
+		// The race detector multiplies the cost of building the candidate itself past the 3 s envelope; the
+		// non-race run keeps the full size that finding F9 was about.
+
+		bulk, cases = 5, 250
+	}
+	art := e.m12apiPrepareBig(threshold, bulk, cases)
 	hash := viewOf(t, e.candidate(e.carol.token, art), 201).ArtifactHash
 	if !activate {
 		return hash

@@ -28,11 +28,11 @@ import (
 )
 
 // m12rDropFixtureGrants revokes the worker grant that the M8 fixture adds for its consumer-effects table.
-// The worker drift guard (migration 52) refuses every grant it does not list, so a test that asserts the
-// guard starts safe first removes this test-only grant.
+// That table lives outside the four guarded schemas, so the drift guard does not see it; the helper keeps
+// the tests that assert the guard independent of the fixture's own grant.
 func m12rDropFixtureGrants(t *testing.T, operator *sql.DB) {
 	t.Helper()
-	if _, err := operator.Exec(`REVOKE ALL ON runtime.m8_test_effects FROM framework_worker`); err != nil {
+	if _, err := operator.Exec(`REVOKE ALL ON m8_fixture.effects FROM framework_worker`); err != nil {
 		t.Fatal(err)
 	}
 }

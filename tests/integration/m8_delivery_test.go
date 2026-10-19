@@ -147,13 +147,16 @@ func m8Database(t *testing.T) {
 	if e = m.QueryRow(`SELECT state,(SELECT count(*) FROM runtime.event_envelopes) FROM control.event_deliveries WHERE tenant_id=$1 AND id=$2`, legacyTenant, legacyID).Scan(&state, &n); e != nil || state != "LEGACY_PAUSED" || n != 0 {
 		t.Fatal("legacy intent was rewritten or broadcast")
 	}
-	if _, e = m.Exec(`CREATE TABLE runtime.m8_test_effects(tenant_id uuid NOT NULL,event_id uuid NOT NULL,PRIMARY KEY(tenant_id,event_id))`); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = m.Exec(`SELECT runtime.install_tenant_rls('runtime.m8_test_effects')`); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = m.Exec(`REVOKE ALL ON runtime.m8_test_effects FROM framework_app; CREATE POLICY test_worker ON runtime.m8_test_effects TO framework_worker USING(iam.worker_tenant_scope(tenant_id) AND event_id::text=current_setting('app.job_id',true)) WITH CHECK(iam.worker_tenant_scope(tenant_id) AND event_id::text=current_setting('app.job_id',true)); GRANT SELECT,INSERT ON runtime.m8_test_effects TO framework_worker`); e != nil {
+	// The consumer-effects probe lives outside control/runtime/iam/audit: the worker drift guard
+	// (migration 52) derives the worker's allowed privileges for those four schemas and refuses every
+	// relation it does not list, so a test-only table with a worker grant cannot live in them.
+	if _, e = m.Exec(`CREATE SCHEMA m8_fixture; GRANT USAGE ON SCHEMA m8_fixture TO framework_worker; GRANT USAGE,CREATE ON SCHEMA m8_fixture TO framework_schema_owner;
+ CREATE TABLE m8_fixture.effects(tenant_id uuid NOT NULL,event_id uuid NOT NULL,PRIMARY KEY(tenant_id,event_id));
+ ALTER TABLE m8_fixture.effects ENABLE ROW LEVEL SECURITY; ALTER TABLE m8_fixture.effects FORCE ROW LEVEL SECURITY;
+ CREATE POLICY schema_owner_access ON m8_fixture.effects TO framework_schema_owner USING(true) WITH CHECK(true);
+ CREATE POLICY test_worker ON m8_fixture.effects TO framework_worker USING(iam.worker_tenant_scope(tenant_id) AND event_id::text=current_setting('app.job_id',true)) WITH CHECK(iam.worker_tenant_scope(tenant_id) AND event_id::text=current_setting('app.job_id',true));
+ GRANT SELECT,INSERT ON m8_fixture.effects TO framework_worker;
+ ALTER TABLE m8_fixture.effects OWNER TO framework_schema_owner`); e != nil {
 		t.Fatal(e)
 	}
 }
@@ -173,7 +176,7 @@ func m8Roles(t *testing.T) (*sql.DB, *sql.DB) {
 }
 func m8Consumer(db *sql.DB) events.Consumer {
 	return events.Consumer{DB: db, Policy: policy.Native{}, Audit: audit.Postgres{}, Handler: func(ctx context.Context, q postgres.Executor, a tenant.Access, e events.Envelope) error {
-		_, err := q.ExecContext(ctx, `INSERT INTO runtime.m8_test_effects(tenant_id,event_id) VALUES($1::uuid,$2::uuid)`, a.TenantID(), e.ID)
+		_, err := q.ExecContext(ctx, `INSERT INTO m8_fixture.effects(tenant_id,event_id) VALUES($1::uuid,$2::uuid)`, a.TenantID(), e.ID)
 		return err
 	}}
 }
@@ -188,7 +191,7 @@ func m8Claim(t *testing.T, d events.Dispatcher) events.Pointer {
 func m8Counts(t *testing.T, db *sql.DB, tenant string) (int, int, int) {
 	t.Helper()
 	var inbox, effects, auditN int
-	if e := db.QueryRow(`SELECT (SELECT count(*) FROM runtime.event_inbox WHERE tenant_id=$1),(SELECT count(*) FROM runtime.m8_test_effects WHERE tenant_id=$1),(SELECT count(*) FROM audit.entries WHERE tenant_id=$1 AND action='events.consume')`, tenant).Scan(&inbox, &effects, &auditN); e != nil {
+	if e := db.QueryRow(`SELECT (SELECT count(*) FROM runtime.event_inbox WHERE tenant_id=$1),(SELECT count(*) FROM m8_fixture.effects WHERE tenant_id=$1),(SELECT count(*) FROM audit.entries WHERE tenant_id=$1 AND action='events.consume')`, tenant).Scan(&inbox, &effects, &auditN); e != nil {
 		t.Fatal(e)
 	}
 	return inbox, effects, auditN
