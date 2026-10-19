@@ -9,16 +9,23 @@ package integration
 // definitions. Everything here is reusable after any further merge.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/Karthikeyan49/Framwork/db/migrations"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
+	"github.com/pressly/goose/v3"
 )
 
 // m13StaleSummary prints the staleness fields of a candidate view, never the
@@ -114,4 +121,247 @@ func TestM13IntegrationRuntimeContractChangeStalesOlderCandidates(t *testing.T) 
 		t.Fatal("the rebuilt candidate is not the active release", hash, generation, ok)
 	}
 	e.checkHistory()
+}
+
+// TestM13IntegrationUpgradeFrom48KeepsM12DataAndStillPromotes: the database is migrated to 00048 only, M12
+// data is created through the HTTP API of this binary (source revision, frozen sandbox, requirement set,
+// acceptance spec), then migrations 49 and later are applied on top of that data. The data must survive
+// unchanged, and a candidate built afterwards from those very rows must go through approve and activate.
+func TestM13IntegrationUpgradeFrom48KeepsM12DataAndStillPromotes(t *testing.T) {
+	m8MigrateTo = 48
+	e12 := m12Setup(t)
+	m8MigrateTo = 0
+	var applied int64
+	if err := e12.f.operator.QueryRow(`SELECT max(version_id) FROM goose_db_version`).Scan(&applied); err != nil || applied != 48 {
+		t.Fatal("the rehearsal must start at migration 48", applied, err)
+	}
+	art := e12.prepare("500", 0, 0, e12.alice, e12.bob)
+	type snapshot struct{ sets, specs, evidence, versions int }
+	take := func() (s snapshot) {
+		if err := e12.f.operator.QueryRow(`SELECT (SELECT count(*) FROM control.requirement_sets WHERE tenant_id=$1),(SELECT count(*) FROM control.acceptance_specs WHERE tenant_id=$1),
+ (SELECT count(*) FROM runtime.sandbox_evidence WHERE tenant_id=$1),(SELECT count(*) FROM control.metadata_versions WHERE tenant_id=$1)`, e12.f.tenantA).Scan(&s.sets, &s.specs, &s.evidence, &s.versions); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	before := take()
+	if before.sets != 1 || before.specs != 1 || before.evidence != 1 || before.versions != 1 {
+		t.Fatalf("the M12 data was not created: %+v", before)
+	}
+	var setHash, specHash, evidenceHash string
+	if err := e12.f.operator.QueryRow(`SELECT (SELECT body_hash FROM control.requirement_sets WHERE tenant_id=$1),(SELECT body_hash FROM control.acceptance_specs WHERE tenant_id=$1),(SELECT body_hash FROM runtime.sandbox_evidence WHERE tenant_id=$1)`, e12.f.tenantA).Scan(&setHash, &specHash, &evidenceHash); err != nil {
+		t.Fatal(err)
+	}
+
+	// The upgrade: every migration after 48, on top of the data.
+	ctx := context.Background()
+	migrator, err := postgres.Open(os.Getenv("MIGRATION_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrator.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, migrator, migrations.Files, goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := provider.Up(ctx)
+	if err != nil || len(results) < 2 || results[0].Source.Version != 49 {
+		t.Fatalf("upgrade from 48: %d migrations, first %v, %v", len(results), results, err)
+	}
+	if after := take(); after != before {
+		t.Fatalf("the upgrade changed M12 data: %+v -> %+v", before, after)
+	}
+	var setHash2, specHash2, evidenceHash2 string
+	if err = e12.f.operator.QueryRow(`SELECT (SELECT body_hash FROM control.requirement_sets WHERE tenant_id=$1),(SELECT body_hash FROM control.acceptance_specs WHERE tenant_id=$1),(SELECT body_hash FROM runtime.sandbox_evidence WHERE tenant_id=$1)`, e12.f.tenantA).Scan(&setHash2, &specHash2, &evidenceHash2); err != nil || setHash != setHash2 || specHash != specHash2 || evidenceHash != evidenceHash2 {
+		t.Fatal("stored bodies changed", err)
+	}
+
+	// The upgraded database promotes: build from the pre-upgrade rows, approve (dave), activate (erin).
+	e := &m13Env{m12Env: e12, people: map[string]m13Actor{}}
+	e.people["alice"] = m13Actor{"alice", e.f.alice, e.f.aliceSubject, e.alice}
+	e.people["bob"] = m13Actor{"bob", e.f.bob, e.f.bobSubject, e.bob}
+	e.carol, e.dave, e.erin = e.member("carol", "admin"), e.member("dave", "admin"), e.member("erin", "admin")
+	hash := viewOf(t, e.candidate(e.carol.token, art), 201).ArtifactHash
+	if v := viewOf(t, e.httpCandidate(e.viewer, hash), 200); v.Stale == nil || *v.Stale {
+		t.Fatalf("the candidate built on upgraded data reads stale: %s", m13StaleSummary(v))
+	}
+	viewOf(t, e.httpApprove(e.dave.token, hash), 201)
+	if rel := m13apiRelease(t, e.httpActivate(e.erin.token, hash, "", 0), 200); rel.Generation != 1 {
+		t.Fatalf("activation after the upgrade: %+v", rel)
+	}
+	e.checkHistory()
+}
+
+// ------------------------------------------------------------ replaced functions
+
+var (
+	functionHeader = regexp.MustCompile(`(?is)CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_]+\.[a-z_0-9]+)\s*\(`)
+	dollarTag      = regexp.MustCompile(`\$[a-z_]*\$`)
+	raiseMessage   = regexp.MustCompile(`(?is)RAISE\s+EXCEPTION\s+'((?:[^']|'')*)'`)
+)
+
+// m13FunctionVersions parses the Up sections of the embedded migrations and returns, for every
+// schema.name/arity, the RAISE EXCEPTION messages of each definition in migration order.
+func m13FunctionVersions(t *testing.T) map[string][]map[string]bool {
+	t.Helper()
+	entries, err := migrations.Files.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".sql") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	out := map[string][]map[string]bool{}
+	for _, name := range names {
+		raw, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		if i := strings.Index(text, "-- +goose Down"); i >= 0 {
+			text = text[:i]
+		}
+		for pos := 0; ; {
+			m := functionHeader.FindStringSubmatchIndex(text[pos:])
+			if m == nil {
+				break
+			}
+			start := pos + m[1] // just after the opening parenthesis
+			depth, end, args, top := 1, start, 0, false
+			for ; end < len(text) && depth > 0; end++ {
+				switch text[end] {
+				case '(':
+					depth++
+				case ')':
+					depth--
+				case ',':
+					if depth == 1 {
+						args++
+					}
+				}
+				if depth >= 1 && !top && strings.TrimSpace(string(text[end])) != "" && text[end] != ')' {
+					top = true
+				}
+			}
+			if top {
+				args++
+			}
+			key := fmt.Sprintf("%s/%d", strings.ToLower(text[pos+m[2]:pos+m[3]]), args)
+			rest := text[end:]
+			open := dollarTag.FindStringIndex(rest)
+			if open == nil {
+				pos = end
+				continue
+			}
+			tag := rest[open[0]:open[1]]
+			closeAt := strings.Index(rest[open[1]:], tag)
+			if closeAt < 0 {
+				pos = end
+				continue
+			}
+			body := rest[open[1] : open[1]+closeAt]
+			messages := map[string]bool{}
+			for _, mm := range raiseMessage.FindAllStringSubmatch(body, -1) {
+				messages[mm[1]] = true
+			}
+			out[key] = append(out[key], messages)
+			pos = end + open[1] + closeAt + len(tag)
+		}
+	}
+	return out
+}
+
+// m13DroppedMessages are guards (RAISE EXCEPTION messages) that a later definition of the same
+// function dropped or reworded ON PURPOSE. Everything else a replaced function ever raised must still be
+// raised by its latest definition: a lost guard is a defect. Each entry names the migration that moved it.
+var m13DroppedMessages = map[string][]string{
+	// 00027 (M9R) consolidates the four checks of 00004/00010 into three reworded errors with the same conditions.
+	"runtime.install_tenant_rls/1": {
+		"tenant table needs nonnull UUID scope and tenant-inclusive primary/unique keys",
+		"tenant foreign keys must include matching tenant scope",
+		"existing policies require explicit security review",
+		"tenant RLS requires a migration-owned tenant table",
+	},
+	// 00022 (M9R) moves claiming to the dispatcher role: the error is reworded to "dispatcher required".
+	"control.claim_workflow/1": {"worker required"},
+	// 00022/00023 (M9R) turn the worker check of the lease probe into a false result (control.worker_principal()).
+	"control.check_workflow_lease/5": {"scoped worker required"},
+}
+
+// TestM13IntegrationReplacedFunctionsKeepTheirGuards: every SQL function that more than one migration
+// defines is, in a freshly migrated database, exactly its highest-numbered definition (no older body
+// resurrected), and that definition still raises every error the older ones raised unless the drop is listed.
+func TestM13IntegrationReplacedFunctionsKeepTheirGuards(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	versions := m13FunctionVersions(t)
+	checked := 0
+	for key, defs := range versions {
+		if len(defs) < 2 {
+			continue
+		}
+		name, arity, _ := strings.Cut(key, "/")
+		schema, fn, _ := strings.Cut(name, ".")
+		latest := defs[len(defs)-1]
+		union := map[string]bool{}
+		for _, d := range defs {
+			for msg := range d {
+				union[msg] = true
+			}
+		}
+		if len(union) == 0 {
+			continue // SQL-language or guard-free functions: nothing to lose
+		}
+		rows, err := f.operator.Query(`SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname=$2 AND p.pronargs=$3::int`, schema, fn, arity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var live []string
+		for rows.Next() {
+			var def string
+			if err = rows.Scan(&def); err != nil {
+				t.Fatal(err)
+			}
+			live = append(live, def)
+		}
+		rows.Close()
+		if len(live) != 1 {
+			t.Errorf("%s: %d live definitions", key, len(live))
+			continue
+		}
+		checked++
+		liveSet := map[string]bool{}
+		for _, mm := range raiseMessage.FindAllStringSubmatch(live[0], -1) {
+			liveSet[mm[1]] = true
+		}
+		if !reflect.DeepEqual(liveSet, latest) {
+			t.Errorf("%s: the live function raises %v but the highest-numbered definition raises %v", key, sortedKeys(liveSet), sortedKeys(latest))
+		}
+		dropped := map[string]bool{}
+		for _, msg := range m13DroppedMessages[key] {
+			dropped[msg] = true
+		}
+		for msg := range union {
+			if !latest[msg] && !dropped[msg] {
+				t.Errorf("%s: an older definition raised %q and the latest does not (add it to m13DroppedMessages with the reason if intended)", key, msg)
+			}
+		}
+	}
+	if checked < 10 {
+		t.Fatalf("only %d replaced functions were compared: the parser lost the migrations", checked)
+	}
+	t.Logf("compared %d functions that more than one migration defines", checked)
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

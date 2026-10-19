@@ -29,6 +29,10 @@ import (
 	"time"
 )
 
+// m8MigrateTo, when positive, makes m8Database stop at that migration version (the legacy
+// M8 fixtures below need a full schema and are skipped). Zero migrates everything.
+var m8MigrateTo int64
+
 // Every M8 test owns a disposable database; no customer rows or old event due
 // times are changed to make dispatch tests convenient.
 func m8Database(t *testing.T) {
@@ -124,11 +128,19 @@ func m8Database(t *testing.T) {
 	if _, e = m.Exec(`INSERT INTO runtime.outbox_intents(tenant_id,id,actor_id,app_id,metadata_revision,ir_hash,entity_id,record_id,record_version,event_type) VALUES($1,$2,$3,'app.legacy',1,$4,'entity.legacy',$5,1,'record.created')`, legacyTenant, legacyID, uuid(t), strings.Repeat("a", 64), uuid(t)); e != nil {
 		t.Fatal("legacy fixture")
 	}
-	if _, e = p.Up(ctx); e != nil {
-		t.Fatal("M8 migration", e)
-	}
-	if applied, e := p.Up(ctx); e != nil || len(applied) != 0 {
-		t.Fatal("migration repeatability")
+	if m8MigrateTo > 0 {
+		// An upgrade rehearsal (TestM13IntegrationUpgradeFrom48...) stops at an earlier version and
+		// applies the rest itself.
+		if _, e = p.UpTo(ctx, m8MigrateTo); e != nil {
+			t.Fatal("partial migration", e)
+		}
+	} else {
+		if _, e = p.Up(ctx); e != nil {
+			t.Fatal("M8 migration", e)
+		}
+		if applied, e := p.Up(ctx); e != nil || len(applied) != 0 {
+			t.Fatal("migration repeatability")
+		}
 	}
 	var state string
 	var n int
