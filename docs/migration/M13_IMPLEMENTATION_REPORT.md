@@ -44,14 +44,59 @@ anything and point the pointer at any approved hash, stale or never activated.
 
 ## Commands executed and results
 
+Executed on the merged tree (M10 review fixes, M11/M12 review fixes, migrations 49–53) on 2026-10-19,
+one process at a time on an otherwise idle 4-core host, integration groups against the isolated M13 stack
+(reset from this tree first; every test also builds its own disposable database from the tree's migrations).
+
 | Command | Result |
 |---|---|
-| `TestM13Ports*` (6 tests: authority, separation/quorum/rejection, CAS, rollback gate, append-only/RLS/hygiene incl. worker-grant guard, closing the M6R write gap; mutation checks caught 3/3 weakenings) | PASS |
-| `TestM13API*` (8 tests), `TestM13Adversarial*` (compromised API forged candidate, identity impersonation residual, rogue-approver matrix, quorum with demoted approver, legacy write paths, 5 race scenarios, staleness, rejection permanence, rollback abuse, cross-tenant/app, replay, end-to-end) and `TestM12*` (5) on a freshly reset isolated database | PASS, 37 tests, 404 s (`-race`) |
-| `make check` (docs checksums, format, vet, mod verify, web lint, typecheck) on the integrated tree | PASS |
-| Go unit tests `-race` (`./cmd/... ./internal/... ./db/... ./contracts/... ./tests/security/...`), `node --test scripts/*.test.mjs`, web `npm test` | PASS (5 / 29 tests) |
-| Full `go test -race -tags=integration ./tests/integration` on the integrated tree (main stack, migrations 1–49), run while other agents loaded the 4-core host | 1 failure of the whole suite: `TestM10CrashAfterSendLookupFindsEffectWithoutResend` returned a 503 (3 s transaction envelope exceeded under load); it passed 2/2 when rerun alone (23 s) |
-| Independent adversarial review of M13 | NOT RUN (the adversarial suite above was written by the builder agent against its own contract) |
+| `go build ./...`, `go vet ./...`, `go vet -tags=integration ./tests/integration`, `gofmt -l .`, `node scripts/verify-docs.mjs` | PASS |
+| Unit tests `-race -count=1` by group: promotion, risk, intent, verification, metadata; compiler, tools; runtime/...; policy, platform/..., audit, db, contracts, cmd; erp, events, identity, observability, sandbox, tenant, config, tests/security | PASS (every package) |
+| `TestM13` group (ports, API, adversarial, integrity, review regressions `TestM13R*`), `-race` | PASS, 172 s |
+| `TestM12` group, `-race` | PASS (after the F9 cost fixture was sized down under the race detector) |
+| `TestM11` group (13 tests, includes `TestM11R*`), `-race` | PASS, 156 s |
+| `TestM10` group (22 tests, includes `TestM10R*`), `-race` | PASS, 480 s |
+| `TestM9` group, `-race` | PASS, 497 s |
+| `TestM8` group without `TestM8RedisACLStreamLossAndPendingRecovery`, `-race` | PASS, 46 s |
+| Full integration suite, `make test`, `make test-e2e`, `make build` on the final tree | see "Final gate" below |
+
+Defects found by running the merged tree (none by the branches alone) and fixed here:
+- Migration 52 derives the worker grant guard for control, runtime, iam and audit and refuses every relation it does
+  not list. The M8 and M9 test fixtures created effect-probe tables in `runtime` with a worker grant, so
+  `worker_grants_safe()` was false in every disposable database and every worker-claiming test (M8–M11, M9R) failed
+  with "worker job denied". The probe tables now live in their own schemas (`m8_fixture`, `m9_fixture`).
+- The F9 large-candidate fixture exceeded the 3 s envelope while being built under `-race`; under the race detector
+  it uses a smaller candidate (the non-race run keeps the full size).
+
+## Independent review
+
+Independent adversarial review of M13 (a separate agent, 2026-10-19): **PASS WITH FINDINGS**, 0 HIGH, 2 MEDIUM,
+4 LOW, 8 INFO (`docs/verification/M13_INDEPENDENT_REVIEW.md`, fix re-verification in
+`docs/verification/FIX_REVERIFICATION.md`). The database authority floor held against every direct attack.
+
+| Finding | Disposition | Where |
+|---|---|---|
+| M13R-01 MEDIUM an acknowledged rejection did not stop an activation that started earlier | FIXED: per-hash fence row written by both ports, the older snapshot aborts with 40001 | migration 53, ADR039 amendment 12, `TestM13R01*` |
+| M13R-02 MEDIUM rollback class gate read only the current release | FIXED: gate covers every release the pointer crosses | migration 53, `promote.go`, ADR039 amendment 12, `TestM13R02*` |
+| M13R-03 LOW demoted approver still counts toward quorum | DOCUMENTED residual (database floor is "active non-viewer member") | ADR039 amendment 13, pinned by `TestM13R03*` |
+| M13R-04 LOW U+017F / U+212A alias a key | FIXED: request keys must be ASCII snake_case | `promote.go`, `TestM13R04*` |
+| M13R-05 LOW invisible marks in notes | FIXED in Go, port and table constraint (U+200C/U+200D stay legal) | migration 53, `TestM13R05*` |
+| M13R-06 LOW runtime components never compared with the binary | FIXED by the M12 API fixes (`RUNTIME_CHANGED` staleness) | `TestM13R06*` |
+| FR-01 LOW a worker can set status/termination/failure of its leased instance | DOCUMENTED (ADR024 residual) | ADR039 amendment 13 |
+| FR-02 LOW an exemption band between the verifier probes passed | FIXED: ratio probes, verifier version `verifier-v2` | ADR038 amendment 9, `TestExemptionBandBetweenBoundaryProbesFails` |
+
+These fixes are NOT independently reviewed. No separate reviewer has re-verified them.
+
+## Re-run recipe
+
+```
+export PATH=/tmp/node24/node-v24.22.0-linux-x64/bin:$PATH
+/home/user/bin/dbrun13 /home/user/m13-env/reset.sh          # from the worktree root; applies migrations 1–53
+for g in TestM13 TestM12 TestM11 TestM10 TestM9; do
+  /home/user/bin/dbrun13 node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -timeout 40m -run "$g" ./tests/integration
+done
+/home/user/bin/dbrun13 node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -timeout 40m -run TestM8 -skip TestM8RedisACLStreamLossAndPendingRecovery ./tests/integration
+```
 
 ## Threat model and limits
 
