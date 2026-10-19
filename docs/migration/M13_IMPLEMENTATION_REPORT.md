@@ -78,7 +78,7 @@ Independent adversarial review of M13 (a separate agent, 2026-10-19): **PASS WIT
 |---|---|---|
 | M13R-01 MEDIUM an acknowledged rejection did not stop an activation that started earlier | FIXED: per-hash fence row written by both ports, the older snapshot aborts with 40001 | migration 53, ADR039 amendment 12, `TestM13R01*` |
 | M13R-02 MEDIUM rollback class gate read only the current release | FIXED: gate covers every release the pointer crosses | migration 53, `promote.go`, ADR039 amendment 12, `TestM13R02*` |
-| M13R-03 LOW demoted approver still counts toward quorum | DOCUMENTED residual (database floor is "active non-viewer member") | ADR039 amendment 13, pinned by `TestM13R03*` |
+| M13R-03 LOW demoted approver still counts toward quorum | FIXED in the Go layer after the first fix round: only approvers whose current role grants `releases.approve` count at activation and in the derived status; the database floor is unchanged | `promote.go` (`holdingApprovers`), `policy/holds.go`, `promotion/approver_roles.go`, ADR039 amendment 13, `TestM13R03*` |
 | M13R-04 LOW U+017F / U+212A alias a key | FIXED: request keys must be ASCII snake_case | `promote.go`, `TestM13R04*` |
 | M13R-05 LOW invisible marks in notes | FIXED in Go, port and table constraint (U+200C/U+200D stay legal) | migration 53, `TestM13R05*` |
 | M13R-06 LOW runtime components never compared with the binary | FIXED by the M12 API fixes (`RUNTIME_CHANGED` staleness) | `TestM13R06*` |
@@ -111,6 +111,27 @@ the isolated M14 database stack reset from that tree. The branch itself was prov
 | `make build` | PASS |
 | `make test-e2e` (5 browser tests) | PASS, 21.6 s |
 | `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN: it restarts the shared Redis and fails on isolated stacks by design |
+
+## Follow-up: M13R-03 closed in the Go layer (2026-10-19)
+
+Only approvers whose current role grants `releases.approve` count at activation and in the derived status (ADR039
+amendment 13). Written failing-first: with `promote.go` reverted, `TestM13R03DemotedApproverNoLongerCounts`,
+`...ReassignedCustomApproverNoLongerCounts` and `...CriticalQuorumNeedsBothApproversToHold` answered 200 on the approval
+of a demoted member, and `...DeactivatedApproverNoLongerCounts` showed `APPROVED` for a candidate the port then refused.
+Two existing tests changed their expectation, not their purpose: the activation after a demotion now answers
+`approval_quorum_not_met` (Go refuses before the port, `TestM13APICriticalQuorumOnATransformRelease`), and the
+custom-role matrix test activates through the loader-configured handler that approved (`TestM13APIRoleMatrixCustomRoleTenantAndAppScope`;
+a handler that knows only the built-in roles correctly does not count a custom-role approver). Run on the isolated M13
+stack reset from the changed tree, one process at a time. This change post-dates the "Final gate" below; the full
+integration suite, `make check`, `make test-unit`, `make build` and `make test-e2e` were **not** re-run for it.
+
+| Command | Result |
+|---|---|
+| `gofmt -l`, `node scripts/verify-docs.mjs`, `go vet -tags=integration ./tests/integration` | PASS |
+| `go test -race ./internal/policy/... ./internal/promotion/... ./internal/platform/access/... ./internal/tenant/...` (new: `TestNativeHolds`, `TestDefinedHoldsFollowsTheGrants`) | PASS (promotion 37.9 s) |
+| `TestM13R03` group, `-race` (5 tests) | PASS, 16 s |
+| Mutation: `Holds` ignores an explicit DENY | caught by `TestDefinedHoldsFollowsTheGrants` and `TestM13R03HoldsMatchesDecide`; restored |
+| `TestM13`, `TestM12` groups, `-race` | PASS, 256 s |
 
 ## Threat model and limits
 

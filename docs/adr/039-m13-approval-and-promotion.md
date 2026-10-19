@@ -321,10 +321,25 @@ These supersede the matching sentences above where they differ.
    - *M13R-05, invisible marks (§3).* Rejection notes may not contain U+061C, U+200B, U+200E, U+200F or
      U+FEFF (Go, the port and the table constraint; older rows are not re-validated). The zero width joiners
      U+200C and U+200D stay legal because emoji sequences and several scripts need them.
-13. **Documented residuals of the same review.** *M13R-03:* the database floor counts every approver who is
-   still an active non-viewer member, so a member demoted to a role without `releases.approve` still counts at
-   activation (`TestM13R03DemotedApproverStillCounts` pins this); the policy engine cannot be evaluated inside
-   the port. *M13R-06:* a candidate recorded under other runtime components now reads stale
+13. **M13R-03 is fixed in the Go layer; residuals of the same review.** *M13R-03 (fixed, 2026-10-19):* the
+   database floor still counts every approver who is an active non-viewer member, and the port cannot evaluate
+   the policy. The handler now narrows the recorded approvers, after the separation bars, to those whose
+   CURRENT role grants `releases.approve` on the application (`promotion.Store.ApproverRoles` reads the
+   roles in the request's transaction; `policy.RoleStore.Holds` answers from the stored role head, an explicit
+   DENY winning, and `policy.NativeHolds` for deployments without a role loader). The narrowed list decides
+   the quorum at activation and the derived status of an undecided candidate, so the view and the refusal
+   agree; the recorded approvals are never changed, which means that restoring the role restores the
+   approval. A rejection is not narrowed: a veto stays a veto. The database floor remains the last check
+   (the narrowed set is a subset of what the port counts, apart from the `iam.users.active` condition only
+   the port reads). The read and the port share the request's REPEATABLE READ snapshot, so a role change
+   that commits after the snapshot is first seen by the next request, as for every other policy decision.
+   A change of a role's definition already made every candidate stale (`POLICY_CHANGED`); the new check
+   covers the reassignment of a member to another role, which changes no role head. Tests:
+   `TestM13R03*` (built-in demotion through the role route, deactivation, reassignment between custom roles,
+   a CRITICAL quorum with one of two approvers demoted, and a comparison of `Holds` with the real approve
+   route over eight roles), `TestNativeHolds`, `TestDefinedHoldsFollowsTheGrants`. `Holds` repeats the grant
+   rules of `Defined.Decide` for a member who is not the caller; the comparison test is what keeps the two
+   equal. *M13R-06:* a candidate recorded under other runtime components now reads stale
    (`RUNTIME_CHANGED`, M12 API fixes) and the verifier version is part of the components (`verifier-v2`).
    *FR-01 (re-verification):* a worker can set status, termination and failure of its own leased instance
    without a transition; this is the ADR024 residual of a compromised worker inside its exact lease.
