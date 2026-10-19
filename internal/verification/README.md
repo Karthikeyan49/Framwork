@@ -1,6 +1,6 @@
 # verification
 
-Deterministic independent-acceptance verifier (`verifier-v1`, ADR038 section 4).
+Deterministic independent-acceptance verifier (`verifier-v2`, ADR038 section 4).
 
 `Verify(Input)` is pure: no clock, randomness, network, database or file, no
 goroutine, and it never calls `compiler.Compile` (a test enforces this). It takes a

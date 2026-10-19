@@ -97,6 +97,9 @@ const (
 	// MaxDecisions bounds the approvals or rejections read for one hash; it
 	// equals the approver bound of risk.CheckSeparation.
 	MaxDecisions = risk.MaxEntries
+	// MaxRollbackSpan is the most releases a rollback is assessed across; a longer
+	// span cannot be assessed here and needs an acknowledged plan.
+	MaxRollbackSpan = 32
 )
 
 var (
@@ -170,6 +173,12 @@ func validScopeOf(tenantID, actorID, app string) bool {
 	return tenant.ValidID(tenantID) && tenant.ValidID(actorID) && len(app) <= 160 && appIDPattern.MatchString(app)
 }
 
+// invisibleMarks are formatting marks that take no width or reorder text (Arabic letter mark,
+// zero width space, left-to-right and right-to-left marks, byte order mark). The zero width
+// joiners U+200C and U+200D stay legal: emoji sequences and several scripts need them.
+// Mirrored by control.reject_release and the release_rejections note constraint.
+var invisibleMarks = map[rune]bool{0x061c: true, 0x200b: true, 0x200e: true, 0x200f: true, 0xfeff: true}
+
 // ValidNote reports whether a rejection note is acceptable: valid UTF-8, at most
 // MaxNoteRunes characters, no control characters and no bidirectional or line
 // separator formatting that could disguise the text where it is displayed.
@@ -178,7 +187,7 @@ func ValidNote(note string) bool {
 		return false
 	}
 	for _, r := range note {
-		if unicode.IsControl(r) || r == ' ' || r == ' ' || r >= '‪' && r <= '‮' || r >= '⁦' && r <= '⁩' {
+		if invisibleMarks[r] || unicode.IsControl(r) || r == ' ' || r == ' ' || r >= '‪' && r <= '‮' || r >= '⁦' && r <= '⁩' {
 			return false
 		}
 	}
@@ -370,6 +379,54 @@ func (Store) WasActivated(ctx context.Context, q postgres.Executor, a tenant.Acc
 		return false, errPortResult
 	}
 	return found, classify(err)
+}
+
+// RolledBackAcross lists the distinct artifact hashes of the history entries newer than
+// the latest entry of target, sorted, at most MaxRollbackSpan+1 of them: the releases a
+// rollback to target moves the pointer across (the current release is among them). A
+// target with no history entry yields none.
+func (Store) RolledBackAcross(ctx context.Context, q postgres.Executor, a tenant.Access, app, target string) ([]string, error) {
+	if !validScope(a, app) || !ValidHash(target) {
+		return nil, ErrInvalid
+	}
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT h.artifact_hash FROM control.release_history h WHERE h.tenant_id=$1 AND h.app_id=$2
+ AND h.seq>(SELECT coalesce(max(t.seq),0) FROM control.release_history t WHERE t.tenant_id=$1 AND t.app_id=$2 AND t.artifact_hash=$3) ORDER BY h.artifact_hash LIMIT $4`,
+		a.TenantID(), app, target, MaxRollbackSpan+1)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, classify(err)
+		}
+		out = append(out, hash)
+	}
+	return out, classify(rows.Err())
+}
+
+// WorseRollbackClass returns the class that demands more care of two: external effects,
+// then data that cannot be reversed, then a class that could not be read (""), then a
+// pointer-safe release. An unknown value ranks as unreadable.
+func WorseRollbackClass(a, b string) string {
+	if rollbackRank(b) > rollbackRank(a) {
+		return b
+	}
+	return a
+}
+
+func rollbackRank(class string) int {
+	switch class {
+	case risk.RollbackPointerSafe:
+		return 0
+	case risk.RollbackDataNotReversible:
+		return 2
+	case risk.RollbackExternalEffects:
+		return 3
+	}
+	return 1
 }
 
 // ------------------------------------------------------------------ pure rules

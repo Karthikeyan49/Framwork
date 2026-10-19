@@ -105,26 +105,42 @@ func readPromotionRequest(r *http.Request, dest any) error {
 		return data.ErrInvalid
 	}
 	value, err := metadata.DecodeJSON(raw)
-	if err != nil || !lowercaseKeys(value) {
+	if err != nil || !asciiKeys(value) {
 		return data.ErrInvalid
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	return readDatasetRequest(r, dest)
 }
 
-func lowercaseKeys(value any) bool {
+// asciiKeys reports whether every object key of the decoded document is plain ASCII snake_case.
+// encoding/json matches struct fields case-insensitively under Unicode folding (U+017F folds to
+// "s", U+212A to "k"), so a key that merely folds to a field name must be refused before decoding
+// (M13R-04); every key of the promotion requests is ASCII.
+func asciiKeys(value any) bool {
 	switch v := value.(type) {
 	case map[string]any:
 		for key, child := range v {
-			if key != strings.ToLower(key) || !lowercaseKeys(child) {
+			if !asciiSnake(key) || !asciiKeys(child) {
 				return false
 			}
 		}
 	case []any:
 		for _, child := range v {
-			if !lowercaseKeys(child) {
+			if !asciiKeys(child) {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func asciiSnake(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		if c := key[i]; !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return false
 		}
 	}
 	return true
@@ -405,6 +421,29 @@ func (a API) rollbackClass(ctx context.Context, q postgres.Executor, access tena
 	return "", nil
 }
 
+// rollbackSpanClass widens the class of the current release to every release a rollback to
+// target moves the pointer across (M13R-02): the worst class among them decides whether a
+// plan is required. A span longer than promotion.MaxRollbackSpan is not assessed and counts
+// as unreadable, which needs a plan.
+func (a API) rollbackSpanClass(ctx context.Context, q postgres.Executor, access tenant.Access, app, current, target string) (string, error) {
+	span, err := a.store().RolledBackAcross(ctx, q, access, app, target)
+	if err != nil {
+		return "", err
+	}
+	if len(span) > promotion.MaxRollbackSpan {
+		return promotion.WorseRollbackClass(current, ""), nil
+	}
+	class := current
+	for _, hash := range span {
+		c, err := a.rollbackClass(ctx, q, access, app, hash)
+		if err != nil {
+			return "", err
+		}
+		class = promotion.WorseRollbackClass(class, c)
+	}
+	return class, nil
+}
+
 func separationRefused(role string) reply {
 	if role == "" {
 		return denied(403, "separation_of_duties", "Separation of duties: you may not approve this candidate")
@@ -602,6 +641,11 @@ func (a API) rollbackRelease(ctx context.Context, q postgres.Executor, r *http.R
 	if len(rejections) > 0 {
 		return denied(409, "rollback_target_rejected", "A rejected release is not a rollback target"), nil
 	}
+	class, err = a.rollbackSpanClass(ctx, q, access, app, class, body.Target)
+	if err != nil {
+		return reply{}, err
+	}
+	evidence.State.RollbackClass = class
 	if promotion.RollbackClassNeedsPlan(class) && body.Plan == nil {
 		return denied(409, "rollback_plan_required", "Rolling back this release requires an acknowledged rollback plan"), nil
 	}

@@ -45,6 +45,7 @@ type orderOptions struct {
 	noteNotNull     bool   // route also requires note to be set
 	orNote          string // route is amount > threshold OR note == orNote (over-approval)
 	rejectCompletes bool   // a rejected approval ends in complete instead of failed
+	exemptBand      bool   // amounts strictly between 600 and 900 skip approval
 }
 
 func orderDocument(o orderOptions) metadata.Document {
@@ -125,6 +126,12 @@ func orderDocument(o orderOptions) metadata.Document {
 		if o.rejectCompletes {
 			// Keeps state.failed reachable, which the workflow contract requires.
 			start = append(start, metadata.Transition{To: "state.failed", Condition: &metadata.Expression{Op: "eq", Args: []metadata.Expression{{Op: "field", FieldRef: "field.order.id"}, {Op: "literal", Value: json.RawMessage(`"invalid"`)}}}})
+		}
+		if o.exemptBand {
+			low := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"600","currency":"` + o.currency + `"}`)}
+			high := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"900","currency":"` + o.currency + `"}`)}
+			band := and(metadata.Expression{Op: "gt", Args: []metadata.Expression{amountField, low}}, metadata.Expression{Op: "lt", Args: []metadata.Expression{amountField, high}})
+			start = append(start, metadata.Transition{To: "state.complete", Condition: band})
 		}
 		if o.vipSkip {
 			start = append(start, metadata.Transition{To: "state.complete", Condition: note("vip")})
@@ -382,6 +389,18 @@ func TestUpperCapOnTheApprovalRouteFails(t *testing.T) {
 	}
 	if r := mustVerify(t, input(orderProgram(t, orderOptions{cap: "1000000000000"}), set, spec)); r.Outcome != Fail || !hasFindingPrefix(r, CodeApprovalMismatch, "po-approval/probe/plus1e") {
 		t.Fatalf("cap at 1e12: %s %+v", r.Outcome, r.Findings)
+	}
+}
+
+// Independent re-verification FR-02: an exemption band between the boundary probes (orders from 600 to 900
+// skip approval) passed because no probe landed inside it; ratios of the threshold now do.
+func TestExemptionBandBetweenBoundaryProbesFails(t *testing.T) {
+	set := requirementSet(thresholdRequirement("po-approval", regular))
+	if r := mustVerify(t, input(orderProgram(t, orderOptions{exemptBand: true}), set, controlSpec(set))); r.Outcome != Fail || !hasFindingPrefix(r, CodeApprovalMismatch, "po-approval/probe/ratio-") {
+		t.Fatalf("%s %+v", r.Outcome, r.Findings)
+	}
+	if r := mustVerify(t, input(orderProgram(t, orderOptions{}), set, controlSpec(set))); r.Outcome != Pass {
+		t.Fatalf("honest route: %s %+v", r.Outcome, r.Findings)
 	}
 }
 

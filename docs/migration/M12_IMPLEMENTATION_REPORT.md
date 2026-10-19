@@ -25,7 +25,7 @@ server**, and the database refuses every other writer.
   strictly parsed), requiredness floors (`requirement-policy-v1`), validation with
   hash binding and coverage, an exact money oracle that never reads the IR, and
   mechanically derived boundary probes.
-- `internal/verification`: deterministic `verifier-v1` over the stored IR bytes
+- `internal/verification`: deterministic `verifier-v2` over the stored IR bytes
   (compiled rules and workflow `Next`; no clock, network, database or compile).
   PASS, FAIL (behaviour differs) or BLOCKED (cannot be verified, including an
   omitted requirement, an open mandatory requirement or an unsupported category).

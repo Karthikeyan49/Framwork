@@ -143,7 +143,7 @@ Authoring-time check: every human case must agree with the oracle, else the spec
 is rejected (a human declaring `500001 INR → finance approval` for `GT 500 USD` is
 rejected).
 
-### Verifier `verifier-v1` (vocabulary `acceptance-vocabulary-v1`)
+### Verifier `verifier-v2` (vocabulary `acceptance-vocabulary-v1`)
 Inputs: restored `compiler.Program` (never compiles), requirement set,
 acceptance spec, `ClassifyStorage` delta, tool catalog + plan pins, sandbox
 evidence. Executes: for threshold cases, set the money field and the case's other

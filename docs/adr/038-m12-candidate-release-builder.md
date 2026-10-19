@@ -283,6 +283,9 @@ intent is unchanged.
    fields and 6 values per field); a mined world that cannot be evaluated or that
    ends in `failed` is skipped, never blocking and never a pass; (d) a plan-only
    workflow change around a pinned tool inherits the tool's level (F7).
+   (e) ratios of the threshold (1/4, 1/2, 3/4, 5/4, 3/2, 3, 5, 7 times, rounded to the currency's minor unit)
+   catch an exemption band between the boundary probes (re-verification FR-02). The verifier version is now
+   `verifier-v2` (a change to the checks needs a new version); candidates recorded under `verifier-v1` read stale.
    Still true: this is a bounded mechanical floor, not a proof. Decimal, money,
    date and datetime fields other than the threshold are not mined, two-field
    interactions beyond one extra value per run are not explored, and a bypass that

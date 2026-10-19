@@ -180,6 +180,11 @@ func DeriveProbes(requirementID string, t ApprovalThreshold) ([]Probe, error) {
 		for _, multiple := range []int64{10, 1000} {
 			specs = append(specs, spec{fmt.Sprintf("x%d", multiple), amountText(new(big.Rat).Mul(limit, new(big.Rat).SetInt64(multiple)), minor), t.Currency})
 		}
+		// An exemption band between the boundary probes (for example 600 to 900 over a 500 threshold)
+		// is caught by ratios of the threshold on both sides; amounts round to the currency's minor unit.
+		for _, ratio := range [][2]int64{{1, 4}, {1, 2}, {3, 4}, {5, 4}, {3, 2}, {2, 1}, {3, 1}, {5, 1}, {7, 1}} {
+			specs = append(specs, spec{fmt.Sprintf("ratio-%d-%d", ratio[0], ratio[1]), amountText(new(big.Rat).Mul(limit, big.NewRat(ratio[0], ratio[1])), minor), t.Currency})
+		}
 	}
 	seen := map[string]bool{}
 	probes := []Probe{}
