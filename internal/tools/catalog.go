@@ -126,11 +126,58 @@ func (d Definition) DeliveryContract() Delivery {
 	return Delivery{SideEffectClass: d.SideEffect, IdempotencyMode: d.Delivery.IdempotencyMode, RetryMode: d.Delivery.RetryMode, ReconciliationMode: d.Delivery.ReconciliationMode}
 }
 
-// Hash is the canonical identity pinned by compiled workflow plans.
+// Unhashable is what Hash returns for a definition that cannot be encoded. It is not a
+// digest, so it never equals a pin and two such definitions are never taken for a valid one.
+const Unhashable = "unhashable-definition"
+
+// Hash is the canonical identity pinned by compiled workflow plans. It covers the decoded
+// SIMULATE fixture, not the spelling of its values (an escape, padding, a null optional
+// member), so re-encoding the operator file does not re-pin a tool (gateway review F6).
+// A definition that cannot be encoded returns Unhashable (F7).
 func (d Definition) Hash() string {
-	raw, _ := json.Marshal(d)
+	if len(d.Sandbox.Output) > 0 {
+		d.Sandbox.Output = canonicalFixture(d.Output, d.Sandbox.Output)
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return Unhashable
+	}
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
+}
+
+// canonicalFixture re-encodes every fixture value that decodes against its declared field
+// from the decoded value, and drops the members that decode to "absent" (null). A value
+// that does not decode is kept as written: validation rejects it, and a raw value that is
+// not even JSON makes the encoding fail.
+func canonicalFixture(fields []Field, raw map[string]json.RawMessage) map[string]json.RawMessage {
+	declared := map[string]Field{}
+	for _, f := range fields {
+		declared[f.Name] = f
+	}
+	out := make(map[string]json.RawMessage, len(raw))
+	for name, v := range raw {
+		f, ok := declared[name]
+		if !ok {
+			out[name] = v
+			continue
+		}
+		if string(bytes.TrimSpace(v)) == "null" {
+			continue
+		}
+		value, err := decodeScalar(f, v)
+		if err != nil {
+			out[name] = v
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			out[name] = v
+			continue
+		}
+		out[name] = encoded
+	}
+	return out
 }
 func (d Definition) AllowsTenant(tenant string) bool {
 	for _, t := range d.Tenants {
@@ -480,7 +527,12 @@ func decodeScalar(f Field, raw json.RawMessage) (any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var v any
-	if decoder.Decode(&v) != nil || decoder.More() {
+	// Exactly one scalar: whitespace may follow it, nothing else. Decoder.More is false
+	// before a stray ']' or '}', so the end of the input is checked instead (F7).
+	if decoder.Decode(&v) != nil {
+		return nil, ErrCatalog
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return nil, ErrCatalog
 	}
 	switch f.Type {

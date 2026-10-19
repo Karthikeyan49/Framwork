@@ -7,10 +7,12 @@ import (
 	"crypto/x509"
 	"errors"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -357,11 +359,43 @@ func ctxClass(ctx context.Context) string {
 	return ClassTransport
 }
 
+// typedAnswer reports whether a 2xx response is the answer the gateway asked for: no
+// content coding (the client never asks for compression and never decodes one) and
+// exactly one media type, application/json, whose only parameter may be charset=utf-8.
+func typedAnswer(h http.Header) bool {
+	for _, value := range h.Values("Content-Encoding") {
+		for _, coding := range strings.Split(value, ",") {
+			if c := strings.ToLower(strings.TrimSpace(coding)); c != "" && c != "identity" {
+				return false
+			}
+		}
+	}
+	types := h.Values("Content-Type")
+	if len(types) != 1 {
+		return false
+	}
+	media, params, err := mime.ParseMediaType(types[0])
+	if err != nil || media != "application/json" {
+		return false
+	}
+	for name, value := range params {
+		if name != "charset" || !strings.EqualFold(value, "utf-8") {
+			return false
+		}
+	}
+	return true
+}
+
 // classifyResponse maps a received response to an outcome (ADR036 #6).
 func classifyResponse(ctx context.Context, def Definition, kind string, resp *http.Response) Result {
 	status := resp.StatusCode
 	switch {
 	case status >= 200 && status <= 299:
+		// The request asked for an uncompressed JSON answer (F5): a content coding or another
+		// media type is not that answer even when the bytes happen to parse.
+		if !typedAnswer(resp.Header) {
+			return unknownResult(ClassInvalidResponse, status)
+		}
 		limit := min(def.Connector.MaxResponseBytes, MaxResponseBytes)
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 		if err != nil {

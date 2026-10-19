@@ -16,6 +16,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/trace"
 	"net/http"
 	"regexp"
@@ -334,7 +335,17 @@ func (a API) previewWorkflow(ctx context.Context, q postgres.Executor, r *http.R
 		return reply{}, &requestRejection{response: denied(404, "not_found", "Workflow or input record not found")}
 	case errors.Is(err, workflow.ErrConflict):
 		return reply{}, &requestRejection{response: denied(409, "workflow_conflict", "Reload workflow state before retrying")}
+	case frozenSandboxFence(err):
+		// The database fence of a frozen sandbox (migration 51, M11 review R03): its workflows
+		// are evidence and take no signal, step or receipt any more.
+		return reply{}, &requestRejection{response: denied(409, "sandbox_frozen", "The sandbox is frozen; its workflows are read-only")}
 	default:
 		return reply{}, err
 	}
+}
+
+// frozenSandboxFence recognises the refusal of runtime.fence_frozen_instance (SQLSTATE 55000).
+func frozenSandboxFence(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "55000" && pg.Message == "frozen sandbox is read-only"
 }

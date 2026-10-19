@@ -466,6 +466,7 @@ func TestMissingFixtureFieldsAreSimplyAbsent(t *testing.T) {
 func TestLookupFoundAndNotFound(t *testing.T) {
 	h := newHarness(t)
 	prod, sandbox := h.pair(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/v1/invoices/by-reference/"+testKey {
 			w.WriteHeader(200)
 			fmt.Fprint(w, `{"invoice_id":"inv-1","state":"paid"}`)

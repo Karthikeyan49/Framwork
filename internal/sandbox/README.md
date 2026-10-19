@@ -7,3 +7,8 @@ implemented in migration 00046, `internal/runtime/data` (CreateSandbox, FreezeSa
 Evidence), `internal/platform/access/sandboxes.go` and `internal/tools/mode.go`
 (see docs/adr/037-m11-sandbox-v2.md). Other modules must not import private
 subpackages or access module tables; see docs/architecture/12_MODULE_BOUNDARIES.md.
+
+Since migration 00051 (docs/adr/037-m11-sandbox-v2.md, Amendments) the freeze is quiescent (it is
+refused while a send is in flight or an unknown outcome is outstanding), runs READ COMMITTED, needs an
+owner/admin, orders its manifests bytewise, and fences every later write to the sandbox's workflow,
+ledger, link, binding and dataset rows in the database.
