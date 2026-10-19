@@ -38,8 +38,8 @@ Baseline: `81b88d2`. Later remediation must cite its verified commit/evidence.
 | M8 delivery | Wired preview receipt consumer | R7 outage/replay/retention; future subscribers |
 | M9 workflows | Wired bounded DAG/noop preview | R1 boundary; later lifecycle/approval semantics |
 | OWNER/TEAM/SHARE/CONDITION | Tested SQL adapter | R5 product policy/administration |
-| Release hashes/CAS/compatibility | M12 server-built candidates (bundle 2.0.0) staged through a definer port; approval/activation contracts and the operator compatibility gate remain | M13 approval, activation and production runtime; independent review of M12 |
-| Intent/acceptance/sandbox/tool delivery | M10 governed tools, M11 sandboxes and M12 deterministic acceptance verifier implemented for preview; independent reviews NOT RUN | M13 enforcement, M14 AI capture; a deterministic verifier is not a separate credential |
+| Release hashes/CAS/compatibility | M12 server-built candidates (bundle 2.0.0) staged through a definer port; M13 approval, rejection, activation and rollback through definer ports with a database-enforced floor (preview control plane: no production data plane, no storage execution); the operator compatibility gate remains | M13 production data plane and storage execution (M13c); independent reviews of M12 and M13 are complete with findings fixed, the latest fixes are not independently re-verified |
+| Intent/acceptance/sandbox/tool delivery | M10 governed tools, M11 sandboxes and M12 deterministic acceptance verifier (`verifier-v2`) implemented for preview; their independent reviews are complete and the findings fixed (re-verification of the M10 and verifier fixes held) | M14 AI capture; a deterministic verifier is not a separate credential |
 | AI, production ERP packs, portability | Deferred | Explicit milestones and executed verification |
 
 Read the [findings](../verification/M0_M9_REVIEW_VALIDATION.md) and
