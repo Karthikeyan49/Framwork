@@ -1,8 +1,10 @@
 # ADR060 — Complete governed tenant role administration
 
-19 October 2026 (Asia/Kolkata). Proposed before implementation. Scope: remaining
-R5 authoring/assignment UI and identity deployment preparation. Acceptance needs
-independent adversarial review and executed regressions. No M10, main merge or
+19 October 2026 (Asia/Kolkata). Accepted after independent adversarial review
+and executed final local regressions. Recorded before implementation at
+`6a1d7b2`; fixes `5c05d0b`, independent closure `ba21eb0`. Scope: remaining
+R5 authoring/assignment UI and identity deployment preparation. Evidence is in
+[the R5g report](../migration/M9R_R5G_IMPLEMENTATION_REPORT.md). No M10, main merge or
 production activation. Preserve ADR032/038/039 and all existing data/history.
 
 ## Existing authority

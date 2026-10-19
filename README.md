@@ -88,7 +88,10 @@ and the configured 100k-row query gate. The [record/team administration UI](docs
 now passes independent review, full checks/tests/build and nine browser cases.
 [Provider sign-in and clock tolerance](docs/migration/M9R_R5F_IMPLEMENTATION_REPORT.md)
 now pass bounded independent review and full checks/tests/build. External provider
-deployment remains unverified; role-definition editing remains API-only.
+deployment remains deferred at the user's request. [Governed role administration](docs/migration/M9R_R5G_IMPLEMENTATION_REPORT.md)
+adds the local role-definition/assignment UI with independently reviewed receipt
+and connection recovery. The [identity deployment runbook](docs/operations/R5_IDENTITY_DEPLOYMENT_RUNBOOK.md)
+records the separate real-provider/gateway/MFA release gate.
 An intermittent workflow connection failure and a worker-policy statement-timeout
 capacity failure remain tracked under R7; failed runs are retained in the reports.
 The foundation acceptance gate remains open.
@@ -375,6 +378,22 @@ loopback port 8090 with the API and browser. It verifies redirects, PKCE, live
 membership, clock tolerance, nonce rejection and revocation. It is test-only and
 must never be deployed as an identity provider. External SSO/MFA deployment,
 SAML/SCIM and provider-side logout remain unverified/separate work. See [ADR039](docs/adr/039-m9r-oidc-browser-sign-in.md).
+
+## Governed tenant role administration (R5g)
+
+After connecting and selecting a verified workspace, open **Manage roles**.
+Inspect a role from the bounded directory or by exact name; configure explicit
+grants/scopes and activation state, then review the impact before publishing.
+New roles start inactive. Native bootstrap replacement needs separate consent;
+the owner role is read-only. Use exact member IDs for assignments beyond the
+first directory page. Live server policy governs every request.
+
+Unknown publications retain their operation ID/hash for immutable receipt
+recovery; unknown assignments need a fresh authorized membership read and
+explicit review. No automatic POST retry. Retain IDs before full reload/close: the
+actor-owned recovery journal is memory-only. See [ADR060](docs/adr/060-m9r-role-administration-completion.md)
+and the [R5g report](docs/migration/M9R_R5G_IMPLEMENTATION_REPORT.md) for exact tests,
+compatibility, authoring limits and remaining external deployment checks.
 
 ## M2 tenant data boundary
 

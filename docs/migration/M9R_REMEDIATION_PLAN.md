@@ -4,7 +4,7 @@ Date: 2026-10-13 (UTC). Status: **implementation authorized and in progress**.
 Evidence: [external review validation](../verification/M0_M9_REVIEW_VALIDATION.md).
 This is a focused follow-up to M9; historical milestone numbering is unchanged.
 
-Current checkpoint: R0 and R1 are implemented; R1 independently passed the
+Earlier checkpoint progression (latest closure below): R0 and R1 are implemented; R1 independently passed the
 database credential/resource threat model. R3a was pulled forward because it
 does not depend on storage format. Its original reference floor passed; the
 resumed host exposed HTTP misses. The page-fetch change passed independent
@@ -87,7 +87,7 @@ All 24 aggregate cases over unmapped/current/retained 100k-row generations pass
 with exact oracles, zero errors and worst HTTP p95 712.030 ms. ADR058–059 and the
 report retain the accepted tier, failed experiments and write-throughput cost.
 No general query or production capacity is claimed. Wider search/uniqueness
-lifecycle, remaining R5 product/deployment, R6 and R7 stay open.
+lifecycle, external identity deployment, R6 and R7 stay open; the latest local R5 closure is below.
 
 ## Objective and release gate
 
@@ -333,10 +333,23 @@ and stale-connection guards. The MEDIUM concurrent-cookie finding is closed by
 executed regression. Final full checks/tests/build pass (179 integration tests
 in 605.921s, frontend 94/94). External provider/client deployment, MFA assurance
 and production gateway validation remain required; a local fixture is not SSO
-deployment evidence. Role-definition editing remains API-only; enterprise UI
-remains separate from the R5c controls. Overall R5/M9R remains PARTIAL.
-Implement and review remaining work before promising product policy completeness.
-Remaining R3b query/search scope, R3d, R6 and R7 remain in this plan;
+deployment evidence. R5f did not deliver role-definition editing.
+
+[R5g local role administration](M9R_R5G_IMPLEMENTATION_REPORT.md) (ADR060)
+completes the missing governed editor, role discovery and member assignment UI.
+Independent review reproduced and closed receipt-body/hash and connection-
+preparation findings at product fix `5c05d0b`, review `ba21eb0`. Final root
+check/test/build passes 275 integration groups without failures/skips, 126 frontend
+tests, browser 11+7 and unchanged numeric-read/write gates (p95 112.045/243.551ms,
+zero errors). Exact commands/profile and earlier failures are in the report.
+Native bootstrap replacement,
+owner protection, exact publication receipts and label-CAS limitations remain
+explicit. The user selected local completion/deployment preparation with no
+external provider yet. Real IdP/MFA/production gateway verification is DEFERRED,
+not passed; the [operator runbook](../operations/R5_IDENTITY_DEPLOYMENT_RUNBOOK.md)
+and blank evidence template define that separate release gate. Local R5
+completion does not close overall M9R or authorize business production rollout.
+Remaining wider query/search/uniqueness lifecycle, R6 and R7 remain in this plan;
 bounded R3c evidence is above, with its product/evolution limits explicit.
 
 Replace fixed-role branching with versioned tenant role/capability definitions
@@ -420,7 +433,7 @@ data residency/retention and deployment owners must approve the chosen tier.
 
 | Capability | Proposed owner / gate |
 |---|---|
-| SSO/OIDC/SAML and configurable clock skew | R5f implements and independently verifies the bounded OIDC/PKCE adapter and clock tolerance. External IdP/client deployment and production gateway/MFA verification remain an identity release gate; SAML only when required |
+| SSO/OIDC/SAML and configurable clock skew | R5f implements and independently verifies the bounded OIDC/PKCE adapter and clock tolerance. R5g completes local role UI and deployment preparation. The user deferred external IdP/client deployment and production gateway/MFA verification until a provider/domain is selected; these remain an identity release gate. SAML only when required |
 | Search and localization | Product/platform workstream before the first ERP Domain Pack release at M16; scope languages and search authorization explicitly |
 | Residency, backup/restore and audit retention | Operations/security M15, with database prerequisites in R2/R7; production gate, not an optional future note |
 | Import/export and portability format | M17; publish a versioned manifest, hash/compatibility rules and import round-trip tests before claiming portability |
@@ -451,8 +464,9 @@ start another milestone automatically.
 
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
 governed numeric, text/civil-date, enum/reference, datetime/boolean and bounded full-text search R3b, R5a/R5b, R5c server and preview UI administration, R5d and
-R5e, bounded R5f sign-in and bounded R3c uniqueness independently verified.
-Production R2 execution,
-broader R3b query/search scope, R3d, external identity deployment and R6–R7 remain open.
-Role-definition UI remains separate.
+R5e, bounded R5f sign-in, R5g local role UI/deployment preparation, bounded R3c
+uniqueness and bounded R3d SQL aggregation independently verified with final root
+gates. Production R2 execution, broader query/search/uniqueness lifecycle, external
+identity deployment and R6–R7 remain open. External provider verification is
+deferred at user request; local conformance is not production SSO certification.
 The complete foundation gate and broader review findings are not accepted as resolved.**

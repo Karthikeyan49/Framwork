@@ -98,6 +98,12 @@ the exact local executions. Fixture success proves local behavior under these
 cases only. No external-provider availability, tenant directory import, MFA,
 production proxy, TLS chain or production secret-store claim follows.
 
+Retained-binary integration coverage additionally requires the checksum-pinned
+artifact and `M9R_LEGACY_API_BINARY` / `M9R_LEGACY_API_SHA256` bindings described
+in the R3b/R3c reports. Verify actual provenance/hash before use. Without that
+artifact those optional compatibility cases SKIP; do not call them verified by
+the plain command above. Never reset the checkout to manufacture an old binary.
+
 ## External verification checklist — deferred until provider/domain exist
 
 Create a copy of [the evidence template](R5_IDENTITY_DEPLOYMENT_EVIDENCE_TEMPLATE.md)

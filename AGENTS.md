@@ -96,6 +96,11 @@ belongs to `internal/platform/app`.
   authority, never unrelated business values. Preserve actor-owned recovery
   across SPA routes; unknown outcomes and unobservable truncated-list targets
   block new changes. No automatic administrative POST retry.
+  ADR060 adds governed role editing: native bootstrap empty grants differ from
+  configured deny-all; owner stays protected. Match V1 HTTP's Go map/escape hash
+  profile and rehash receipt definitions before clearing unknown publications.
+  Scope asynchronous preparation to its connection/key; old completion cannot
+  clear newer work. Membership label CAS retains its documented ABA limitation.
 - ADR021: pure DSL2 has no ambient clock/network/filesystem/DB/tool access.
   Preserve exact fixed-point money, rounding, pinned calendar/timezone data,
   budgets and declared legacy IR compatibility. Rules never authorize effects.
