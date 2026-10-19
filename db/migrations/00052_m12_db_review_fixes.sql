@@ -3,7 +3,7 @@
 -- its LATEST definition, with every guard of that definition kept:
 --   control.append_requirements, control.author_acceptance, control.stage_candidate (00048)
 --   control.worker_grants_safe (00049)
--- New: control.json_tokens, control.candidate_body_keys, control.strict_candidate_json, control.keys_within,
+-- New: control.candidate_body_keys, control.strict_candidate_json, control.keys_within,
 --   control.worker_guard_granted, control.worker_guard_denied.
 -- F1 (framework_app approving/activating directly) was closed by 00049 and F6 (worker-asserted approval flag)
 -- by 00050; they get no change here.
@@ -24,9 +24,6 @@
 --     is therefore refused by default.
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION control.json_tokens(txt text) RETURNS TABLE(is_key boolean,number_token text) LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
- SELECT m[1] IS NOT NULL,m[2] FROM regexp_matches(txt,'"[^"\\]*(?:\\.[^"\\]*)*"(\s*:)?|(-?[0-9][0-9.eE+-]*)','g') m
-$$;
 CREATE FUNCTION control.candidate_body_keys(kind text) RETURNS text[] LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
  SELECT CASE kind
  WHEN 'bundle' THEN ARRAY['Acceptance','AppID','BaseGeneration','BaseRelease','Dependencies','Diff','Evolution','HighRisk','IR','RequesterID','Requirements','Risk','RuntimeContract','Sandbox','Source','Storage','TenantID','Verification','Version']
@@ -47,11 +44,13 @@ CREATE FUNCTION control.keys_within(obj jsonb,kind text) RETURNS boolean LANGUAG
  SELECT obj IS NOT NULL AND jsonb_typeof(obj)='object' AND NOT EXISTS(SELECT 1 FROM jsonb_object_keys(obj) k WHERE k<>ALL(control.candidate_body_keys(kind)))
 $$;
 -- The text is one object without surrounding whitespace, with no duplicate member at any depth and no
--- number spelled with an exponent or a leading zero (outside strings).
+-- number spelled with an exponent or a leading zero (outside strings). A duplicate member is dropped by
+-- the jsonb view and always removes its key, so the string tokens of the text and of its jsonb differ;
+-- strings are scanned with an unrolled pattern, so the check is linear.
 CREATE FUNCTION control.strict_candidate_json(txt text,doc jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
  SELECT left(txt,1)='{' AND right(txt,1)='}'
-  AND NOT EXISTS(SELECT 1 FROM control.json_tokens(txt) t WHERE t.number_token IS NOT NULL AND t.number_token !~ '^-?(0|[1-9][0-9]*)(\.[0-9]+)?$')
-  AND (SELECT count(*) FROM control.json_tokens(txt) t WHERE t.is_key)=(SELECT count(*) FROM control.json_tokens(doc::text) t WHERE t.is_key)
+  AND regexp_count(txt,'"[^"\\]*(?:\\.[^"\\]*)*"')=regexp_count(doc::text,'"[^"\\]*(?:\\.[^"\\]*)*"')
+  AND regexp_replace(txt,'"[^"\\]*(?:\\.[^"\\]*)*"','""','g') !~ '(^|[^0-9.eE+-])-?0[0-9]|[0-9][eE]'
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
@@ -256,7 +255,7 @@ $$;
 -- +goose StatementBegin
 DO $$ DECLARE f regprocedure;BEGIN
  FOR f IN SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='control'
-  AND p.proname IN('json_tokens','candidate_body_keys','keys_within','strict_candidate_json','worker_guard_granted','worker_guard_denied','worker_grants_safe','append_requirements','author_acceptance','stage_candidate') LOOP
+  AND p.proname IN('candidate_body_keys','keys_within','strict_candidate_json','worker_guard_granted','worker_guard_denied','worker_grants_safe','append_requirements','author_acceptance','stage_candidate') LOOP
  EXECUTE format('ALTER FUNCTION %s OWNER TO framework_schema_owner',f);
  EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,framework_app,framework_worker,framework_dispatcher',f);
  END LOOP;

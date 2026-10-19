@@ -287,6 +287,44 @@ intent is unchanged.
    interactions beyond one extra value per run are not explored, and a bypass that
    needs a pinned value is outside what the requirement promises.
 
+## Amendment after the independent database review (2026-10-19)
+
+Recorded by the fixes for `docs/verification/M12_DB_INDEPENDENT_REVIEW.md` (the "Fix status" section of that
+report maps every finding to its disposition, commit and test). Enforced by migration 00052 (additive,
+forward-only; 48, 49 and 50 unchanged). Written by the builder agent, NOT independently reviewed.
+
+12. **The definer ports read the bytes Go reads (F2), replay is idempotent (F3), embedded documents are the
+    stored rows (F4), the worker guard is derived (F5).**
+    (F2) `append_requirements`, `author_acceptance` and `stage_candidate` refuse (22023) a body that is not one
+    object without surrounding whitespace, that has a duplicate member at any depth (the jsonb view keeps the last
+    one and is case-sensitive, Go's decoder is case-insensitive), a number spelled with an exponent or a leading
+    zero, a key outside the key set of the Go type (bundle, source, ir, storage, risk, requirements, acceptance,
+    sandbox, verification; requirement set; acceptance spec: `control.candidate_body_keys`, compared with the Go
+    struct tags in both directions by `TestM12RBodyKeyListsMatchTheGoStructs`), or a wrong scalar type in a field the
+    port reads. This closes the F1 chain (a self-consistent body whose index row disagrees with the bytes) and the
+    activation/rollback ports' reads of `Storage.class` and `Risk.Rollback` from the jsonb view. **Residual, unchanged:**
+    the database still cannot recompute risk, verification, the diff or the IR; a compromised API process can stage a
+    self-consistent forged body, and the Go recomputation (`Restore`, `VerifyWithBase` at load, at approval and at
+    activation) is the control. The migration comment that every index column is "copied from the verified body" is
+    corrected: the index is copied from a body the database has checked for form and for the bindings listed in
+    Amendments 4 and 7, not verified.
+    (F3) staging bytes that were already staged by the same requester returns `false` (a replay) whatever happened to the
+    base since; the check precedes the base check. A body that was never staged and names a base that is no longer
+    current is still refused (55000), and a replay by another member is still refused (22023). The API never reaches
+    the replay-after-the-base-moved path with an honest client: it rebuilds against the current base, which is a new
+    hash. Amendment 8 (`release.candidate_replayed`) is now true at the database as well.
+    (F4) the source document, the requirement set and the acceptance spec a bundle embeds must equal the stored rows
+    as JSON values, not only their hashes (55000 otherwise). The IR is not stored by the database and stays a
+    Go-side check. (F5) `control.worker_grants_safe()` is false when the worker effectively holds any privilege that
+    `control.worker_guard_granted()` does not list on any relation of control, runtime, iam and audit (table and
+    column level, REFERENCES and TRIGGER included), or CREATE on one of those schemas; a relation added by a later
+    migration is refused by default, and a migration that deliberately gives the worker a privilege must add it to the
+    list (`TestM12RWorkerGuardClassifiesEveryRelation` compares the list with the live catalog). Test fixtures that
+    grant the worker anything (the M8 consumer-effects table) are revoked by the tests that assert the guard is safe.
+    F1 (direct approval/activation by `framework_app`) was closed by migration 00049 (`TestM13AdversarialLegacyWritePathsAreClosed`,
+    `TestM13PortsCloseTheM6RWriteGap`) and F6 (worker-asserted approval flag) by migration 00050 (`TestM10R02*`);
+    neither is touched here.
+
 ## Consequences
 
 Candidates become reproducible server-built artifacts whose risk, dependencies

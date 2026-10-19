@@ -341,3 +341,25 @@ savepoint per attack, whole transaction rolled back; 0.69 s):
 - HTTP-level behaviour and the Go verifier/risk logic beyond what Restore printed.
 
 M12 DB review STATUS: PASS WITH FINDINGS
+
+---
+
+## Fix status (added by the fixes; the reviewer's text above is unchanged)
+
+Written by the builder agent on `claude/m12-db-fixes`; **not independently reviewed**. `TestM12R*` ran first on the
+tree without migration 00052 and failed there (7 of 7, 71 failed assertions); with 00052 they pass 7/7 on the M12DB
+stack reset from this tree. Design and residuals: ADR038 "Amendment after the independent database review" (item 12).
+
+| Finding | Disposition | Commit | Test |
+|---|---|---|---|
+| F1 MEDIUM | ALREADY FIXED by migration 00049 (M13): `framework_app` has no INSERT on approvals or active releases; the M13 ports require a Go `Restore` in the API and check separation in the database | migration 00049 (M13 control plane, present in `e6b7877`) | `TestM13AdversarialLegacyWritePathsAreClosed`, `TestM13PortsCloseTheM6RWriteGap`, `TestM13PortsCallerAuthority` |
+| F2 LOW | FIXED: strict body (one object, no duplicate member at any depth, no exponent or leading-zero number, closed key sets, scalar types) in the three ports. The jsonb view can no longer disagree with the bytes Go reads. RESIDUAL: the database still does not recompute risk/verification/diff/IR | migration 00052 | `TestM12RStagePortRefusesBodiesTheGoDecoderReadsDifferently` (16 variants), `TestM12RRequirementAndAcceptancePortsRefuseAmbiguousBodies`, `TestM12RBodyKeyListsMatchTheGoStructs` |
+| F3 LOW | FIXED: an exact replay returns `false` whatever happened to the base; a never-staged body on a moved base is still 55000; another member's replay is still 22023 | migration 00052 | `TestM12RReplayAfterTheBaseMovedIsStillAReplay` |
+| F4 LOW | PARTLY FIXED: the embedded source, requirement set and acceptance spec must equal the stored rows (55000). The diff, storage class, dependencies and the IR stay Go-side: `Candidate.VerifyWithBase` is now called by `Store.LoadCandidate` (M12 fix e26dfaf, ADR038 Amendment 2) and so on every read, approval and activation. RESIDUAL as before: a compromised API process can stage a self-consistent forged body | migration 00052 | `TestM12REmbeddedDocumentsAreTheStoredRows`; `TestM12CoordinatedForgeryIsRefusedWhenLoaded` (existing) |
+| F5 LOW | FIXED: the guard is derived from the effective privileges on every relation of the four schemas and CREATE on them, against an exact grant list; REFERENCES/TRIGGER and unlisted relations are covered | migration 00052 | `TestM12RWorkerGuardTripsOnEveryExtraGrant` (19 grants), `TestM12RWorkerGuardClassifiesEveryRelation` |
+| F6 MEDIUM | ALREADY FIXED by migration 00050 (M10R-02): the database derives the approval requirement from the pinned plan and binds worker transitions to it | migration 00050 (M10 review fixes, present in `e6b7877`) | `TestM10R02WorkerCannotSkipApprovalInsideOwnLease` |
+| Contract honesty | "copied from the verified body" corrected (Amendment 12); "requester holding `candidates.build`" remains an API policy rule (the database checks an active non-viewer membership); "app id equals the body's IR app" remains a Go-side check | — | — |
+
+Not covered: real concurrency of two committed appenders and of an activation racing a stager (static, as in the review);
+F6's dynamic reproduction is the M10R-02 test; migrations applied to an empty database and as an upgrade are covered by
+the integration proof on the merged tree, not here.
