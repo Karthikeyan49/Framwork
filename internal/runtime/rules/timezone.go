@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"io"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -19,10 +18,10 @@ var zoneArchive []byte
 
 // TZDataHash is the digest of the embedded archive. The archive is constant for the
 // life of the process and Restore reads the digest for every stored plan, so it is
-// computed once.
-var tzDataHash = sync.OnceValue(func() string { h := sha256.Sum256(zoneArchive); return hex.EncodeToString(h[:]) })
+// computed once, at package initialisation (the pure rule engine imports no sync).
+var tzDataHash = func() string { h := sha256.Sum256(zoneArchive); return hex.EncodeToString(h[:]) }()
 
-func TZDataHash() string { return tzDataHash() }
+func TZDataHash() string { return tzDataHash }
 func location(name string) (*time.Location, error) {
 	if name == "" || name == "Local" || len(name) > 100 || strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
 		return nil, ErrDate
