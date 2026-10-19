@@ -1,34 +1,39 @@
 # Integrating the milestone line (M10–M14) with the remediation line (R-slices)
 
-Status: **analysis only, 2026-10-19. Nothing was merged or renumbered.** The facts below come from one executed trial
-merge in a scratch worktree that was never pushed. The recommendation needs a decision from the repository owner,
-because the remediation line is being developed by another agent.
+Status: **analysis only, 2026-10-19. Nothing was merged or renumbered.** The facts below come from executed trial
+merges in scratch worktrees that were never pushed (the numbers were refreshed once, after the remediation line
+completed R7b). The recommendation needs a decision from the repository owner, because the remediation line is being
+developed by another agent. That agent's own report still lists M10 to M14 as future work ("M10 remains paused"): it has
+no knowledge of the milestone line, so both agents need the same instruction.
 
 | Line | Branch | Head at analysis time | Commits since the common base `e6305df` | Files changed since the base |
 |---|---|---|---|---|
-| Milestone line (M10 to M14, reviews, fixes) | `claude/m14-ai-builder` (also `claude/dazzling-goldberg-69wbkn`) | `5a6895b` | 182 | 246 |
-| Remediation line (R3c, R3d, R5c UI, R5d to R5g, R7a) | `origin/remediation/m9r-foundation` | `0a4f7d2` | 105 | 246 |
+| Milestone line (M10 to M14, reviews, fixes) | `claude/m14-ai-builder` (also `claude/dazzling-goldberg-69wbkn`) | `7f2b29b` | 189 | 253 |
+| Remediation line (R3c, R3d, R5c UI, R5d to R5g, R7a, R7b) | `origin/remediation/m9r-foundation` | `b00da36` | 116 | 264 |
 
-The two lines diverged after migration `00044`. 34 files are changed by both (docs aside).
+The two lines diverged after migration `00044`. 33 files are changed by both (docs aside).
 
 ## What the trial merge showed (executed)
 
 `git merge origin/remediation/m9r-foundation` into the milestone head:
 
-1. **21 files conflict textually** (38 hunks): `.github/workflows/ci.yml`, `Makefile`,
+1. **23 files conflict textually** (37 hunks; the first trial, before R7b, showed 21 files and 38 hunks; R7b added
+   `internal/platform/postgres/transaction.go` and `tests/integration/m8_delivery_test.go`): `.github/workflows/ci.yml`, `Makefile`,
    `apps/web/src/preview/Workspace.test.tsx`, `apps/web/src/preview/contracts.ts`,
    `contracts/jsonschema/application-v1.3.schema.json` (added on both lines), `contracts/jsonschema/embed.go`,
    `docs/migration/M9R_FINDING_STATUS.md`, `internal/compiler/{README.md,compiler.go,rules.go,workflow_plans.go}`
    (compiler.go 4 hunks), `internal/config/config.go`, `internal/metadata/{README.md,models.go,validation.go}`
    (validation.go 4 hunks), `internal/platform/access/{access.go,metadata.go,workflows.go}`,
-   `internal/platform/app/app.go`, `internal/runtime/workflow/{contracts.go,plan.go}`.
+   `internal/platform/app/app.go`, `internal/platform/postgres/transaction.go`, `internal/runtime/workflow/{contracts.go,plan.go}`,
+   `tests/integration/m8_delivery_test.go`.
 2. **Nine migration versions exist on both lines with different content: `00045` to `00053`.** The merged tree does not
    start: `goose.NewProvider` over the merged `db/migrations` fails with `found duplicate migration version 45:
    existing 00045_m10_tool_ledger.sql, current 00045_m9r_workflow_approval_roles.sql` (run in the scratch tree, then
-   removed). The remediation line also has `00054`; the milestone line also has `00060`.
+   removed). The remediation line also has `00054` to `00057` (R7b: event outage budgets, live event authority, isolation
+   cutover); the milestone line also has `00060`. Renumbered milestone migrations therefore have to start above `00057`.
 3. **ADR numbers `036` to `040` exist on both lines** (milestone line: M10 to M14; remediation line: workflow approval
    roles, field visibility, administration UI, OIDC sign-in, text and date projections). The remediation line continues
-   to `060`.
+   to `063`.
 4. **Two incompatible definitions of the published authoring contract `urn:framework:metadata:1.3.0`.** The milestone
    line makes `activity` a `oneOf` that admits tool activities (M10); the remediation line adds
    `state.approval_roles` (R5e). Both are "version 1.3.0" and both are described as immutable once published.
@@ -43,6 +48,11 @@ The two lines diverged after migration `00044`. 34 files are changed by both (do
   relations of the remediation line (`runtime.scalar_indexes`, `search_indexes`, `unique_constraints`, and others)
   appear to grant the worker nothing and add `worker_no_generic` deny policies, so the guard should hold; running
   every worker-claiming test is the proof.
+* R7b changes event delivery and worker authority (migrations `00055` to `00057`, ADR062 and ADR063): event-only READ
+  COMMITTED authority, direct restrictive event RLS, and a cutover that refuses active old transactions until they
+  drain. The milestone line's worker paths (M10 tool ledger and approval derivation, the M11 fences, the derived guard
+  `control.worker_grants_safe()`) have to be re-run against it; the M13 and M14 API paths stay REPEATABLE READ, which
+  R7b keeps for API and workflow callbacks.
 * `internal/platform/app/app.go` wiring, readiness lists, `internal/platform/access/roles.go` and
   `internal/platform/postgres/transaction.go` are changed by both lines.
 * Tests that count migrations or compare policy versions.
@@ -80,4 +90,4 @@ remediation line needs nothing from them, so the duplicated numbers only get mor
 2. The freeze point of the remediation line (new migrations on either line after the freeze renumber again).
 3. The metadata contract decision (step 3).
 
-Cleanup note: the scratch worktree of the trial merge was removed after the facts were recorded; the merge was aborted.
+Cleanup note: the scratch worktrees of both trial merges were removed after the facts were recorded; the merges were aborted.
