@@ -16,8 +16,8 @@ access was not demonstrated.
 
 Forward migration00056 requires READ COMMITTED in the event branch of private
 `control.worker_authority()`. Binding already calls this function; every later
-event use must also satisfy it. Already-bound RR/SERIALIZABLE contexts therefore
-lose authority after cutover. PostgreSQL does not permit importing a snapshot
+event use must also satisfy it. Fresh RR/SERIALIZABLE contexts fail closed.
+PostgreSQL does not permit importing a snapshot
 into READ COMMITTED. Live revocation is observed on subsequent statements, not
 an instantaneous cancellation of a statement already executing. Exact audience,
 job, generation, token, actor and receipt-expiry fences remain.
@@ -53,12 +53,43 @@ authority by weakening the SQL gate. Workflow/API isolation is unchanged.
 On failure stop owned delivery and forward-fix. No destructive down or erased
 receipts; existing DEAD/LEGACY_PAUSED rows stay paused.
 
+## Cutover correction recorded before migration00057
+
+Independent re-verification of `46646b4`, recorded at `418e78c`, found that an
+already-bound RR backend can retain old SQL read plans across function-only
+replacement. Prepared/fresh envelope reads and a cached authority call stayed
+visible; a new inbox INSERT was denied. A fresh transaction importing a snapshot
+exported before the replacement was denied. Do not claim automatic online
+fencing of old contexts from migration00056.
+
+Forward migration00057 first acquires transaction-held NOWAIT ACCESS EXCLUSIVE
+locks on the private worker-context and event envelope/inbox relations. An
+active old reader/binder causes migration failure, with no partial policy or
+data change. Operators must quiesce owned API event emitters, consumers and
+dispatchers, drain their database transactions, then retry. Never silently kill
+unknown sessions or infer rollback from a cancelled client response. This is a
+maintenance cutover, not an online revocation promise.
+
+Once the barrier succeeds, add direct restrictive worker READ COMMITTED RLS
+policies on both event tables, with identical USING/WITH CHECK expressions.
+New readiness must inspect their exact role/mode/expressions. Table locks remain
+until migration commit, so old readers cannot overlap successful installation.
+Retain the function-level guard and v3 timing/probe contract. No row or evidence
+is rewritten. Historical migrations55/56 stay frozen.
+
+The review also demonstrated75 marker writes when a structurally unsafe
+VOLATILE helper ran through the owner-executed probe before readiness denied
+it. Check helper shape/owner/private grants before invoking the semantic probe.
+This LOW operator-drift correction changes Go check order only.
+
 ## Verification
 
 Independently reverify the demonstrated raw RR/imported-snapshot and receipt
 write attacks, RC live revocation, event RC/non-certified callbacks and API RR
-certification. Test already-bound RR contexts across54→56 cutover, SERIALIZABLE
-denial and unchanged workflow RR. Rehearse populated migration preservation,
+certification. Test that an already-bound RR context blocks migration57 with
+SQLSTATE55P03, manifests/policies remain unchanged on failure, and draining then
+retrying installs the guard. Test SERIALIZABLE denial and unchanged workflow RR.
+Rehearse populated migration preservation,
 helper semantic drift and private grants. Retain all initial failures.
 
 After independent fixes close, execute the real600-second outage again at the
