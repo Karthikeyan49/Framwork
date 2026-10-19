@@ -438,7 +438,7 @@ func requireM9RReferencePostgres(t *testing.T) {
 	}
 	var shared, effective, work, cost string
 	if err = probe.QueryRow(`SELECT current_setting('shared_buffers'),current_setting('effective_cache_size'),current_setting('work_mem'),current_setting('random_page_cost')`).Scan(&shared, &effective, &work, &cost); err != nil || shared != "2GB" || effective != "6GB" || work != "4MB" || cost != "1.1" {
-		t.Fatal("performance gate requires actual ADR048 reference memory/planner settings; run make reference-up")
+		t.Fatal("performance gate requires actual ADR058-v2-candidate reference memory/planner settings; run make reference-up")
 	}
 	t.Logf("verified_reference profile=ADR058-v2-candidate cpus=4 memory_bytes=8589934592 swap_disabled=true image=%s shared_buffers=%s effective_cache_size=%s work_mem=%s random_page_cost=%s", fields[3], shared, effective, work, cost)
 }

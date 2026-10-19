@@ -590,6 +590,8 @@ func runAggregatePerformance(t *testing.T, mapped bool, costStudy ...bool) {
 			valid := make([]bool, 100)
 			jobs := make(chan int)
 			var group sync.WaitGroup
+			aggregateBackendBoundary(t, f)
+			resources := aggregateResourceSnapshot()
 			begin := time.Now()
 			for range 10 {
 				group.Go(func() {
@@ -603,6 +605,9 @@ func runAggregatePerformance(t *testing.T, mapped bool, costStudy ...bool) {
 			}
 			close(jobs)
 			group.Wait()
+			elapsed := time.Since(begin)
+			aggregateReportResources(t, resources, aggregateResourceSnapshot())
+			aggregateBackendBoundary(t, f)
 			unexpected := 0
 			for _, ok := range valid {
 				if !ok {
@@ -622,7 +627,6 @@ func runAggregatePerformance(t *testing.T, mapped bool, costStudy ...bool) {
 			if len(sqlTimes) != 100 {
 				t.Fatal("aggregate SQL sample count")
 			}
-			elapsed := time.Since(begin)
 			sqlP95 := reportLatency(t, "aggregate_"+tc.name+"_sql10", sqlTimes, elapsed)
 			httpP95 := reportLatency(t, "aggregate_"+tc.name+"_http10", latency, elapsed)
 			if sqlP95 > 500 || httpP95 > 750 {

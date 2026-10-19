@@ -156,6 +156,9 @@ func (st Store) aggregateSQL(ctx context.Context, q postgres.Executor, s Scope, 
 // Scratch URIs can have adopted/evolved mappings too. A retained pin is a read
 // witness, not a requirement to match the latest generation or active binding.
 func aggregateSource(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, b *builder) (string, error) {
+	// Bound physical access independently of outer ACL/filter joins. There is no
+	// inner cap: all value-dependent predicates still precede LIMIT100001.
+	physical := `(SELECT tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,row_version,owner_user_id,owner_team_id FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4 AND entity_id=$5 OFFSET 0)`
 	var dataset string
 	var generation int64
 	var canonical bool
@@ -165,7 +168,7 @@ func aggregateSource(ctx context.Context, q postgres.Executor, s Scope, a tenant
 		if s.DatasetID() != "" {
 			return "", ErrDenied
 		}
-		return "runtime.records r", nil
+		return physical + " r", nil
 	}
 	if err != nil {
 		return "", err
@@ -174,11 +177,11 @@ func aggregateSource(ctx context.Context, q postgres.Executor, s Scope, a tenant
 		return "", ErrDenied
 	}
 	if !canonical {
-		return "runtime.records r", nil
+		return physical + " r", nil
 	}
 	id := b.bind(dataset) + "::uuid"
 	return `(SELECT src.tenant_id,src.app_id,src.metadata_revision,src.ir_hash,src.entity_id,src.id,src.custom_data,src.row_version,c.owner_user_id,c.owner_team_id
- FROM runtime.records src JOIN (SELECT id,owner_user_id,owner_team_id FROM runtime.record_identity WHERE tenant_id=$1 AND app_id=$2 AND dataset_id=` + id + ` AND entity_id=$5 AND NOT tombstone OFFSET 0) c ON c.id=src.id
+ FROM ` + physical + ` src JOIN (SELECT id,owner_user_id,owner_team_id FROM runtime.record_identity WHERE tenant_id=$1 AND app_id=$2 AND dataset_id=` + id + ` AND entity_id=$5 AND NOT tombstone OFFSET 0) c ON c.id=src.id
  WHERE src.tenant_id=$1 AND src.app_id=$2 AND src.metadata_revision=$3 AND src.ir_hash=$4 AND src.entity_id=$5) r`, nil
 }
 
