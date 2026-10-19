@@ -72,6 +72,8 @@ integration suite, `make check`, `make test-unit`, `make build` and `make test-e
 | `TestM14APIClientGoneDuringProviderPhaseStillRecordsTheOutcome`, `-race` | PASS, 3.8 s: the proposal ended `FAILED`/`INTERNAL`, one provider call, the slot was free again |
 | `TestM14` group (25 tests), `-race` | PASS, 109 s |
 | `TestM12`, `TestM13` groups, `-race` | PASS, 251 s |
+| After merging the M13R-03 fix (ADR039 amendment 13): `go vet ./...`, `go vet -tags=integration ./tests/integration`, `gofmt -l`, `node scripts/verify-docs.mjs`, `go test -race` of `internal/policy`, `internal/promotion`, `internal/platform/...`, `internal/tenant` | PASS |
+| After the same merge, M14 stack reset from the merged tree: `TestM14`, `TestM13`, `TestM12` groups together, `-race` | PASS, 381 s |
 
 ## Threat model and limits
 
