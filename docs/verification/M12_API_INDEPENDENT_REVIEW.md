@@ -403,3 +403,32 @@ All with `export PATH=/tmp/node24/node-v24.22.0-linux-x64/bin:$PATH` from the wo
   version, contrary to the common rules for commits; not a product issue.
 
 M12 API review STATUS: PASS WITH FINDINGS
+
+---
+
+## Fix status (added by the fixes; the reviewer's text above is unchanged)
+
+These fixes were written by the builder agent on `claude/m12-api-fixes` and are **not independently
+reviewed**. Each regression test was run on an export of the reviewed base `e6b7877` (same test files) and
+failed there, except where the disposition is documentation (marked "pin"): those tests pin the documented
+behaviour. No migration was needed (00053 unused). Behaviour changes are recorded in ADR038 Amendments 10 and 11.
+
+| Finding | Disposition | Commit | Test (integration unless stated) |
+|---|---|---|---|
+| F9 MEDIUM | FIXED: memo of the pure recomputation, per-tenant and per-process admission, typed 429/503 + `Retry-After`, audited, timeout mapped; tzdata digest computed once | `0e4da09`, `6dadeaf` | `TestM12APIDetailReadsOfALargeCandidateConverge` (base: 10 x 503 after 8 attempts, 36 s, cheap request waited 3.6 s; fixed: 10 x 200 in 0.22 s), `TestM12APIColdRecomputationIsBoundedTypedAndAudited`, unit `TestRecompute*` (7), `TestTZDataHashIsStableAndComputedOnce` |
+| F1 | FIXED: no store-level `release.staged` row | `6dadeaf` | `TestM12APIStageWritesOneCorrelatedAuditRow` (base: FAIL) |
+| F2 | FIXED: role operations by registered pattern | `a2977b4` | `TestM12APIReleaseRoutesEndingInRolesAreNotRoleRoutes` (base: FAIL) |
+| F3 | ALREADY FIXED at `dbc4b5b`; HTTP regression test added | `66e041c` | `TestM12APICaseVariantDuplicateKeysAreRefused`; unit `internal/metadata/decode_fold_test.go` |
+| F4 | DOCUMENTED (the effective envelope is the truth; the 1 MiB values are storage bounds): ADR038 Amendment 11 | `66e041c` | `TestM12APIAuthoringEnvelopeIsTheMetadataBudget` (pin) |
+| F5 | FIXED (evidence): custom roles through `PolicyLoader`; real outsider in the cross-tenant assertion | `66e041c` | `TestM12APICustomRolesDecideThroughThePolicyLoader`, `TestM12CandidateBuilderEndToEndAuthorityAndReplay` |
+| F6 | FIXED: audit state carries the closed refusal code and the assessment hash | `6dadeaf` | `TestM12APIRejectedBuildAuditsReasonAndAssessmentHash` (base: FAIL), unit `TestPromotionEvidenceIsBoundedAndClosed` |
+| F7 | FIXED for candidates and acceptance specs (bounded retry after a known abort); requirement appends stay compare-and-set (one winner); under the F9 bound a concurrent identical build may be answered 429 and its retry is the replay | `a2977b4` | `TestM12APIConcurrentIdenticalRequestsConvergeOnTheReplay` (base: `[409 409 201 409]`) |
+| F8 | DOCUMENTED: snapshot-current as of the build snapshot; the candidate reads STALE and M13 refuses it (ADR038 Amendment 11) | this commit | existing `TestM13APIStaleAtApproveAndActivate`, `TestM13AdversarialStalenessAtApproveAndActivate` (not a new test) |
+| F10 | FIXED in the API (publication refuses the head above the bound, typed audited 409 above it); NOT enforced in the database (a direct call of the definer port or a raced publication can still exceed it) | `a2977b4` | `TestM12APIRoleHeadLimitIsTypedAndAudited` (base: the 1025th head accepted) |
+| F11 | DOCUMENTED (ids are opaque and needed for separation of duties; membership list stays owner/admin): ADR038 Amendment 11 | this commit | `TestM12APIReadersSeeOpaqueActorIdsButNotMemberships` (pin) |
+| F12 | FIXED: audited as `<action>.rejected` with the tenant | `a2977b4` | `TestM12APIInvalidApplicationIsAuditedAsATenantRequest` (base: FAIL) |
+| Contract honesty rows | §9 exact-pattern now true (F2); Amendment 7 context idempotency true under concurrency for candidates and acceptance specs (F7); Amendment 8 rows/hashes true (F1, F6); `MaxRoleHeads` wording corrected (F10) | — | as above |
+
+Not covered by these fixes: the memo is per process; a compromised API process is unchanged (the database
+cannot recompute the verifier); the tool-catalog, schema-hash and data-mode mismatch paths the reviewer
+marked NOT TESTED are still not tested dynamically.

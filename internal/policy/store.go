@@ -142,6 +142,21 @@ func (s RoleStore) Publish(ctx context.Context, q postgres.Executor, a tenant.Ac
 	if err != nil || !tenant.ValidID(id) || expected < 0 || expected >= 1e9 || d.Name() == "owner" {
 		return RoleVersion{}, ErrDefinition
 	}
+	if expected == 0 {
+		// A new head: refuse the one above the bound a policy snapshot can carry, so that a
+		// tenant can never publish its way out of building release candidates (review F10).
+		// A replay of a recorded operation is not a new head. Role heads cannot be retired,
+		// so the bound is on all heads, active or not. Best effort under concurrency: two
+		// simultaneous publications by the owner may overshoot by one; the snapshot then
+		// refuses with a typed, audited error instead.
+		var full bool
+		if err = q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM control.role_heads WHERE tenant_id=$1) >= $3 AND NOT EXISTS (SELECT 1 FROM control.role_versions WHERE tenant_id=$1 AND operation_id=$2)`, a.TenantID(), id, MaxRoleHeads).Scan(&full); err != nil {
+			return RoleVersion{}, err
+		}
+		if full {
+			return RoleVersion{}, ErrTooManyRoles
+		}
+	}
 	_, err = q.ExecContext(ctx, `SELECT control.publish_role($1,$2,$3,$4,$5,$6,$7)`, a.TenantID(), d.Name(), id, expected, raw, d.Hash(), active)
 	if err != nil {
 		return RoleVersion{}, err
@@ -165,8 +180,12 @@ type RoleHead struct {
 }
 
 // MaxRoleHeads bounds a policy snapshot. A tenant above it cannot build
-// release candidates (fail closed) until roles are retired.
+// release candidates (fail closed). Role heads cannot be retired, so Publish refuses
+// the head that would exceed the bound (ErrTooManyRoles).
 const MaxRoleHeads = 1024
+
+// ErrTooManyRoles refuses a new role head beyond MaxRoleHeads.
+var ErrTooManyRoles = errors.New("role head limit reached")
 
 // ActionCatalogHash is the sha256 of the sorted action names the engine knows.
 // A new or removed capability changes it, so candidates built before the change

@@ -93,13 +93,23 @@ func Build(source metadata.Source, program compiler.Program, b Bundle) (Candidat
 	return Candidate{raw, Hash(raw)}, nil
 }
 
+// Restore re-derives everything a stored bundle claims that does not need its base
+// release and requires byte equality. It is pure; the request paths use a Recompute
+// (recompute.go), which remembers a success under the digest of the exact bytes.
 func Restore(raw []byte, hash string, supportedIR []string) (Candidate, error) {
+	c, _, err := restoreProgram(raw, hash, supportedIR)
+	return c, err
+}
+
+// restoreProgram is Restore that also returns the executable program of the IR it
+// had to restore anyway.
+func restoreProgram(raw []byte, hash string, supportedIR []string) (Candidate, compiler.Program, error) {
 	if len(raw) > MaxBundleBytes || Hash(raw) != hash {
-		return Candidate{}, ErrGate
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
 	var probe struct{ Version string }
 	if json.Unmarshal(raw, &probe) != nil {
-		return Candidate{}, ErrGate
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
 	if probe.Version == BundleVersion2 {
 		return restoreV2(raw, hash, supportedIR)
@@ -108,16 +118,17 @@ func Restore(raw []byte, hash string, supportedIR []string) (Candidate, error) {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&b) != nil || validateBundle(b, supportedIR) != nil {
-		return Candidate{}, ErrGate
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
 	canonical, e := json.Marshal(b)
 	if e != nil || !bytes.Equal(raw, canonical) {
-		return Candidate{}, ErrGate
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
-	if _, e = compiler.Restore(b.IR, b.IRHash, supportedIR); e != nil {
-		return Candidate{}, ErrGate
+	program, e := compiler.Restore(b.IR, b.IRHash, supportedIR)
+	if e != nil {
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
-	return Candidate{append([]byte(nil), raw...), hash}, nil
+	return Candidate{append([]byte(nil), raw...), hash}, program, nil
 }
 
 func validateBundle(b Bundle, supported []string) error {

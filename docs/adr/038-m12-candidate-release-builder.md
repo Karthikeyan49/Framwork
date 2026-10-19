@@ -288,6 +288,63 @@ intent is unchanged.
    interactions beyond one extra value per run are not explored, and a bypass that
    needs a pinned value is outside what the requirement promises.
 
+## Amendments after the independent API review (2026-10-19)
+
+Recorded by the fixes for `docs/verification/M12_API_INDEPENDENT_REVIEW.md` (F1–F12; the
+"Fix status" section of that report maps every finding to its commit and test). These fixes were
+written by the builder and are NOT independently reviewed.
+
+10. **Recomputation is memoised and bounded (§1, F9).** Restoring a stored candidate (risk,
+    verification, dependency hashes) and verifying it against its own base (diff, storage class,
+    evolution plan) are pure functions of immutable, content-addressed bytes and of this binary.
+    `promotion.Recompute` therefore (a) remembers a SUCCESSFUL outcome under the SHA-256 of the exact
+    bytes that were verified plus the base program hash, the supported-IR set and the runtime-components
+    hash (a hit proves "these very bytes verified", nothing else; the bytes are read under the caller's
+    row-level security on every request); (b) lets concurrent callers of one key share one computation;
+    (c) admits at most `max(2, GOMAXPROCS/2)` cold computations per process and half of that (at least 1)
+    per tenant, refusing the rest at once with a typed `release_busy` answer (429 for the tenant bound,
+    503 for the process bound, both with `Retry-After`; nothing computed or written; audited with the closed
+    refusal code `RECOMPUTE_BUSY_TENANT|PROCESS`). Staleness, approvals, the active pointer, role snapshots
+    and tool status are NEVER remembered; a failure is never remembered; the M13 approve and activate paths
+    load through the same `LoadCandidate`, so they stay fail closed (a busy refusal decides nothing). A
+    request that outlives the 3 s transaction budget answers a typed audited 503 `release_timeout` with
+    `Retry-After`. A candidate just built is remembered, so its first read is a hit. Measured on the
+    reviewer's fixture (14 bulk entities x 30 fields, 1000 acceptance cases, a base release, shared 4-core
+    host): ten parallel detail reads of a viewer went from ten 503 after eight attempts each (36 s, a cheap
+    `GET /access` waiting 3.6 s) to ten 200 in 0.22 s; the embedded tzdata digest is computed once (the
+    largest single cost of a restore). Residual: the memo is per process (a restart or another replica starts
+    cold), and a cold computation of a very large candidate still costs about 0.35 s of one core.
+11. **Release API hardening (F1, F2, F4, F5, F6, F7, F8, F10, F11, F12).**
+    (F1) a stage writes exactly one audit row, `release.candidate_staged`, correlated with the request and the
+    decision; the M6R store-level `release.staged` row is gone (Amendment 8 now describes what is written).
+    (F2) role operations are selected by the registered pattern, not by a path suffix, so a release artifact
+    whose last segment is `roles` is authorized and audited as a release read. (F12) a malformed application id
+    of an authenticated request is audited as `<action>.rejected` with its tenant, not as
+    `authentication.denied`. (F6) a rejected build records the closed refusal code (`VERIFICATION_FAILED`,
+    `STORAGE_BREAKING`, ...) and the hash of the risk assessment in the audit state, besides the report hash;
+    never free text. (F7) `POST candidates` and `POST acceptance-specs` are idempotent by content and are
+    repeated (at most three attempts inside the 4 s budget) after a known abort, so concurrent identical
+    requests converge on one 201 and replays; the compare-and-set append of requirement sets is not repeated
+    (one winner, the others 409). Under the admission bound of Amendment 10 a concurrent identical build of
+    one tenant may instead be answered 429 with `Retry-After`; its retry is the replay. (F10) the head above
+    `policy.MaxRoleHeads` is refused at publication (409 `role_limit`; heads cannot be retired, deactivated
+    heads count); a tenant that is above the bound anyway (a raced publication, a direct call of the
+    definer port, which still accepts it) gets a typed, audited 409 `release_policy_snapshot_too_large`
+    instead of an unaudited 503. The database does not enforce the bound (no migration was needed).
+    (F4, documentation) the effective body limit of every release authoring request is
+    `metadata.MaxBytes + 4096` = 266,240 bytes, 32 nesting levels and 16,000 nodes (`metadata.DecodeJSON`),
+    inside the 1 MiB transport cap; `intent.MaxAcceptanceBytes` (1 MiB) and the database CHECK are storage
+    upper bounds this route cannot reach. The same envelope bounds the M11 sandbox witness, which carries the
+    compiled IR: applications whose source is roughly above half of the metadata limit cannot be sandboxed and
+    so cannot be built. (F8, documentation) §6 "the base is the current active release or absent" means as of
+    the build's REPEATABLE READ snapshot; a candidate staged against a base that was replaced by a commit
+    during the build reads STALE (`BASE_CHANGED`) on its first detail read and M13 refuses it at approval and
+    activation. (F11, documentation) release reads disclose the opaque user ids of the requester, the
+    decider, the acceptance author, the sandbox freezer and the source author to every role that holds the read
+    action; approvers need them to check separation of duties. The membership list stays owner/admin only.
+    (F5) the shipped tests now exercise stored custom roles through `PolicyLoader` and assert the cross-tenant
+    refusal with a user that belongs to the other tenant only.
+
 ## Consequences
 
 Candidates become reproducible server-built artifacts whose risk, dependencies

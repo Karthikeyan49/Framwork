@@ -9,13 +9,14 @@ import (
 func TestPromotionEvidenceIsBoundedAndClosed(t *testing.T) {
 	h := strings.Repeat("a", 64)
 	good := State{ArtifactHash: h, RiskLevel: "CRITICAL", ReleaseGeneration: 9007199254740991, ApprovalCount: 2, ApprovalsRequired: 2, RejectReason: "WITHDRAWN",
-		PreviousHash: h, PlanHash: h, StorageClass: "ADDITIVE", RollbackClass: "DATA_NOT_REVERSIBLE", StaleReasons: []string{"BASE_CHANGED", "POLICY_CHANGED"}}
+		PreviousHash: h, PlanHash: h, StorageClass: "ADDITIVE", RollbackClass: "DATA_NOT_REVERSIBLE", StaleReasons: []string{"BASE_CHANGED", "POLICY_CHANGED"},
+		RefusalCode: "VERIFICATION_FAILED", AssessmentHash: h}
 	args, err := encodeEntry(Entry{Action: "release.rolled_back", Resource: "release", Allow: true, State: good})
 	if err != nil {
 		t.Fatal("valid promotion evidence rejected", err)
 	}
 	var decoded map[string]any
-	if json.Unmarshal(args[9].([]byte), &decoded) != nil || decoded["release_generation"] != float64(9007199254740991) || decoded["reject_reason"] != "WITHDRAWN" || len(decoded["stale_reasons"].([]any)) != 2 {
+	if json.Unmarshal(args[9].([]byte), &decoded) != nil || decoded["release_generation"] != float64(9007199254740991) || decoded["reject_reason"] != "WITHDRAWN" || len(decoded["stale_reasons"].([]any)) != 2 || decoded["refusal_code"] != "VERIFICATION_FAILED" || decoded["assessment_hash"] != h {
 		t.Fatal("promotion evidence not encoded", string(args[9].([]byte)))
 	}
 	if _, err := encodeEntry(Entry{Action: "release.approved", State: State{}}); err != nil {
@@ -40,6 +41,11 @@ func TestPromotionEvidenceIsBoundedAndClosed(t *testing.T) {
 		"empty stale reason":    func(s *State) { s.StaleReasons = []string{""} },
 		"stale reason too long": func(s *State) { s.StaleReasons = []string{strings.Repeat("A", 33)} },
 		"stale free text":       func(s *State) { s.StaleReasons = []string{"note: secret"} },
+		"refusal free text":     func(s *State) { s.RefusalCode = "storage breaking: see note" },
+		"refusal lowercase":     func(s *State) { s.RefusalCode = "storage_breaking" },
+		"refusal too long":      func(s *State) { s.RefusalCode = strings.Repeat("A", 41) },
+		"short assessment hash": func(s *State) { s.AssessmentHash = "abc" },
+		"upper assessment hash": func(s *State) { s.AssessmentHash = strings.Repeat("A", 64) },
 	} {
 		s := good
 		s.StaleReasons = append([]string(nil), good.StaleReasons...)

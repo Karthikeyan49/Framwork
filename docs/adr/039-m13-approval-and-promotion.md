@@ -293,6 +293,13 @@ These supersede the matching sentences above where they differ.
    `rollback_target_rejected` (found by the adversarial suite).
 10. **Decoder hardening found on the way.** `metadata.DecodeJSON` now rejects keys that differ
    only by Unicode case folding (they previously decoded to the last spelling).
+11. **Bounded recomputation (after the M12 API review, F9; ADR038 Amendment 10).** Approve,
+   reject, activate and rollback load the candidate through the same memoised
+   `LoadCandidate`. A cold recomputation beyond the per-tenant or per-process bound is refused
+   before any port call with 429 / 503 `release_busy` and `Retry-After`, audited with the closed
+   refusal code `RECOMPUTE_BUSY_TENANT|PROCESS`; it decides nothing, so the routes stay fail
+   closed (`TestM12APIColdRecomputationIsBoundedTypedAndAudited`). Staleness, approvals and the
+   pointer are read again on every request and never remembered.
 
 ## Consequences
 

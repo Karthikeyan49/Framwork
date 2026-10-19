@@ -2,7 +2,7 @@ package promotion
 
 import (
 	"context"
-	"github.com/Karthikeyan49/Framwork/internal/audit"
+
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
@@ -12,7 +12,14 @@ import (
 // Since M13 the runtime role has no direct write on release approvals or the
 // active pointer: approval, rejection, activation and rollback go only through
 // the ADR039 ports wrapped in decisions.go.
-type Store struct{ Audit audit.Writer }
+//
+// Store writes no audit entry: the API handler appends its own, correlated with the
+// request and the policy decision, in the same transaction (ADR038 amendment 8).
+type Store struct {
+	// Recompute remembers the pure recomputation of stored candidates and bounds the
+	// cold ones; nil is the process default.
+	Recompute *Recompute
+}
 
 // RollbackPlan is the caller's assessment of a rollback (ADR039 section 5). The
 // port requires it acknowledged (see Acknowledged) unless the current release
@@ -21,14 +28,6 @@ type RollbackPlan struct {
 	StorageCompatible, ExternalEffectsReviewed bool
 	RecoveryRequired                           bool
 	PlanHash                                   string
-}
-
-func (st Store) evidence(ctx context.Context, q postgres.Executor, a tenant.Access, c Candidate, action string) error {
-	w := st.Audit
-	if w == nil {
-		w = audit.Postgres{}
-	}
-	return w.Append(ctx, q, audit.Entry{ActorID: a.ActorID(), TenantID: a.TenantID(), Action: action, Resource: "release", Allow: true, PolicyVersion: "m6r-release-contract-v1", State: audit.State{IRHash: c.Header().IRHash, ArtifactHash: c.Hash(), MetadataApp: c.Header().AppID}})
 }
 
 // Stage persists a server-built 2.0.0 candidate through control.stage_candidate,
@@ -45,11 +44,28 @@ func (st Store) Stage(ctx context.Context, q postgres.Executor, a tenant.Access,
 	if e := q.QueryRowContext(ctx, `SELECT control.stage_candidate($1,$2,$3)`, h.AppID, c.Hash(), c.JSON()).Scan(&staged); e != nil {
 		return false, e
 	}
-	if !staged {
-		return false, nil
-	}
-	return true, st.evidence(ctx, q, a, c, "release.staged")
+	return staged, nil
 }
+
+// Build is BuildCandidate for a request: it takes the admission tokens of the request's
+// tenant while it runs (a build is the most expensive computation of the API) and
+// remembers the outcome of the self-check, so the first read of the new candidate is a
+// memo hit.
+func (st Store) Build(ctx context.Context, in BuildInput) (Candidate, error) {
+	rc := st.Recompute.orDefault()
+	giveBack, err := rc.Admit(ctx)
+	if err != nil {
+		return Candidate{}, err
+	}
+	defer giveBack()
+	c, program, err := buildCandidate(in)
+	if err != nil {
+		return Candidate{}, err
+	}
+	rc.remember(c, program, compiler.SupportedIRVersions())
+	return c, nil
+}
+
 func bApplication(b Bundle) string {
 	p, e := compiler.Restore(b.IR, b.IRHash, compiler.SupportedIRVersions())
 	if e != nil {
@@ -59,7 +75,7 @@ func bApplication(b Bundle) string {
 }
 
 // Active restores exact persisted bytes, never calls the current compiler.
-func (Store) Active(ctx context.Context, q postgres.Executor, a tenant.Access, app string, supported []string) (compiler.Program, string, int64, error) {
+func (st Store) Active(ctx context.Context, q postgres.Executor, a tenant.Access, app string, supported []string) (compiler.Program, string, int64, error) {
 	var raw []byte
 	var hash string
 	var generation int64
@@ -67,10 +83,9 @@ func (Store) Active(ctx context.Context, q postgres.Executor, a tenant.Access, a
 	if e != nil {
 		return compiler.Program{}, "", 0, e
 	}
-	c, e := Restore(raw, hash, supported)
+	got, e := st.Recompute.orDefault().restore(ctx, raw, hash, supported)
 	if e != nil {
 		return compiler.Program{}, "", 0, e
 	}
-	p, e := c.Program(supported)
-	return p, hash, generation, e
+	return got.program, hash, generation, nil
 }
