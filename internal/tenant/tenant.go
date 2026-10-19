@@ -107,6 +107,16 @@ type Member struct {
 	Active bool   `json:"active"`
 }
 
+// Member does not infer absence from the bounded directory response.
+func (Store) Member(ctx context.Context, tx postgres.Executor, access Access, user string) (Member, error) {
+	if access.actor == "" || access.tenant == "" || !ValidID(user) {
+		return Member{}, ErrDenied
+	}
+	var member Member
+	err := tx.QueryRowContext(ctx, `SELECT user_id,role,active FROM iam.memberships WHERE tenant_id=$1 AND user_id=$2`, access.tenant, user).Scan(&member.UserID, &member.Role, &member.Active)
+	return member, err
+}
+
 func (Store) Members(ctx context.Context, tx postgres.Executor, access Access) ([]Member, error) {
 	if access.actor == "" || access.tenant == "" {
 		return nil, ErrDenied

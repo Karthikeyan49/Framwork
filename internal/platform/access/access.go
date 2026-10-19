@@ -100,6 +100,8 @@ func (a API) Register(mux *http.ServeMux) {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/workflows/{workflow}/instances/{instance}/signals", a.serve)
 		}
 	}
+	mux.HandleFunc("GET /v1/tenants/{tenant}/roles", a.serve)
+	mux.HandleFunc("GET /v1/tenants/{tenant}/role-contract", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/roles/{role}", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/roles/operations/{policy_operation}", a.serve)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/roles", a.serve)
@@ -111,6 +113,7 @@ func (a API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/session", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/access", a.serve)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/members", a.serve)
+	mux.HandleFunc("GET /v1/tenants/{tenant}/members/{workspace_member}", a.serve)
 	if a.Registry != nil {
 		mux.HandleFunc("GET /v1/tenants/{tenant}/metadata/{app}/versions", a.serve)
 		mux.HandleFunc("GET /v1/tenants/{tenant}/metadata/{app}/versions/{revision}", a.serve)
@@ -348,7 +351,7 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		a.Policy = engine
 	}
 	action, resource := "tenant.access", "tenant"
-	if strings.HasSuffix(r.URL.Path, "/members") {
+	if strings.HasSuffix(r.URL.Path, "/members") || r.Pattern == "GET /v1/tenants/{tenant}/members/{workspace_member}" {
 		action, resource = "memberships.read", "membership"
 	}
 	if strings.Contains(r.URL.Path, "/metadata/") {
@@ -382,7 +385,7 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			action = "datasets.evolve"
 		}
 	}
-	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") {
+	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") || r.Pattern == "GET /v1/tenants/{tenant}/role-contract" {
 		resource = "role"
 		action = "roles.read"
 		if r.Method == http.MethodPost {
@@ -459,6 +462,19 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	}
 	var result any
 	if action == "memberships.read" {
+		if member := r.PathValue("workspace_member"); member != "" {
+			if !tenant.ValidID(member) {
+				return denied(400, "invalid_member", "Invalid member identifier"), evidence, nil
+			}
+			value, err := ts.Member(ctx, tx, access, member)
+			if errors.Is(err, sql.ErrNoRows) {
+				return denied(404, "member_not_found", "Member is unavailable"), evidence, nil
+			}
+			if err != nil {
+				return reply{}, evidence, err
+			}
+			return reply{status: 200, body: value}, evidence, nil
+		}
 		members, err := ts.Members(ctx, tx, access)
 		if err != nil {
 			return reply{}, evidence, err

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"regexp"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
@@ -45,6 +46,22 @@ func roleReply(value any, err error) (reply, error) {
 func (a API) role(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, evidence *audit.Entry) (reply, error) {
 	store := policy.RoleStore{}
 	if r.Method == http.MethodGet {
+		if r.Pattern == "GET /v1/tenants/{tenant}/role-contract" || r.Pattern == "GET /v1/tenants/{tenant}/roles" {
+			key := "after"
+			if r.Pattern == "GET /v1/tenants/{tenant}/role-contract" {
+				key = "name"
+			}
+			query, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil || len(query) > 1 || len(query[key]) > 1 || len(query) == 1 && query[key] == nil {
+				return roleReply(nil, policy.ErrDefinition)
+			}
+			if key == "name" {
+				v, err := policy.DefinitionContract(query.Get(key))
+				return roleReply(v, err)
+			}
+			v, err := store.List(ctx, q, access, query.Get(key))
+			return roleReply(v, err)
+		}
 		if id := r.PathValue("policy_operation"); id != "" {
 			v, err := store.Operation(ctx, q, access, id)
 			return roleReply(v, err)
@@ -64,8 +81,11 @@ func (a API) role(ctx context.Context, q postgres.Executor, r *http.Request, acc
 		evidence.State.PolicySubject = r.PathValue("member")
 		err := store.Assign(ctx, q, access, r.PathValue("member"), body.Role, body.ExpectedRole)
 		return roleReply(struct {
-			Assigned bool `json:"assigned"`
-		}{err == nil}, err)
+			Assigned     bool   `json:"assigned"`
+			UserID       string `json:"user_id"`
+			Role         string `json:"role"`
+			ExpectedRole string `json:"expected_role"`
+		}{err == nil, r.PathValue("member"), body.Role, body.ExpectedRole}, err)
 	}
 	var body struct {
 		OperationID     string          `json:"operation_id"`

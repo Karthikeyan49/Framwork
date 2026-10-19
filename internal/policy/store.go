@@ -36,6 +36,48 @@ type RoleVersion struct {
 	Definition  json.RawMessage `json:"definition"`
 }
 type RoleStore struct{}
+
+// RolePage omits policy bodies and uses tenant-scoped, bounded keyset reads.
+type RoleSummary struct {
+	Name        string `json:"name"`
+	Version     int64  `json:"version"`
+	Hash        string `json:"hash"`
+	Active      bool   `json:"active"`
+	Bootstrap   bool   `json:"bootstrap"`
+	OperationID string `json:"operation_id"`
+}
+type RolePage struct {
+	Roles []RoleSummary `json:"roles"`
+	Next  string        `json:"next,omitempty"`
+}
+
+func (RoleStore) List(ctx context.Context, q postgres.Executor, a tenant.Access, after string) (RolePage, error) {
+	page := RolePage{Roles: []RoleSummary{}}
+	if after != "" && !ValidRoleName(after) {
+		return page, ErrDefinition
+	}
+	rows, err := q.QueryContext(ctx, `SELECT h.name,h.version,v.body_hash,h.active,v.bootstrap,v.operation_id::text FROM control.role_heads h JOIN control.role_versions v USING(tenant_id,name,version) WHERE h.tenant_id=$1 AND h.name COLLATE "C">$2::text COLLATE "C" ORDER BY h.name COLLATE "C" LIMIT 101`, a.TenantID(), after)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role RoleSummary
+		if err := rows.Scan(&role.Name, &role.Version, &role.Hash, &role.Active, &role.Bootstrap, &role.OperationID); err != nil {
+			return RolePage{}, err
+		}
+		page.Roles = append(page.Roles, role)
+	}
+	if err := rows.Err(); err != nil {
+		return RolePage{}, err
+	}
+	if len(page.Roles) > 100 {
+		page.Roles = page.Roles[:100]
+		page.Next = page.Roles[99].Name
+	}
+	return page, nil
+}
+
 type Loader func(context.Context, postgres.Executor, tenant.Access) (Engine, error)
 type Transactional interface {
 	Resolve(context.Context, postgres.Executor, tenant.Access) (Engine, error)

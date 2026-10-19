@@ -70,15 +70,18 @@ not an invented revision witness. Preserve the documented ABA limitation; no
 exactly-once/linearizable membership claim. Unknown assignments block that member
 until fresh authorized state is explicitly reviewed. Warn before self-demotion;
 refresh workspace authority after known self-assignment success. Retain last-owner
-protection in SQL. Aborted/unmounted requests do not prove rollback. Ignore stale
+protection in SQL. Add user ID, requested role and expected role to successful
+assignment acknowledgements alongside the existing `assigned` boolean; this
+binds UI success to the request without changing the underlying CAS contract.
+Aborted/unmounted requests do not prove rollback. Ignore stale
 responses belonging to another connection, workspace or selected resource.
 
 ## Identity deployment boundary
 
 No external provider, issuer/audience/JWKS or HTTPS callback is currently configured
-in this environment. The user has been asked for provider/domain information;
-secret values belong in environment settings. Continue independent UI and local
-verification while waiting. Prepare concrete operator guidance and evidence
+in this environment. The user explicitly selected local completion and deployment
+preparation, with external-provider verification deferred. Secret values belong
+in environment settings. Prepare concrete operator guidance and evidence
 checks for pinned public-client PKCE, HTTPS same-origin callback, gateway query
 redaction, key rotation, dedicated Redis ACL and provider/MFA assurance.
 Do not equate a local fixture with production provider/deployment certification.

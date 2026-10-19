@@ -51,6 +51,47 @@ func knownAction(action string) bool { return slices.Contains(strings.Fields(act
 
 func ValidRoleName(name string) bool { return roleName.MatchString(name) }
 
+// RoleContract describes authoring constraints, never the caller's authority.
+type RoleContract struct {
+	SchemaVersion string       `json:"schema_version"`
+	Name          string       `json:"name"`
+	RootProtected bool         `json:"root_protected"`
+	Actions       []RoleAction `json:"actions"`
+	Limits        RoleLimits   `json:"limits"`
+}
+type RoleAction struct {
+	Name           string `json:"name"`
+	AllowSupported bool   `json:"allow_supported"`
+	ScopeRequired  bool   `json:"scope_required"`
+}
+type RoleLimits struct {
+	DefinitionBytes int `json:"definition_bytes"`
+	Grants          int `json:"grants"`
+	ActionsPerGrant int `json:"actions_per_grant"`
+	ScopeDepth      int `json:"scope_depth"`
+	ScopeNodes      int `json:"scope_nodes"`
+	ScopeChildren   int `json:"scope_children"`
+	ConditionBytes  int `json:"condition_bytes"`
+	ScopesPerAction int `json:"scopes_per_action"`
+	NodesPerAction  int `json:"nodes_per_action"`
+}
+
+func DefinitionContract(name string) (RoleContract, error) {
+	if !ValidRoleName(name) {
+		return RoleContract{}, ErrDefinition
+	}
+	c := RoleContract{SchemaVersion: DefinitionVersion, Name: name, RootProtected: name == "owner",
+		Limits: RoleLimits{65536, 64, 64, 6, 32, 8, 1024, 8, 63}}
+	for _, action := range strings.Fields(actionCatalog) {
+		c.Actions = append(c.Actions, RoleAction{action, supportedRoleAction(name, action), actionNeedsScope(action)})
+	}
+	return c, nil
+}
+
+func actionNeedsScope(action string) bool {
+	return strings.HasPrefix(action, "data.entity.") || strings.HasPrefix(action, "data.field.")
+}
+
 func CompileDefinition(raw []byte, expected string) (Defined, error) {
 	var d Definition
 	if len(raw) == 0 || len(raw) > 65536 {
@@ -103,7 +144,7 @@ func CompileDefinition(raw []byte, expected string) (Defined, error) {
 		for _, a := range g.Actions {
 			// SQL intersects entity and field scopes. Row/aggregate action
 			// grants are gates only; accepting an unused scope there is unsafe.
-			scoped := strings.HasPrefix(a, "data.entity.") || strings.HasPrefix(a, "data.field.")
+			scoped := actionNeedsScope(a)
 			if g.Scope != nil && !scoped || scoped && g.Effect == "ALLOW" && g.Scope == nil {
 				return Defined{}, ErrDefinition
 			}
