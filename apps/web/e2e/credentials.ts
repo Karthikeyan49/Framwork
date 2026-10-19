@@ -18,6 +18,13 @@ export async function enterAccessToken(
 
 export function redactedRequests(request: APIRequestContext) {
   return {
+    async get(...args: Parameters<APIRequestContext["get"]>) {
+      try {
+        return await request.get(...args);
+      } catch {
+        throw new Error("Authenticated fixture request failed; check the service.");
+      }
+    },
     async post(...args: Parameters<APIRequestContext["post"]>) {
       try {
         return await request.post(...args);

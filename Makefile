@@ -9,12 +9,13 @@ setup:
 	./scripts/bootstrap.sh
 env:
 	node scripts/env.mjs
+	node scripts/m8-env.mjs
 	node scripts/with-env.mjs node scripts/dev-identity.mjs
 infra-up: env
 	$(COMPOSE) up -d --wait --wait-timeout 90
 infra-down:
 	$(COMPOSE) down
-migrate:
+migrate: roles-init
 	node scripts/with-env.mjs $(GO) run ./cmd/migrate up
 migration-status:
 	node scripts/with-env.mjs $(GO) run ./cmd/migrate status
@@ -24,11 +25,19 @@ api:
 	node scripts/with-env.mjs $(GO) run ./cmd/api
 worker:
 	node scripts/with-env.mjs $(GO) run ./cmd/worker
+dispatcher:
+	node scripts/with-env.mjs $(GO) run ./cmd/dispatcher
 test-unit:
 	$(GO) test -race $(GO_PACKAGES)
+	node --test scripts/*.test.mjs
 	$(NPM) test
 test-integration:
-	node scripts/with-env.mjs $(GO) test -race -tags=integration -count=1 ./tests/integration
+	node scripts/with-env.mjs $(GO) test -race -tags=integration -count=1 -timeout 40m ./tests/integration
+.PHONY: test-performance test-write-performance
+test-performance:
+	node scripts/with-env.mjs $(GO) test -tags=integration,performance -count=1 -run '^TestM9RMembershipPerformanceFloor$$' -v ./tests/integration
+test-write-performance:
+	node scripts/with-env.mjs $(GO) test -tags=integration,performance -count=1 -run '^TestM9RIndependentWritePerformanceFloor$$' -v ./tests/integration
 test: test-unit test-integration
 check: docs-verify
 	./scripts/check-format.sh
@@ -40,8 +49,12 @@ build:
 	mkdir -p bin
 	$(GO) build -o bin/api ./cmd/api
 	$(GO) build -o bin/worker ./cmd/worker
+	$(GO) build -o bin/dispatcher ./cmd/dispatcher
+	$(GO) build -o bin/event-replay ./cmd/event-replay
 	$(GO) build -o bin/migrate ./cmd/migrate
 	$(GO) build -o bin/iam ./cmd/iam
+	$(GO) build -o bin/worker-admin ./cmd/worker-admin
+	$(GO) build -o bin/release-check ./cmd/release-check
 	$(NPM) run build
 fmt:
 	find cmd internal db contracts tests -name '*.go' -type f -exec "$$($(GO) env GOROOT)/bin/gofmt" -w {} +
@@ -53,3 +66,27 @@ browser-install:
 	node scripts/browser-install.mjs
 test-e2e:
 	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.local/cache/ms-playwright $(NPM) run test:e2e
+
+.PHONY: roles-init
+roles-init:
+	node scripts/m6r-env.mjs
+	node scripts/with-env.mjs node scripts/m6r-roles.mjs
+
+.PHONY: release-check
+release-check:
+	node scripts/with-env.mjs $(GO) run ./cmd/release-check
+
+.PHONY: test-rules-fuzz
+RULE_FUZZ_TIME ?= 10s
+test-rules-fuzz:
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzRuleCompile$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzRuleRestoreAndInputs$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzFixedDecimalMoney$$' -fuzztime=$(RULE_FUZZ_TIME) -parallel=2 ./internal/runtime/rules
+
+.PHONY: test-events-fuzz
+test-events-fuzz:
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzPointer$$' -fuzztime=10s -parallel=2 ./internal/events
+
+.PHONY: test-workflows-fuzz
+test-workflows-fuzz:
+	GOMAXPROCS=2 $(GO) test -run '^$$' -fuzz '^FuzzWorkflowRestore$$' -fuzztime=10s -parallel=2 ./internal/runtime/workflow

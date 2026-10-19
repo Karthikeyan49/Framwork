@@ -38,13 +38,22 @@ func (e executor) QueryRowContext(ctx context.Context, q string, args ...any) *s
 
 const clearContext = `SELECT pg_catalog.set_config('app.auth_issuer','',false),
  pg_catalog.set_config('app.auth_subject','',false),pg_catalog.set_config('app.actor_id','',false),
- pg_catalog.set_config('app.tenant_id','',false)`
+ pg_catalog.set_config('app.tenant_id','',false),pg_catalog.set_config('app.job_id','',false),
+ pg_catalog.set_config('app.dataset_id','',false),pg_catalog.set_config('app.dataset_binding','',false),
+ pg_catalog.set_config('app.execution_ir_hash','',false)`
 
 // WithRuntime leases one connection, checks THAT connection's effective role,
 // resets persistent identity context, and owns a bounded transaction. The caller
 // must buffer results until this function succeeds. No automatic retry occurs.
 func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, Executor) error) (result error) {
-	if db == nil || run == nil {
+	return WithRuntimeIsolation(parent, db, sql.LevelRepeatableRead, run)
+}
+
+// WithRuntimeIsolation is WithRuntime at an explicit isolation level. Only a port whose own
+// contract needs a fresh snapshot per statement after it holds its locks (runtime.freeze_sandbox,
+// ADR037 Amendment 2) uses READ COMMITTED; everything else keeps REPEATABLE READ.
+func WithRuntimeIsolation(parent context.Context, db *sql.DB, level sql.IsolationLevel, run func(context.Context, Executor) error) (result error) {
+	if db == nil || run == nil || level != sql.LevelRepeatableRead && level != sql.LevelReadCommitted {
 		return ErrUnavailable
 	}
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
@@ -60,7 +69,9 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
 			span.SetStatus(codes.Error, "transaction failed")
 		}
 	}()
-	conn, err := db.Conn(ctx)
+	poolCtx, poolSpan := otel.Tracer("framework/postgres").Start(ctx, "postgres.connection.acquire")
+	conn, err := db.Conn(poolCtx)
+	poolSpan.End()
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -76,14 +87,17 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
 			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 		}
 	}()
-	if err = checkRuntime(ctx, conn); err != nil {
+	admissionCtx, admissionSpan := otel.Tracer("framework/postgres").Start(ctx, "postgres.role.admission")
+	err = checkRuntime(admissionCtx, conn)
+	admissionSpan.End()
+	if err != nil {
 		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 		return ErrUnavailable
 	}
 	if _, err = conn.ExecContext(ctx, clearContext); err != nil {
 		return ErrUnavailable
 	}
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: level})
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -93,13 +107,26 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
  pg_catalog.set_config('idle_in_transaction_session_timeout','3000',true)`); err != nil {
 		return ErrUnavailable
 	}
-	if err = run(ctx, executor{tx}); err != nil {
+	err = func() error {
+		bodyCtx, bodySpan := otel.Tracer("framework/postgres").Start(ctx, "postgres.transaction.body")
+		defer bodySpan.End()
+		return run(bodyCtx, executor{tx})
+	}()
+	if err != nil {
 		return err
 	}
 	if ctx.Err() != nil {
 		return ErrUnavailable
 	}
-	if err = tx.Commit(); err != nil {
+	_, commitSpan := otel.Tracer("framework/postgres").Start(ctx, "postgres.transaction.commit")
+	err = tx.Commit()
+	commitSpan.End()
+	if err != nil {
+		// PostgreSQL's serialization/deadlock reply proves that COMMIT aborted.
+		// A lost reply, connection error or cancellation proves no such outcome.
+		if KnownAbort(err) {
+			return err
+		}
 		return ErrCommitUnknown
 	}
 	return nil

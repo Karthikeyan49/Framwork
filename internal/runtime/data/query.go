@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -145,7 +146,11 @@ type cursor struct {
 func fingerprint(s Scope, a tenant.Access, e string, q Query) string {
 	q.After = ""
 	raw, _ := json.Marshal(q)
-	h := sha256.Sum256([]byte(a.TenantID() + s.AppID() + fmt.Sprint(s.Revision()) + s.Hash() + e + string(raw)))
+	identity := a.TenantID() + s.AppID() + fmt.Sprint(s.Revision()) + s.Hash() + e + string(raw)
+	if s.DatasetID() != "" {
+		identity += "/dataset/" + s.DatasetID() + "/binding/" + fmt.Sprint(s.BindingVersion())
+	}
+	h := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(h[:])
 }
 func project(r Record, ids []string) Record {
@@ -158,7 +163,7 @@ func project(r Record, ids []string) Record {
 	r.Values = out
 	return r
 }
-func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard) (Page, error) {
+func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard, resolve ...ScopeResolver) (Page, error) {
 	e, err := plan(s, a, entity)
 	if err != nil {
 		return Page{}, err
@@ -167,6 +172,9 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	defer span.End()
 	span.SetAttributes(attribute.String("entity_id", entity), attribute.String("ir_hash", s.Hash()), attribute.Int64("metadata_version", s.Revision()), attribute.String("data_mode", "preview"))
 	if err = g.check(ctx, "data.entity.read", Resource{EntityID: entity}); err != nil {
+		return Page{}, err
+	}
+	if err = g.check(ctx, "data.row.read", Resource{EntityID: entity}); err != nil {
 		return Page{}, err
 	}
 	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > 2048 || len(query.Projection) == 0 || len(query.Projection) > 32 {
@@ -186,6 +194,22 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	}
 	b := builder{args: base(s, a, entity)}
 	where := `r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5`
+	if query.RecordID != "" {
+		if !tenant.ValidID(query.RecordID) {
+			return Page{}, ErrInvalid
+		}
+		where += " AND r.id=" + b.bind(query.RecordID) + "::uuid"
+	}
+	accessScope, err := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity})
+	if err != nil {
+		return Page{}, err
+	}
+	n := 0
+	scopePredicate, err := scopeSQL(ctx, e, accessScope, a, "r", &b, 0, &n)
+	if err != nil {
+		return Page{}, err
+	}
+	where += " AND (" + scopePredicate + ")"
 	if query.Filter != nil {
 		nodes := 0
 		condition, err := filterSQL(ctx, e, *query.Filter, &b, g, 0, &nodes)
@@ -206,6 +230,7 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	}
 	sf := compiler.Field{Type: "string", CoreID: true}
 	sortExpr, sortType := "r.id", "uuid"
+	indexJoin := ""
 	desc := false
 	if query.Sort != nil {
 		var ok bool
@@ -216,9 +241,25 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: sf.ID}); err != nil {
 			return Page{}, err
 		}
-		sortExpr, sortType = physical(sf, "r", &b)
 		desc = query.Sort.Desc
 		seen[sf.ID] = true
+		if !st.workerSource && !st.legacy && (sf.Type == "integer" || sf.Type == "decimal" || sf.Type == "money") {
+			index, indexErr := numericIndex(ctx, q, s, a, entity, sf.ID)
+			if indexErr != nil && indexErr != ErrNotFound {
+				return Page{}, indexErr
+			}
+			if indexErr == nil && index.State == "READY" {
+				// Same tenant/physical namespace, source row version and snapshot.
+				// All authorization/filter/cursor predicates remain before LIMIT.
+				indexJoin = ` JOIN runtime.numeric_projections ni ON ni.tenant_id=$1 AND ni.app_id=$2 AND ni.metadata_revision=$3 AND ni.ir_hash=$4 AND ni.entity_id=$5 AND ni.field_id=` + b.bind(sf.ID) + ` AND ni.id=r.id AND ni.source_version=r.row_version`
+				sortExpr = "ni.value_number"
+				sortType = "numeric"
+				span.SetAttributes(attribute.String("query_index", "numeric-v1"))
+			}
+		}
+		if indexJoin == "" {
+			sortExpr, sortType = physical(sf, "r", &b)
+		}
 	}
 	fp := fingerprint(s, a, entity, query)
 	span.SetAttributes(attribute.String("query_fingerprint", fp))
@@ -272,6 +313,9 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 		if err = g.check(ctx, "data.entity.read", Resource{EntityID: target.ID}); err != nil {
 			return Page{}, err
 		}
+		if err = g.check(ctx, "data.row.read", Resource{EntityID: target.ID}); err != nil {
+			return Page{}, err
+		}
 		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: relation.FromField}); err != nil {
 			return Page{}, err
 		}
@@ -283,7 +327,29 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 				return Page{}, err
 			}
 		}
-		joinSQL = ` LEFT JOIN runtime.preview_records j ON j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
+		joinSQL = ` LEFT JOIN ` + st.recordsTable() + ` j ON j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
+		targetScope, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID})
+		if er != nil {
+			return Page{}, er
+		}
+		ns := 0
+		jp, er := scopeSQL(ctx, target, targetScope, a, "j", &b, 0, &ns)
+		if er != nil {
+			return Page{}, er
+		}
+		joinSQL += " AND (" + jp + ")"
+		for _, id := range query.Join.Projection {
+			fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID, FieldID: id})
+			if er != nil {
+				return Page{}, er
+			}
+			nodes := 0
+			pred, er := scopeSQL(ctx, target, fs, a, "j", &b, 0, &nodes)
+			if er != nil {
+				return Page{}, er
+			}
+			joinSQL += " AND (" + pred + ")"
+		}
 		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,j.custom_data`
 	}
 	if query.Aggregate != nil {
@@ -306,14 +372,37 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 			return Page{}, err
 		}
 	}
-	if err = authorizeCandidates(ctx, q, s, a, entity, seen, query.Join, target, g); err != nil {
-		return Page{}, err
+	keys := []string{}
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity, FieldID: key})
+		if er != nil {
+			return Page{}, er
+		}
+		n := 0
+		fp, er := scopeSQL(ctx, e, fs, a, "r", &b, 0, &n)
+		if er != nil {
+			return Page{}, er
+		}
+		where += " AND (" + fp + ")"
 	}
 	order := "ASC"
 	if desc {
 		order = "DESC"
 	}
-	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,` + joinedColumns + ` FROM runtime.preview_records r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + indexJoin + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	if query.Sort != nil && !sf.CoreID && !st.workerSource {
+		// Bound the sort tuple to ID/key before fetching wide JSONB records. Both
+		// stages share one statement/snapshot and forced RLS; entity/field/row
+		// DataScope and cursor predicates select the page before LIMIT. The outer
+		// fetch is constrained to the same namespace and those selected IDs.
+		limit := fmt.Sprintf("$%d", len(b.args))
+		statement = `WITH selected_page AS MATERIALIZED (SELECT r.id,` + sortExpr + ` AS sort_value FROM ` + st.recordsTable() + ` r` + indexJoin + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + limit + `)
+ SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN ` + st.recordsTable() + ` r ON r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
+	}
 	rows, err := q.QueryContext(ctx, statement, b.args...)
 	if err != nil {
 		return Page{}, err
@@ -322,27 +411,26 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	records := []Record{}
 	var lastValue any
 	hasMore := false
-	pending := []Resource{}
 	for rows.Next() {
 		var r Record
 		var raw, joinedRaw []byte
 		var jid, owner sql.NullString
 		var version sql.NullInt64
 		var created, updated sql.NullTime
-		if err = rows.Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &jid, &version, &owner, &created, &updated, &joinedRaw); err != nil {
+		if err = rows.Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &r.OwnerID, &r.TeamID, &jid, &version, &owner, &created, &updated, &joinedRaw); err != nil {
 			return Page{}, err
 		}
-		if err = readValues(e, &r, raw); err != nil {
+		readEntity := e
+		if st.workerSource {
+			readEntity.Fields = nil
+			for _, f := range e.Fields {
+				if f.CoreID || slices.Contains(query.Projection, f.ID) {
+					readEntity.Fields = append(readEntity.Fields, f)
+				}
+			}
+		}
+		if err = readValues(readEntity, &r, raw); err != nil {
 			return Page{}, err
-		}
-		pending = append(pending, Resource{EntityID: entity, RecordID: r.ID, OwnerID: r.CreatedBy})
-		keys := make([]string, 0, len(seen))
-		for key := range seen {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			pending = append(pending, Resource{EntityID: entity, FieldID: key, RecordID: r.ID, OwnerID: r.CreatedBy})
 		}
 		if query.Join != nil {
 			r.Related = map[string]*Record{query.Join.Relationship: nil}
@@ -350,10 +438,6 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 				joined := Record{ID: jid.String, Version: version.Int64, CreatedBy: owner.String, CreatedAt: created.Time, UpdatedAt: updated.Time}
 				if err = readValues(target, &joined, joinedRaw); err != nil {
 					return Page{}, err
-				}
-				pending = append(pending, Resource{EntityID: target.ID, RecordID: joined.ID, OwnerID: joined.CreatedBy})
-				for _, key := range query.Join.Projection {
-					pending = append(pending, Resource{EntityID: target.ID, FieldID: key, RecordID: joined.ID, OwnerID: joined.CreatedBy})
 				}
 				joined = project(joined, query.Join.Projection)
 				r.Related[query.Join.Relationship] = &joined
@@ -375,15 +459,6 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	}
 	if err = rows.Close(); err != nil {
 		return Page{}, err
-	}
-	for _, resource := range pending {
-		action := "data.row.read"
-		if resource.FieldID != "" {
-			action = "data.field.read"
-		}
-		if err = g.check(ctx, action, resource); err != nil {
-			return Page{}, err
-		}
 	}
 	if hasMore && query.Aggregate != nil {
 		return Page{}, ErrBudget

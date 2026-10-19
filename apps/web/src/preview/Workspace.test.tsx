@@ -189,6 +189,7 @@ it("sends a scoped typed create command and reports safe errors without exposing
     String(url).endsWith("/commands"),
   )!;
   expect(JSON.parse(String(call[1]?.body))).toEqual({
+    command_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
     operation: "create",
     values: {
       "field.contact.name": "Alice",
@@ -252,14 +253,20 @@ it("requires explicit reload after a stale update and carries the selected row v
     expected_version: 7,
   });
 });
-it("blocks uncertain writes until a successful explicit reload and redacts transport messages", async () => {
+it("keeps uncertain writes blocked until an owned committed receipt and fresh reload, and redacts transport messages", async () => {
   let commands = 0;
   let queryFailure = false;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+  let commandKey = "";
+  let committed = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     if (String(url).endsWith("/commands")) {
       commands++;
+      commandKey = JSON.parse(String(options?.body)).command_key;
       throw new TypeError("private network details");
     }
+    if (String(url).endsWith(`/commands/${commandKey}`))
+      return response({ command_key: commandKey, state: committed ? "COMMITTED" : "UNKNOWN",
+        ...(committed ? { record_id: tenant, record_version: 1 } : {}) });
     if (String(url).endsWith("/query")) {
       if (queryFailure) throw new TypeError("private network details");
       return response({ records: [], next: "" });
@@ -271,12 +278,19 @@ it("blocks uncertain writes until a successful explicit reload and redacts trans
   await userEvent.type(screen.getByLabelText("Name"), "Possibly committed");
   await userEvent.click(screen.getByRole("button", { name: "Create record" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "may have committed",
+    "outcome is uncertain",
   );
   expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled();
   expect(screen.queryByText("private network details")).not.toBeInTheDocument();
   queryFailure = true;
   await userEvent.click(screen.getByRole("button", { name: "Reload records" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Reload records" })).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Check command receipt" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("still unknown");
+  expect(screen.getByRole("button", { name: "Create record" })).toBeDisabled();
+  committed = true;
+  await userEvent.click(screen.getByRole("button", { name: "Check command receipt" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Reload records" }),
@@ -305,4 +319,167 @@ it("supports compiler-valid entities without an exposed ID alias and rejects nes
     },
   ];
   expect(() => decodePreview(p, "app.contacts", 1)).toThrow("Nested forms");
+});
+
+describe("M6R preview recovery", () => {
+  it("keeps the write guard and input after a confirmed save followed by reload failure", async () => {
+    let written = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith("/commands")) {
+          written = true;
+          return response({
+            id: tenant,
+            version: 1,
+            values: { "field.contact.name": "Keep this name" },
+          });
+        }
+        if (String(url).endsWith("/query"))
+          return written
+            ? response({ code: "unavailable" }, 503)
+            : response({ records: [], next: "" });
+        return response(fixture());
+      }),
+    );
+    render(<ApplicationWorkspace token="test" tenant={tenant} />);
+    await load();
+    await userEvent.type(screen.getByLabelText("Name"), "Keep this name");
+    await userEvent.selectOptions(screen.getByLabelText("Status"), "active");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create record" }),
+    );
+    await screen.findByText(
+      /change was saved, but records could not be reloaded/,
+    );
+    expect(
+      screen.getByRole("button", { name: "Create record" }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Name")).toHaveValue("Keep this name");
+    expect(screen.queryByText("No records yet.")).not.toBeInTheDocument();
+  });
+  it("offers selection on a detail-only page", async () => {
+    const descriptor = fixture() as {
+      ir: {
+        application: {
+          definitions: Array<{
+            kind: string;
+            page?: { components: unknown[] };
+          }>;
+        };
+      };
+    };
+    descriptor.ir.application.definitions.find(
+      (d) => d.kind === "page",
+    )!.page!.components = [{ type: "detail" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) =>
+        String(url).endsWith("/query")
+          ? response({
+              records: [
+                {
+                  id: tenant,
+                  version: 1,
+                  values: { "field.contact.name": "Detail record" },
+                },
+              ],
+              next: "",
+            })
+          : response(descriptor),
+      ),
+    );
+    render(<ApplicationWorkspace token="test" tenant={tenant} />);
+    await load();
+    await userEvent.selectOptions(screen.getByLabelText("Open record"), tenant);
+    expect(screen.getByText("Version 1")).toBeInTheDocument();
+  });
+  it("retains uncertain write review across pages of the same entity", async () => {
+    const descriptor = fixture() as {
+      ir: {
+        application: {
+          definitions: Array<{
+            id: string;
+            kind: string;
+            label: string;
+            page?: { components: unknown[] };
+          }>;
+        };
+      };
+    };
+    const page = descriptor.ir.application.definitions.find(
+      (d) => d.kind === "page",
+    )!;
+    descriptor.ir.application.definitions.push({
+      ...page,
+      id: "page.contact.second",
+      label: "Second page",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith("/commands"))
+          throw new TypeError("transport unavailable");
+        return String(url).endsWith("/query")
+          ? response({ records: [], next: "" })
+          : response(descriptor);
+      }),
+    );
+    render(<ApplicationWorkspace token="test" tenant={tenant} />);
+    await load();
+    await userEvent.type(screen.getByLabelText("Name"), "Uncertain");
+    await userEvent.selectOptions(screen.getByLabelText("Status"), "active");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create record" }),
+    );
+    await screen.findByRole("alert");
+    await userEvent.click(screen.getByRole("button", { name: "Second page" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Reload records" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Create record" }),
+    ).toBeDisabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reload records" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create record" }),
+      ).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: "Check command receipt" })).toBeEnabled();
+  });
+});
+
+it("uses IR compatibility while preserving historical compiler provenance", () => {
+  const raw = fixture() as { ir: { compiler_version: string } };
+  raw.ir.compiler_version = "historical-compiler";
+  expect(decodePreview(raw, "app.contacts", 1).ir.compiler_version).toBe(
+    "historical-compiler",
+  );
+});
+
+it("accepts opt-in M7 IR while retaining renderer version checks", () => {
+  const raw = fixture() as {
+    ir: { ir_version: string; compiler_version: string };
+  };
+  raw.ir.ir_version = "1.1.0";
+  raw.ir.compiler_version = "1.1.0";
+  expect(decodePreview(raw, "app.contacts", 1).ir.ir_version).toBe("1.1.0");
+  raw.ir.ir_version = "1.2.0";
+  raw.ir.compiler_version = "1.2.0";
+  expect(decodePreview(raw, "app.contacts", 1).ir.ir_version).toBe("1.2.0");
+  raw.ir.ir_version = "1.3.0";
+  raw.ir.compiler_version = "1.3.0";
+  expect(decodePreview(raw, "app.contacts", 1).ir.ir_version).toBe("1.3.0");
+  raw.ir.ir_version = "1.3.0";
+  raw.ir.compiler_version = "1.3.0";
+  expect(decodePreview(raw, "app.contacts", 1).ir.ir_version).toBe("1.3.0");
+  raw.ir.ir_version = "2.0.0";
+  expect(() => decodePreview(raw, "app.contacts", 1)).toThrow(
+    "Unsupported preview version",
+  );
 });

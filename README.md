@@ -5,12 +5,40 @@ metadata-driven enterprise runtime. **M0–M6:** local infrastructure, telemetry
 cryptographic identity, trusted tenant membership, central policy and durable
 audit, bounded transactions, reusable tenant RLS and a typed draft metadata registry.
 Canonical compiler IR, bounded typed preview CRUD/query execution and dynamic React
-forms/tables/details are implemented. Production activation and AI remain later work.
+forms/tables/details are implemented. M6R adds V3 storage/authorization/release
+foundations; M7 adds pure typed Rule Engine V2, M8 adds transactional delivery,
+and M9 adds durable Workflow Runtime V2. Production activation and AI remain later work.
+
+**M9R remediation is in progress.** The [review validation](docs/verification/M0_M9_REVIEW_VALIDATION.md)
+reproduced worker-authority, data-namespace, query-cost and write-contention gaps.
+Follow the [remediation plan](docs/migration/M9R_REMEDIATION_PLAN.md) before M10.
+The [worker boundary](docs/migration/M9R_R1_IMPLEMENTATION_REPORT.md) and
+[RLS reference floor](docs/migration/M9R_R3A_IMPLEMENTATION_REPORT.md) have
+independent evidence. The earlier current-host HTTP gate failed; governed
+[numeric indexing](docs/migration/M9R_R3B_IMPLEMENTATION_REPORT.md) now passes
+the unchanged 100k-row/ten-client gate in root and independent runs (independent
+p95 96.713 ms, zero errors). This requires a registered and verified numeric
+index; general query planning, uniqueness and aggregates remain separate work.
+Dataset schema plans and equal-schema
+preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
+passed focused correctness/fault/browser checks and, after measured FIFO admission,
+the 32-client write gate passed in root and independent runs (independent p95
+340.575 ms). Earlier failures are retained. [Checkpointed preview schema evolution](docs/migration/M9R_R2C_IMPLEMENTATION_REPORT.md)
+now passes the full root suite/build, browser regressions and independent
+fault/capacity review, including a real 100k migration and post-cutover query gate.
+[Versioned tenant capabilities](docs/migration/M9R_R5A_IMPLEMENTATION_REPORT.md)
+now pass independent API/trusted-Go and workload checks. [Worker SQL authority](docs/migration/M9R_R5B_IMPLEMENTATION_REPORT.md)
+also passes bounded review and full regressions: live role/field/record scopes,
+per-row lease fencing and statement policy evaluation. Wider capacity and the
+remaining record/field/verification/operations work remain open in the ledger.
+The foundation acceptance gate remains open.
+The [supersession map and capability inventory](docs/migration/V2_V3_SUPERSESSION_MAP.md)
+qualify historical PASS reports and distinguish previews from contract-only and
+deferred production services.
 
 AI will propose structured drafts; the compiler, sandbox, verification, approval
 and promotion pipeline will produce immutable versions for deterministic runtime
-execution. The original architecture buildkit is preserved verbatim in [docs](docs/README.md).
-Start with [the master playbook](docs/00_MASTER_PLAYBOOK.md), [roadmap](docs/implementation/50_IMPLEMENTATION_ROADMAP.md),
+execution. V3 is authoritative: read the [V3 kit](docs/v3/README.md), [master playbook](docs/v3/00_MASTER_PLAYBOOK_V3.md), and [V3 roadmap](docs/v3/roadmap/50_RESTRUCTURED_MILESTONES.md). Retained [V2 documents](docs/README.md) supplement unchanged specifications. Read the [compatibility audit](docs/migration/M0_M6_AUDIT_REPORT.md), [M6R decision](docs/adr/020-v3-m6r-architecture-remediation.md),
 [agent contract](AGENTS.md), and [M0 tooling decision](docs/adr/013-m0-foundation-tooling.md), and
 [M1 identity decision](docs/adr/014-m1-identity-policy-audit.md).
 
@@ -29,8 +57,14 @@ make dev
 
 This installs locked dependencies, preserves or generates a 0600 `.env` with random
 development passwords, starts the local stack, applies migrations, builds the
-programs, and runs API/idle worker/Vite. Ctrl-C stops those application processes;
+programs, and runs API/worker/dispatcher/Vite. V3 assigns separate API/worker credentials;
+operator and dispatcher secrets are excluded from application children. Ctrl-C stops those application processes;
 `make infra-down` stops local containers and retains PostgreSQL data.
+
+M9R requires an explicit tenant assignment for the worker. On a fresh database,
+`make dev` starts API/web/dispatcher and reports the worker as paused. Create the
+local owner below, assign the worker, then run `make worker` or restart `make dev`.
+An unassigned worker cannot claim or execute another tenant's work.
 
 The coordinator prints its PID. Some cloud runners close a command connection
 without propagating Ctrl-C to child processes. In that case, send SIGINT or SIGTERM
@@ -56,7 +90,8 @@ an approved HTTPS API origin at build time. The access console validates identit
 ```sh
 make check             # source checksums, nonmutating Go format, vet, integrity, TS lint/typecheck
 make test              # Go race/unit tests, frontend tests, real PG/Redis integration
-make build             # API, worker, migration binary, frontend production bundle
+make build             # API, worker, operator binaries, frontend bundle
+make release-check     # operator-only supported active-IR deployment gate
 node scripts/with-env.mjs node scripts/smoke.mjs  # live API, telemetry, worker and proxy smoke
 ```
 
@@ -138,7 +173,7 @@ internal/metadata/                   M3 models, validation and registry ports
 internal/platform/access/             Identity/tenant/policy/audit/metadata HTTP composition
 internal/runtime/{data,rules,workflow}/  Later runtime modules, no M0 logic
 apps/web/                            React shell, router, typed API client, tests
-db/{migrations,rls,seeds}/            Embedded M0–M3 migrations and reusable tenant RLS
+db/{migrations,rls,seeds}/            Embedded forward migrations and reusable tenant RLS
 contracts/jsonschema/                Embedded typed metadata contract
 tests/{integration,e2e,security,performance}/
 infra/{compose,otel}/                Local PostgreSQL/Redis/collector
@@ -181,6 +216,19 @@ node scripts/with-env.mjs ./bin/iam \
   --role owner --user-status active --membership-status active \
   --operator local-setup
 ```
+
+Assign the local worker after creating that tenant:
+
+```sh
+node scripts/with-env.mjs ./bin/worker-admin \
+  --principal framework_worker \
+  --tenant 11111111-1111-4111-8111-111111111111 --operator local-worker-setup
+```
+
+This records assignment and operator audit together. `--disable` revokes future
+bindings. Further tenants require distinct LOGIN principals inheriting only the
+worker privilege group, unique credentials and audience-specific Redis receiver
+ACLs. See [the M9R worker runbook](docs/migration/M9R_WORKER_RUNBOOK.md).
 
 Generate a 15-minute local access token in your terminal:
 
@@ -306,6 +354,40 @@ See [ADR-016](docs/adr/016-m3-metadata-source-registry.md),
 
 ## Compiled application previews (M4–M6)
 
+M9R adds explicit **preview** dataset bindings through the API, while retaining
+the existing scratch-preview UI. See [R2 progress](docs/migration/M9R_R2_IMPLEMENTATION_REPORT.md).
+The bounded equal-schema tranche passed [independent review](docs/verification/M9R_R2B_INDEPENDENT_REVIEW.md)
+at `145eaa4`; this does not complete schema evolution or the foundation gate.
+Owner/admin requests can `POST /v1/tenants/{tenant}/preview/{app}/datasets`
+with `workspace_id`, `mode` (`ADOPT` or `EMPTY`), `metadata_revision`, `ir_hash`
+and exact canonical `compiled_ir` from the matching compiled descriptor. No
+frontend tenant claim grants access. The existing metadata JSON request budget
+applies; excessive artifacts are rejected. Keep the workspace UUID to reconcile
+an unknown create result by retrying the exact request.
+
+ADOPT requires the exact existing namespace witness; it enters ADOPTING and
+seals legacy writes. `POST .../datasets/{dataset}/verify` with `{}` verifies up to
+100 records and commits cursor/count/manifest plus audit together. Repeat until
+state OPEN; `GET .../datasets/{dataset}` is owner/admin status inspection. No
+record is copied or deleted. Failed verification leaves the source sealed and
+retained for a reviewed forward repair; never delete it to make verification pass.
+
+`POST .../datasets/{dataset}/bindings` takes the target witness plus
+`expected_binding`. Only identical storage hashes can bind in this tranche.
+`GET .../bindings/{binding}` restores stored IR without recompilation; its
+`entities/{entity}/query` and `commands` paths use the existing typed contracts.
+Old bindings read, only the active binding writes, and cursors bind the dataset
+and binding. Audit/outbox keep execution IR while ordering retains the data
+origin. Schema evolution uses a separate, sealed shadow-generation protocol:
+`POST .../datasets/{dataset}/evolutions` with an operation UUID, expected base
+binding, exact target witness and typed `intent`. GET its operation status;
+POST `/advance` with `expected_checkpoint` until READY, then `/activate`.
+See [the recovery/API report](docs/migration/M9R_R2C_IMPLEMENTATION_REPORT.md).
+Old bindings retain their schema as read-only snapshots and apply current
+ownership/sharing/tombstones. Workflow routes also exist under bindings and pin
+their physical generation. Production activation, the dataset-management UI and
+larger/denser migration capacity are still pending.
+
 Development/test only: append a structurally validated source using the existing
 metadata API (see contracts/examples/contacts-draft-v1.json), then compile it with
 `GET /v1/tenants/{tenant}/metadata/{app}/versions/{revision}/compile`. Compilation
@@ -334,6 +416,126 @@ traces/video/screenshots are off. Generated dependencies/builds/artifacts stay i
 Decisions: [ADR017](docs/adr/017-m4-compiler-ir.md),
 [ADR018](docs/adr/018-m5-preview-data-runtime.md),
 [ADR019](docs/adr/019-m6-compiled-ui-renderer.md). Completion and independent review
-reports are under docs/M4*, M5*, M6*. Rules/workflows/tools/outbox/sandbox/promotion,
+reports are under docs/M4*, M5*, M6*. Workflows/tools/sandbox/promotion,
 released schema migrations, AI builder and full scale/security certification remain
-their later milestones. Do not start M7 without a new user task.
+their later milestones. Do not start M9 without a new user task.
+
+## V3 migration and recovery
+
+M6R adds generic records, SQL DataScope, least-privilege worker roles, immutable
+release/approval contracts, transactional audit/outbox and ERP value contracts.
+See [the implementation report](docs/migration/M6R_IMPLEMENTATION_REPORT.md).
+There are no public production activation endpoints or AI execution capabilities.
+Use the V3 roadmap; M8 is outbox/inbox, M9 workflows, M10 tools,
+M11 sandbox, M12 candidate builder and M13 approval/promotion services.
+
+For an existing database, stop all legacy API/worker writers before migration.
+Take and test an encrypted operational backup plus schema/row checkpoints. Keep
+existing credentials and volumes. Local development uses make infra-up and make
+migrate, which provisions development-only dedicated roles before applying 9–19.
+No Down or destructive reset is exposed. Legacy tables and a read-only adapter remain.
+The final barrier waits for legacy transactions, reconciles late inserts and aborts
+on divergence rather than overwriting data. The report contains the rehearsal and
+forward-recovery instructions. Do not restart old writers after cutover.
+
+For production, provision reviewed roles using operator-controlled infrastructure;
+local credential helpers reject production. Run the migrate binary with explicit
+MIGRATION_DATABASE_URL and production TLS/auth configuration, then release-check
+before deploying binaries. Never mount operator/dispatcher credentials into API or
+worker processes. A failed compatibility check blocks deployment.
+
+Rollback of release metadata is an audited, approved pointer switch after storage
+and external-effect assessment. It cannot undo destructive schema changes or remote
+actions. Code rollback must retain V3 storage/role compatibility; returning an old
+binary to the legacy writable adapter is unsafe. Restore into a separate verified
+recovery environment or apply a reviewed forward reconciliation; retain both copies.
+
+## M7 — Rule Engine V2
+
+Read [ADR021](docs/adr/021-m7-rule-engine-v2.md),
+[rule semantics](internal/runtime/rules/README.md), the
+[implementation report](docs/verification/M7_IMPLEMENTATION_REPORT.md) and
+[independent review](docs/verification/M7_INDEPENDENT_REVIEW.md).
+Opt-in metadata schema 1.1.0 requires DSL 2.0.0 and emits typed rule plans in IR1.1.0.
+Existing schema/IR1.0.0 remains supported with its original hashes; it contains no
+executable DSL2 plans. Use [the example](contracts/examples/contacts-rules-v2.json)
+for exact Money thresholds, minor-unit rounding and a pinned business calendar.
+
+With migration17 applied, development/test preview exposes
+`POST /v1/tenants/{tenant}/preview/{app}/versions/{revision}/rules/{rule}/evaluate`
+with `{"record_id":"<UUID>"}`. It loads the record through existing action/field/
+DataScope/RLS checks, enforces record-specific rule authorization, computes only a
+value and commits audit before returning it. Requests cannot supply expressions,
+values, tenant context, calendar overrides or tools. No production route is exposed.
+Money/decimal JSON outputs use exact strings; no automatic business action follows.
+
+`make test` includes deterministic/property tests and fuzz seeds. For timed fuzzing:
+
+```sh
+make test-rules-fuzz
+GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzRuleCompile$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
+GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzRuleRestoreAndInputs$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
+GOMAXPROCS=2 ./scripts/go.sh test -run '^$' -fuzz '^FuzzFixedDecimalMoney$' -fuzztime=10s -parallel=2 ./internal/runtime/rules
+```
+
+## M8 — Transactional Outbox + Inbox
+
+Read [ADR022](docs/adr/022-m8-transactional-delivery.md),
+[delivery and recovery semantics](internal/events/README.md), and
+[M8 verification](docs/verification/M8_IMPLEMENTATION_REPORT.md).
+`make dev` now runs API, dispatcher, worker and web with separate credential
+bindings. `make env` preserves secrets and generates local broker ACL identities;
+`make infra-up migrate build` prepares migrations18/19 and binaries. Existing
+PostgreSQL volumes, data and all historical intents remain intact.
+
+`EVENTS_ENABLED=true` is development/test only. New preview CRUD atomically freezes
+an immutable event; the dispatcher publishes its reference, and a receipt-only
+worker commits policy/audit/inbox completion. Redis can restart without losing
+authoritative events. Production activation and external tools remain
+later milestones; production preview delivery is rejected. Set EVENTS_ENABLED=false
+to pause delivery without removing event or inbox history. Manual process commands
+are `make api`, `make dispatcher`, `make worker`; `make test` runs M8 failure tests
+alongside all existing regressions. M8 tests own disposable databases and restart
+the local Redis cache; run them against development/test infrastructure only.
+
+For operator-reviewed recovery, inspect delivery generation/attempts and fix the
+underlying membership/configuration problem first. Then use separate operator
+credentials (never mount them into API/worker/dispatcher):
+
+```sh
+node scripts/with-env.mjs bin/event-replay \
+  -tenant <tenant-uuid> -event <event-uuid> -generation <expected-generation> \
+  -operator <review-reference> -reason <reviewed-reason>
+```
+
+Replay retains event bytes/identity, attempts and inbox. Completed events remain
+completed; stale generations, active leases and legacy paused intents are refused.
+A dead predecessor blocks its aggregate successors until recovery. Old binaries
+may be used only with delivery disabled and additive schemas retained; database
+rollback never deletes event/inbox evidence. Apply reviewed forward fixes or restore
+a verified backup into a separate recovery environment. See the report for limits.
+
+## M9 — Workflow Runtime V2
+
+Read [ADR023](docs/adr/023-m9-workflow-runtime-v2.md), the
+[runtime/API contracts](internal/runtime/workflow/README.md) and
+[verification report](docs/verification/M9_IMPLEMENTATION_REPORT.md).
+Apply migrations20/21 with `make migrate` before deploying M9 binaries.
+`WORKFLOWS_ENABLED` defaults true for development/test and false for production;
+production refuses preview execution. `make worker` runs both M8 receipts and
+the independent PostgreSQL workflow loop. PostgreSQL owns timers/state/history;
+Redis is not the workflow durability provider.
+
+The [schema1.2 example](contracts/examples/workflow-draft-v1.2.json) demonstrates
+captured conditions, a local activity, timer, separate-actor approval and failure
+paths. Start/read/signal APIs are documented in the runtime contract. Local
+activities commit receipts/history/audit/lifecycle outbox atomically. Only
+`local.noop` is registered; external tools are M10. The existing React preview
+renders1.2 entity/page plans; a workflow authoring/editor UI is later work.
+
+`make test` runs actual crash, lost-COMMIT-response, isolation and recovery checks;
+`make test-workflows-fuzz` runs the bounded plan-restore campaign. Recovery never
+changes the instance's captured inputs, IR, plan/version or committed receipts.
+Unknown outcomes require reviewed reconciliation; compensation cannot undo
+arbitrary external actions. Pause with `WORKFLOWS_ENABLED=false` before rolling
+back binaries, retain all additive schemas/evidence, and use reviewed forward fixes.

@@ -30,9 +30,14 @@ func (a Access) Roles() []string  { return append([]string{}, a.roles...) }
 type Store struct{}
 
 func (Store) Ready(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `SELECT t.id,t.name,t.active,m.user_id,m.role,m.active,r.name FROM iam.tenants t JOIN iam.memberships m ON m.tenant_id=t.id JOIN iam.roles r ON r.name=m.role LIMIT 0`)
+	_, err := db.ExecContext(ctx, `SELECT t.id,t.name,t.active,m.user_id,m.role,m.active FROM iam.tenants t JOIN iam.memberships m ON m.tenant_id=t.id LIMIT 0`)
 	if err != nil {
 		return err
+	}
+	// Team administration ports must exist with their reviewed definer contract.
+	var teamPorts bool
+	if err = db.QueryRowContext(ctx, `SELECT count(*)=3 AND bool_and(p.prosecdef AND p.proowner='framework_schema_owner'::regrole AND p.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'] AND has_function_privilege(p.oid,'EXECUTE')) FROM pg_catalog.pg_proc p WHERE p.oid IN('control.save_team(uuid,uuid,bigint,text,uuid)'::regprocedure,'control.set_team_member(uuid,uuid,uuid,boolean,boolean)'::regprocedure,'control.team_members(uuid,uuid)'::regprocedure)`).Scan(&teamPorts); err != nil || !teamPorts {
+		return errors.New("team administration contract unavailable")
 	}
 	var actor, tenantID any
 	var matches bool
@@ -153,7 +158,19 @@ func (Store) Provision(ctx context.Context, tx postgres.Executor, tenantID, name
 	_, err := tx.ExecContext(ctx, `INSERT INTO iam.memberships(tenant_id,user_id,role,active) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=excluded.role,active=excluded.active`, tenantID, userID, role, active)
 	return err
 }
-func ValidRole(s string) bool { return s == "owner" || s == "admin" || s == "member" || s == "viewer" }
+func ValidRole(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	for i, c := range s {
+		if c < 'a' || c > 'z' {
+			if i == 0 || !(c >= '0' && c <= '9' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // A disabled identity may not retain an active owner membership. Operators must
 // transfer ownership first; there is no implicit reactivation or privilege grant.

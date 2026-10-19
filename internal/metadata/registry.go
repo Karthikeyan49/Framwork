@@ -49,6 +49,7 @@ func (r *Registry) Ready(ctx context.Context, db *sql.DB) error {
 	var ready bool
 	err := db.QueryRowContext(ctx, `SELECT
  EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='control.metadata_versions'::regclass AND tgname='metadata_immutable' AND tgenabled='O' AND NOT tgisinternal)
+ AND EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='control.metadata_versions'::regclass AND tgname='metadata_envelope_version' AND tgenabled='O' AND NOT tgisinternal)
  AND EXISTS(SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid='control.metadata_heads'::regclass AND conname='metadata_head_revision' AND contype='f' AND condeferrable AND condeferred AND convalidated)
  AND EXISTS(SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid='control.metadata_versions'::regclass AND conname='metadata_envelope_required' AND convalidated)
  AND (SELECT count(*)=2 AND bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_catalog.pg_class WHERE oid IN('control.metadata_heads'::regclass,'control.metadata_versions'::regclass))

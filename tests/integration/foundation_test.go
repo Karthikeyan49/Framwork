@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,8 +95,8 @@ func TestFoundationDependenciesAndMigration(t *testing.T) {
 		t.Fatalf("migration not repeatable: count=%d", len(second))
 	}
 	var count int
-	if err := migrationDB.QueryRowContext(ctx, `SELECT count(*) FROM pg_namespace WHERE nspname IN ('iam','control','runtime','audit') AND nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)`).Scan(&count); err != nil || count != 4 {
-		t.Fatalf("migration role does not own four schemas: count=%d", count)
+	if err := migrationDB.QueryRowContext(ctx, `SELECT count(*) FROM pg_namespace WHERE nspname IN ('iam','control','runtime','audit') AND nspowner=(SELECT oid FROM pg_roles WHERE rolname='framework_schema_owner' AND NOT rolcanlogin)`).Scan(&count); err != nil || count != 4 {
+		t.Fatalf("NOLOGIN schema owner does not own four schemas: count=%d", count)
 	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE public.m0_privilege_probe (id integer)`); err == nil {
 		_, _ = migrationDB.ExecContext(ctx, `DROP TABLE public.m0_privilege_probe`)
@@ -194,16 +195,54 @@ func TestAPIWithoutCollectorAndDependencyOutages(t *testing.T) {
 	}
 }
 
+type workerStartupLog struct {
+	slog.Handler
+	ready chan struct{}
+	once  *sync.Once
+}
+
+func (h workerStartupLog) Handle(ctx context.Context, r slog.Record) error {
+	if err := h.Handler.Handle(ctx, r); err != nil {
+		return err
+	}
+	if r.Message == "event delivery started" || r.Message == "event delivery disabled" {
+		h.once.Do(func() { close(h.ready) })
+	}
+	return nil
+}
+func (h workerStartupLog) WithAttrs(a []slog.Attr) slog.Handler {
+	h.Handler = h.Handler.WithAttrs(a)
+	return h
+}
+func (h workerStartupLog) WithGroup(g string) slog.Handler {
+	h.Handler = h.Handler.WithGroup(g)
+	return h
+}
+
 func TestWorkerLifecycle(t *testing.T) {
+	m8Database(t)
+	newIAM(t) // Explicit tenant assignment in the owned disposable database.
 	c, err := config.Load(os.Getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.OTelEndpoint = ""
+	c.EventRedisURL = os.Getenv("EVENT_RECEIVER_REDIS_URL")
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- app.Run(ctx, "framework-worker", c, slog.New(slog.NewJSONHandler(io.Discard, nil))) }()
-	time.Sleep(100 * time.Millisecond)
+	ready := make(chan struct{})
+	logger := slog.New(workerStartupLog{Handler: slog.NewJSONHandler(io.Discard, nil), ready: ready, once: &sync.Once{}})
+	go func() { done <- app.Run(ctx, "framework-worker", c, logger) }()
+	// Synchronize with successful storage/transport startup, rather than cancel
+	// an in-flight readiness probe after an assumed 100 ms on a loaded machine.
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatal("worker exited before startup", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not confirm startup")
+	}
 	cancel()
 	select {
 	case err := <-done:

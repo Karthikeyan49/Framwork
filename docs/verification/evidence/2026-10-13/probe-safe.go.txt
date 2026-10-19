@@ -1,0 +1,325 @@
+// Disposable, local-only validation probe. No implementation changes.
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/Karthikeyan49/Framwork/db/migrations"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+)
+
+var ctx = context.Background()
+var phase string
+
+func must(err error) {
+	if err != nil {
+		panic(fmt.Sprintf("phase=%s sqlstate=%s", phase, state(err)))
+	}
+}
+func state(err error) string {
+	if err == nil {
+		return "OK"
+	}
+	var p *pgconn.PgError
+	if errors.As(err, &p) {
+		return p.Code
+	}
+	return fmt.Sprintf("%T", err)
+}
+func out(name string, v any) { b, _ := json.Marshal(v); fmt.Printf("%s %s\n", name, b) }
+func uuid() string {
+	b := make([]byte, 16)
+	_, e := rand.Read(b)
+	must(e)
+	b[6] = b[6]&15 | 64
+	b[8] = b[8]&63 | 128
+	s := hex.EncodeToString(b)
+	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:]
+}
+func hash(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
+func open(raw, expectedDatabase, expectedRole string) *sql.DB {
+	c, e := pgx.ParseConfig(raw)
+	must(e)
+	if c.Database != expectedDatabase || c.User != expectedRole {
+		panic("effective database/role override refused before connection")
+	}
+	if c.Host != "localhost" && c.Host != "127.0.0.1" && c.Host != "::1" {
+		panic("nonlocal connection refused")
+	}
+	for _, f := range c.Fallbacks {
+		if f.Host != "localhost" && f.Host != "127.0.0.1" && f.Host != "::1" { panic("nonlocal fallback refused") }
+	}
+	d, e := sql.Open("pgx", raw)
+	must(e)
+	d.SetMaxOpenConns(4)
+	must(d.Ping())
+	var actualDatabase, sessionRole, effectiveRole string
+	must(d.QueryRow(`SELECT current_database(),session_user,current_user`).Scan(&actualDatabase,&sessionRole,&effectiveRole))
+	if actualDatabase != expectedDatabase || sessionRole != expectedRole || effectiveRole != expectedRole {
+		d.Close()
+		panic("connected database/role differs from owned fixture")
+	}
+	out("connection_target_verified", map[string]any{"role":expectedRole,"expected_database_matches":true})
+	return d
+}
+func exec(d interface {
+	Exec(string, ...any) (sql.Result, error)
+}, q string, args ...any) sql.Result { r, e := d.Exec(q, args...); must(e); return r }
+func binding(key, name string) string {
+	u, e := url.Parse(os.Getenv(key))
+	must(e)
+	u.Path = "/" + name
+	return u.String()
+}
+func scope(tx *sql.Tx, t, a string) {
+	exec(tx, `SELECT set_config('app.tenant_id',$1,true),set_config('app.actor_id',$2,true),set_config('app.auth_issuer','audit-local',true),set_config('app.auth_subject',$2,true)`, t, a)
+}
+func begin(d *sql.DB, t, a string) *sql.Tx {
+	x, e := d.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	must(e)
+	scope(x, t, a)
+	exec(x, `SET LOCAL statement_timeout='2000ms'; SET LOCAL lock_timeout='500ms'`)
+	return x
+}
+func count(tx *sql.Tx, q string, args ...any) int {
+	var n int
+	must(tx.QueryRow(q, args...).Scan(&n))
+	return n
+}
+
+const app = "app.workflows"
+const entity = "entity.contact"
+const insertBinding = `INSERT INTO runtime.workflow_bindings(tenant_id,id,app_id,metadata_revision,ir_hash,ir_body,workflow_id,workflow_version,plan_hash,plan_body,record_id,record_version,inputs,input_hash,start_key,request_hash,request_id) VALUES($1,$2,$3,1,$4,$5,'workflow.contact.review','1.0.0',$6,$7,$8,1,$9,$10,$11,$12,'audit-probe')`
+const counter = `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,1,$3) ON CONFLICT(tenant_id,app_id,metadata_revision,ir_hash) DO UPDATE SET write_version=runtime.record_sets.write_version+1`
+
+func main() {
+	defer func() {
+		if x := recover(); x != nil {
+			fmt.Println("PROBE_FAILED", x)
+			os.Exit(1)
+		}
+	}()
+	phase = "environment safety"
+	if e := os.Getenv("APP_ENV"); e != "development" && e != "test" {
+		panic("explicit local development/test required")
+	}
+	for _, k := range []string{"DATABASE_URL", "MIGRATION_DATABASE_URL", "WORKER_DATABASE_URL", "DISPATCHER_DATABASE_URL"} {
+		c, e := pgx.ParseConfig(os.Getenv(k))
+		must(e)
+		if c.Host != "localhost" && c.Host != "127.0.0.1" && c.Host != "::1" {
+			panic("nonlocal database refused")
+		}
+		for _, f := range c.Fallbacks {
+			if f.Host != "localhost" && f.Host != "127.0.0.1" && f.Host != "::1" {
+				panic("nonlocal fallback refused")
+			}
+		}
+	}
+	u, e := url.Parse(os.Getenv("DATABASE_URL"))
+	must(e)
+	u.User = url.UserPassword("postgres", os.Getenv("POSTGRES_PASSWORD"))
+	u.Path = "/postgres"
+	admin := open(u.String(), "postgres", "postgres")
+	defer admin.Close()
+	name := "audit_validation_" + strings.ReplaceAll(uuid(), "-", "")
+	quoted := pgx.Identifier{name}.Sanitize()
+	phase = "create owned fixture database"
+	exec(admin, `CREATE DATABASE `+quoted+` OWNER framework_migrator`)
+	defer func() {
+		phase = "drop owned fixture database"
+		_, e := admin.Exec(`DROP DATABASE ` + quoted + ` WITH (FORCE)`)
+		out("cleanup", map[string]any{"dropped": e == nil, "sqlstate": state(e)})
+	}()
+	exec(admin, `REVOKE ALL ON DATABASE `+quoted+` FROM PUBLIC`)
+	exec(admin, `GRANT CONNECT ON DATABASE `+quoted+` TO framework_app,framework_worker,framework_dispatcher`)
+	m := open(binding("MIGRATION_DATABASE_URL", name), name, "framework_migrator")
+	defer m.Close()
+	phase = "apply migrations"
+	p, e := goose.NewProvider(goose.DialectPostgres, m, migrations.Files, goose.WithDisableGlobalRegistry(true))
+	must(e)
+	applied, e := p.Up(ctx)
+	must(e)
+	again, e := p.Up(ctx)
+	must(e)
+	out("migrations", map[string]int{"applied": len(applied), "repeat_applied": len(again)})
+	u.Path = "/" + name
+	seed := open(u.String(), name, "postgres")
+	defer seed.Close()
+	var version string
+	must(seed.QueryRow(`SHOW server_version`).Scan(&version))
+	out("postgres", version)
+	a := open(binding("DATABASE_URL", name), name, "framework_app")
+	defer a.Close()
+	w := open(binding("WORKER_DATABASE_URL", name), name, "framework_worker")
+	defer w.Close()
+	phase = "compile authentic fixture"
+	raw, e := os.ReadFile("contracts/examples/workflow-draft-v1.2.json")
+	must(e)
+	v, e := metadata.NewValidator()
+	must(e)
+	s, e := v.Parse(raw)
+	must(e)
+	prog, diags := compiler.Compile(s, compiler.PlatformCatalog())
+	if len(diags) > 0 || !prog.Valid() {
+		panic("fixture compilation failed")
+	}
+	wp, e := prog.Workflow("workflow.contact.review")
+	must(e)
+	otherCatalog := compiler.PlatformCatalog()
+	otherCatalog.Version = "audit-platform-v2"
+	changed, d := compiler.Compile(s, otherCatalog)
+	if len(d) > 0 || !changed.Valid() {
+		panic("catalog compilation failed")
+	}
+	ta, tb, aa, ab := uuid(), uuid(), uuid(), uuid()
+	phase = "seed synthetic tenants"
+	for _, x := range [][2]string{{ta, aa}, {tb, ab}} {
+		exec(seed, `INSERT INTO iam.users(id,issuer,subject,name) VALUES($1::uuid,'audit-local',($1::uuid)::text,'Synthetic audit actor')`, x[1])
+		exec(seed, `INSERT INTO iam.tenants(id,name) VALUES($1,'Synthetic audit tenant')`, x[0])
+		exec(seed, `INSERT INTO iam.memberships(tenant_id,user_id,role) VALUES($1,$2,'owner')`, x[0], x[1])
+		exec(seed, `INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,1,$3)`, x[0], app, prog.Hash())
+	}
+	ids := []string{uuid(), uuid(), uuid(), uuid(), uuid()}
+	for _, id := range ids {
+		exec(seed, `INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,created_by,owner_user_id,updated_by) VALUES($1,$2,1,$3,$4,$5,$6,$7,$7,$7)`, tb, app, prog.Hash(), entity, id, `{"field.contact.name":"Synthetic","field.contact.status":"active","field.contact.balance":{"amount":"10","currency":"USD"}}`, ab)
+	}
+	inputs := []byte(`{"fields":["field.contact.status"],"values":{"field.contact.status":"active"},"record_version":1}`)
+	phase = "insert authentic binding as app"
+	x := begin(a, tb, ab)
+	jid := uuid()
+	exec(x, insertBinding, tb, jid, app, prog.Hash(), []byte(prog.JSON()), wp.Hash(), wp.JSON(), ids[0], inputs, hash(inputs), uuid(), hash([]byte("request")))
+	must(x.Commit())
+	phase = "worker credentials only baseline"
+	var n int
+	must(w.QueryRow(`SELECT count(*) FROM runtime.records`).Scan(&n))
+	out("worker_no_context", map[string]int{"visible_records": n})
+	phase = "worker global claim"
+	var ct, cj, ch, token string
+	var generation int64
+	must(w.QueryRow(`SELECT tenant_id::text,id::text,ir_hash,generation,token::text FROM control.claim_workflow($1)`, uuid()).Scan(&ct, &cj, &ch, &generation, &token))
+	x, e = w.BeginTx(ctx, nil)
+	must(e)
+	exec(x, `SELECT set_config('app.tenant_id',$1,true),set_config('app.job_id',$2,true)`, ct, cj)
+	var actor, tenant, issuer, subject string
+	must(x.QueryRow(`SELECT actor::text,tenant::text,issuer,subject FROM iam.worker_identity($1)`, cj).Scan(&actor, &tenant, &issuer, &subject))
+	exec(x, `SELECT set_config('app.actor_id',$1,true),set_config('app.auth_issuer',$2,true),set_config('app.auth_subject',$3,true)`, actor, issuer, subject)
+	n = count(x, `SELECT count(*) FROM runtime.records`)
+	updated, _ := exec(x, `UPDATE runtime.records SET custom_data=jsonb_set(custom_data,'{field.contact.name}','"credential probe"'),row_version=row_version+1 WHERE id=$1`, ids[1]).RowsAffected()
+	deleted, _ := exec(x, `DELETE FROM runtime.records WHERE id=$1`, ids[2]).RowsAffected()
+	must(x.Rollback())
+	out("worker_credential_probe", map[string]any{"claimed_foreign_tenant": ct == tb, "visible_records": n, "unrelated_record_updates": updated, "unrelated_record_deletes": deleted, "mutations_rolled_back": true})
+	phase = "forged hash-consistent artifact"
+	x = begin(a, tb, ab)
+	fake := []byte(`{}`)
+	_, e = x.Exec(insertBinding, tb, uuid(), app, hash(fake), fake, hash(fake), fake, ids[0], inputs, hash(inputs), uuid(), hash([]byte("fake request")))
+	_, restoreErr := compiler.Restore(fake, hash(fake), compiler.SupportedIRVersions())
+	out("forged_binding", map[string]any{"database_accepts": e == nil, "database_sqlstate": state(e), "restore_rejects": restoreErr != nil})
+	must(x.Rollback())
+	phase = "namespace continuity"
+	x = begin(a, tb, ab)
+	q := `SELECT count(*) FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4`
+	original := count(x, q, tb, app, 1, prog.Hash())
+	revision := count(x, q, tb, app, 2, prog.Hash())
+	catalog := count(x, q, tb, app, 1, changed.Hash())
+	must(x.Rollback())
+	out("storage_continuity", map[string]any{"original_rows": original, "revision_2_rows": revision, "changed_catalog_rows": catalog, "ir_hash_changed": prog.Hash() != changed.Hash(), "records_preserved": original == 5})
+	phase = "counter lock timeout"
+	first := begin(a, tb, ab)
+	second := begin(a, tb, ab)
+	exec(first, counter, tb, app, prog.Hash())
+	started := time.Now()
+	_, e = second.Exec(counter, tb, app, prog.Hash())
+	out("writer_lock_timeout", map[string]any{"sqlstate": state(e), "elapsed_ms": float64(time.Since(started).Microseconds()) / 1000})
+	must(second.Rollback())
+	must(first.Rollback())
+	phase = "counter stale snapshot"
+	first = begin(a, tb, ab)
+	second = begin(a, tb, ab)
+	_ = count(second, `SELECT count(*) FROM runtime.record_sets WHERE tenant_id=$1`, tb)
+	exec(first, counter, tb, app, prog.Hash())
+	must(first.Commit())
+	_, e = second.Exec(counter, tb, app, prog.Hash())
+	out("writer_serialization", map[string]string{"sqlstate": state(e)})
+	must(second.Rollback())
+	for _, size := range []int{20000, 100000} {
+		phase = fmt.Sprintf("seed benchmark %d", size)
+		start := 1
+		if size == 100000 {
+			start = 20001
+		}
+		exec(seed, `INSERT INTO runtime.records(tenant_id,app_id,metadata_revision,ir_hash,entity_id,id,custom_data,created_by,owner_user_id,updated_by) SELECT $1,$2,1,$3,$4,gen_random_uuid(),jsonb_build_object('field.contact.name','Synthetic '||g::text,'field.contact.status','active','field.contact.balance',jsonb_build_object('amount',((g*7919)%100003)::text,'currency','USD')),$5,$5,$5 FROM generate_series($6::int,$7::int) g`, ta, app, prog.Hash(), entity, aa, start, size)
+		exec(seed, `ANALYZE runtime.records`)
+		where := ` FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=1 AND ir_hash=$3 AND entity_id=$4`
+		numeric := `SELECT id::text` + where + ` ORDER BY (custom_data->'field.contact.balance'->>'amount')::numeric,id LIMIT 101`
+		key := `SELECT id::text` + where + ` ORDER BY runtime.records.id LIMIT 101`
+		measure := func(label, query, timeout string, repeats int) {
+			times := []float64{}
+			states := []string{}
+			counts := []int{}
+			for i := 0; i < repeats; i++ {
+				tx := begin(a, ta, aa)
+				exec(tx, `SELECT set_config('statement_timeout',$1,true)`, timeout)
+				st := time.Now()
+				rows, err := tx.Query(query, ta, app, prog.Hash(), entity)
+				num := 0
+				if err == nil {
+					for rows.Next() {
+						var id string
+						err = rows.Scan(&id)
+						if err != nil {
+							break
+						}
+						num++
+					}
+					if err == nil {
+						err = rows.Err()
+					}
+					rows.Close()
+				}
+				times = append(times, float64(time.Since(st).Microseconds())/1000)
+				states = append(states, state(err))
+				counts = append(counts, num)
+				must(tx.Rollback())
+			}
+			sorted := append([]float64{}, times...)
+			sort.Float64s(sorted)
+			out("benchmark", map[string]any{"rows": size, "case": label, "samples_ms": times, "median_ms": sorted[len(sorted)/2], "sqlstates": states, "returned": counts})
+		}
+		phase = fmt.Sprintf("RLS numeric sort %d", size)
+		measure("numeric_RLS_budget_2s", numeric, "2s", 1)
+		measure("numeric_RLS_budget_30s", numeric, "30s", 3)
+		measure("key_RLS_budget_2s", key, "2s", 3)
+		for label, query := range map[string]string{"numeric_RLS": numeric, "key_RLS": key} {
+			tx := begin(a, ta, aa)
+			exec(tx, `SET LOCAL statement_timeout='30s'`)
+			var plan []byte
+			must(tx.QueryRow(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) `+query, ta, app, prog.Hash(), entity).Scan(&plan))
+			out("explain", map[string]any{"rows": size, "case": label, "plan": json.RawMessage(plan)})
+			must(tx.Rollback())
+		}
+		// Disable RLS only in the uniquely owned disposable database for a same-role SQL control.
+		phase = "same-role no-RLS control in owned fixture"
+		exec(seed, `ALTER TABLE runtime.records DISABLE ROW LEVEL SECURITY`)
+		measure("numeric_same_role_no_RLS_control", numeric, "30s", 3)
+		exec(seed, `ALTER TABLE runtime.records ENABLE ROW LEVEL SECURITY; ALTER TABLE runtime.records FORCE ROW LEVEL SECURITY`)
+	}
+	phase = "finish"
+	out("probe_complete", true)
+}
