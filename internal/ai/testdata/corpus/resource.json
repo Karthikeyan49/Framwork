@@ -1,0 +1,3785 @@
+{
+ "corpus_version": "m14-corpus-v1",
+ "class": "resource",
+ "items": [
+  {
+   "id": "res-slow-timeout",
+   "class": "resource",
+   "subclass": "slow",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider takes 5 s; the wall clock is 300 ms: the run ends in time, no document.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "x"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "delay_ms": 5000,
+     "model": "scripted-model-1"
+    }
+   ],
+   "budget": {
+    "wall_clock_ms": 300
+   },
+   "expect": {
+    "status": [
+     "FAILED",
+     "BUDGET_EXCEEDED"
+    ],
+    "elapsed_ms_max": 2500,
+    "max_provider_calls": 3
+   },
+   "tags": [
+    "e2e"
+   ]
+  },
+  {
+   "id": "res-slow-then-ok",
+   "class": "resource",
+   "subclass": "slow",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The first call is too slow, the second is fine: bounded wait, no unbounded retry.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "x"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "delay_ms": 5000,
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "budget": {
+    "wall_clock_ms": 400
+   },
+   "expect": {
+    "status": [
+     "FAILED",
+     "BUDGET_EXCEEDED",
+     "READY"
+    ],
+    "elapsed_ms_max": 3500,
+    "max_provider_calls": 3
+   }
+  },
+  {
+   "id": "res-endless-repair",
+   "class": "resource",
+   "subclass": "endless",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider never converges: exactly MaxAttempts calls, then NEEDS_HUMAN.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad1",
+         "definition": {
+          "id": "page.order.bad1",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost1",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad2",
+         "definition": {
+          "id": "page.order.bad2",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost2",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad3",
+         "definition": {
+          "id": "page.order.bad3",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost3",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad4",
+         "definition": {
+          "id": "page.order.bad4",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost4",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad5",
+         "definition": {
+          "id": "page.order.bad5",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost5",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad6",
+         "definition": {
+          "id": "page.order.bad6",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost6",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad7",
+         "definition": {
+          "id": "page.order.bad7",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost7",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad8",
+         "definition": {
+          "id": "page.order.bad8",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost8",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad9",
+         "definition": {
+          "id": "page.order.bad9",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost9",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "NEEDS_HUMAN"
+    ],
+    "layer": "compile",
+    "max_provider_calls": 3,
+    "attempts": [
+     "COMPILE_ERROR",
+     "COMPILE_ERROR",
+     "COMPILE_ERROR"
+    ]
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "res-raise-attempts",
+   "class": "resource",
+   "subclass": "endless",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The caller asks for 100 attempts: the server ceiling (3) wins.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad1",
+         "definition": {
+          "id": "page.order.bad1",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost1",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad2",
+         "definition": {
+          "id": "page.order.bad2",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost2",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad3",
+         "definition": {
+          "id": "page.order.bad3",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost3",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad4",
+         "definition": {
+          "id": "page.order.bad4",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost4",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad5",
+         "definition": {
+          "id": "page.order.bad5",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost5",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad6",
+         "definition": {
+          "id": "page.order.bad6",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost6",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad7",
+         "definition": {
+          "id": "page.order.bad7",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost7",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad8",
+         "definition": {
+          "id": "page.order.bad8",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost8",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad9",
+         "definition": {
+          "id": "page.order.bad9",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost9",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "budget": {
+    "max_attempts": 100
+   },
+   "expect": {
+    "status": [
+     "NEEDS_HUMAN"
+    ],
+    "max_provider_calls": 3
+   }
+  },
+  {
+   "id": "res-lower-attempts",
+   "class": "resource",
+   "subclass": "endless",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The caller lowers attempts to 1: exactly one call.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad1",
+         "definition": {
+          "id": "page.order.bad1",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost1",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad2",
+         "definition": {
+          "id": "page.order.bad2",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost2",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad3",
+         "definition": {
+          "id": "page.order.bad3",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost3",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad4",
+         "definition": {
+          "id": "page.order.bad4",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost4",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad5",
+         "definition": {
+          "id": "page.order.bad5",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost5",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad6",
+         "definition": {
+          "id": "page.order.bad6",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost6",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad7",
+         "definition": {
+          "id": "page.order.bad7",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost7",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad8",
+         "definition": {
+          "id": "page.order.bad8",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost8",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad9",
+         "definition": {
+          "id": "page.order.bad9",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost9",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "budget": {
+    "max_attempts": 1
+   },
+   "expect": {
+    "status": [
+     "NEEDS_HUMAN",
+     "FAILED"
+    ],
+    "max_provider_calls": 1
+   }
+  },
+  {
+   "id": "res-refusing",
+   "class": "resource",
+   "subclass": "refusing",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider refuses every time: FAILED, bounded calls, no document.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "refused",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "refused",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "refused",
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "max_provider_calls": 3,
+    "attempts_any": [
+     "PROVIDER_ERROR"
+    ]
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "res-unavailable-once",
+   "class": "resource",
+   "subclass": "transient",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "One transient failure then success: READY with at most two calls.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "unavailable",
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "READY",
+     "FAILED"
+    ],
+    "max_provider_calls": 2
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "res-unavailable-always",
+   "class": "resource",
+   "subclass": "transient",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider is always unavailable: bounded calls, FAILED.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "unavailable",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "unavailable",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "unavailable",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "unavailable",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "unavailable",
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "max_provider_calls": 3
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "res-timeout-error",
+   "class": "resource",
+   "subclass": "transient",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider reports a timeout.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "timeout",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "timeout",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "timeout",
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED",
+     "BUDGET_EXCEEDED"
+    ],
+    "max_provider_calls": 3
+   }
+  },
+  {
+   "id": "res-malformed-error",
+   "class": "resource",
+   "subclass": "transient",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider reports a malformed response.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "malformed",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "malformed",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "malformed",
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "max_provider_calls": 3
+   }
+  },
+  {
+   "id": "res-untyped-error",
+   "class": "resource",
+   "subclass": "transient",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider returns an error that is none of the typed errors.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "other",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "other",
+     "model": "scripted-model-1"
+    },
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "other",
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "max_provider_calls": 3
+   }
+  },
+  {
+   "id": "res-provider-panic",
+   "class": "resource",
+   "subclass": "hostile_provider",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider panics. The harness recovers and records whether the gateway did.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "error": "panic",
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "max_provider_calls": 1,
+    "ambiguous": "a panicking adapter is operator code; recovery is defence in depth. The test reports whether RunPatch recovers."
+   }
+  },
+  {
+   "id": "res-oscillating-ab",
+   "class": "resource",
+   "subclass": "oscillating",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "Two different invalid proposals alternate (A, B, A): bounded at three calls.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad1",
+         "definition": {
+          "id": "page.order.bad1",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost1",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad1",
+         "definition": {
+          "id": "page.order.bad1",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost1",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "NEEDS_HUMAN"
+    ],
+    "max_provider_calls": 3
+   }
+  },
+  {
+   "id": "res-identical-repeat",
+   "class": "resource",
+   "subclass": "oscillating",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The same invalid proposal three times (no progress): bounded at three calls.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "NEEDS_HUMAN"
+    ],
+    "max_provider_calls": 3
+   }
+  },
+  {
+   "id": "res-repair-then-ok",
+   "class": "resource",
+   "subclass": "oscillating",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "Invalid, invalid, then valid: stops at the first READY.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad1",
+         "definition": {
+          "id": "page.order.bad1",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost1",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "READY"
+    ],
+    "max_provider_calls": 3,
+    "attempts": [
+     "COMPILE_ERROR",
+     "COMPILE_ERROR",
+     "OK"
+    ]
+   }
+  },
+  {
+   "id": "res-huge-output-10mb",
+   "class": "resource",
+   "subclass": "oversize",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "A 10 MiB provider payload: rejected without hashing the world, bounded time.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "delete",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "rationale": "remove"
+        }
+       ],
+       "assumptions": [
+        "{{repeat:a:10485760}}"
+       ],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "layer": "syntax",
+    "elapsed_ms_max": 8000
+   },
+   "tags": [
+    "e2e"
+   ]
+  },
+  {
+   "id": "res-usage-zero",
+   "class": "resource",
+   "subclass": "usage",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider reports zero tokens for a large payload: the pessimistic estimate must be charged.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "delete",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "rationale": "remove"
+        }
+       ],
+       "assumptions": [
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}"
+       ],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "READY",
+     "FAILED"
+    ],
+    "usage": {
+     "min_total_tokens": 1000
+    }
+   },
+   "tags": [
+    "e2e"
+   ]
+  },
+  {
+   "id": "res-usage-tiny",
+   "class": "resource",
+   "subclass": "usage",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The provider reports 1 token in and 1 out for a 40 KB payload (under-reporting to stay within budget).",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "delete",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "rationale": "remove"
+        }
+       ],
+       "assumptions": [
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}",
+        "{{repeat:a:2000}}"
+       ],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1,
+      "output_tokens": 1
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "READY",
+     "FAILED"
+    ],
+    "usage": {
+     "min_total_tokens": 10000
+    },
+    "ambiguous": "ADR040 section 11 records usage 'from the provider response and clamped to the budget estimate if absent': under-reporting that is not absent may be trusted"
+   },
+   "tags": [
+    "e2e"
+   ]
+  },
+  {
+   "id": "res-usage-negative",
+   "class": "resource",
+   "subclass": "usage",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "Negative usage numbers (would refill the budget).",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "x"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": -1000000,
+      "output_tokens": -1000000
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "READY",
+     "FAILED",
+     "BUDGET_EXCEEDED"
+    ],
+    "usage": {
+     "min_total_tokens": 0,
+     "non_negative": true
+    }
+   }
+  },
+  {
+   "id": "res-usage-int64-max",
+   "class": "resource",
+   "subclass": "usage",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "Usage of MaxInt64 twice: the sum must not wrap around to a negative number.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "x"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 9223372036854775807,
+      "output_tokens": 9223372036854775807
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "BUDGET_EXCEEDED",
+     "FAILED"
+    ],
+    "usage": {
+     "non_negative": true
+    },
+    "max_provider_calls": 1
+   }
+  },
+  {
+   "id": "res-budget-zero",
+   "class": "resource",
+   "subclass": "budget",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "TokensRemaining is zero: BUDGET_EXCEEDED before any provider call.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "budget": {
+    "tokens_remaining": 0
+   },
+   "expect": {
+    "status": [
+     "BUDGET_EXCEEDED"
+    ],
+    "max_provider_calls": 0
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "res-budget-tight",
+   "class": "resource",
+   "subclass": "budget",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The first call consumes more than the remaining budget: no second call.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad1",
+         "definition": {
+          "id": "page.order.bad1",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost1",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad2",
+         "definition": {
+          "id": "page.order.bad2",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost2",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad3",
+         "definition": {
+          "id": "page.order.bad3",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost3",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad4",
+         "definition": {
+          "id": "page.order.bad4",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost4",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad5",
+         "definition": {
+          "id": "page.order.bad5",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost5",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad6",
+         "definition": {
+          "id": "page.order.bad6",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost6",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad7",
+         "definition": {
+          "id": "page.order.bad7",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost7",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad8",
+         "definition": {
+          "id": "page.order.bad8",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost8",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad9",
+         "definition": {
+          "id": "page.order.bad9",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost9",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "budget": {
+    "tokens_remaining": 500
+   },
+   "expect": {
+    "status": [
+     "BUDGET_EXCEEDED",
+     "NEEDS_HUMAN"
+    ],
+    "max_provider_calls": 1
+   }
+  },
+  {
+   "id": "res-budget-zero-value",
+   "class": "resource",
+   "subclass": "budget",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "A Budget struct left entirely at its zero value must fail closed, never mean unlimited.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "budget": {
+    "zero_value": true
+   },
+   "expect": {
+    "status": [
+     "BUDGET_EXCEEDED",
+     "FAILED"
+    ],
+    "max_provider_calls": 0
+   }
+  },
+  {
+   "id": "res-context-too-large",
+   "class": "resource",
+   "subclass": "oversize",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "A draft that cannot fit MaxContextBytes is refused before any provider call.",
+   "task": "application_patch",
+   "fixture": "gen:wide",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "max_provider_calls": 0,
+    "context_error": "too_large"
+   }
+  },
+  {
+   "id": "res-ops-50",
+   "class": "resource",
+   "subclass": "limits",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "Exactly 50 operations are accepted (limit boundary, repeated here for the resource suite).",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "$gen": "repeat",
+         "count": 50,
+         "value": {
+          "op": "add",
+          "target": "page.order.p{{i}}",
+          "definition": {
+           "id": "page.order.p{{i}}",
+           "schema_version": "1.3.0",
+           "namespace": "acme.orders",
+           "label": "Page {{i}}",
+           "kind": "page",
+           "page": {
+            "entity_ref": "entity.order",
+            "components": [
+             {
+              "type": "table",
+              "entity_ref": "entity.order"
+             }
+            ]
+           }
+          },
+          "rationale": "add"
+         }
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "status": [
+     "READY"
+    ],
+    "layer": "accepted"
+   }
+  },
+  {
+   "id": "res-compile-error",
+   "class": "resource",
+   "subclass": "hostile_compiler",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The compile function itself fails (infrastructure error).",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "compile_error": [
+    {
+     "attempt": 1,
+     "error": "compiler unavailable"
+    }
+   ],
+   "expect": {
+    "status": [
+     "FAILED"
+    ],
+    "max_provider_calls": 1
+   }
+  },
+  {
+   "id": "res-compile-flood",
+   "class": "resource",
+   "subclass": "hostile_compiler",
+   "adr": [
+    "\u00a77",
+    "\u00a711"
+   ],
+   "description": "The compile function returns 100000 diagnostics: capped before they reach the next prompt.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.bad0",
+         "definition": {
+          "id": "page.order.bad0",
+          "schema_version": "1.3.0",
+          "namespace": "acme.orders",
+          "label": "Bad",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.ghost0",
+               "label": "G"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "compile_inject": [
+    {
+     "attempt": 1,
+     "diagnostics": [
+      {
+       "path": "/definitions/0",
+       "code": "unknown_symbol",
+       "message": "Reference must resolve to the required definition kind",
+       "repeat": 100000
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "status": [
+     "READY"
+    ],
+    "max_provider_calls": 2,
+    "diagnostics": {
+     "max_items": 40,
+     "max_segment_bytes": 65536
+    }
+   }
+  }
+ ]
+}
