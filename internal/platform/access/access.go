@@ -44,6 +44,9 @@ type API struct {
 	// ToolCatalog is the operator-owned tool registry (ADR036); it feeds
 	// sandbox evidence and, with the compiler, tool admission.
 	ToolCatalog tools.Catalog
+	// AI is the optional AI builder (ADR040). The zero value leaves every AI route
+	// answering 503 ai_unavailable.
+	AI AIConfig
 }
 
 func (a API) catalog() compiler.Catalog {
@@ -76,6 +79,7 @@ func (a API) Register(mux *http.ServeMux) {
 		for pattern := range releasePatterns {
 			mux.HandleFunc(pattern, a.serve)
 		}
+		a.registerAI(mux)
 		for _, op := range []string{"advance", "activate", "abort", "reverify"} {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}/"+op, a.serve)
 		}
@@ -130,6 +134,10 @@ type reply struct {
 	code, message string
 	body          any
 	issues        []metadata.Issue
+	// next, when set, continues the request after the first transaction committed
+	// (the AI provider phase and its result transaction, ADR040 A8). Its reply
+	// replaces this one.
+	next func(context.Context) reply
 }
 
 // A service rejection must roll back its entire business transaction before
@@ -258,6 +266,9 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpserver.Error(w, r, 503, "service_unavailable", "A required service or security transaction is unavailable")
 		return
+	}
+	if err == nil && response.next != nil {
+		response = response.next(parentContext)
 	}
 	// No protected response or security success is sent before the outer commit.
 	if response.status == 401 {
@@ -396,6 +407,9 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		if releaseAction, ok := releasePatterns[r.Pattern]; ok {
 			action = releaseAction
 		}
+		if aiAction, ok := aiPatterns[r.Pattern]; ok {
+			action = aiAction
+		}
 	}
 	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") {
 		resource = "role"
@@ -453,6 +467,8 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			result = reply{status: 200, body: receipt}
 		} else if _, ok := releasePatterns[r.Pattern]; ok {
 			result, err = a.release(ctx, tx, r, u, access, &evidence)
+		} else if _, ok := aiPatterns[r.Pattern]; ok {
+			result, err = a.ai(ctx, tx, r, u, access, &evidence)
 		} else if sandboxPatterns[r.Pattern] {
 			result, err = a.sandbox(ctx, tx, r, u, access, &evidence)
 		} else if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {

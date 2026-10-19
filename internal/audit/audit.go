@@ -76,6 +76,26 @@ type State struct {
 	StorageClass      string   `json:"storage_class,omitempty"`
 	RollbackClass     string   `json:"rollback_class,omitempty"`
 	StaleReasons      []string `json:"stale_reasons,omitempty"`
+
+	// AI proposal evidence (ADR040 A10): ids, hashes, closed codes, labels and
+	// counts only. A prompt, a request text, model output or definition text is
+	// never an audit field.
+	AIProposalID      string `json:"ai_proposal_id,omitempty"`
+	AIKind            string `json:"ai_kind,omitempty"`
+	AIStatus          string `json:"ai_status,omitempty"`
+	AIFailure         string `json:"ai_failure,omitempty"`
+	AIRequestHash     string `json:"ai_request_hash,omitempty"`
+	AIContextHash     string `json:"ai_context_hash,omitempty"`
+	AIProposalHash    string `json:"ai_proposal_hash,omitempty"`
+	AIDiagnosticsHash string `json:"ai_diagnostics_hash,omitempty"`
+	AIAckHash         string `json:"ai_ack_hash,omitempty"`
+	AITemplate        string `json:"ai_template,omitempty"`
+	AIProvider        string `json:"ai_provider,omitempty"`
+	AIModel           string `json:"ai_model,omitempty"`
+	AIAttempts        int64  `json:"ai_attempts,omitempty"`
+	AIInputTokens     int64  `json:"ai_input_tokens,omitempty"`
+	AIOutputTokens    int64  `json:"ai_output_tokens,omitempty"`
+	AISourceRevision  int64  `json:"ai_source_revision,omitempty"`
 }
 type Entry struct {
 	ActorID, TenantID, Action, Resource, DecisionID, PolicyVersion, RequestID, TraceID string
@@ -130,6 +150,9 @@ func encodeEntry(e Entry) ([]any, error) {
 	if !validPromotionEvidence(e.State) {
 		return nil, errors.New("invalid promotion evidence")
 	}
+	if !validAIEvidence(e.State) {
+		return nil, errors.New("invalid AI evidence")
+	}
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")
 	}
@@ -177,6 +200,39 @@ func validPromotionEvidence(s State) bool {
 	for _, r := range s.StaleReasons {
 		if r == "" || !upperCode(r, 32) {
 			return false
+		}
+	}
+	return true
+}
+
+// validAIEvidence bounds the ADR040 fields. Labels (provider, model, template) are
+// short [A-Za-z0-9._:/@+-] strings; kinds, statuses and failures are closed codes.
+func validAIEvidence(s State) bool {
+	if len(s.AIProposalID) > 36 || s.AIAttempts < 0 || s.AIAttempts > 16 || s.AIInputTokens < 0 || s.AIInputTokens > 100000000 || s.AIOutputTokens < 0 || s.AIOutputTokens > 100000000 ||
+		s.AISourceRevision < 0 || s.AISourceRevision > 1000000000 {
+		return false
+	}
+	if !closedCode(s.AIKind, "patch", "requirements") ||
+		!closedCode(s.AIStatus, "PENDING", "READY", "NEEDS_HUMAN", "FAILED", "EXPIRED", "APPLIED", "CONFIRMED", "REJECTED") ||
+		!upperCode(s.AIFailure, 24) {
+		return false
+	}
+	for _, h := range []string{s.AIRequestHash, s.AIContextHash, s.AIProposalHash, s.AIDiagnosticsHash, s.AIAckHash} {
+		if !hexHash(h) {
+			return false
+		}
+	}
+	for _, l := range []struct {
+		v   string
+		max int
+	}{{s.AITemplate, 40}, {s.AIProvider, 64}, {s.AIModel, 128}} {
+		if len(l.v) > l.max {
+			return false
+		}
+		for i := 0; i < len(l.v); i++ {
+			if c := l.v[i]; !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '/' || c == '@' || c == '+' || c == '-') {
+				return false
+			}
 		}
 	}
 	return true

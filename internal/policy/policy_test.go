@@ -220,7 +220,7 @@ func TestReleasePromotionCapabilities(t *testing.T) {
 			t.Fatalf("viewer DENY of %s rejected: %v", action, err)
 		}
 	}
-	if Version != "m13-native-v10" || nativeRevision(t) != 10 {
+	if nativeRevision(t) < 10 {
 		t.Fatal("policy version not advanced for the promotion actions", Version)
 	}
 }
@@ -238,11 +238,73 @@ func TestActionCatalogHashIsStableAndSensitive(t *testing.T) {
 	}
 	// The M13 actions changed the catalog, so candidates built under the M12
 	// catalog are stale (POLICY_CHANGED) and must be rebuilt (ADR038 section 2).
-	m12 := slices.DeleteFunc(append([]string(nil), names...), func(a string) bool { return strings.HasPrefix(a, "releases.") })
-	if len(m12) != len(names)-4 || catalogHash(m12) == h {
+	m13 := slices.DeleteFunc(append([]string(nil), names...), func(a string) bool { return strings.HasPrefix(a, "ai.") })
+	if len(m13) != len(names)-3 || catalogHash(m13) == h {
+		t.Fatal("action catalog hash is not sensitive to the M14 actions")
+	}
+	m12 := slices.DeleteFunc(append([]string(nil), m13...), func(a string) bool { return strings.HasPrefix(a, "releases.") })
+	if len(m12) != len(m13)-4 || catalogHash(m12) == catalogHash(m13) {
 		t.Fatal("action catalog hash is not sensitive to the M13 actions")
 	}
 	if catalogHash(names[1:]) == h {
 		t.Fatal("action catalog hash ignored a removed action")
+	}
+}
+
+// TestAICapabilities pins ADR040 A6: ai.read for every built-in role, ai.propose and
+// ai.apply for owner and admin only, never for viewer or an unknown role, only on the
+// preview resource of an application, never across tenants; a stored custom role may
+// be granted any of them except that a role named viewer may be granted ai.read only.
+func TestAICapabilities(t *testing.T) {
+	preview := Resource{TenantID: "tenant-a", Type: "preview", AppID: "app.orders"}
+	for _, role := range []string{"owner", "admin", "member", "viewer", "unknown", ""} {
+		builtin := role == "owner" || role == "admin" || role == "member" || role == "viewer"
+		if got := permits("alice", "tenant-a", []string{role}, "ai.read", preview); got != builtin {
+			t.Fatalf("%q ai.read allow=%v", role, got)
+		}
+		for _, action := range []string{"ai.propose", "ai.apply"} {
+			if got := permits("alice", "tenant-a", []string{role}, action, preview); got != (role == "owner" || role == "admin") {
+				t.Fatalf("%q/%s allow=%v", role, action, got)
+			}
+		}
+	}
+	for _, action := range []string{"ai.read", "ai.propose", "ai.apply"} {
+		if !knownAction(action) || !validResource(action, preview, "alice") {
+			t.Fatalf("%s missing from the catalog or the preview resource shape", action)
+		}
+		for _, r := range []Resource{{TenantID: "tenant-a", Type: "preview"}, {TenantID: "tenant-a", Type: "metadata", AppID: "app.orders"}, {TenantID: "tenant-a", Type: "workflow", AppID: "app.orders"}} {
+			if permits("alice", "tenant-a", []string{"owner"}, action, r) || validResource(action, r, "alice") {
+				t.Fatalf("%s accepted resource %+v", action, r)
+			}
+		}
+		if permits("alice", "tenant-b", []string{"owner"}, action, preview) || permits("", "tenant-a", []string{"owner"}, action, preview) {
+			t.Fatalf("%s crossed tenants or admitted an anonymous actor", action)
+		}
+	}
+	grant := `{"schema_version":"tenant-capabilities-v1","name":"%s","grants":[{"effect":"ALLOW","actions":[%s],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]}`
+	define := func(role string, actions ...string) error {
+		_, err := CompileDefinition([]byte(fmt.Sprintf(grant, role, `"`+strings.Join(actions, `","`)+`"`)), "")
+		return err
+	}
+	if err := define("ai_author", "ai.read", "ai.propose"); err != nil {
+		t.Fatal("propose-only custom role rejected", err)
+	}
+	if err := define("ai_reviewer", "ai.read", "ai.apply"); err != nil {
+		t.Fatal("apply-only custom role rejected", err)
+	}
+	if err := define("viewer", "ai.read"); err != nil {
+		t.Fatal("viewer denied ai.read", err)
+	}
+	for _, action := range []string{"ai.propose", "ai.apply"} {
+		if define("viewer", action) == nil {
+			t.Fatalf("viewer granted %s", action)
+		}
+		denyOnly := strings.Replace(fmt.Sprintf(grant, "viewer", `"`+action+`"`), `"ALLOW"`, `"DENY"`, 1)
+		if _, err := CompileDefinition([]byte(denyOnly), ""); err != nil {
+			t.Fatalf("viewer DENY of %s rejected: %v", action, err)
+		}
+	}
+	if Version != "m14-native-v11" || nativeRevision(t) != 11 {
+		t.Fatal("policy version not advanced for the AI actions", Version)
 	}
 }

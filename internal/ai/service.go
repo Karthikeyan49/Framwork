@@ -596,3 +596,14 @@ func (s *Service) Finish(ctx context.Context, q postgres.Executor, a tenant.Acce
 	}
 	return st.Get(ctx, q, a, adm.App, adm.ProposalID)
 }
+
+// Attempts is the trace of the run, whichever pipeline produced it.
+func (o Outcome) Attempts() []Attempt {
+	switch {
+	case o.Patch != nil:
+		return o.Patch.Attempts
+	case o.Requirements != nil:
+		return o.Requirements.Attempts
+	}
+	return nil
+}
