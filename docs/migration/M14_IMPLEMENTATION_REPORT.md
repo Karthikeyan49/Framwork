@@ -107,6 +107,9 @@ worktree, so the two environmental failures of the first run did not recur.
   secrets, tenant ids and tool endpoints never do. Redaction is a mechanical filter.
 - **Identity is the API process's** (ADR039 residual): a compromised API can open, finish and decide proposals as any
   member whose identity it can bind; it gains no authority it did not have.
+- **This line is not integrated with the remediation line.** Both add migrations `00045` to `00053` and ADRs `036` to
+  `040` with different content, 21 files conflict and the metadata contract `1.3.0` is defined twice; the merged tree
+  does not start. `docs/migration/LINE_INTEGRATION_PLAN.md` records the executed trial merge and the options.
 - Not exercised: daily budget rollover, several API processes, a per-item budget override over HTTP.
 - Not built: asynchronous or streaming generation, embeddings, a UI, real vendor adapters, AI workflow activities.
 
