@@ -390,12 +390,11 @@ func (l *Library) Expand(it Item) (Case, error) {
 	}
 	c.Catalog = compiler.Catalog{Version: "corpus-v1", Permissions: []string{"data.read", "data.write"}, Tools: []string{}}
 	if it.Catalog == "vendor_tools" {
-		c.Catalog.Tools = []string{"tool.vendor.lookup"}
-		catalog, err := tools.NewCatalog([]tools.Definition{vendorLookup()})
+		vc, err := VendorCatalog()
 		if err != nil {
 			return Case{}, err
 		}
-		c.Catalog.ToolCatalog = catalog
+		c.Catalog = vc
 	}
 	return c, nil
 }
@@ -887,6 +886,16 @@ func (c Case) CompileFunc(real func(metadata.Document) (compiler.Program, []comp
 		}
 		return real(doc)
 	}
+}
+
+// VendorCatalog is the compile catalog of the items that use the vendor_tools catalog:
+// the platform permissions and one operator-registered READ tool.
+func VendorCatalog() (compiler.Catalog, error) {
+	catalog, err := tools.NewCatalog([]tools.Definition{vendorLookup()})
+	if err != nil {
+		return compiler.Catalog{}, err
+	}
+	return compiler.Catalog{Version: "corpus-v1", Permissions: []string{"data.read", "data.write"}, Tools: []string{"tool.vendor.lookup"}, ToolCatalog: catalog}, nil
 }
 
 // vendorLookup is the operator-registered READ tool the vendor_tools catalog holds.

@@ -28,6 +28,7 @@ type Result struct {
 	Baseline   []Seg               // the context of a benign request over the same fixture
 	Feedback   []Seg               // repair and diagnostics segments of the second request
 	RunError   string
+	NoOracle   bool // the observer cannot recompute the diff (an HTTP run): skip the independent comparison
 }
 
 // Report is the verdict on one case.
@@ -109,7 +110,7 @@ func (c Case) Check(r Result, w Wrapper) Report {
 			fail("no diagnostic for conflict %s (codes %v)", cat, r.DiagCodes)
 		}
 	}
-	if r.Document {
+	if r.Document && !r.NoOracle {
 		oracleSensitive := map[string]bool{}
 		for target, aspects := range r.Oracle {
 			for _, a := range aspects {
@@ -142,6 +143,19 @@ func (c Case) Check(r Result, w Wrapper) Report {
 					fail("independent diff of %s is %v, the item expects %v", target, have, want)
 				}
 			}
+		}
+		for _, s := range x.SensitiveHas {
+			if !got[s] {
+				fail("sensitive list %v lacks %s", r.Sensitive, s)
+			}
+		}
+		if x.SensitiveEmpty && len(r.Sensitive) > 0 {
+			fail("sensitive list should be empty, got %v", r.Sensitive)
+		}
+	} else if r.Document && r.NoOracle {
+		got := map[string]bool{}
+		for _, s := range r.Sensitive {
+			got[s] = true
 		}
 		for _, s := range x.SensitiveHas {
 			if !got[s] {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/ai"
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
@@ -41,6 +42,7 @@ type m14Options struct {
 	noService   bool // leave AI unconfigured (routes answer 503)
 	gateway     ai.Gateway
 	gatewayOpts ai.Options
+	catalog     *compiler.Catalog // compile catalog of the API (nil: the platform catalog)
 }
 
 func m14Setup(t *testing.T, opts m14Options, steps ...ai.ScriptStep) *m14Env {
@@ -53,6 +55,7 @@ func m14Setup(t *testing.T, opts m14Options, steps ...ai.ScriptStep) *m14Env {
 	}
 	e.svc = ai.NewService(gateway, registry, opts.limits)
 	e.api = access.API{DB: e.f.db, Auth: e.f.verifier, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: true, WorkflowsEnabled: true}
+	e.api.CompilerCatalog = opts.catalog
 	if !opts.noService {
 		e.api.AI = access.AIConfig{Service: e.svc}
 	}
