@@ -25,6 +25,12 @@ API and workflow stay RR; event executors are not certified shared snapshots.
 The nine focused review/readiness/54-to56 migration groups PASS32.867s, and
 `make migrate migration-status check test-unit` PASS with56 applied migrations
 and126 frontend tests. Independent fix closure and final gates are still pending.
+Re-verification found cached pre-cutover reads and unsafe helper invocation
+before denial. ADR063's cutover amendment was committed before code at3840245.
+Migration00057 adds a fail-closed NOWAIT drain barrier and exact restrictive
+event RLS policies; readiness checks helper structure before invoking it. The
+expanded review/readiness/preservation selection PASS44.544s. This is a drained
+maintenance cutover, not automatic online revocation of existing cached reads.
 
 Forward migration00055 replaces only dispatcher SQL ports and the attempts
 upper-bound constraint, plus private retry/readiness contract functions. It does

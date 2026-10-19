@@ -329,7 +329,7 @@ func TestR7bReviewEventCallbackUsesUncertifiedReadCommitted(t *testing.T) {
 	}
 }
 
-func TestR7bReviewAlreadyBoundSnapshotLosesAuthorityAtCutover(t *testing.T) {
+func TestR7bReviewAlreadyBoundSnapshotBlocksUnsafeCutover(t *testing.T) {
 	m8DatabaseAt(t, 55)
 	f, h, base, owner, _ := m5Fixture(t)
 	scalarReviewTarget(t, f)
@@ -352,7 +352,7 @@ func TestR7bReviewAlreadyBoundSnapshotLosesAuthorityAtCutover(t *testing.T) {
 	before := r7bManifest(t, f.operator)
 	provider, err := goose.NewProvider(goose.DialectPostgres, f.operator, migrations.Files, goose.WithDisableGlobalRegistry(true))
 	scalarSQL(t, err)
-	applied, err := provider.Up(context.Background())
+	applied, err := provider.UpTo(context.Background(), 56)
 	if err != nil || len(applied) != 1 {
 		t.Fatal("review additive migration56 while old RR context is bound")
 	}
@@ -363,8 +363,8 @@ func TestR7bReviewAlreadyBoundSnapshotLosesAuthorityAtCutover(t *testing.T) {
 		}
 	}
 	scalarSQL(t, prepared.QueryRow().Scan(&visible))
-	if visible != 0 {
-		t.Error("already-bound prepared RR context survived authority cutover")
+	if visible != 1 {
+		t.Fatal("historical function-only replacement control changed")
 	}
 	var direct, fresh int
 	var seesGuard bool
@@ -372,11 +372,28 @@ func TestR7bReviewAlreadyBoundSnapshotLosesAuthorityAtCutover(t *testing.T) {
 	scalarSQL(t, tx.QueryRow(`SELECT count(*) FROM control.worker_authority()`).Scan(&direct))
 	scalarSQL(t, tx.QueryRow(`SELECT strpos(pg_get_functiondef('control.worker_authority()'::regprocedure),'read committed')>0`).Scan(&seesGuard))
 	t.Logf("already-bound post-cutover authority: prepared=%d fresh_envelope=%d direct_authority=%d catalog_sees_guard=%t", visible, fresh, direct, seesGuard)
-	if fresh != 0 || direct != 0 {
-		t.Error("already-bound RR context retained authority in fresh statement")
+	if fresh != 1 || direct != 1 || !seesGuard {
+		t.Fatal("historical cached-authority positive control changed")
+	}
+	// Successful installation must not overlap this known historical reader.
+	_, err = provider.Up(context.Background())
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) || pg.Code != "55P03" {
+		t.Fatal("live old reader did not refuse migration57 at NOWAIT barrier")
+	}
+	var applied57, policies int
+	scalarSQL(t, f.operator.QueryRow(`SELECT count(*) FROM goose_db_version WHERE version_id=57 AND is_applied`).Scan(&applied57))
+	scalarSQL(t, f.operator.QueryRow(`SELECT count(*) FROM pg_policy WHERE polname='event_read_committed'`).Scan(&policies))
+	if applied57 != 0 || policies != 0 {
+		t.Fatal("failed cutover left migration or partial policies")
+	}
+	failed := r7bManifest(t, f.operator)
+	for i := range before {
+		if before[i] != failed[i] {
+			t.Fatal("failed barrier rewrote retained evidence", i)
+		}
 	}
 	_, err = tx.Exec(`INSERT INTO runtime.event_inbox(tenant_id,consumer_id,event_id,body_hash) VALUES($1,$2,$3,$4)`, p.TenantID, p.ConsumerID, p.EventID, p.BodyHash)
-	var pg *pgconn.PgError
 	if err == nil {
 		t.Error("already-bound RR receipt survived authority cutover")
 	} else if !errors.As(err, &pg) || pg.Code != "42501" {
@@ -385,6 +402,23 @@ func TestR7bReviewAlreadyBoundSnapshotLosesAuthorityAtCutover(t *testing.T) {
 		t.Log("already-bound RR inbox insertion denied42501 after cutover")
 	}
 	tx.Rollback()
+	applied, err = provider.Up(context.Background())
+	if err != nil || len(applied) != 1 {
+		t.Fatal("drained cutover did not install migration57")
+	}
+	after = r7bManifest(t, f.operator)
+	for i := range before {
+		if before[i] != after[i] {
+			t.Fatal("successful drained cutover rewrote evidence", i)
+		}
+	}
+	for _, isolation := range []sql.IsolationLevel{sql.LevelRepeatableRead, sql.LevelSerializable} {
+		denied, bound := r7bReviewRawTryBind(t, f, worker, p, isolation)
+		denied.Rollback()
+		if bound {
+			t.Fatal("completed cutover admitted an old isolation")
+		}
+	}
 	if m8Consumer(worker).Consume(context.Background(), p) != nil {
 		t.Fatal("same immutable event not consumable after compatible cutover")
 	}
@@ -456,8 +490,8 @@ func TestR7bReviewPreCutoverExportedSnapshotCannotBindAfterUpgrade(t *testing.T)
 	provider, err := goose.NewProvider(goose.DialectPostgres, f.operator, migrations.Files, goose.WithDisableGlobalRegistry(true))
 	scalarSQL(t, err)
 	applied, err := provider.Up(context.Background())
-	if err != nil || len(applied) != 1 {
-		t.Fatal("review migration56 after snapshot export")
+	if err != nil || len(applied) != 2 {
+		t.Fatal("review migrations56 and57 after snapshot export")
 	}
 	importer, err := worker.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	scalarSQL(t, err)

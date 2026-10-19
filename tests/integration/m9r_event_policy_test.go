@@ -267,15 +267,18 @@ func TestR7bForwardMigrationPreservesIssuedStateAndEvidence(t *testing.T) {
 		t.Fatal("migration fixture must populate all six states")
 	}
 	before := r7bManifest(t, f.operator)
+	if err := worker.Close(); err != nil {
+		t.Fatal("drain owned worker before migration cutover")
+	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, f.operator, migrations.Files, goose.WithDisableGlobalRegistry(true))
 	if err != nil {
 		t.Fatal("migration provider")
 	}
-	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 2 {
-		t.Fatal("additive migrations55 and56")
+	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 3 {
+		t.Fatal("additive migrations55 through57")
 	}
 	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 0 {
-		t.Fatal("migrations55 and56 repeatability")
+		t.Fatal("migrations55 through57 repeatability")
 	}
 	after := r7bManifest(t, f.operator)
 	for i := range before {
@@ -283,7 +286,8 @@ func TestR7bForwardMigrationPreservesIssuedStateAndEvidence(t *testing.T) {
 			t.Fatal("migration rewrote issued state, bytes or evidence", i)
 		}
 	}
-	for role, connection := range map[string]*sql.DB{"framework_app": f.db, "framework_worker": worker, "framework_dispatcher": db} {
+	_, upgradedWorker := m8Roles(t)
+	for role, connection := range map[string]*sql.DB{"framework_app": f.db, "framework_worker": upgradedWorker, "framework_dispatcher": db} {
 		if events.Ready(context.Background(), connection, role) != nil {
 			t.Fatal("migrated event contract not ready", role)
 		}

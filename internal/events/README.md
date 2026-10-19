@@ -67,6 +67,9 @@ Current M9R timing authority is [ADR062](../../docs/adr/062-m9r-event-outage-bud
 Its reviewed correction is [ADR063](../../docs/adr/063-m9r-live-event-authority.md):
 policy `event-outage-v3` verifies actual private retry outputs without exposing
 the helper, while preserving timing and immutable issued evidence.
+Migration00057 requires a drained maintenance cutover and installs direct
+restrictive RC policies. Active old readers/binders refuse its NOWAIT barrier;
+function-only replacement cannot safely revoke every cached pre-cutover read.
 See the [outage runbook](../../docs/operations/R7B_EVENT_DELIVERY_RUNBOOK.md) for
 finite retry/receipt budgets, the longer broker-loss repair delay, controlled
 forward migration and the real `make test-event-outage` rehearsal. This does not

@@ -29,14 +29,22 @@ func Ready(ctx context.Context, db *sql.DB, role string) error {
 	if err := db.QueryRowContext(ctx, `SELECT count(*)=1 AND coalesce(bool_and(p.proowner='framework_schema_owner'::regrole AND p.prokind='f' AND p.provolatile='s' AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog']),false) FROM pg_catalog.pg_proc p WHERE p.oid=to_regprocedure('control.event_delivery_policy()')`).Scan(&ok); err != nil || !ok {
 		return ErrDelivery
 	}
-	if err := db.QueryRowContext(ctx, `SELECT count(*)=1 AND coalesce(bool_and(version=$1 AND lease_ms=$2 AND receipt_ms=$3 AND max_attempts=$4 AND retry_base_ms=$5 AND retry_cap_ms=$6),false) FROM control.event_delivery_policy()`, DeliveryPolicyVersion, PublishLease.Milliseconds(), ReceiptWindow.Milliseconds(), MaxDeliveryAttempts, RetryBase.Milliseconds(), RetryCap.Milliseconds()).Scan(&ok); err != nil || !ok {
-		return ErrDelivery
-	}
+	// Inspect the dependency before the owner-executed semantic probe invokes it.
 	if err := db.QueryRowContext(ctx, `SELECT count(*)=1 AND coalesce(bool_and(p.proowner='framework_schema_owner'::regrole AND p.prokind='f' AND p.provolatile='i' AND p.proisstrict AND NOT p.prosecdef
  AND p.prorettype='interval'::regtype AND p.proconfig @> ARRAY['search_path=pg_catalog']
  AND NOT has_function_privilege(p.oid,'EXECUTE')
  AND NOT has_function_privilege('framework_app',p.oid,'EXECUTE') AND NOT has_function_privilege('framework_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('framework_dispatcher',p.oid,'EXECUTE')),false)
  FROM pg_catalog.pg_proc p WHERE p.oid=to_regprocedure('control.event_retry_delay(integer)')`).Scan(&ok); err != nil || !ok {
+		return ErrDelivery
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*)=1 AND coalesce(bool_and(version=$1 AND lease_ms=$2 AND receipt_ms=$3 AND max_attempts=$4 AND retry_base_ms=$5 AND retry_cap_ms=$6),false) FROM control.event_delivery_policy()`, DeliveryPolicyVersion, PublishLease.Milliseconds(), ReceiptWindow.Milliseconds(), MaxDeliveryAttempts, RetryBase.Milliseconds(), RetryCap.Milliseconds()).Scan(&ok); err != nil || !ok {
+		return ErrDelivery
+	}
+	const isolationExpression = "(current_setting('transaction_isolation'::text) = 'read committed'::text)"
+	if err := db.QueryRowContext(ctx, `SELECT count(*)=2 AND coalesce(bool_and(NOT p.polpermissive AND p.polcmd='*' AND p.polroles=ARRAY['framework_worker'::regrole::oid]
+ AND pg_get_expr(p.polqual,p.polrelid)=$1 AND pg_get_expr(p.polwithcheck,p.polrelid)=$1),false)
+ FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname='runtime' AND c.relname IN('event_envelopes','event_inbox') AND p.polname='event_read_committed'`, isolationExpression).Scan(&ok); err != nil || !ok {
 		return ErrDelivery
 	}
 	err := db.QueryRowContext(ctx, `WITH event_tables AS(

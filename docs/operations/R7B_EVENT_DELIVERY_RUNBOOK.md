@@ -42,13 +42,19 @@ do not erase inboxes, forge receipts or rewrite due times operationally.
 
 ## Forward migration
 
-1. Identify and quiesce only owned consumer and dispatcher processes. Do not kill unrelated
+1. Identify and quiesce owned API event emitters, consumers and dispatchers.
+   Drain their database transactions. Do not kill unrelated
    services or flush Redis. Preserve event envelopes, attempts, inbox, replay
    history and broker references.
 2. Apply `make migrate`, then inspect `make migration-status`. Migration00055
    changes functions and the attempt-count upper bound only; migration00056
    adds event isolation enforcement and semantic retry readiness. Neither resets
    existing states, tokens, attempts, deadlines or data.
+   Migration00057 takes NOWAIT exclusive locks on worker context and the two
+   event tables before installing direct restrictive READ COMMITTED RLS. A live
+   old reader/binder refuses cutover with SQLSTATE55P03; the failed migration
+   installs no partial policies. Drain only known owned work and retry. Never
+   infer DDL rollback from a cancelled client response; check migration state.
 3. Verify new runtime event readiness before starting owned dispatchers/workers.
    New binaries deny a missing or mismatched policy contract. Older compatible
    callers keep the same SQL signatures; in-progress issued deadlines remain
@@ -57,6 +63,9 @@ do not erase inboxes, forge receipts or rewrite due times operationally.
    probe returns no contract for incorrect actual helper delays; runtime roles
    still cannot execute the private helper. This is drift detection, not proof
    against an administrator able to replace both helper and probe.
+   Function-only replacement at56 cannot revoke all cached reads in an already
+   open RR backend; do not claim an online cutover or run before the barrier
+   at57 succeeds. New readiness requires both exact restrictive policies.
 4. Observe completion and ordering in the intended local tenant. DEAD and
    LEGACY_PAUSED rows remain paused; they do not resume just because code was
    updated. Workflow leases and external tools are unaffected.
