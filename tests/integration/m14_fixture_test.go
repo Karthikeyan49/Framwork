@@ -117,6 +117,17 @@ func m14Do(h http.Handler, method, path, token string, body any) *httptest.Respo
 	return w
 }
 
+func m14DoType(h http.Handler, method, path, token, contentType, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
 func (e *m14Env) ai(method, suffix, token string, body any) *httptest.ResponseRecorder {
 	e.t.Helper()
 	return m14Do(e.h, method, e.root+"/ai"+suffix, token, body)
