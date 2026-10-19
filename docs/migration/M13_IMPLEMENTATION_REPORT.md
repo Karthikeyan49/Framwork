@@ -58,7 +58,7 @@ one process at a time on an otherwise idle 4-core host, integration groups again
 | `TestM10` group (22 tests, includes `TestM10R*`), `-race` | PASS, 480 s |
 | `TestM9` group, `-race` | PASS, 497 s |
 | `TestM8` group without `TestM8RedisACLStreamLossAndPendingRecovery`, `-race` | PASS, 46 s |
-| Full integration suite, `make test`, `make test-e2e`, `make build` on the final tree | see "Final gate" below |
+| Full integration suite, `make check`, `make test-unit`, `make build`, `make test-e2e` | run on the M14 tree, which contains this branch: see "Final gate" below |
 
 Defects found by running the merged tree (none by the branches alone) and fixed here:
 - Migration 52 derives the worker grant guard for control, runtime, iam and audit and refuses every relation it does
@@ -97,6 +97,20 @@ for g in TestM13 TestM12 TestM11 TestM10 TestM9; do
 done
 /home/user/bin/dbrun13 node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -timeout 40m -run TestM8 -skip TestM8RedisACLStreamLossAndPendingRecovery ./tests/integration
 ```
+
+## Final gate
+
+Run on 2026-10-19 on `claude/m14-ai-builder` (code identical to commit `8a8d34d`; this branch is an ancestor of it), against
+the isolated M14 database stack reset from that tree. The branch itself was proven by the groups above.
+
+| Command | Result |
+|---|---|
+| `make check` (docs checksums, format, vet, `mod verify`, web lint, typecheck) | PASS |
+| `make test-unit` (Go unit tests `-race` over every package, `node --test scripts/*.test.mjs`, web `npm test`) | PASS (5 script tests, 29 web tests; `internal/ai` takes about 212 s under `-race`) |
+| Full `go test -race -tags=integration ./tests/integration`, skipping `TestM8RedisACLStreamLossAndPendingRecovery` | 1714 s; exactly two failures, `TestM1DevelopmentIssuer` and `TestAPIWithoutCollectorAndDependencyOutages`: the worktree had no local development identity keys (`.local/identity`, ignored by git). Both PASS (7.6 s) once the keys were provided; no other test failed |
+| `make build` | PASS |
+| `make test-e2e` (5 browser tests) | PASS, 21.6 s |
+| `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN: it restarts the shared Redis and fails on isolated stacks by design |
 
 ## Threat model and limits
 
