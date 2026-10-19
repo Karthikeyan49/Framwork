@@ -108,6 +108,17 @@ the remediation line replaces it). Run on the M14 stack reset from the changed t
 `internal/platform/...`, `internal/runtime/workflow` PASS; `TestM10` to `TestM14` groups, `-race`, PASS in 1056 s. The full
 suite, `make test-unit`, `make build` and `make test-e2e` were not re-run for this commit.
 
+## Items the reviews listed as "not covered", executed here (2026-10-19)
+
+| Review item | Executed as | Result |
+|---|---|---|
+| M12 API and M13 reviews: tool-pin staleness through the handlers (reviewed by reading only) | `TestM13ToolPin*` (details in the M13 report) | `TOOL_CHANGED` and `TOOL_REMOVED` at view, approve and activate; fresh again when the exact definition returns |
+| M11 review: freeze racing a record write (reasoned statically) | `TestM11RFreezeRacesRecordWrites`: 12 concurrent writers through the governed command route, the sandbox frozen after 0, 20, 50, 120 and 300 ms | in every round the record count of the evidence, the rows of the dataset and the acknowledged writes are equal (0, 10, 11, 10 and 10 records); the writes that lost the race were refused with 409; 15.4 s with `-race` |
+
+The freeze test does not mutate the freeze's locking (applied migrations are immutable), so its sensitivity rests on the
+equality it asserts: a write acknowledged after the freeze snapshot, or a counted row nobody acknowledged, fails it. Only
+these tests were run for this addition.
+
 ## Threat model and limits
 
 - **No real model.** Context quality, prompt quality, repair success rate, cost and latency are unmeasured. The
