@@ -146,6 +146,15 @@ func denied(status int, code, message string) reply {
 }
 
 func (a API) transaction(ctx context.Context, run func(context.Context, postgres.Executor) error) error {
+	return a.transactionAt(ctx, sql.LevelRepeatableRead, run)
+}
+
+// freezePattern is the one route whose port needs READ COMMITTED: runtime.freeze_sandbox locks the
+// sandbox, the dataset and the ledger first and must then read the committed state, not the snapshot
+// of a transaction that started before the locks were granted (M11 review R02).
+const freezePattern = "POST /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/freeze"
+
+func (a API) transactionAt(ctx context.Context, level sql.IsolationLevel, run func(context.Context, postgres.Executor) error) error {
 	if a.Admission != nil {
 		queueCtx, span := otel.Tracer("framework/postgres").Start(ctx, "postgres.request.admission")
 		release, err := a.Admission.Acquire(queueCtx)
@@ -155,7 +164,7 @@ func (a API) transaction(ctx context.Context, run func(context.Context, postgres
 		}
 		defer release()
 	}
-	return postgres.WithRuntime(ctx, a.DB, run)
+	return postgres.WithRuntimeIsolation(ctx, a.DB, level, run)
 }
 func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	if a.Auth == nil || a.Policy == nil || a.Audit == nil {
@@ -189,7 +198,11 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		if localCommand {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		return a.transaction(parent, func(ctx context.Context, tx postgres.Executor) error {
+		level := sql.LevelRepeatableRead
+		if r.Pattern == freezePattern {
+			level = sql.LevelReadCommitted
+		}
+		return a.transactionAt(parent, level, func(ctx context.Context, tx postgres.Executor) error {
 			if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
 				p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
 			}

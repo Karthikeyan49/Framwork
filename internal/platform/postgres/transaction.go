@@ -46,7 +46,14 @@ const clearContext = `SELECT pg_catalog.set_config('app.auth_issuer','',false),
 // resets persistent identity context, and owns a bounded transaction. The caller
 // must buffer results until this function succeeds. No automatic retry occurs.
 func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, Executor) error) (result error) {
-	if db == nil || run == nil {
+	return WithRuntimeIsolation(parent, db, sql.LevelRepeatableRead, run)
+}
+
+// WithRuntimeIsolation is WithRuntime at an explicit isolation level. Only a port whose own
+// contract needs a fresh snapshot per statement after it holds its locks (runtime.freeze_sandbox,
+// ADR037 Amendment 2) uses READ COMMITTED; everything else keeps REPEATABLE READ.
+func WithRuntimeIsolation(parent context.Context, db *sql.DB, level sql.IsolationLevel, run func(context.Context, Executor) error) (result error) {
+	if db == nil || run == nil || level != sql.LevelRepeatableRead && level != sql.LevelReadCommitted {
 		return ErrUnavailable
 	}
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
@@ -90,7 +97,7 @@ func WithRuntime(parent context.Context, db *sql.DB, run func(context.Context, E
 	if _, err = conn.ExecContext(ctx, clearContext); err != nil {
 		return ErrUnavailable
 	}
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: level})
 	if err != nil {
 		return ErrUnavailable
 	}
