@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -640,4 +641,96 @@ func TestR7bReviewUnsafeHelperRejectedBeforeOwnerInvocation(t *testing.T) {
 		t.Fatalf("readiness invoked structurally unsafe helper with owner privileges before denial; writes=%d", calls)
 	}
 	m8AssertCounts(t, f.operator, f.tenantA, 0)
+}
+
+func TestR7bReviewReadinessRejectsIsolationPolicyDrift(t *testing.T) {
+	m8Database(t)
+	f, h, base, owner, _ := m5Fixture(t)
+	scalarReviewTarget(t, f)
+	m5Create(t, h, base, owner, "readiness isolation policy drift")
+	db, worker := m8Roles(t)
+	roles := map[string]*sql.DB{"framework_app": f.db, "framework_worker": worker, "framework_dispatcher": db}
+	check := func(want bool) {
+		t.Helper()
+		for name, connection := range roles {
+			if (events.Ready(context.Background(), connection, name) == nil) != want {
+				t.Fatal("unexpected event isolation-policy readiness", name, want)
+			}
+		}
+	}
+	check(true)
+	for _, fault := range []struct{ name, table, definition string }{
+		{"missing_envelope", "event_envelopes", ""},
+		{"missing_inbox", "event_inbox", ""},
+		{"permissive", "event_envelopes", "AS PERMISSIVE TO framework_worker USING(current_setting('transaction_isolation')='read committed') WITH CHECK(current_setting('transaction_isolation')='read committed')"},
+		{"wrong_role", "event_envelopes", "AS RESTRICTIVE TO framework_app USING(current_setting('transaction_isolation')='read committed') WITH CHECK(current_setting('transaction_isolation')='read committed')"},
+		{"extra_role", "event_envelopes", "AS RESTRICTIVE TO framework_worker,framework_app USING(current_setting('transaction_isolation')='read committed') WITH CHECK(current_setting('transaction_isolation')='read committed')"},
+		{"read_true", "event_inbox", "AS RESTRICTIVE TO framework_worker USING(true) WITH CHECK(current_setting('transaction_isolation')='read committed')"},
+		{"write_true", "event_inbox", "AS RESTRICTIVE TO framework_worker USING(current_setting('transaction_isolation')='read committed') WITH CHECK(true)"},
+		{"select_only", "event_inbox", "AS RESTRICTIVE FOR SELECT TO framework_worker USING(current_setting('transaction_isolation')='read committed')"},
+	} {
+		t.Run(fault.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				_, err := f.operator.Exec(`DROP POLICY IF EXISTS event_read_committed ON runtime.` + fault.table + `; CREATE POLICY event_read_committed ON runtime.` + fault.table + ` AS RESTRICTIVE TO framework_worker USING(current_setting('transaction_isolation')='read committed') WITH CHECK(current_setting('transaction_isolation')='read committed')`)
+				if err != nil {
+					t.Error("review isolation-policy restoration")
+				}
+			})
+			_, err := f.operator.Exec(`DROP POLICY event_read_committed ON runtime.` + fault.table)
+			scalarSQL(t, err)
+			if fault.definition != "" {
+				_, err = f.operator.Exec(`CREATE POLICY event_read_committed ON runtime.` + fault.table + ` ` + fault.definition)
+				scalarSQL(t, err)
+			}
+			check(false)
+		})
+		check(true)
+	}
+	m8AssertCounts(t, f.operator, f.tenantA, 0)
+}
+
+func TestR7bReviewRestrictivePolicyDeniesStaleFunctionAuthority(t *testing.T) {
+	m8Database(t)
+	f, h, base, owner, _ := m5Fixture(t)
+	scalarReviewTarget(t, f)
+	m5Create(t, h, base, owner, "direct relation guard")
+	db, worker := m8Roles(t)
+	dispatch := events.Dispatcher{DB: db}
+	p := m8Claim(t, dispatch)
+	if dispatch.Finish(context.Background(), p, true) != nil {
+		t.Fatal("review confirmed publication")
+	}
+	var original string
+	scalarSQL(t, f.operator.QueryRow(`SELECT pg_get_functiondef('control.worker_authority()'::regprocedure)`).Scan(&original))
+	guard := `current_setting('transaction_isolation')='read committed' AND `
+	if strings.Count(original, guard) != 1 {
+		t.Fatal("review function-guard diagnostic needs explicit inspection")
+	}
+	t.Cleanup(func() {
+		if _, err := f.operator.Exec(original); err != nil {
+			t.Error("review authority function restoration")
+		}
+	})
+	// Operator-only fixture simulates the old function behavior; the product's
+	// direct restrictive RLS must still deny envelope and inbox access.
+	_, err := f.operator.Exec(strings.Replace(original, guard, "", 1))
+	scalarSQL(t, err)
+	tx := r7bReviewRawBind(t, f, worker, p, sql.LevelRepeatableRead)
+	var authority, visible int
+	scalarSQL(t, tx.QueryRow(`SELECT count(*) FROM control.worker_authority()`).Scan(&authority))
+	scalarSQL(t, tx.QueryRow(`SELECT count(*) FROM runtime.event_envelopes`).Scan(&visible))
+	if authority != 1 || visible != 0 {
+		t.Fatal("direct restrictive policy did not override stale function authority")
+	}
+	_, err = tx.Exec(`INSERT INTO runtime.event_inbox(tenant_id,consumer_id,event_id,body_hash) VALUES($1,$2,$3,$4)`, p.TenantID, p.ConsumerID, p.EventID, p.BodyHash)
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) || pg.Code != "42501" {
+		t.Fatal("direct restrictive inbox policy did not reject stale function authority")
+	}
+	tx.Rollback()
+	scalarSQL(t, func() error { _, err := f.operator.Exec(original); return err }())
+	if m8Consumer(worker).Consume(context.Background(), p) != nil {
+		t.Fatal("guard restoration broke normal consumer")
+	}
+	m8AssertCounts(t, f.operator, f.tenantA, 1)
 }

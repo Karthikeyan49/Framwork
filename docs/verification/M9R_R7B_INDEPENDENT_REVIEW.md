@@ -7,6 +7,12 @@ execution window. Reviewer changes are only the independent integration test
 file and this report. No production source, migration, dependency, credential,
 customer data, main branch or M10 change.
 
+**Final bounded review result: PASS at product checkpoint `031c8a1`.** All three
+demonstrated findings are independently closed within the documented maintenance
+cutover and credential threat model. Final root full/browser/reference gates and
+the repeated real600-second rehearsal remain required. Historical failed
+checkpoints and fixture mistakes are preserved below.
+
 **Initial review result: FAIL — one MEDIUM authorization finding and one LOW
 deployment-readiness finding require fixes and independent re-verification.**
 The ten-minute outage rehearsal passes at this checkpoint, but that evidence
@@ -197,6 +203,66 @@ node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=
 | Corrected server-lock/drained-reader control | PASS3.302s: exact55P03 under held reader, known rollback, same DDL succeeds after drain |
 | `make docs-verify` and `git diff --check` at initial review commit | PASS;84 retained and43 V3 checksums |
 
-**Current independent status: FAIL pending safe cutover and readiness ordering
+**Status at46646b4: FAIL pending safe cutover and readiness ordering
 corrections.** No final full/browser/reference gates or repeated600-second test
 at the corrected source have been run by this reviewer.
+
+## Final independent closure at031c8a1
+
+The ADR063 cutover correction was committed before code at `3840245`.
+Migration00057 and the Go readiness ordering change are reviewed at `031c8a1`.
+Only new independent tests and this report changed during this final exclusive
+window; no production code or historical migration was edited by the reviewer.
+
+| Finding | Independent disposition |
+| --- | --- |
+| IR-R7b-01 MEDIUM, stale raw event authority | CLOSED for the supported drained cutover. Fresh RR/SERIALIZABLE/RU and imported snapshots deny. Current RC observes live revocation; API/workflow RR certificates remain unchanged. The old55→56 retained-reader behavior stays in the regression as a positive historical control. Actual57 refuses that active reader with55P03, leaves no applied57 marker/partial policy or changed durable-table manifest, then succeeds after the owned transaction drains. Normal consumption of the same immutable event commits exactly one effect/audit/inbox |
+| IR-R7b-02 LOW, retry semantic readiness drift | CLOSED. Zero-delay and changed valid/invalid input bodies deny all three runtime readiness roles; restored helper recovers readiness, and private EXECUTE remains denied. The operator can still change both the code and its probe; protection against an all-powerful operator is not claimed |
+| IR-R7b-03 LOW, unsafe dependency invoked before denial | CLOSED. The same VOLATILE marker-writing helper now causes readiness denial before the owner-executed probe runs; marker writes remain zero for all three roles |
+
+Two additional independent populated groups pass:
+
+- Readiness denies eight isolation-policy drift variants: missing envelope or
+  inbox policy, permissive mode, wrong or extra role, `USING true`, `WITH CHECK
+  true`, and a SELECT-only command. Exact restoration recovers all three runtime
+  roles after every fault.
+- With the product's direct restrictive policies intact, an operator-only
+  fixture removes the function-level isolation condition to simulate old
+  authority behavior. Raw RR binding and direct authority return the positive
+  control, but envelope visibility is zero and inbox INSERT denies42501.
+  Restoring the function permits normal RC consumption with exactly one local
+  effect/audit/inbox. This is defense in depth against the demonstrated stale
+  function path, not a runtime role obtaining ALTER privileges.
+
+Executed final command:
+
+```sh
+./scripts/go.sh fmt ./tests/integration
+node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^Test(R7bReview|R7bForward|R7bPublication|R7bReadiness|M8)' -v ./tests/integration
+make docs-verify
+git diff --check
+```
+
+**PASS92.968s:32 top-level groups, zero failures and zero skips**, including the
+retained crash, unknown-COMMIT/no-ACK, ordering, deduplication, lease fencing,
+dead-letter/replay, Redis stream-loss/pending recovery, running-service and trace
+correlation cases; independent raw credential attacks; exact readiness drift;
+and populated54→57 forward preservation. The forward rehearsal applies three
+additive migrations and repeats idempotently without changing manifests of
+deliveries, attempts, envelopes, inbox, replay, business records, outbox or audit.
+Final formatting, documentation checksums84+43 and whitespace checks PASS.
+Ignored detailed evidence is `.local/reports/r7b-independent-final-closure.log`.
+
+Migration57 is explicitly a maintenance operation. Its shared worker-context
+lock requires draining all owned worker jobs, including workflows, along with
+API event emitters, consumers and dispatchers. A failed NOWAIT barrier is a
+stop-and-report condition; do not silently kill unknown sessions or reset
+receipts/generations. No successful online migration over an active old reader
+is claimed. Raw-process lock/liveness guarantees and instantaneous cancellation
+of an already-running statement remain outside this bounded contract.
+
+This review does not rerun the final-source600-second rehearsal, full build/test
+suite, browser suites or unchanged reference-capacity targets; those remain the
+implementation agent's gates. All prior failed runs remain historical evidence.
+R6, other R7 operations, production runtime, broader M9R, external identity
+deployment, main merge and M10 remain outside this bounded PASS.
