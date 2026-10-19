@@ -40,25 +40,30 @@ gates. Opt-in schema/IR1.4 declarations use governed verified claims and live
 full-scope authorization; existing records and legacy readers are retained.
 Final checks pass246 integration groups without skips,97 frontend tests,
 9 application plus7 sign-in browser cases and all seven capacity gates.
-Uniqueness administration UI/removal/evolution, R3d aggregates and the remaining
+Uniqueness administration UI/removal/evolution and the remaining
 R5–R7 product/authority/operations work remain open; M9R is PARTIAL.
 
-[R3d SQL aggregates](docs/migration/M9R_R3D_IMPLEMENTATION_REPORT.md) are being
-verified. Opt-in `aggregate.execution: "SQL_V1"` supports exact count and
+[R3d SQL aggregates](docs/migration/M9R_R3D_IMPLEMENTATION_REPORT.md) now pass
+bounded independent review and all 24 unmapped/current/retained capacity cases.
+Final checks pass 269 integration groups without failures/skips, 97 frontend
+tests, 9+7 browser cases and all eight reference capacity targets. Opt-in
+`aggregate.execution: "SQL_V1"` supports exact count and
 integer/decimal/fixed-currency sums over at most 100,000 authorized matching
 inputs; omitted execution retains the legacy bounded behavior. Unsupported
 shapes and invalid inputs fail explicitly. A READY governed numeric index is
 needed for the measured full-set sum workload. No aggregate/report UI or general
-query capacity is claimed. Independent and mapped capacity acceptance is pending.
+query capacity is claimed. Worst measured HTTP p95 is 712.030 ms against 750 ms;
+the explicit injected-driver-panic/R7 diagnostic remains unresolved.
 
 `API_DB_CONCURRENCY` bounds access API database transactions (integer 1..10,
 default 4), with the existing 128-place FIFO queue. The pool remains 10 and all
 queue/statement/transaction deadlines remain. This does not limit health probes,
 Redis sign-in or other processes and does not complete rate limiting. Capacity
 checks require `make reference-up` after ordinary infrastructure startup: the
-explicit PostgreSQL reference profile v2 candidate uses four CPUs, 8GiB/no swap, 2GiB shared buffers,
-6GiB effective cache estimate, 4MiB work memory and random_page_cost1.1. API and Docker share the cloud
-parent's four CPUs. Ordinary `make infra-up` restores lightweight defaults;
+explicit PostgreSQL reference profile v2 uses four CPUs, 8GiB/no swap, 2GiB shared
+buffers, 6GiB effective cache estimate, 4MiB work memory and random_page_cost1.1.
+API and Docker share the cloud parent's four CPUs. This is a bounded test-tier
+acceptance, not production capacity proof. Ordinary `make infra-up` restores lightweight defaults;
 do not run it between selecting the reference profile and performance checks.
 `make test-aggregate-performance` exercises unmapped and current/retained mapped
 generations; its larger total suite timeout does not increase query budgets.

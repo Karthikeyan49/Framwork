@@ -1,7 +1,9 @@
 # R3d — Bounded SQL aggregates and query planning
 
-19 October 2026 (Asia/Kolkata). **STATUS: IN PROGRESS; not accepted complete.**
-Design: ADR046, committed before source at `8ebc75d`. Branch:
+19 October 2026 (Asia/Kolkata). **R3d STATUS: PASS within the bounded reference
+workload; overall M9R remains PARTIAL.** Final acceptance evidence is at the end
+of this report; earlier progress/failure entries retain their checkpoint status.
+Design: ADR046–059, first committed before source at `8ebc75d`. Branch:
 `remediation/m9r-foundation`; M9R remains PARTIAL. No M10, main merge or production
 activation. Existing records, immutable metadata/IR and pinned workflows remain.
 
@@ -15,8 +17,9 @@ preserves live-generation semantics through a snapshot-certified source planner
 (ADR047). ADR048 introduces an explicit reference memory profile. ADR049 adds
 migration53's nullable versioned numeric validity witness without rewriting old
 projections. No new dependency is introduced. Bounded independent functional
-review has passed with an open driver-panic/R7 limitation; final source
-re-verification and whole-suite/capacity acceptance remain pending.
+review, final source re-verification, whole-suite and all eight capacity targets
+pass. The injected driver-panic/R7 limitation remains open; this is not
+production readiness or completion of every external-review finding.
 
 ## Executed evidence and failures
 
@@ -339,3 +342,105 @@ Root final `make check test build`, both browser suites and the seven earlier
 capacity gates are now running serially against this source/profile. Their
 results are pending. The joint ADR058 profile and R3d are not accepted merely
 because aggregate capacity passes; all required regressions must finish first.
+
+## Final root verification and acceptance — 19 October 2026
+
+**R3d STATUS: PASS for the declared bounded reference tier. Overall M9R STATUS:
+PARTIAL.** Product checkpoint `f9cb4fa`, independent review/tests `1f73033`.
+Full verification ran on `1f73033`; later browser/capacity targets ran on
+`44e2c63`, whose only change was the evidence report. No production code changed
+between these final gates. Subsequent completion edits are documentation and a
+Compose comment only. All earlier failed commands above remain failures.
+
+| Exact command actually executed | Result | Elapsed seconds |
+|---|---|---:|
+| `make check test build` | PASS | 602.327 |
+| `make test-e2e` | PASS | 18.465 |
+| `make test-signin-e2e` | PASS | 8.541 |
+| `make test-performance` | PASS | 67.056 |
+| `make test-scalar-performance` | PASS | 79.673 |
+| `make test-choice-performance` | PASS | 93.977 |
+| `make test-native-performance` | PASS | 88.618 |
+| `make test-search-performance` | PASS | 51.017 |
+| `make test-write-performance` | PASS | 62.659 |
+| `make test-unique-performance` | PASS | 173.803 |
+| `make test-aggregate-performance` | PASS | 619.747 |
+| `make docs-verify` | PASS | 0.059 |
+
+The full command includes Go formatting/static checks, unit/race tests,
+TypeScript lint/typecheck, frontend tests and both builds. Its exact integration
+subcommand is `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration
+-timeout=20m -count=1 ./tests/integration`; all 269 top-level groups pass in
+568.559 seconds with zero failures and zero skips. Frontend: 97/97 across 15 files.
+Browser application suite: 9/9; sign-in suite: 7/7. The checksum-pinned retained
+API was supplied for full and final tests, rather than silently skipping it.
+
+| Earlier capacity gate | Worst measured HTTP p95 ms | HTTP p99 ms | Unexpected errors |
+|---|---:|---:|---:|
+| Numeric | 101.014 | 118.948 | 0 |
+| Text/date, 12 cases | 289.271 | 332.876 | 0 |
+| Enum/reference, 12 cases | 234.462 | 252.081 | 0 |
+| Datetime/boolean, 12 cases | 264.545 | 313.507 | 0 |
+| Search, 8 cases | 176.219 | 186.043 | 0 |
+| 32-client writes, 8,163 mutations | 283.368 | 392.855 | 0 |
+| Unique fresh/conflict requests and 32-client writes | 359.583 | 368.484 | 0 |
+
+The p99 column reports the maximum observed p99 across each gate's cases; it
+need not come from the same case as maximum p95. Unique conflict requests expect
+100 actual conflicts, not successful mutation: all are classified correctly.
+Unique-key sustained writes complete 7,081 mutations, p95 304.839 ms,
+p99 333.094 ms, 117.53/s, zero errors. Ordinary writes complete 8,163 at 135.58/s.
+Historical R3c writes/unique writes had higher throughput (12,547/10,061), so the
+new joint scheduling/index/profile envelope is not described as throughput
+neutral. No controlled single-change causation claim is made. All eight original
+capacity targets pass without changing client counts or individual latency,
+statement, lock, transaction or queue limits. ADR058 is now accepted for this tier.
+
+`node .local/reports/r3d-startup-smoke.mjs` PASS: the built `bin/api` starts on
+owned temporary loopback ports via `node scripts/with-env.mjs bin/api`, responds
+HTTP 200 on health/readiness with all 11 dependency probes OK, then exits 0 after
+SIGTERM. Repeating with OTLP pointed at an unused local port also PASSes health,
+readiness and graceful exit. Both owned processes are stopped. This verifies
+startup tolerates an unavailable collector; it does not prove telemetry delivery
+during an outage. The helper, logs and result JSON are ignored local artifacts.
+
+`make docs-verify` preserves all 84 V2 and 43 V3 source checksums. The existing
+`make infra-up migrate migration-status` PASS applies all 54 migrations to the
+local developer database; final readiness confirms the aggregate/role contracts.
+No new migration is needed for ADR059. Migrations 53/54 remain immutable. No
+customer records, database volumes, immutable IR, audit, inbox or outbox evidence
+were removed. No new dependency or ERP/business module was introduced.
+
+## Remaining scope and recovery
+
+- SQL_V1 is opt-in count and exact integer/decimal/fixed-currency SUM over up to
+  100,000 authorized matching inputs, with certified snapshots and closed policy.
+  Indexed capacity is not raw/unindexed capacity. GROUP BY, arbitrary expressions,
+  expanded joins, report UI and larger/general workloads are NOT RUN/unsupported.
+- The explicit injected pgx-tracer panic diagnostic remains FAIL under R7
+  (IR-R3d-01). Default connection setup installs no custom tracer. Ordinary callback
+  panic rollback/reuse passes. No arbitrary driver-panic recovery is claimed.
+- R5 role-definition UI/external IdP and gateway deployment, R6 authenticated
+  requirement/verifier/promotion authority, R7 reliability/operations, wider
+  search/uniqueness lifecycle and production active-runtime wiring remain open.
+  Main merge, production deployment, external tools and M10 are NOT RUN.
+- To stop using this path, clients omit `aggregate.execution` and retain the
+  original bounded behavior. This is a client opt-in contract, not a global
+  server kill switch. If the endpoint must be withdrawn, stop the owned preview
+  API pending a reviewed forward fix. Preserve migrations, physical generations,
+  live ACLs and evidence; never run destructive downs or silently recompile IR.
+  Any binary downgrade requires its declared artifact/schema/role compatibility
+  checks; a metadata pointer rollback cannot reverse data or external effects.
+
+## Git and generated files
+
+This continuation started on `remediation/m9r-foundation` at `fab5636` with a
+modified R3d report. The report was preserved and the first checkpoint pushed as
+`9b759f1` before further implementation. Subsequent stable source, review and
+capacity evidence were pushed through `44e2c63`; final completion documentation
+is committed/pushed on that same designated branch. Main is not merged or rewritten.
+Tracked changes comprise ADR059, the physical namespace source, capacity/resource
+and independent tests, plus status/recovery documentation. Reused infrastructure
+and earlier committed M0–M9R work remain intact. Commit source/tests/docs/config
+only. Keep `.local`, `.env`, keys, binaries, dependencies, frontend builds,
+Playwright output and execution logs ignored; none belong in Git.

@@ -1,8 +1,8 @@
 # ADR058 — Test a calibrated reference profile with four API transactions
 
-19 October 2026 (Asia/Kolkata). Provisional implementation candidate approved
-after independent read-only review, before configuration changes. Acceptance
-requires all eight workload gates and normal regressions. NOT production proof.
+19 October 2026 (Asia/Kolkata). Accepted for the bounded reference workload after
+independent review and all final gates. The initial provisional candidate was
+approved before configuration changes. NOT production capacity proof.
 
 ADR057's app-role ABBA diagnostic runs81.81s and91.382s. The first has stable
 numeric visibility8609/9186 pages: unfiltered money cost4 sequential plans take
@@ -37,3 +37,21 @@ passes. Current/retained canonical data, fault/authority correctness,32-client
 write/unique capacity and all prior read/browser gates remain mandatory. If any
 fails, keep R3d incomplete and investigate; no implicit acceptance by tuning.
 No data/DDL/privilege/dependency or production runtime capability changes.
+
+## Acceptance evidence
+
+Final product checkpoint `f9cb4fa`, independent review/tests `1f73033`:
+23 independent/retained ordinary race groups pass with zero skips, followed by
+269 full integration groups, 97 frontend tests, both browser suites (9+7) and
+all eight reference capacity targets. Aggregate capacity includes 24 cases across
+unmapped/current/retained generations, worst HTTP p95 712.030 ms and zero errors.
+The [implementation report](../migration/M9R_R3D_IMPLEMENTATION_REPORT.md) retains
+every failed experiment and exact commands. Default 3/cost 4 is superseded for
+this test tier. The legacy diagnostic log identifier `ADR058-v2-candidate` names
+these same measured settings; it does not grant production acceptance.
+
+Writes pass their 500 ms p95 floor but throughput is lower than historical R3c:
+8,163 ordinary and 7,081 unique-key writes at 32 clients. Keep that tradeoff and
+the narrow aggregate HTTP headroom visible. No single-variable causation, larger
+workload or deployment capacity is established. R7 driver-panic recovery,
+production operations and other M9R gaps remain open.

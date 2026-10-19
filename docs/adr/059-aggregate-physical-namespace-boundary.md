@@ -1,7 +1,8 @@
 # ADR059 — Bound physical aggregate input to its trusted namespace
 
-19 October 2026 (Asia/Kolkata). Proposed before code; independent read-only
-review and executed capacity/correctness verification are required for acceptance.
+19 October 2026 (Asia/Kolkata). Accepted after independent review and executed
+capacity/correctness verification. Proposed before code at `8f73d47`;
+implementation `3a9d23e` preserves the namespace, snapshot, scope and cap contracts.
 
 ADR058's provisional cost1.1/default4 run fails raw capacity133.412s. No observed
 EXPLAIN node spills temporary blocks. SHARE count performs20000 records_pkey
@@ -35,3 +36,15 @@ Reverify namespace isolation, projected/filtered field authorization, cap and
 invalid-value priority, canonical/retained ACLs, snapshots, real SQL cancellation
 and settings cleanup. Preserve every failed workload. If capacity still fails,
 R3d remains incomplete and this optimization is not a production-readiness claim.
+
+## Executed outcome
+
+Independent review at `1f73033` passes all 23 ordinary race groups and separately
+strengthened nested OWNER+CONDITION/rare core-ID filters over 100,001 physical
+rows. The telemetry-scope LOW finding is fixed in `f9cb4fa`. Root aggregate
+capacity passes all 24 unmapped/current/retained cases in 619.747 seconds; full
+checks/build, both browser suites and seven earlier capacity targets pass too.
+The filtered source still scans 38,008 record blocks in the observed raw plan;
+the fence is not claimed to eliminate that scan. No source, permission or budget
+weakening was required. Exact timings, previous failures and recovery are in the
+[report](../migration/M9R_R3D_IMPLEMENTATION_REPORT.md).

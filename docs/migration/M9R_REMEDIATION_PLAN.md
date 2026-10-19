@@ -78,9 +78,16 @@ regression was actually reproduced and fixed. Final check/test/build passes
 246 integration groups without skips and 97 frontend tests; browser9+7 and all
 seven capacity gates pass. The final unique writer completes10,061 updates at
 32 clients, p95 227.569ms and zero errors. UI, READY removal and constraint-
-preserving evolution are not part of this bounded API foundation. The next core
-R3 subgate is R3d SQL aggregates/planning, with its own ADR, populated independent
-oracles, authorization/fault tests and reference workload before acceptance.
+preserving evolution are not part of this bounded API foundation.
+
+[R3d SQL aggregates/planning](M9R_R3D_IMPLEMENTATION_REPORT.md) now passes bounded
+independent functional review, 269 integration groups without failures/skips,
+97 frontend tests, browser suites 9+7 and all eight reference capacity targets.
+All 24 aggregate cases over unmapped/current/retained 100k-row generations pass
+with exact oracles, zero errors and worst HTTP p95 712.030 ms. ADR058–059 and the
+report retain the accepted tier, failed experiments and write-throughput cost.
+No general query or production capacity is claimed. Wider search/uniqueness
+lifecycle, remaining R5 product/deployment, R6 and R7 stay open.
 
 ## Objective and release gate
 

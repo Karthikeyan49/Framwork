@@ -1,4 +1,4 @@
-# Explicit ADR058 reference profile v2 candidate; acceptance gates pending.
+# Explicit ADR058 reference profile v2; bounded acceptance recorded in its ADR.
 # Normal infra-up keeps lightweight defaults.
 # Recreating this owned local container retains the named pgdata volume.
 services:

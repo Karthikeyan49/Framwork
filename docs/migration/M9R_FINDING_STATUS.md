@@ -1,6 +1,21 @@
 # External review finding status
 
-Current checkpoint, 18 October 2026: [R3c unique-field integrity](M9R_R3C_IMPLEMENTATION_REPORT.md)
+Current checkpoint, 19 October 2026: [R3d SQL aggregation](M9R_R3D_IMPLEMENTATION_REPORT.md)
+passes bounded independent functional review and final root verification. All 24
+unmapped/current/retained 100k-row/ten-client capacity cases pass with zero errors;
+worst HTTP p95 is 712.030 ms against 750 ms. Full check/test/build passes 269
+integration groups without failures/skips and 97 frontend tests; browser 9+7 and
+all eight reference capacity targets pass. The calibrated ADR058 reference-v2
+profile and actual default 4 API admission are accepted for this measured tier.
+32-client writes (8,163; p95 283.368 ms) and unique writes (7,081; p95 304.839 ms)
+pass, with
+lower throughput than historical R3c results retained as a tradeoff. The explicit
+driver-panic diagnostic still FAILs under R7; no arbitrary driver recovery claim.
+R5 role-definition UI/external-provider deployment, R6 authority, R7 operations,
+wider search/uniqueness lifecycle and production wiring remain open. Overall
+M9R remains PARTIAL. No M10 or main merge.
+
+Previous checkpoint, 18 October 2026: [R3c unique-field integrity](M9R_R3C_IMPLEMENTATION_REPORT.md)
 passes bounded independent review and final root verification on source `d15be92`
 with review/tests `2cf2f57`. Opt-in schema/IR1.4, governed copy/verification,
 private live-authority key permits, abort generations and compatible legacy
@@ -97,7 +112,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Late command rejection can commit a record without receipt/outbox | Independently reproduced fault and independently closed; real RLS-policy regression verifies zero business facts on rejection | Preserve whole-command rollback |
 | Same-login navigation loses an in-flight command key | Independently reproduced and closed; actor-owned pre-dispatch journal/navigation/account recovery verified | Browser-restart persistence intentionally absent |
 | Custom field indexes / unique projections | Integer/decimal/money, string/civil-date, enum/reference, datetime/boolean and fixed plain full-text indexes plus [R3c typed unique-field enforcement](M9R_R3C_IMPLEMENTATION_REPORT.md) independently verified; source JSONB, existing records, old readers/cursors and immutable releases retained. Populated backfill, conflict rollback, private permits, raw roles, concurrent claims/receipt replay and 100k/32-client gates pass | Uniqueness UI/READY removal/constraint-preserving evolution and search UI/ranking/languages/broad-term capacity remain separate; aggregates/planning remain R3d |
-| Aggregates and bounded join planner | [R3d](M9R_R3D_IMPLEMENTATION_REPORT.md) IN PROGRESS: opt-in exact SQL count/sums, transactional numeric validity witness, snapshot source planning and configurable bounded API concurrency. Unmapped indexed100k/ten-client checkpoint passes; earlier failures retained | Mapped/current/retained capacity, independent executable review and final regression gates remain pending; no arbitrary expressions, GROUP BY or join expansion |
+| Aggregates and bounded join planner | [R3d](M9R_R3D_IMPLEMENTATION_REPORT.md) bounded PASS: opt-in exact SQL count/sums, transactional numeric validity witness, certified physical/canonical snapshot planning and configurable bounded API concurrency. Independent23-group race review, full269 integration groups, browser9+7, all24 aggregate capacity cases and all eight reference targets pass; earlier failures retained | No arbitrary expressions, GROUP BY, join expansion, aggregate/report UI or general workload guarantee. Worst aggregate p95 leaves only37.970ms headroom. Injected driver-panic recovery remains R7; production active-runtime wiring remains R6/M11–M14 |
 | Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
 | Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
 | DataScope returns ALL for permitted built-in roles | [R5a](M9R_R5A_IMPLEMENTATION_REPORT.md) independently PASS: tenant role versions/CAS, live API scopes, exact operation reconciliation, bound engines and trusted worker revocation; bootstrap roles remain broad | R5b bounded PASS: raw leased source/business ports enforce current head/actions/fields/record scopes, with per-row lease fences. [R5c-a](M9R_R5C_IMPLEMENTATION_REPORT.md) independently PASS: governed CAS-fenced record owner/team/share administration (`data.row.assign`/`data.row.share`). R5c-b team hierarchy/membership administration (ADR035) independently PASS. [R5e](M9R_R5E_IMPLEMENTATION_REPORT.md) custom workflow approval roles and legacy compatibility independently verified, including the closed audit-context follow-up; final full checks/tests/build and browser5/5 PASS. [R5d](M9R_R5D_IMPLEMENTATION_REPORT.md) field masking/partial writes now pass bounded independent and final full/browser/performance checks; [R5c record/team UI](M9R_R5C_UI_IMPLEMENTATION_REPORT.md) passes independent/full/browser gates; R5f provider sign-in/clock tolerance now passes bounded independent/full checks; external provider deployment remains unverified and role-definition editing remains API-only |
