@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/platform/traffic"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
@@ -29,6 +31,7 @@ import (
 type API struct {
 	DB               *sql.DB
 	Admission        *postgres.Admission
+	Traffic          *traffic.Gate
 	Auth             identity.Authenticator
 	Policy           policy.Engine
 	PolicyLoader     policy.Loader
@@ -50,6 +53,13 @@ func (a API) catalog() compiler.Catalog {
 }
 
 func (a API) Register(mux *http.ServeMux) {
+	if a.Traffic == nil {
+		var err error
+		a.Traffic, err = traffic.New(traffic.DefaultLimits(), nil)
+		if err != nil {
+			panic("API admission initialization failed")
+		}
+	}
 	if a.Admission == nil && a.DB != nil {
 		limit := a.DB.Stats().MaxOpenConnections
 		if limit < 1 || limit > 4 {
@@ -155,11 +165,28 @@ func (a API) transaction(ctx context.Context, run func(context.Context, postgres
 	return postgres.WithRuntime(ctx, a.DB, run)
 }
 func (a API) serve(w http.ResponseWriter, r *http.Request) {
+	if a.rateRejected(w, r, a.Traffic.Peer(r.Context(), r.RemoteAddr)) {
+		return
+	}
 	if a.Auth == nil || a.Policy == nil || a.Audit == nil {
 		httpserver.Error(w, r, 503, "identity_unavailable", "Identity service is not configured")
 		return
 	}
 	headers := r.Header.Values("Authorization")
+	var prePrincipal identity.Principal
+	preError := identity.ErrUnauthenticated
+	if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
+		prePrincipal, preError = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
+	}
+	var trafficDecision traffic.Decision
+	if preError != nil {
+		trafficDecision = a.Traffic.Invalid(r.Context(), r.RemoteAddr)
+	} else {
+		trafficDecision = a.Traffic.Subject(r.Context(), prePrincipal.Issuer(), prePrincipal.Subject())
+	}
+	if a.rateRejected(w, r, trafficDecision) {
+		return
+	}
 	var p identity.Principal
 	authErr := identity.ErrUnauthenticated
 	var response reply
@@ -182,12 +209,14 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	run := func(parent context.Context) error {
 		response, rejectedEvidence = reply{}, audit.Entry{}
-		p, authErr = identity.Principal{}, identity.ErrUnauthenticated
+		p, authErr = identity.Principal{}, preError
 		if localCommand {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		return a.transaction(parent, func(ctx context.Context, tx postgres.Executor) error {
-			if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
+			// Recheck valid signatures/time bounds after admission/queue waits and
+			// on each known-aborted retry. No token validity or policy cache.
+			if preError == nil {
 				p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
 			}
 			result, evidence, err := a.perform(ctx, tx, r, p, authErr)
@@ -272,6 +301,16 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.JSON(w, response.status, response.body)
+}
+
+func (a API) rateRejected(w http.ResponseWriter, r *http.Request, d traffic.Decision) bool {
+	if d.Allowed() {
+		return false
+	}
+	w.Header().Set("Retry-After", strconv.FormatInt(d.RetrySeconds(), 10))
+	w.Header().Set("Cache-Control", "no-store")
+	httpserver.Error(w, r, http.StatusTooManyRequests, "rate_limited", "Request rate exceeded; wait before a new request")
+	return true
 }
 
 func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request, p identity.Principal, authErr error) (reply, audit.Entry, error) {

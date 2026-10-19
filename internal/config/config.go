@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/identity"
+	"github.com/Karthikeyan49/Framwork/internal/platform/traffic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
@@ -23,6 +24,7 @@ type Config struct {
 	Environment           string
 	HTTPAddr              string
 	APIConcurrency        int
+	APIRequestLimits      traffic.Limits
 	DatabaseURL           string
 	WorkerDatabaseURL     string
 	DispatcherDatabaseURL string
@@ -49,6 +51,9 @@ func Load(getenv func(string) string) (Config, error) {
 	c.APIConcurrency, concurrencyErr = strconv.Atoi(value(getenv, "API_DB_CONCURRENCY", "4"))
 	if concurrencyErr != nil || c.APIConcurrency < 1 || c.APIConcurrency > 10 {
 		return c, fmt.Errorf("API_DB_CONCURRENCY must be an integer from 1 to 10")
+	}
+	if err := loadTraffic(getenv, &c); err != nil {
+		return c, err
 	}
 	c.DispatcherDatabaseURL = getenv("DISPATCHER_DATABASE_URL")
 	c.EventRedisURL = getenv("EVENT_REDIS_URL")

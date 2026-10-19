@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -159,7 +160,7 @@ func middleware(next http.Handler, opts Options) http.Handler {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Retry-After")
 			if r.Method == http.MethodOptions {
 				method := r.Header.Get("Access-Control-Request-Method")
 				if method != http.MethodGet && method != http.MethodHead && !(method == http.MethodPost && opts.AllowPOST != nil && opts.AllowPOST(r.URL.Path)) {
@@ -218,13 +219,42 @@ func (w *recorder) Write(b []byte) (int, error) {
 }
 func (w *recorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func accessLog(next http.Handler, logger *slog.Logger) http.Handler {
+	throttled := &rejectionLog{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &recorder{ResponseWriter: w}
 		next.ServeHTTP(rw, r)
+		if rw.status == http.StatusTooManyRequests {
+			throttled.record(r.Context(), time.Now(), logger)
+			return
+		}
 		span := trace.SpanContextFromContext(r.Context())
 		logger.InfoContext(r.Context(), "http request", "request_id", RequestID(r.Context()), "trace_id", span.TraceID().String(), "method", r.Method, "status", rw.status, "duration_ms", time.Since(start).Milliseconds())
 	})
+}
+
+// Aggregate transport denials instead of replacing a database/audit flood with
+// one log per rejected packet. Metrics retain a closed, low-cardinality count.
+type rejectionLog struct {
+	mu    sync.Mutex
+	last  time.Time
+	count uint64
+}
+
+func (l *rejectionLog) record(ctx context.Context, now time.Time, logger *slog.Logger) {
+	l.mu.Lock()
+	if l.count < ^uint64(0) {
+		l.count++
+	}
+	if !l.last.IsZero() && now.Sub(l.last) < 10*time.Second {
+		l.mu.Unlock()
+		return
+	}
+	count := l.count
+	l.count = 0
+	l.last = now
+	l.mu.Unlock()
+	logger.WarnContext(ctx, "http rate rejections", "status", http.StatusTooManyRequests, "rejected_requests", count)
 }
 
 func New(addr string, handler http.Handler) *http.Server {

@@ -24,6 +24,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/platform/signin"
+	"github.com/Karthikeyan49/Framwork/internal/platform/traffic"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
@@ -188,7 +189,15 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if err != nil {
 		return err
 	}
-	accessAPI := access.API{DB: db, Admission: admission, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
+	requestLimits := c.APIRequestLimits
+	if requestLimits == (traffic.Limits{}) {
+		requestLimits = traffic.DefaultLimits()
+	}
+	trafficGate, err := traffic.New(requestLimits, nil)
+	if err != nil {
+		return err
+	}
+	accessAPI := access.API{DB: db, Admission: admission, Traffic: trafficGate, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
 	signIn := signin.API{Development: c.Environment != "production"}
 	var signInStore *cache.Client
 	if c.OIDC != nil {

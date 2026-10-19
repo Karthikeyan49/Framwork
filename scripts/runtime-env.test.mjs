@@ -49,3 +49,11 @@ test('database concurrency reaches only the API process',()=>{
   for(const kind of ['worker','dispatcher','web'])assert.equal(runtimeEnv(configured,kind).API_DB_CONCURRENCY,undefined)
  }
 })
+
+test('API request admission tuning reaches only the API process',()=>{
+ const configured={...source,API_REQUESTS_PER_SECOND:'300',API_REQUEST_BURST:'600',API_GLOBAL_REQUESTS_PER_SECOND:'1000',API_GLOBAL_REQUEST_BURST:'2000'}
+ for(const key of ['API_REQUESTS_PER_SECOND','API_REQUEST_BURST','API_GLOBAL_REQUESTS_PER_SECOND','API_GLOBAL_REQUEST_BURST']){
+  assert.equal(runtimeEnv(configured,'api')[key],configured[key])
+  for(const kind of ['worker','dispatcher','web'])assert.equal(runtimeEnv(configured,kind)[key],undefined)
+ }
+})

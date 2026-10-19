@@ -36,7 +36,11 @@ unbounded queues or per-request map scans. No request payload/credential storage
 Global and peer checks precede cryptographic verification and body processing.
 Verify a bearer before choosing the signed-subject/invalid budget. Admitted
 signature failures retain existing denied audit behavior. Excess failures return
-429 before PostgreSQL, audit and repository work. Valid tokens are reverified at
+429 before PostgreSQL, audit and repository work. Here invalid means malformed
+or signature/claim/time-invalid bearer authentication. Signed-valid but
+unprovisioned/revoked users still require live database resolution and use the
+general peer/subject/global budgets; there is no cached negative membership.
+Valid tokens are reverified at
 transaction execution (and each known-abort retry), preserving expiration checks
 after database queue waits. No authenticated membership or policy result cache.
 All admitted protected reads/writes retain live authorization and atomic audit.
