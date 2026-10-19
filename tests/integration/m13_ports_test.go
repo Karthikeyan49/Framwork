@@ -572,12 +572,22 @@ func TestM13PortsActivationCompareAndSet(t *testing.T) {
 	unapproved := p.stage(t, "LOW", nil)
 	_, err = p.activate(p.f.bobSubject, unapproved, "", 0)
 	wantState(t, "activation without any approval", err, "55000")
-	noStorage := p.stage(t, "LOW", func(body, _ map[string]any) { delete(body["Storage"].(map[string]any), "class") })
-	if _, err = p.approve(p.f.bobSubject, noStorage); err != nil {
-		t.Fatal(err)
+	// A body without a storage class can no longer be staged at all: migration 52 checks the typed fields
+	// the activation port reads. (The activation port keeps its own 55000 guard for a body staged earlier;
+	// no port can create such a body any more, so that guard is not exercised here.)
+	{
+		raw, _ := json.Marshal(p.body)
+		b := portsDecode(t, raw)
+		risk := b["Risk"].(map[string]any)
+		risk["Level"], b["HighRisk"] = "LOW", false
+		p.nonce++
+		risk["PolicyHash"] = fmt.Sprintf("%064x", p.nonce)
+		delete(b["Storage"].(map[string]any), "class")
+		raw, _ = json.Marshal(b)
+		var staged bool
+		err = p.call(p.f.aliceSubject, p.f.tenantA, &staged, `SELECT control.stage_candidate($1,$2,$3)`, p.app, portsHash(raw), raw)
+		wantState(t, "staging a body without a storage class", err, "22023")
 	}
-	_, err = p.activate(p.f.bobSubject, noStorage, "", 0)
-	wantState(t, "activation of a body without a storage class", err, "55000")
 
 	// Two first activations on separate connections: exactly one wins.
 	first, second := p.race(p.f.bobSubject, activateOp(p.app, a, "", 0), p.daveSub, activateOp(p.app, b, "", 0))
@@ -912,6 +922,7 @@ func TestM13PortsTablesAreAppendOnlyIsolatedAndHygienic(t *testing.T) {
 	}
 
 	// The worker drift guard covers every release authority table.
+	m12rDropFixtureGrants(t, p.f.operator)
 	var safe bool
 	if err := worker.QueryRow(`SELECT control.worker_grants_safe()`).Scan(&safe); err != nil || !safe {
 		t.Fatal("worker grants must start safe", safe, err)

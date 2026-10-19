@@ -74,6 +74,15 @@ longer holds INSERT/UPDATE on `control.release_approvals` or
 `control.active_releases`. `Gate` remains only for `Store.Stage`; `Store.Active`,
 `ActiveBase`, `ExecutionPin` and `CheckActiveCompatibility` are unchanged.
 
+## Database ports and the Go recomputation
+
+`control.stage_candidate`, `append_requirements` and `author_acceptance` (migration 00052) accept only a body that is one
+object, has no duplicate member at any depth, spells no number with an exponent or leading zero, uses the key sets of the Go
+types (`control.candidate_body_keys`, compared with the struct tags by `TestM12RBodyKeyListsMatchTheGoStructs`; add a field to a
+2.0.0 struct and the key list must change in a new migration) and embeds the stored source, requirement set and acceptance
+spec. An exact replay by the same requester returns `false` whatever the base did since. The database still cannot recompute
+risk, verification, the diff or the IR: `Restore` and `VerifyWithBase` (called by `Store.LoadCandidate`) remain the control.
+
 ## Not built
 
 The production data plane (ADR039 §10): nothing serves an activated release;
