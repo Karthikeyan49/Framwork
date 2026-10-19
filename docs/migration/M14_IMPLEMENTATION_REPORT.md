@@ -38,7 +38,21 @@ time, integration tests against the isolated M14 stack reset from this tree.
 | `TestM14` integration group (API, ports, adversarial; 23 tests), `-race` | PASS, 92 s |
 | `TestM12`, `TestM13` groups on the M14 stack, `-race` | PASS, 251 s |
 | Eleven mutation checks of the guards (`docs/verification/M14_ADVERSARIAL_PLAN.md`) | each weakening was caught by at least one test; the tree was clean afterwards |
-| Full integration suite, `make test`, `make test-e2e`, `make build` on the final tree | see "Final gate" |
+| Full integration suite, `make check`, `make test-unit`, `make build`, `make test-e2e` on the final tree | see "Final gate" below |
+
+## Final gate
+
+Run on 2026-10-19 on `claude/m14-ai-builder` (code identical to commit `8a8d34d`; later commits change documentation only),
+against the isolated M14 database stack reset from that tree.
+
+| Command | Result |
+|---|---|
+| `make check` (docs checksums, format, vet, `mod verify`, web lint, typecheck) | PASS |
+| `make test-unit` (Go unit tests `-race` over every package, `node --test scripts/*.test.mjs`, web `npm test`) | PASS (5 script tests, 29 web tests; `internal/ai` takes about 212 s under `-race`) |
+| Full `go test -race -tags=integration ./tests/integration`, skipping `TestM8RedisACLStreamLossAndPendingRecovery` | 1714 s; exactly two failures, `TestM1DevelopmentIssuer` and `TestAPIWithoutCollectorAndDependencyOutages`: the worktree had no local development identity keys (`.local/identity`, ignored by git). Both PASS (7.6 s) once the keys were provided; no other test failed |
+| `make build` | PASS |
+| `make test-e2e` (5 browser tests) | PASS, 21.6 s |
+| `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN: it restarts the shared Redis and fails on isolated stacks by design |
 
 ## Threat model and limits
 
