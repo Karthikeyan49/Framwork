@@ -20,6 +20,7 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/ai"
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
@@ -28,7 +29,7 @@ import (
 
 // m14Env is the M12 environment with the AI routes wired in.
 type m14Env struct {
-	*m12Env
+	*m13Env
 	provider *ai.ScriptedProvider
 	svc      *ai.Service
 	api      access.API
@@ -44,14 +45,14 @@ type m14Options struct {
 
 func m14Setup(t *testing.T, opts m14Options, steps ...ai.ScriptStep) *m14Env {
 	t.Helper()
-	e := &m14Env{m12Env: m12Setup(t), provider: ai.NewScriptedProvider(steps...)}
+	e := &m14Env{m13Env: m13Setup(t), provider: ai.NewScriptedProvider(steps...)}
 	registry := m3Registry(t)
 	gateway := opts.gateway
 	if gateway == nil {
 		gateway = ai.NewGateway(e.provider, opts.gatewayOpts)
 	}
 	e.svc = ai.NewService(gateway, registry, opts.limits)
-	e.api = access.API{DB: e.f.db, Auth: e.f.verifier, Policy: policy.Native{}, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: true, WorkflowsEnabled: true}
+	e.api = access.API{DB: e.f.db, Auth: e.f.verifier, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: true, WorkflowsEnabled: true}
 	if !opts.noService {
 		e.api.AI = access.AIConfig{Service: e.svc}
 	}
@@ -222,4 +223,71 @@ func (e *m14Env) heads() (revision, requirements int64) {
 		e.t.Fatal("heads", err)
 	}
 	return revision, requirements
+}
+
+// ------------------------------------------------------------------ request helpers
+
+func (e *m14Env) propose(token, request string) *httptest.ResponseRecorder {
+	return e.ai("POST", "/patch-proposals", token, map[string]any{"request": request})
+}
+
+func (e *m14Env) apply(token, id string, expected int64, ack []string) *httptest.ResponseRecorder {
+	if ack == nil {
+		ack = []string{}
+	}
+	return e.ai("POST", "/proposals/"+id+"/apply", token, map[string]any{"expected_revision": expected, "acknowledge": ack})
+}
+
+func (e *m14Env) reject(token, id, reason string) *httptest.ResponseRecorder {
+	return e.ai("POST", "/proposals/"+id+"/reject", token, map[string]any{"reason": reason})
+}
+
+func (e *m14Env) confirm(token, id string, version int64, decisions map[string]string) *httptest.ResponseRecorder {
+	list := []map[string]string{}
+	for id, d := range decisions {
+		list = append(list, map[string]string{"id": id, "decision": d})
+	}
+	return e.ai("POST", "/proposals/"+id+"/confirm", token, map[string]any{"expected_requirements_version": version, "decisions": list})
+}
+
+// readyPatch scripts one label answer and creates a READY patch proposal as alice.
+func (e *m14Env) readyPatch(revision int64, id, label string) ai.Proposal {
+	e.t.Helper()
+	e.provider.Push(e.answerFor(revision, func(doc metadata.Document) []byte { return labelPatch(e.t, doc, id, label) }))
+	p := e.proposal(e.propose(e.alice, "Rename "+id+" to "+label+"."), 201)
+	if p.Status != ai.ProposalReady {
+		e.t.Fatalf("proposal is %s (%s)", p.Status, p.FailureCode)
+	}
+	return p
+}
+
+// reqAnswer scripts a valid requirement proposal (one approval threshold requirement).
+func (e *m14Env) reqAnswer(id string) ai.ScriptStep {
+	sem, _ := json.Marshal(intent.ApprovalThreshold{WorkflowID: "workflow.order.approve", EntityID: "entity.order", FieldID: "field.order.amount", Currency: "USD", Op: "GT", Amount: "500", ApproverRoles: []string{"admin"}})
+	p := ai.RequirementProposal{Version: ai.RequirementProposalVersion, Requirements: []ai.RequirementDraft{{ID: id, Category: intent.CategoryApprovalThreshold, Statement: "Orders above 500 USD need admin approval.", Semantics: sem}},
+		OpenQuestions: []ai.UnresolvedRequirement{{ID: "q-currency", Question: "Which currencies are in scope?"}}, ProposedTests: []intent.AcceptanceCase{}, Assumptions: []string{}}
+	raw, _, err := ai.CanonicalRequirementProposal(p)
+	if err != nil {
+		e.t.Fatal("scripted requirement proposal:", err)
+	}
+	return step(raw)
+}
+
+// customRole publishes a stored role of tenant A and assigns it to a new member.
+func (e *m14Env) customRole(name string, actions ...string) m13Actor {
+	e.t.Helper()
+	e.publishRole(name, 0, actions...)
+	a := e.member("user_"+name, "viewer")
+	r5Assign(e.t, e.h, "/v1/tenants/"+e.f.tenantA, e.alice, a.id, name, 200)
+	return e.fresh(a)
+}
+
+// proposalRows counts the proposals of tenant A (operator view).
+func (e *m14Env) proposalRows() int {
+	e.t.Helper()
+	var n int
+	if err := e.f.operator.QueryRow(`SELECT count(*) FROM control.ai_proposals WHERE tenant_id=$1 AND app_id=$2`, e.f.tenantA, e.app).Scan(&n); err != nil {
+		e.t.Fatal(err)
+	}
+	return n
 }
