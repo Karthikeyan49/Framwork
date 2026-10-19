@@ -122,8 +122,8 @@ Two existing tests changed their expectation, not their purpose: the activation 
 `approval_quorum_not_met` (Go refuses before the port, `TestM13APICriticalQuorumOnATransformRelease`), and the
 custom-role matrix test activates through the loader-configured handler that approved (`TestM13APIRoleMatrixCustomRoleTenantAndAppScope`;
 a handler that knows only the built-in roles correctly does not count a custom-role approver). Run on the isolated M13
-stack reset from the changed tree, one process at a time. This change post-dates the "Final gate" below; the full
-integration suite, `make check`, `make test-unit`, `make build` and `make test-e2e` were **not** re-run for it.
+stack reset from the changed tree, one process at a time. The full gate was re-run on the merged M14 line after
+this change (table at the end of this section); the "Final gate" section below is the earlier run.
 
 | Command | Result |
 |---|---|
@@ -132,6 +132,18 @@ integration suite, `make check`, `make test-unit`, `make build` and `make test-e
 | `TestM13R03` group, `-race` (5 tests) | PASS, 16 s |
 | Mutation: `Holds` ignores an explicit DENY | caught by `TestDefinedHoldsFollowsTheGrants` and `TestM13R03HoldsMatchesDecide`; restored |
 | `TestM13`, `TestM12` groups, `-race` | PASS, 256 s |
+
+Full gate re-run on `claude/m14-ai-builder` at `3987baa` (it contains this fix; code identical to `c05d769`, later commits
+change documentation only), against the isolated M14 database stack reset from that tree, 2026-10-19:
+
+| Command | Result |
+|---|---|
+| `make check` | PASS, 28 s |
+| `make test-unit` (Go `-race`, script tests, web tests) | PASS, 208 s |
+| Full `go test -race -tags=integration ./tests/integration`, skipping `TestM8RedisACLStreamLossAndPendingRecovery` | PASS, 1653.7 s, no failure (the development identity keys were linked into the worktree, so the two environmental failures of the earlier run did not recur) |
+| `make build` | PASS, 18 s |
+| `make test-e2e` (5 browser tests) | PASS, 25.3 s |
+| `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN (restarts the shared Redis; fails on isolated stacks by design) |
 
 ## Threat model and limits
 
