@@ -269,12 +269,14 @@ func TestM12CandidateBuilderEndToEndAuthorityAndReplay(t *testing.T) {
 			t.Errorf("%s: %d", c.name, c.w.Code)
 		}
 	}
+	outsider := (&m13Env{m12Env: e, people: map[string]m13Actor{}}).addMemberIn(e.f.tenantB, "outsider", "viewer")
 	for _, path := range []string{"/requirements", "/requirements/1", "/acceptance-specs/" + art.acceptanceID, "/candidates"} {
 		if w := e.get(path, e.viewer); w.Code != 200 {
 			t.Errorf("viewer read %s: %d", path, w.Code)
 		}
-		if w := m3Call(e.h, "GET", e.root+path, e.outsider, 0, nil); w.Code == 200 && e.f.bob == e.f.alice {
-			t.Errorf("cross-tenant read %s", path)
+		// outsider belongs to tenant B only (bob, the old outsider token, is an admin of tenant A).
+		if w := m3Call(e.h, "GET", e.root+path, outsider.token, 0, nil); w.Code != 403 {
+			t.Errorf("cross-tenant read %s: %d", path, w.Code)
 		}
 	}
 

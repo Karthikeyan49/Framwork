@@ -13,12 +13,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
@@ -444,5 +446,153 @@ func TestM12APIRoleHeadLimitIsTypedAndAudited(t *testing.T) {
 	}
 	if n := e.auditCount("candidates.read"); n != 1 {
 		t.Logf("allowed candidate reads: %d", n)
+	}
+}
+
+// ------------------------------------------------------------------ F3, F4, F5, F11
+
+// TestM12APICaseVariantDuplicateKeysAreRefused (F3, fixed at dbc4b5b, regression test over HTTP):
+// "Revision" next to "revision" or a long-s spelling of a key was read last-wins by encoding/json
+// while an intermediary saw the first.
+func TestM12APICaseVariantDuplicateKeysAreRefused(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	art := e.prepareDoc(orderDocument(e.app, "500"), "500", e.person("alice"), e.person("bob"))
+	good := fmt.Sprintf(`"revision":%d,"requirement_set_version":%d,"acceptance_spec_id":%q,"sandbox_id":%q`, art.revision, art.requirementsVersion, art.acceptanceID, art.sandboxID)
+	for name, body := range map[string]string{
+		"ascii case variant":   `{` + good + `,"Revision":99}`,
+		"upper case variant":   `{` + good + `,"SANDBOX_ID":"` + art.sandboxID + `"}`,
+		"long s spelling":      `{` + good + `,"reviſion":99}`,
+		"kelvin sign spelling": `{` + good + `,"requirement_set_verſion":1}`,
+	} {
+		w := m13Raw(e.h, e.root+"/candidates", e.carol.token, body)
+		if w.Code != 400 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	for name, body := range map[string]string{
+		"requirements": `{"expected_version":0,"requirements":{},"Requirements":{}}`,
+	} {
+		if w := m13Raw(e.h, e.root+"/requirements", e.alice, body); w.Code != 400 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	if n := e.auditCount("release.candidate_staged"); n != 0 {
+		t.Errorf("a refused body staged a candidate: %d", n)
+	}
+}
+
+// m13Raw posts a raw JSON body.
+func m13Raw(h http.Handler, path, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+// TestM12APIAuthoringEnvelopeIsTheMetadataBudget (F4): the effective body limit of every
+// release authoring request is metadata.MaxBytes + 4096 bytes (260 KiB), not the 1 MiB of the
+// outer transport cap or of intent.MaxAcceptanceBytes and the database CHECK, which are upper
+// bounds of storage that this route cannot reach. ADR038 amendment 11 states it; this test
+// pins the boundary so that the statement and the code cannot drift apart.
+func TestM12APIAuthoringEnvelopeIsTheMetadataBudget(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	limit := metadata.MaxBytes + 4096
+	base := `{"expected_version":0,"requirements":{}}`
+	at := base + strings.Repeat(" ", limit-len(base))
+	over := at + " "
+	atReply, overReply := m13Decode(m13Raw(e.h, e.root+"/requirements", e.alice, at)), m13Decode(m13Raw(e.h, e.root+"/requirements", e.alice, over))
+	if overReply.Code != "invalid_release_request" {
+		t.Errorf("a body of %d bytes must be refused by the envelope: %s", len(over), overReply.Code)
+	}
+	if atReply.Code == "invalid_release_request" {
+		t.Errorf("a body of exactly %d bytes must pass the envelope and be judged on its content: %s", limit, atReply.Code)
+	}
+}
+
+// TestM12APIReadersSeeOpaqueActorIdsButNotMemberships (F11): release reads disclose the opaque
+// ids of the requester, the acceptance author, the sandbox freezer and the requirement decider
+// to every role that holds the read action, because approvers need them for separation of
+// duties; the membership list stays owner/admin only. ADR038 amendment 11 records it.
+func TestM12APIReadersSeeOpaqueActorIdsButNotMemberships(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	hash, art := e.build("500", nil, e.carol)
+	v := viewOf(t, e.httpCandidate(e.viewer, hash), 200)
+	if v.RequesterID != e.carol.id || v.AcceptanceAuthor != e.person("bob").id || v.SandboxFrozenBy != e.f.alice {
+		t.Errorf("the actor ids a viewer sees: %+v", v)
+	}
+	var req promotion.StoredRequirements
+	if w := e.get(fmt.Sprintf("/requirements/%d", art.requirementsVersion), e.viewer); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &req) != nil || req.DecidedBy != e.f.alice {
+		t.Errorf("requirement decider as a viewer sees it: %d %s", w.Code, w.Body.String())
+	}
+	if w := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/members", e.viewer, 0, nil); w.Code != 403 {
+		t.Errorf("a viewer listed the members: %d", w.Code)
+	}
+}
+
+// TestM12APICustomRolesDecideThroughThePolicyLoader (F5): the shipped M12 fixtures wired
+// policy.Native{} without a PolicyLoader, so stored custom roles were never exercised, and the
+// cross-tenant assertion compared two different ids and could not fail. Here the production
+// composition (PolicyLoader = RoleStore.Load) decides: each single-action custom role may do
+// exactly its action, nothing else, and a user of another tenant reads nothing.
+func TestM12APICustomRolesDecideThroughThePolicyLoader(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	e.useAPI(func(a *access.API) { a.PolicyLoader = (policy.RoleStore{}).Load })
+	root := "/v1/tenants/" + e.f.tenantA
+	roles := map[string]string{"builder_only": "candidates.build", "decider_only": "requirements.decide", "author_only": "acceptance.author"}
+	users := map[string]m13Actor{}
+	for name, action := range roles {
+		r5Publish(t, e.h, root+"/roles", e.alice, 0, policy.Definition{SchemaVersion: policy.DefinitionVersion, Name: name, Grants: []policy.Grant{
+			{Effect: "ALLOW", Actions: []string{action}, Resource: policy.Selector{AppID: "*", EntityID: "*", FieldID: "*"}}}}, true, uuid(t))
+		users[name] = e.member("u_"+name, "viewer")
+		r5Assign(t, e.h, root, e.alice, users[name].id, name, 200)
+	}
+	// alice (owner) registers the source and decides the requirements, bob (admin) authors the acceptance.
+	art := e.prepareDoc(orderDocument(e.app, "500"), "500", e.person("alice"), e.person("bob"))
+	_, head := e.heads()
+	set := thresholdSet(e.app, "500")
+	spec := acceptanceFor(set, "500.01")
+	// Every route a role does NOT hold is refused (the allowed one is exercised below, after).
+	routes := map[string]struct {
+		action string
+		call   func(token string) int
+	}{
+		"requirements": {"requirements.decide", func(token string) int { return e.requirements(token, thresholdSet(e.app, "600"), head).Code }},
+		"acceptance":   {"acceptance.author", func(token string) int { return e.acceptance(token, art.requirementsVersion, spec).Code }},
+		"candidates":   {"candidates.build", func(token string) int { return e.candidate(token, art).Code }},
+	}
+	for name, action := range roles {
+		for route, r := range routes {
+			if r.action != action {
+				if code := r.call(users[name].token); code != 403 {
+					t.Errorf("%s on %s: %d, want 403", name, route, code)
+				}
+			}
+		}
+		if code := e.get("/candidates", users[name].token).Code; code != 403 {
+			t.Errorf("%s may read without a read grant: %d", name, code)
+		}
+	}
+	// And each may do exactly its own action.
+	if code := e.requirements(users["decider_only"].token, thresholdSet(e.app, "600"), head).Code; code != 201 {
+		t.Errorf("decider_only decides: %d", code)
+	}
+	if code := e.acceptance(users["author_only"].token, art.requirementsVersion, spec).Code; code != 201 {
+		t.Errorf("author_only authors: %d", code)
+	}
+	if code := e.candidate(users["builder_only"].token, art).Code; code != 201 {
+		t.Errorf("builder_only builds: %d", code)
+	}
+	// A user who belongs only to another tenant reads nothing of this one.
+	outsider := e.addMemberIn(e.f.tenantB, "outsider", "viewer")
+	for _, path := range []string{"/requirements", "/requirements/1", "/acceptance-specs/" + art.acceptanceID, "/candidates"} {
+		if w := e.get(path, outsider.token); w.Code != 403 {
+			t.Errorf("outsider read %s: %d", path, w.Code)
+		}
 	}
 }
