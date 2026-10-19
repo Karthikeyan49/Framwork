@@ -14,8 +14,9 @@ uncertified executors cannot use expanded aggregation. The initial implementatio
 preserves live-generation semantics through a snapshot-certified source planner
 (ADR047). ADR048 introduces an explicit reference memory profile. ADR049 adds
 migration53's nullable versioned numeric validity witness without rewriting old
-projections. No new dependency is introduced. Independent executable review and
-final whole-suite acceptance remain pending.
+projections. No new dependency is introduced. Bounded independent functional
+review has passed with an open driver-panic/R7 limitation; final source
+re-verification and whole-suite/capacity acceptance remain pending.
 
 ## Executed evidence and failures
 
@@ -250,3 +251,33 @@ times out with57014; it is neither an API error nor a passing diagnostic.
 Reference-v2/default4 remains unaccepted. R3d remains INCOMPLETE. Full/build,
 browser and other capacity gates on this candidate remain pending; the earlier
 default3/cost4 write PASS does not certify the new profile.
+
+## Physical namespace refinement (ADR059)
+
+The actual failed-run plans show SHARE20000 records_pkey lookups/80010 hits and
+filtered money38008 scanned record blocks; no observed temp spill. ADR059 and
+independent read-only criticism precede source8f73d47/3a9d23e. Exact physical
+tenant/app/revision/hash/entity predicates now sit inside an OFFSET0 relation,
+without an inner cap. SQL retains custom_data for nested policy conditions and
+filters, all outer authorization before the100001 cap and canonical CI ownership.
+A fence is not a security barrier or a guarantee PostgreSQL avoids a full scan.
+No schema/settings/roles or latency limits changed. PostgreSQL can prune unused
+JSON in certified header scans. Passive case-boundary GC/cgroup/backend counts
+contain no SQL, arguments or business data and do not force GC/vacuum or pauses.
+
+`./scripts/go.sh fmt ./internal/runtime/data ./tests/integration` PASS;
+`./scripts/go.sh test ./internal/runtime/data` PASS0.054s.
+`node scripts/with-env.mjs ./scripts/go.sh test -tags=integration -timeout=5m
+-count=1 -run '^TestM9RSQLAggregate(ExactFullSetAndLegacyCompatibility|RejectsCorruptInputsEvenCancellation|BudgetBoundaryAndFilteredInput|LiveScopesFieldInferenceAndRevocation|RetainedGenerationUsesCurrentOwnersAndTombstones|RestoresExpressionModeWithinSnapshot)$'
+-v ./tests/integration` PASS15.788s: six groups, zero skips. Retained executable
+compatibility is a separate group and is not claimed by this selection.
+
+Sourcee406966 adds one core-ID count case to all seven unchanged capacity cases.
+`make test-aggregate-performance` attempt3 is IN PROGRESS. Its raw fixture passes
+101.08s,100000 hot/9x10000 other-tenant rows,100 samples/ten clients/case,
+zero errors. SQL/HTTP p95 ms: count48.569/153.745, ID44.775/143.219,
+integer162.154/416.369, decimal153.148/401.688, money136.947/387.787,
+filtered183.118/481.529, OWNER131.417/352.292, SHARE92.366/261.093.
+The filtered source still scans38008 blocks despite the fence, so no avoidance
+claim is made. The mapped100k adoption/evolution/current/retained fixture remains
+running; raw success alone does not accept R3d or the provisional profile.
