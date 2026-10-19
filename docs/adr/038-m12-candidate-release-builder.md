@@ -168,7 +168,8 @@ recomputation at approval is the backstop (see §4 limit).
 `Staleness(bound, current)` returns sorted reasons: `BASE_CHANGED`,
 `BASE_GENERATION_ADVANCED`, `SCHEMA_CHANGED`, `POLICY_CHANGED`, `TOOL_CHANGED`,
 `TOOL_REMOVED`, `TOOL_TENANT_DENIED`, `RISK_ESCALATED`, `EVIDENCE_INVALID`,
-`UNSUPPORTED_RUNTIME`. The detail route returns `stale` and `stale_reasons` (the list route does not);
+`UNSUPPORTED_RUNTIME`, `RUNTIME_CHANGED` (the runtime-components hash recorded in the
+candidate differs from the running binary's, or either is empty). The detail route returns `stale` and `stale_reasons` (the list route does not);
 M13 re-evaluates inside its
 approval and activation transactions. Source head moving is not stale; a stale
 candidate is rebuilt to a new hash and never revived.

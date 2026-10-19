@@ -175,6 +175,7 @@ path, tool exceeding `max_side_effect`.
 | risk | `Evaluate(latest policy, bound facts + current volume)` level ≤ bound | RISK_ESCALATED |
 | sandbox evidence | row exists, FROZEN, hash/IR/schema equal | EVIDENCE_INVALID |
 | IR version | still in `SupportedIRVersions()` | UNSUPPORTED_RUNTIME |
+| runtime components | recorded `ComponentsHash` equals the running binary's (`RuntimeComponents()`); empty never matches | RUNTIME_CHANGED |
 
 Sorted, deduplicated; pure over plain inputs; never stored.
 

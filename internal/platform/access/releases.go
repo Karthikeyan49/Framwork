@@ -488,8 +488,9 @@ func (a API) staleness(ctx context.Context, q postgres.Executor, access tenant.A
 		return nil, err
 	}
 	bound := promotion.BoundState{BaseRelease: b.BaseRelease, BaseGeneration: b.BaseGeneration, BaseSchemaHash: b.Dependencies.BaseSchemaHash, PolicyBundleHash: b.Dependencies.PolicyBundleHash, ToolPins: b.Dependencies.ToolPins,
-		IRVersion: b.IR.Version, RiskPolicyVersion: b.Risk.PolicyVersion, RiskLevel: level, RiskFacts: b.Risk.Facts, EvidenceHash: b.Sandbox.EvidenceHash}
+		IRVersion: b.IR.Version, RiskPolicyVersion: b.Risk.PolicyVersion, RiskLevel: level, RiskFacts: b.Risk.Facts, EvidenceHash: b.Sandbox.EvidenceHash, ComponentsHash: b.RuntimeContract.ComponentsHash}
+	_, componentsHash := promotion.RuntimeComponents()
 	current := promotion.CurrentState{ActiveRelease: baseHash, ActiveGeneration: baseGeneration, BaseSchemaHash: baseSchema, PolicyBundleHash: policyHash, ToolStatus: status,
-		SupportedIR: compiler.SupportedIRVersions(), Volume: promotion.DefaultVolume(baseHash == ""), Evidence: evidenceState}
+		SupportedIR: compiler.SupportedIRVersions(), Volume: promotion.DefaultVolume(baseHash == ""), Evidence: evidenceState, ComponentsHash: componentsHash}
 	return promotion.Staleness(bound, current), nil
 }
