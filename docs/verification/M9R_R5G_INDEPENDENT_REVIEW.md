@@ -12,6 +12,11 @@ no BLOCKER/HIGH identified in this bounded review. Both findings require fixes
 and independent re-verification before R5g acceptance. The full final root gates
 remain separate from the executed checks below.
 
+Follow-up at **`5c05d0b`: both findings independently CLOSED**. The bounded R5g
+review passes after the fixes and stronger executed probes below. Final root
+check/test/build, complete browser suites and read/write capacity gates still
+remain required; external identity deployment remains deferred.
+
 ## Scope and threat model
 
 Read AGENTS/CLAUDE, README, V3 kit, compatibility/supersession guidance, remediation
@@ -140,4 +145,57 @@ real MFA, production gateway/TLS/log canary, secret provisioning, directory
 enrollment and other R6/R7 release checks remain DEFERRED/NOT RUN. This review
 does not authorize deployment, a main merge, production activation or M10.
 
-Follow-up verification and final acceptance are appended after stable fixes.
+## Independent fix verification — `5c05d0b`
+
+The second review began with a clean checkout at `5c05d0b`. The implementation
+agent again paused source edits, builds and shared database workloads. This
+reviewer inspected the two-file fix and added three stronger regression tests;
+no product source was changed by the reviewer.
+
+**R5G-IR-01 CLOSED.** Publication preparation and receipt recovery now share the
+exact normalized Go V1 HTTP definition hash. An unchanged label with changed
+grants fails verification and retains the original journal entry. The original
+populated failure now passes. An additional delayed-hash test proves unmount
+cannot clear the pending intent; remount plus explicit valid receipt verification
+then clears it. The real browser again reconciles the correct original receipt
+after a newer head exists. No historical role bytes or stored hashes changed.
+
+**R5G-IR-02 CLOSED.** Preparation state and its synchronous guard bind both the
+client and a unique preparation key. Lifetime abort releases only its own
+pre-dispatch marker. The original disabled-editor failure now passes. Two
+stronger probes execute the overlapping promises: a fresh connection prepares
+and successfully publishes before the old digest settles, and completion of the
+old digest while a newer digest is pending cannot clear its busy marker, enable
+editing or dispatch a POST. Resolving the newer digest yields exactly one
+publication under the new connection. Old completion produces no extra write.
+
+| Executed follow-up command | Result |
+| --- | --- |
+| `npm --prefix apps/web test -- src/administration/RolesPanel.review.test.tsx src/AccessConsole.review.test.tsx src/administration/RolesPanel.test.tsx src/administration/roleContracts.test.ts` | PASS; 28/28 in 4 files, 3.63s, including both actual AccessConsole review tests and the two stronger preparation probes |
+| `npm --prefix apps/web test` after adding delayed receipt-hash unmount probe | PASS; 126/126 in 19 files, no failures/skips, 10.74s |
+| `PLAYWRIGHT_BROWSERS_PATH=$PWD/.local/cache/ms-playwright npm --prefix apps/web run test:e2e -- roles.spec.ts` | PASS; 2/2 actual browser/API cases, 5.0s |
+| `npm --prefix apps/web run lint`, `npm --prefix apps/web run typecheck`, `git diff --check` after all new probes | PASS |
+
+The implementation agent reports an initial fix typecheck failure from missing
+`useRef` initialization, corrected before `5c05d0b`; this reviewer did not execute
+that pre-commit state. Its independent post-fix typecheck passes as recorded
+above. The initial product failures and reviewer-test-only typecheck failure
+above remain preserved.
+
+The backend is unchanged since the independently passing eight-group run. It was
+not rerun in this second window; no claim of a new full backend regression run
+follows. Full foundation gates remain with the implementation agent. No further
+finding was identified within this bounded review, and all scope/threat-model,
+performance, memory-journal/ABA and external-deployment limits above remain.
+
+Source-inspected authoring limits: the 65,536-byte HTTP decoder ceiling includes
+the command envelope, while the definition contract's 65,536-byte limit concerns
+only the definition. A near-limit draft can therefore fail server admission even
+after local definition validation. The condition editor also accepts an escaped
+NUL that the server's PostgreSQL-compatible strict JSON decoder rejects. Both
+paths fail closed with 400 and cannot grant access or commit a publication;
+they remain local validation/usability limits, not proof that every locally
+accepted draft is server-admissible. This review did not separately execute
+these two boundary cases. The editor intentionally rejects unsafe JSON numeric
+representations, so no claim that all historical/server-valid definitions are
+editable follows.
