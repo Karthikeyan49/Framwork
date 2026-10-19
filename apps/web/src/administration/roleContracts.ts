@@ -170,11 +170,14 @@ export function decodeRoleMember(v: unknown, user: string): RoleMember {
 }
 
 export interface PreparedRolePublication { name: string; operationID: string; expectedVersion: number; active: boolean; hash: string; body: string; serializedDefinition: string }
+export async function roleDefinitionHash(definition: RoleDefinition): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(roleWireJSON(definition)));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 export async function prepareRolePublication(definition: RoleDefinition, contract: RoleContract, expectedVersion: number, active: boolean): Promise<PreparedRolePublication> {
   if (contract.root_protected || !Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || expectedVersion >= 1e9 || typeof active !== "boolean") throw new Error("Role cannot be published");
   const valid = decodeRoleDefinition(definition, contract.name, contract);
   const serializedDefinition = roleWireJSON(valid), operationID = crypto.randomUUID();
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(serializedDefinition));
-  const hash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  const hash = await roleDefinitionHash(valid);
   return { name: valid.name, operationID, expectedVersion, active, hash, serializedDefinition, body: JSON.stringify({ operation_id: operationID, expected_version: expectedVersion, active, definition: valid }) };
 }

@@ -7,7 +7,7 @@ import { config } from "../config";
 import { uuid } from "../preview/contracts";
 import type { AdministrationIntent, AdministrationPort } from "./Recovery";
 import { compileDraft, draftGrants, RoleEditor, type GrantDraft } from "./RoleEditor";
-import { prepareRolePublication, roleName, type RoleContract, type RoleMember, type RoleSummary, type RoleVersion } from "./roleContracts";
+import { prepareRolePublication, roleDefinitionHash, roleName, type RoleContract, type RoleMember, type RoleSummary, type RoleVersion } from "./roleContracts";
 import { useChange } from "./useChange";
 
 export const roleScope = (tenant: string, name: string) => `role:${tenant}:${name}`;
@@ -52,10 +52,11 @@ async function readRole(client: RolesClient, name: string, signal: AbortSignal):
 function RoleDefinitionPanel({ name, client, tenant, recovery, blocked }: { name: string; client: RolesClient; tenant: string; recovery: AdministrationPort; blocked: boolean }) {
   const [snapshot, setSnapshot] = useState<RoleSnapshot>(); const [grants, setGrants] = useState<GrantDraft[]>([]); const [active, setActive] = useState(false);
   const [confirmed, setConfirmed] = useState(false); const [bootstrapConfirmed, setBootstrapConfirmed] = useState(false);
-  const [loading, setLoading] = useState(true); const [preparing, setPreparing] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
-  const request = useRef<AbortController | undefined>(undefined); const lifetime = useRef<AbortController | undefined>(undefined); const preparingLock = useRef(false);
+  const [loading, setLoading] = useState(true); const [preparation, setPreparation] = useState<{ client: RolesClient; key: string }>(); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
+  const request = useRef<AbortController | undefined>(undefined); const lifetime = useRef<AbortController | undefined>(undefined); const preparingLock = useRef<{ client: RolesClient; key: string } | undefined>(undefined);
   const change = useChange(recovery, client); const scope = roleScope(tenant, name); const pending = recovery.pending[scope];
   const current = snapshot?.client === client ? snapshot : undefined;
+  const preparing = preparation?.client === client;
   const disabled = blocked || change.busy || preparing || loading;
   async function load() {
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
@@ -72,9 +73,11 @@ function RoleDefinitionPanel({ name, client, tenant, recovery, blocked }: { name
     return () => { alive.abort(); controller.abort(); request.current?.abort(); };
   }, [client, name]);
   async function publish() {
-    if (!current || disabled || pending || !confirmed || current.contract.root_protected || current.role?.bootstrap && !bootstrapConfirmed || preparingLock.current) return;
+    if (!current || disabled || pending || !confirmed || current.contract.root_protected || current.role?.bootstrap && !bootstrapConfirmed || preparingLock.current?.client === client) return;
     const alive = lifetime.current!; const captured = current; const key = crypto.randomUUID();
-    preparingLock.current = true; setPreparing(true); setError(""); setNotice(""); recovery.busy(key, true);
+    preparingLock.current = { client, key }; setPreparation({ client, key }); setError(""); setNotice(""); recovery.busy(key, true);
+    const releasePreparation = () => recovery.busy(key, false);
+    alive.signal.addEventListener("abort", releasePreparation, { once: true });
     try {
       const prepared = await prepareRolePublication(compileDraft(name, grants, current.contract), current.contract, current.role?.version ?? 0, active);
       if (alive.signal.aborted) return;
@@ -83,14 +86,18 @@ function RoleDefinitionPanel({ name, client, tenant, recovery, blocked }: { name
       setSnapshot(undefined); setConfirmed(false); setBootstrapConfirmed(false);
       if (result.ok) { setNotice(`Role ${name} version ${result.value.version} saved. Reload to review the current head before another publication.`); }
     } catch (e) { if (!alive.signal.aborted) { setSnapshot(captured); setError(e instanceof Error ? e.message : "Invalid role definition"); } }
-    finally { recovery.busy(key, false); preparingLock.current = false; if (!alive.signal.aborted) setPreparing(false); }
+    finally {
+      alive.signal.removeEventListener("abort", releasePreparation); releasePreparation();
+      if (preparingLock.current?.key === key) preparingLock.current = undefined;
+      if (!alive.signal.aborted) setPreparation((old) => old?.key === key ? undefined : old);
+    }
   }
   async function receipt(intent: AdministrationIntent) {
     if (!intent.operationID || disabled) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller; setLoading(true); setError(""); setSnapshot(undefined);
     try {
       const value = await client.operation(intent.operationID, controller.signal);
-      if (!publicationMatches(intent, value)) throw new Error("Publication receipt does not match the recorded intent");
+      if (!publicationMatches(intent, value) || await roleDefinitionHash(value.definition) !== intent.expectedHash) throw new Error("Publication receipt does not match the recorded intent");
       if (!controller.signal.aborted) { recovery.remember(intent.scope); setNotice(`Publication committed as version ${value.version}. Its receipt does not assert the current head; reload the role.`); }
     } catch (e) { if (!controller.signal.aborted) setError(e instanceof APIError ? administrationMessage(e) + " The publication outcome remains unproven." : "The receipt could not be verified. The publication outcome remains unproven."); }
     finally { if (!controller.signal.aborted) setLoading(false); }
