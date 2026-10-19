@@ -59,8 +59,7 @@ against the isolated M14 database stack reset from that tree.
 The synchronous provider phase was clamped to 6 s because `httpserver.New` ends a response at 10 s. It now follows
 the contract (`ai.APIWallClockCeiling` = `DefaultWallClock`, 60 s) and the route extends the write deadline of its own
 connection (`reply.nextWithin`, `http.NewResponseController`; ADR040 A5 and Amendment B.9). Run on the isolated M14
-stack reset from the changed tree, one process at a time. This change post-dates the "Final gate" above; the full
-integration suite, `make check`, `make test-unit`, `make build` and `make test-e2e` were **not** re-run for it.
+stack reset from the changed tree, one process at a time. This change was gated again on the merged tree (section "Final gate, re-run" below).
 
 | Command | Result |
 |---|---|
@@ -74,6 +73,21 @@ integration suite, `make check`, `make test-unit`, `make build` and `make test-e
 | `TestM12`, `TestM13` groups, `-race` | PASS, 251 s |
 | After merging the M13R-03 fix (ADR039 amendment 13): `go vet ./...`, `go vet -tags=integration ./tests/integration`, `gofmt -l`, `node scripts/verify-docs.mjs`, `go test -race` of `internal/policy`, `internal/promotion`, `internal/platform/...`, `internal/tenant` | PASS |
 | After the same merge, M14 stack reset from the merged tree: `TestM14`, `TestM13`, `TestM12` groups together, `-race` | PASS, 381 s |
+
+## Final gate, re-run after the 60 s change and the M13R-03 merge
+
+Run on 2026-10-19 on `claude/m14-ai-builder` at `3987baa` (code identical to `c05d769`; later commits change documentation
+only), against the isolated M14 database stack reset from that tree. The development identity keys were linked into the
+worktree, so the two environmental failures of the first run did not recur.
+
+| Command | Result |
+|---|---|
+| `make check` (docs checksums, format, vet, `mod verify`, web lint, typecheck) | PASS, 28 s |
+| `make test-unit` (Go `-race` over every package, script tests, web tests) | PASS, 208 s |
+| Full `go test -race -tags=integration ./tests/integration`, skipping `TestM8RedisACLStreamLossAndPendingRecovery` | PASS, 1653.7 s, no failure |
+| `make build` | PASS, 18 s |
+| `make test-e2e` (5 browser tests) | PASS, 25.3 s |
+| `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN (restarts the shared Redis; fails on isolated stacks by design) |
 
 ## Threat model and limits
 
