@@ -38,6 +38,21 @@ func NewScriptedProvider(steps ...ScriptStep) *ScriptedProvider {
 	return &ScriptedProvider{steps: append([]ScriptStep(nil), steps...)}
 }
 
+// Push appends steps to the script. Tests use it to script an answer that depends on
+// state that only exists after the provider was constructed.
+func (s *ScriptedProvider) Push(steps ...ScriptStep) {
+	s.mu.Lock()
+	s.steps = append(s.steps, steps...)
+	s.mu.Unlock()
+}
+
+// Calls is the number of requests received so far.
+func (s *ScriptedProvider) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.requests)
+}
+
 // Requests returns a copy of the requests received so far, oldest first.
 func (s *ScriptedProvider) Requests() []ProviderRequest {
 	s.mu.Lock()
