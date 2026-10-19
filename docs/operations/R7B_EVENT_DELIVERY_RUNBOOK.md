@@ -42,7 +42,8 @@ do not erase inboxes, forge receipts or rewrite due times operationally.
 
 ## Forward migration
 
-1. Identify and quiesce owned API event emitters, consumers and dispatchers.
+1. Identify and quiesce owned API event emitters, all workers (including
+   workflows), and dispatchers. The worker-context cutover lock is shared.
    Drain their database transactions. Do not kill unrelated
    services or flush Redis. Preserve event envelopes, attempts, inbox, replay
    history and broker references.

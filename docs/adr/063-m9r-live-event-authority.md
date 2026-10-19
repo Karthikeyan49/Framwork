@@ -65,8 +65,9 @@ fencing of old contexts from migration00056.
 Forward migration00057 first acquires transaction-held NOWAIT ACCESS EXCLUSIVE
 locks on the private worker-context and event envelope/inbox relations. An
 active old reader/binder causes migration failure, with no partial policy or
-data change. Operators must quiesce owned API event emitters, consumers and
-dispatchers, drain their database transactions, then retry. Never silently kill
+data change. Operators must quiesce owned API event emitters, all workers
+(including workflows), and dispatchers, drain their database transactions, then
+retry. The worker-context lock is shared. Never silently kill
 unknown sessions or infer rollback from a cancelled client response. This is a
 maintenance cutover, not an online revocation promise.
 

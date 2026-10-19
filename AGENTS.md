@@ -111,6 +111,12 @@ belongs to `internal/platform/app`.
 - ADR022: PostgreSQL owns envelope/lease/inbox state; brokers carry references.
   Exact attempts, delegated policy and atomic local effect/audit/receipt precede
   ACK. Preserve identity and evidence during dead-letter/replay.
+  ADR062–063 separate5s publication/15m receipt budgets with20 backed-off attempts.
+  Event jobs require RC with no shared-snapshot certificate; API/workflow stay RR.
+  Migration57 refuses active old readers/binders; drain owned emitters, all workers
+  and dispatchers. Preserve direct restrictive event RLS and inspect private helper
+  structure before the owner-executed semantic readiness probe. No online cutover
+  or raw-process liveness guarantee; see the R7b runbook.
 - ADR023: workflows pin IR/plan/input bytes. Preserve fenced leases, durable
   history, versioned signals, cancellation, recovery and compensation limits.
   Only `local.noop` is registered. M9R corrects the historic worker boundary;

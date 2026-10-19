@@ -1,157 +1,214 @@
 # R7b — Event publication and receipt outage budgets
 
-19 October 2026 (Asia/Kolkata). Starting checkpoint `0a4f7d2` was clean and
-directly matched `remediation/m9r-foundation` on the remote. Main remains
-`9da3f5f40fcdbed53ebe5af694cf0a14c600cbe7`. ADR062 was committed before code at
-`237ca65`; implementation checkpoints `8099055` and `1fdefa1`. No M10, main merge or production
-activation. Current status: verification IN PROGRESS, not a completion claim.
+19 October 2026 (Asia/Kolkata). **R7b STATUS: bounded PASS. Overall M9R STATUS:
+PARTIAL.** Starting checkpoint `0a4f7d2` was clean and directly matched the remote
+`remediation/m9r-foundation` branch. Main remains
+`9da3f5f40fcdbed53ebe5af694cf0a14c600cbe7`. Final production code is `031c8a1`,
+with independent tests and closure at `a15d629`. Final checks below ran against
+that stable source; subsequent completion edits are documentation only.
+No main merge, production activation or M10 work.
 
-## Change and boundaries
+## Result and boundaries
 
-The original publication and receipt deadlines were both five seconds, with
-five attempts. Actual pre-fix execution reproduced the review's outage problem:
-after30 seconds the published event and broker-denied event were both DEAD at
-five attempts, with no inbox receipt. The new `event-outage-v2` policy separates
-the five-second publication lease from a15-minute consumer receipt window.
-Twenty attempts use500ms exponential retry backoff capped at60 seconds. An
-expired publication lease waits backoff after expiry; a known publish failure
-waits backoff directly. Immediate known failures cannot consume a fresh
-20-attempt budget before about783.5 seconds. Actual dispatch delays extend that.
-Independent review then demonstrated stale RR/imported-snapshot event authority
-and a semantic retry-readiness omission. ADR063 was committed before the fix at
-`a98cb40`. Forward migration00056 introduces the final `event-outage-v3` contract:
-event-only READ COMMITTED authority and actual private helper-output validation.
-API and workflow stay RR; event executors are not certified shared snapshots.
-The nine focused review/readiness/54-to56 migration groups PASS32.867s, and
-`make migrate migration-status check test-unit` PASS with56 applied migrations
-and126 frontend tests. Independent fix closure and final gates are still pending.
-Re-verification found cached pre-cutover reads and unsafe helper invocation
-before denial. ADR063's cutover amendment was committed before code at3840245.
-Migration00057 adds a fail-closed NOWAIT drain barrier and exact restrictive
-event RLS policies; readiness checks helper structure before invoking it. The
-expanded review/readiness/preservation selection PASS44.544s. This is a drained
-maintenance cutover, not automatic online revocation of existing cached reads.
+The original five-second publication/receipt deadlines and five attempts
+reproduced premature dead-lettering during an actual 30-second outage. The final
+fixed database contract, `event-outage-v3`, provides:
 
-Forward migration00055 replaces only dispatcher SQL ports and the attempts
-upper-bound constraint, plus private retry/readiness contract functions. It does
-not rewrite issued states, deadlines, tokens, generations, attempts, bodies,
-inbox, business data or audit. Existing DEAD/LEGACY_PAUSED rows stay paused.
-SQL signatures, event schema1.0 and routing schema1.1 remain compatible. No
-compiler/release/workflow artifact is recompiled. New event readiness denies
-a missing/mismatched policy before dispatch. No new dependency or secret.
+- Five-second fenced publication leases, a 15-minute consumer receipt window,
+  and 20 attempts with 500ms exponential retry backoff capped at 60 seconds.
+- Backoff after an expired publication lease as well as known publish failure.
+  Immediate known failures cannot consume a fresh budget before about 783.5s;
+  dispatch delays extend that. Repeated receipt timeouts can occupy roughly five
+  hours plus dispatch delays. Neither number is an end-to-end delivery SLA.
+- Event-only READ COMMITTED authority at binding and subsequent SQL use, plus
+  direct restrictive event-envelope/inbox RLS. Raw RR, SERIALIZABLE and imported
+  snapshots cannot establish current event authority. API and workflow callbacks
+  keep REPEATABLE READ. Event executors do not certify a shared runtime snapshot.
+- Readiness checks actual private retry outputs and invalid-input behavior,
+  inspecting helper structure/owner/private grants before the owner-executed
+  semantic probe. Incorrect isolation policies also deny readiness.
 
-The receipt window is also the existing event capability's expiry. The assigned
-worker may resolve only that event/hash/token/generation during the longer
-window. Live assignment/membership/policy and per-use RLS remain. This does not
-extend workflow leases or grant business-record DML. Trusted Go consumer
-callbacks retain3-second transaction,2-second SQL and500ms lock budgets; these
-are not a new raw-credential processing-lease protocol or proof of liveness
-against a compromised process. Raw-role isolation remains a separate required
-regression boundary.
+The receipt deadline also bounds the assigned worker's exact event capability.
+Live revocation is visible on subsequent statements, not instantaneous
+cancellation of a statement already running. Trusted Go transaction/SQL/lock
+budgets remain 3s/2s/500ms. No database processing lease or raw-process
+lock/liveness guarantee was introduced. Exact tenant, actor, audience, event,
+hash, generation and token fences remain; no generic business-record DML grant.
 
-After broker stream loss, republication may wait the remaining15-minute receipt
-window. Repeated receipt timeouts may occupy roughly5 hours plus dispatch
-delays; no delivery SLA is claimed. A dead predecessor still blocks its own
-aggregate. Least-privilege replay, subscriber/payload contract expansion, faster
-broker-loss repair and alerting/retention remain open. Existing migrator-only
-reviewed replay preserves bodies/inbox/history; it was not exposed publicly.
+Broker stream loss can now delay republication by the remaining 15-minute
+receipt window. Dead predecessors still block their aggregate. Single-consumer,
+identifier/version-only event payloads and migrator-only reviewed replay remain.
+No production consumer, workflow renewal, external action or universal
+exactly-once guarantee is added. Local effects below are populated test-fixture
+effects, not independent ERP business acceptance.
 
-Source areas: `db/migrations/00055_m9r_event_outage_budgets.sql`,
-`internal/events/{delivery_policy,readiness}.go`, the event README, Makefile,
-new outage/policy integration fixtures and existing M8 retry/crash expectations.
-The [runbook](../operations/R7B_EVENT_DELIVERY_RUNBOOK.md) describes rollout,
-tradeoffs and recovery. Frozen migrations/source kits remain unchanged.
+## Decisions, migrations and preservation
 
-## Executed evidence
+[ADR062](../adr/062-m9r-event-outage-budgets.md) was committed before implementation
+at `237ca65`. [ADR063](../adr/063-m9r-live-event-authority.md) was committed before
+the isolation/probe fix at `a98cb40`; its cutover correction was committed before
+migration 57 at `3840245`. See the [runbook](../operations/R7B_EVENT_DELIVERY_RUNBOOK.md).
 
-The same ordinary30-second acceptance ran before and after the SQL change.
-It uses a fresh effective-target-verified disposable database and populated
-tenantB behind a unique worker role and Redis stream. Only a uniquely owned
-sender ACL loses XADD; no shared ACL, Redis service or customer stream changes.
-The dispatcher continues; the receiver is absent. No policy shortening or
-timestamp adjustment occurs in either real-duration test.
+| Forward migration | Change |
+| --- | --- |
+| 00055 | Retry/receipt policy, 20-attempt constraint and compatible dispatcher ports |
+| 00056 | Event RC authority and closed no-argument semantic policy probe |
+| 00057 | NOWAIT exclusive drain barrier and direct restrictive event RC policies |
+
+All 57 migrations are actually applied locally. Pushed migrations were never
+edited. No migration rewrites delivery states, deadlines, tokens, generations,
+attempts, envelope bytes, inbox, business records or audit. Existing DEAD and
+LEGACY_PAUSED rows stay paused. Event schema 1.0, routing 1.1 and SQL signatures
+remain compatible; no IR/release/workflow artifact is recompiled.
+
+The populated 54-to57 rehearsal applies three migrations, repeats idempotently,
+and preserves SHA-256 manifests across eight tables: deliveries, attempts,
+envelopes, inbox, replay, business records, outbox intents and audit. It includes
+COMPLETED/SENT/DEAD/LEASED/PENDING/LEGACY_PAUSED fixtures, including a genuine old
+five-attempt DEAD row. This is executed fixture evidence, not a customer-volume
+production migration claim.
+
+Function-only replacement at56 does not revoke every cached read in an already
+open old backend. Migration57 therefore requires a maintenance cutover: quiesce
+owned API event emitters, all workers (including workflows), and dispatchers;
+drain their transactions. Its NOWAIT locks refuse a live old reader/binder with
+SQLSTATE55P03. The test proves no applied57 marker, partial policy or changed
+manifest on failure, then successful installation after the owned transaction
+drains. It does not silently terminate unknown sessions or promise online
+revocation. Down migrations deliberately refuse destructive reversal.
+
+## Independent findings and fixes
+
+The [independent review](../verification/M9R_R7B_INDEPENDENT_REVIEW.md) preserves
+all attacks, failures and re-verification commands. Reviewers had exclusive
+execution windows against stable commits; implementation paused edits, builds
+and database/Redis tests during those windows.
+
+| Finding | Executed evidence and closure |
+| --- | --- |
+| IR-R7b-01 MEDIUM: stale raw worker snapshot | Before fix, revoked RR and imported snapshots read the exact event and accepted inbox INSERT after 5.2s; schema54 denied both. Age-only mitigation was rejected by a fresh importer aged 0.021s. Fresh RC enforcement fixed entry; further review exposed cached reads across 55-to56. The enforced drained57 cutover and direct RLS close the supported boundary. Historical read retention remains an explicit positive control |
+| IR-R7b-02 LOW: retry semantics not checked | Operator-only zero-delay helper drift passed readiness and exhausted 20 attempts in206ms. Actual output/input checks now deny all three runtime roles while direct helper execution stays private |
+| IR-R7b-03 LOW: unsafe helper invoked before denial | A VOLATILE marker-writing helper produced 75 writes through the owner probe before rejection. Reordered structural checks now deny with zero marker writes |
+
+Final independent selection: **PASS 32 top-level groups in 92.968s, zero failures
+or skips**. It includes raw credential attacks, RC/API/workflow isolation,
+prepared/imported snapshots, eight readiness-policy faults, private grants,
+semantic variants, cutover preservation, and retained crash/unknown-COMMIT/
+ordering/dedupe/replay/broker-loss checks. A fixture that simulates stale
+function authority still gets zero envelope visibility and denied inbox INSERT
+through the direct policies. Protection against an administrator able to replace
+both code and its probe is not claimed.
+
+## Actual duration and final gates
+
+Outage fixtures use effective-target-verified disposable databases, populated
+tenants, uniquely assigned worker credentials/Redis streams and fixture-owned
+sender/receiver ACLs. Only the owned sender loses XADD. Shared ACLs, services and
+customer streams are not modified. Real-duration tests do not alter timestamps
+or shorten policy. Fast boundary tests explicitly accelerate owned due times.
 
 | Check | Actual result |
 | --- | --- |
-| Pre-fix30-second acceptance | Expected FAIL;31.980s. At30.004 monotonic/30.113 PostgreSQL seconds: receipt DEAD/attempts5, broker DEAD/attempts5, successor attempts0, receipts0 |
-| Fixed same30-second acceptance | PASS;35.028s. At30.019 monotonic/30.123 PostgreSQL seconds: receipt SENT/attempts1, broker PENDING/attempts6, successor attempts0, receipts0. Recovery32.141s total, exactly3 inbox/effects/audits/intents;9 attempts retained |
-| Existing M8 plus new SQL/readiness/migration tests | PASS;17 groups54.520s, no failures/skips |
-| Expanded forward migration manifest | PASS;3.261s. Existing COMPLETED/SENT/DEAD/LEASED/PENDING/LEGACY_PAUSED states populated; SHA-256 manifests unchanged across delivery/attempt/envelope/inbox/replay/business-record/outbox/audit tables; migration55 idempotent |
-| First real600-second outage and recovery | FAIL;602.485s. At600.003 monotonic/600.111 PostgreSQL seconds, receipt SENT/attempts1, broker PENDING/attempts16, successor attempts0, receipts0. Original recovery error was unclassified; the later controlled `ErrNotReady` reproduction is separate evidence |
-| Second real600-second outage at1fdefa1 | PASS609.451s: actual600.004 monotonic/600.104 PostgreSQL seconds; recovery606.726 total,3 inbox/effects/audits/intents,19 retained attempts and2 unconfirmed redeliveries. A corrected-source rehearsal remains required after migration56 |
-| Independent adversarial review | Initial FAIL: MEDIUM raw stale snapshot authority and LOW semantic retry drift; fixes awaiting independent closure. See linked independent report |
-| Final full regression/build/browser/reference gates | NOT RUN yet |
+| Old-policy30s outage | Expected FAIL; 31.980s: at30.004 monotonic/30.113 PostgreSQL seconds, receipt and broker events DEAD at5 attempts; successor0, receipts0 |
+| First corrected30s outage | PASS; 35.028s: SENT/1, broker PENDING/6 at30s; exactly3 local facts of each kind after recovery |
+| First actual600s run | FAIL; 602.485s at recovery; absence completed600.003 monotonic/600.111 PostgreSQL seconds. Original error was unclassified, not conclusively diagnosed by a later reproduction |
+| Second actual600s run at 1fdefa1 | PASS; 609.451s; absence600.004/600.104, recovery606.726s total,3 facts of each kind,19 attempts,2 unconfirmed redeliveries. This predates review corrections |
+| Final actual600s run at a15d629 | **PASS; 609.388s**; absence600.002/600.123, SENT/1, broker PENDING/16, successor0, receipts0. Recovery606.446s total; exactly3 completed/inbox/effects/audits/immutable intents,19 attempts retained,2 unconfirmed redeliveries |
+| Full check/test/build | **PASS**:304 integration groups, 884.394s, zero failures/skips;126 frontend tests,9 Node tests; Go race/security/format/vet/module checks, TypeScript lint/typecheck, frontend and backend builds |
+| Application browsers | PASS; 11/11,26.9s |
+| Local sign-in browsers | PASS; 7/7,10.4s |
+| Numeric-read reference target | PASS; 76.921s: ten-client HTTP p95 158.903ms, p99 183.382ms,100 measurements, zero errors; unchanged750ms p95 limit |
+| Concurrent-write reference target | PASS; 62.094s:32 clients,6527 writes, p95 349.656ms, p99 393.181ms,108.29/s, zero errors; unchanged500ms p95 limit |
 
-Fast boundary tests intentionally accelerate only owned fixture due times;
-they verify all20 actual SQL backoffs, the20th terminal transition, no claim
-before due time, publication-versus-receipt expiry, stale completion, reissue
-fences and exact body identity. They do not replace the real600-second gate.
-Readiness drift and missing grants deny. App/worker claim ports and all runtime
-roles' direct private retry-helper calls fail with SQLSTATE42501 against
-populated fixtures. Existing crash, unknown-COMMIT, Redis loss, inbox dedupe,
-ordering, revocation and worker tests remain required.
+The read benchmark's deliberately restored original-policy baseline fails with
+SQLSTATE57014 under the unchanged 2s budget as expected; it is not a corrected
+query PASS. Reference-v2 was selected with `make reference-up` and verified on
+the connected PG18.6 cluster: 4CPU/8GiB/no swap, shared_buffers2GiB,
+effective_cache_size6GiB, work_mem4MiB and random_page_cost1.1. API and Docker
+share the parent's four CPUs. Workloads ran serially without competing builds or
+DB tests, forced GC/vacuum, client reductions or raised per-operation deadlines.
+
+Current read/write results are slower than recorded R7a p95 values 75.786ms and
+165.909ms/13334 writes. No cause or performance neutrality is claimed. Both
+unchanged gates pass for this bounded tier; wider profiling remains R7 work.
+The other six capacity targets are **NOT RUN in R7b**; retain R7a's prior all-eight
+evidence rather than describing it as a new rerun. No general workload or
+production capacity guarantee follows.
 
 ## Commands actually executed
 
-Logs are ignored under `.local/reports/r7b-*`. Commands run from
-`/workspace/Framwork`; PASS denotes executed results only.
+From `/workspace/Framwork`; ignored evidence logs are `.local/reports/r7b-*`.
+Repeated outcomes are distinguished below. Independent commands are separately
+listed in the linked review report.
 
-| Command | Result |
+| Command | Actual result |
 | --- | --- |
-| `./scripts/go.sh fmt ./tests/integration` | PASS; fixture formatting |
-| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestR7bConsumerOutageFirstThirtySeconds$' -v ./tests/integration` | Before: expected FAIL as above. After: PASS |
+| `./scripts/go.sh fmt ./tests/integration` | PASS |
 | `./scripts/go.sh fmt ./internal/events ./tests/integration` | PASS |
-| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=4m -count=1 -run '^Test(R7bSQL|R7bPublication|R7bReadiness|R7bForward|M8)' -v ./tests/integration` | PASS;17 populated groups54.520s |
-| `make check test-unit` | PASS; format/vet/module integrity/docs, Go race/security, Node9 and frontend126/126 |
-| `make migrate migration-status` | PASS; all55 migrations applied; no owned API/worker/dispatcher process was running at cutover |
-| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestR7bForwardMigrationPreservesIssuedStateAndEvidence$' -v ./tests/integration` | PASS;3.261s with expanded manifests |
-| `make test-event-outage` | First run FAIL602.485s at recovery; fixed600-second absence completed. Repeat required after correcting the harness |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestR7bConsumerOutageFirstThirtySeconds$' -v ./tests/integration` | Old-policy expected FAIL; 31.980s; initial fix PASS; 35.028s; cold diagnostic PASS; 35.049s; controlled confirmation-gap harness FAIL; 32.115s |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=4m -count=1 -run '^Test(R7bSQL\|R7bPublication\|R7bReadiness\|R7bForward\|M8)' -v ./tests/integration` | PASS; 17 groups54.520s |
+| `make check test-unit` | PASS, repeated after readiness/fixture corrections |
+| `make migrate migration-status` | PASS at55, then57; actual forward application |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestR7bForwardMigrationPreservesIssuedStateAndEvidence$' -v ./tests/integration` | PASS; 3.261s with expanded eight-table manifests at55 |
+| `make test-event-outage` | First FAIL; 602.485s; second PASS; 609.451s; final-source PASS; 609.388s |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=2m -count=1 -run '^TestR7bReadinessRequiresPrivateRetryDependency$' -v ./tests/integration` | Pre-fix FAIL; 3.259s; one cleanup-fixture FAIL; 6.165s; corrected PASS; 5.729s |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^Test(R7bReadinessRequires\|R7bConsumerOutageFirst)' -v ./tests/integration` | PASS; 39.795s after confirmation-gap harness fix |
+| `./scripts/go.sh fmt ./internal/events ./internal/platform/jobs ./internal/platform/postgres ./tests/integration` | PASS |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=4m -count=1 -run '^Test(R7bReview\|R7bForward\|R7bReadiness)' -v ./tests/integration` | PASS; 32.867s at56; expanded57 selection PASS; 44.544s |
+| `make migrate migration-status check test-unit` | PASS at56,126 frontend tests |
+| `sha256sum .local/reports/r3c-pre49-api` | PASS: actual retained artifact matches the pinned hash below |
+| `GOFLAGS=-v M9R_LEGACY_API_BINARY=/workspace/Framwork/.local/reports/r3c-pre49-api M9R_LEGACY_API_SHA256=03811f7cc694f33757aa4b005179f69f4ad6f94c525c6592a4e7cdf3e2537a19 make check test build` | PASS; 304 integration groups; retained-binary compatibility actually executed, no skips |
+| `make test-e2e` | PASS; 11 |
+| `make test-signin-e2e` | PASS; 7 |
+| `make reference-up` | PASS; actual connected profile verified by both benchmarks |
+| `make test-performance` | PASS; expected old-policy baseline failure retained |
+| `make test-write-performance` | PASS |
+| `make docs-verify` | PASS; source-kit checksums84+43 |
+| `git diff --check` | PASS |
 
-The cold-worker diagnostic passed35.049s; forcing connection renewal did not
-reproduce the failure and does not resolve the historic connection finding.
-A controlled200ms gap after real XADD and before SQL Finish reproduced the
-recovery failure in32.115s: the first event had completed, the next pointer was
-not yet confirmed, and its ticket was not ready/dead/completed. The harness
-now follows the existing RunConsumer contract for **only** `ErrNotReady`: leave
-the broker message pending, assert no new local effects/audit/inbox, and permit
-bounded reclaim. Unexpected errors still fail with closed diagnostic categories,
-not raw driver text. The same controlled gap then passes with two observed
-unconfirmed redeliveries and exactly3 effects/audits/inbox; combined selected
-check39.795s. The repeat600-second rehearsal must still pass.
+A controlled200ms gap between real XADD and SQL Finish reproduced `ErrNotReady`.
+The harness now follows the existing consumer contract: only that transient
+leaves the broker message pending for bounded reclaim, with no new local facts;
+all unexpected errors still fail. This does not conclusively classify the first
+600s failure. Forcing a cold connection passed but did not fix the historical
+connection finding. The custom-grant test once failed cleanup because it left
+its injected ACL; cleanup now revokes first. Its single leftover role was
+identified from the failed DROP and removed only after proving safe owned-test
+attributes, zero dependencies and zero connections.
 
-Root review also reproduced a LOW readiness omission: a missing private retry
-dependency made a populated claim fail while readiness still reported ready;
-an improper runtime grant was similarly accepted. Raw acceptance FAIL3.259s.
-Readiness now validates the helper's existence, owner, function/type/strictness,
-immutable/search-path contract and absence of base/current-runtime execution
-privileges. Missing, base-grant and custom-worker-grant cases pass5.729s.
-One earlier custom-grant probe failed6.165s during test-role cleanup because it
-had not revoked its injected ACL. The fixture now revokes before role removal;
-the single leftover role was identified from its actual failed DROP log and
-removed only after proving safe test-role attributes, zero dependencies and
-zero connections. No unrelated role or customer data was changed.
+Independent failed probes, the corrected callback fixture, old cached reads,
+unsafe-helper marker and client-cancelled DDL diagnostic are all preserved in
+the review report. The latter was replaced with a server55P03 plus rollback and
+post-drain positive control; cancellation alone did not prove DDL rollback.
 
-No arbitrary-driver/tracer panic, external provider deployment, production
-activation or fresh-cloud restoration is claimed. Their existing limits and
-deferred status remain in the finding ledger. No attempt budget, offered client
-count, SQL/lock/transaction deadline or latency gate is relaxed for verification.
+## Files, dependencies, recovery and remaining work
 
-## Recovery and remaining scope
+Changes include Makefile's opt-in outage target; migrations 55–57;
+internal/events policy/readiness/docs; explicit event transaction selection in
+internal/platform/jobs and internal/platform/postgres; M8 expectation updates;
+populated protocol/outage/review tests; ADR062–063; the runbook, reports and
+finding/plan links. No new dependency, secret, environment variable or customer
+DDL path was introduced. Only public source, tests, configuration and docs
+belong in Git; never `.env`, keys, ACL credentials, binaries, caches, generated
+builds or test logs. Those local artifacts remain ignored. Completion documentation is committed on
+`remediation/m9r-foundation` alongside all source/review commits; the final chat
+checkpoint records the exact directly verified pushed HEAD and clean status.
+Main is unchanged.
 
-Quiesce owned delivery, apply the additive migration, verify event readiness,
-then restart. Preserve all durable evidence and customer data. On failure stop
-delivery and forward-fix. Down migration intentionally refuses; restoring a
-five-attempt constraint can reject retained rows above five. Do not reset
-generations or erase receipts to force replay. The existing operator replay
-needs exact generation and an explicit reviewed reason; DEAD is not silently
-revived by deployment. Details and the longer broker-loss tradeoff are in the
-runbook. Only public source/tests/config/docs belong in Git; no `.env`, keys,
-credentials, binaries, caches or generated reports/test output.
+On a cutover failure stop, inspect migration state, identify/drain only owned
+transactions and forward-fix or retry the reviewed migration. Do not silently
+terminate unknown sessions. Never erase receipts, reset generations or revive
+DEAD rows to force progress. Old RR consumer binaries fail after the corrected
+cutover and must be upgraded. A metadata rollback cannot undo external effects.
 
-R6 authority/independent acceptance/production runtime, other R7 reliability and
-workflow lifecycle, replay privileges, subscriber/payload contracts, audit
-retention and DR remain open. Wider search/uniqueness lifecycle and the user's
-deferred real IdP/MFA/HTTPS-gateway deployment remain separate. This tranche
-does not complete M9R or authorize M10, production exposure or a main merge.
+Still open: R6 authenticated requirement/independent acceptance/promotion
+integration and production active-release execution; other R7 replay privileges,
+subscriber/payload contracts, workflow cycles/renewal/current-record approval,
+audit retention/DR, distributed quotas and profiling; broader search/uniqueness
+administration/removal/evolution. The injected driver/tracer-panic diagnostic
+remains a historical FAIL and was NOT RUN here; no arbitrary driver recovery is
+claimed. Unconfirmed connection and narrow worker-policy timing findings remain
+open despite passing regressions. The user-deferred real IdP/MFA/HTTPS-gateway
+verification, production activation and fresh-cloud restoration are NOT RUN.
 
-**R7b STATUS: verification IN PROGRESS. Overall M9R STATUS: PARTIAL.**
+**R7b STATUS: bounded PASS. M9R STATUS: PARTIAL. M10 remains paused.**

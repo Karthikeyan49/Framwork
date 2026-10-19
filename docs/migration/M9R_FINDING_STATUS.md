@@ -1,6 +1,22 @@
 # External review finding status
 
-Current checkpoint, 19 October 2026: [R7a protected request admission](M9R_R7A_IMPLEMENTATION_REPORT.md)
+Current checkpoint, 19 October 2026: [R7b event outage budgets](M9R_R7B_IMPLEMENTATION_REPORT.md)
+pass bounded independent review at product `031c8a1` and review `a15d629`.
+All three review findings are closed within the enforced drained-cutover scope.
+Final root check/test/build passes304 integration groups884.394s with zero
+failures/skips,126 frontend tests and9 Node tests; browsers pass11+7. The corrected
+source survives600 real seconds of consumer/broker outage and recovers exactly3
+effects/audits/inbox with19 retained attempts. Unchanged reference gates pass:
+ten-client read p95 158.903ms;32-client writes6527/p95 349.656ms, zero errors.
+These measurements are slower than R7a; no performance neutrality is claimed.
+Migrations55–57 preserve evidence;57 refuses an active old reader/binder and
+requires all owned workers (including workflows), emitters and dispatchers to
+drain. Event jobs use RC/direct restrictive RLS; API/workflow stay RR. The first
+600s failure and all independent failures remain in the reports. Replay,
+subscriber/payload contracts, other workflow/operations work and R6 remain open.
+**Overall M9R remains PARTIAL; no M10/main merge/production activation.**
+
+Previous checkpoint, 19 October 2026: [R7a protected request admission](M9R_R7A_IMPLEMENTATION_REPORT.md)
 passes bounded independent review at product `8f9805e`, review `cf45300`, and
 final root checks/build with 283 integration groups without failures/skips,
 126 frontend tests, browser suites 11 + 7 and all eight unchanged reference targets.
@@ -151,7 +167,7 @@ Historical timing measurements and audit percentages are not current guarantees.
 | Intermittent workflow fixture connection failure during R5d verification | One full run failed with `driver: bad connection` while advancing an approval fixture; the unchanged test then passed three focused repetitions | R7 connection/deadline diagnostics and repeatability follow-up; cause unconfirmed. Preserve the failed run and final whole-suite evidence in the R5d report; do not describe reruns as a reliability fix |
 | Worker policy receipt-scan capacity | R5c UI final regression hit the unchanged 2s statement timeout during EXPLAIN on the existing 96-receipt/63-node policy fixture; preceding query 1657.145ms. Three isolated unchanged-budget repetitions then passed (16.066s total), as did the final full rerun (worker first query 1146.412ms). Historical R5b already documented narrow timing headroom | R7 profile statement/identity/lease/anti-join costs and repeatability under representative load. Preserve first failure; aggregate suite timeout adjustment is separate and no capacity fix is claimed |
 | Injected database driver/tracer panic | Independent [R3d review](../verification/M9R_R3D_INDEPENDENT_REVIEW.md) reproduces database/sql rollback lock hang in a supervised subprocess; explicit diagnostic FAIL7.272s. Ordinary callback-panic rollback/reuse passes; default connector installs no custom tracer | IR-R3d-01 remains an open R7 infrastructure/process recovery limit; do not claim arbitrary driver panics recover or are bounded by the transaction deadline |
-| M8 short outage window / dead predecessor / one consumer | Still limited to documented preview delivery | R7 outage/replay controls; future tool/subscriber contracts must preserve ordering and idempotency |
+| M8 short outage window / dead predecessor / one consumer | [R7b](M9R_R7B_IMPLEMENTATION_REPORT.md) closes bounded publication/receipt outage budgets:5s/15m,20 backed-off attempts, actual600s outage/recovery and independently verified live RC/RLS authority plus drained cutover | Still preview delivery. Least-privilege replay/quarantine, dead-predecessor operation, subscriber/payload versioning and faster broker-loss repair remain R7; no raw-process liveness or universal external exactly-once claim |
 | Audit volume / retention / partitioning | Atomic, immutable audit retained; lifecycle not implemented | R7 measured audit policy and retention/archive design; do not delete receipts/evidence to retry |
 | M9 DAG, noop, lease/timer/history limits and copied IR | Documented limits retained | Workflow lifecycle expansion requires explicit design, renewal/fencing tests and capacity evidence |
 | Workflow approval uses start snapshot, not current document | Existing snapshot semantics retained | Before business side effects, bind current-document version or explicitly approve a snapshot and validate freshness |
@@ -178,8 +194,9 @@ search, aggregate/report UI, general query planning and uniqueness administratio
 removal/evolution remain separate. The bounded APIs do not complete product search
 or general query capacity. R5 local role UI and deployment preparation now pass;
 external provider verification is deferred. R7a local request admission now
-passes independent/full/browser/all-eight capacity gates; R6 and other R7 remain
-separate
+passes independent/full/browser/all-eight capacity gates. R7b outage budgets now
+pass independent/full/browser, actual600s recovery and representative unchanged
+read/write gates. R6 and other R7 remain separate
 product/security/operations deliverables. R5b closes the bounded raw-worker
 capability gap; its synthetic receipt test has a narrow timeout margin and is
 not a wider capacity guarantee. The independent report records which final

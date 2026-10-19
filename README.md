@@ -82,6 +82,17 @@ operator tuning. Proxy clients share the socket bucket, and replicas/restarts
 change the aggregate allowance: verified edge controls and durable telemetry
 remain deployment work. This does not close R6 or the rest of R7.
 
+[R7b event outage budgets](docs/migration/M9R_R7B_IMPLEMENTATION_REPORT.md) now
+pass independent review, a real ten-minute outage/recovery, full304-group
+regression/build, browser11+7 and unchanged numeric-read/32-client-write gates.
+Publication leases stay5s; receipts allow15 minutes, with20 backed-off attempts.
+Event authority requires READ COMMITTED and direct restrictive RLS; API/workflow
+snapshots remain RR. Migration57 requires draining owned emitters and all
+workers/dispatchers, and refuses active old readers. See ADR062–063 and the
+[cutover runbook](docs/operations/R7B_EVENT_DELIVERY_RUNBOOK.md). Broker-loss repair
+may wait15 minutes. Replay privileges, subscriber/payload contracts, workflow
+lifecycle, retention/DR, R6 and production runtime remain open; M9R is PARTIAL.
+
 Dataset schema plans and equal-schema
 preview bindings passed independent review. The [concurrent-write changes](docs/migration/M9R_R4_IMPLEMENTATION_REPORT.md)
 passed focused correctness/fault/browser checks and, after measured FIFO admission,

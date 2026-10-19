@@ -4,6 +4,13 @@ Date: 2026-10-13 (UTC). Status: **implementation authorized and in progress**.
 Evidence: [external review validation](../verification/M0_M9_REVIEW_VALIDATION.md).
 This is a focused follow-up to M9; historical milestone numbering is unchanged.
 
+Latest closure,19 October2026: [R7b](M9R_R7B_IMPLEMENTATION_REPORT.md) is bounded
+PASS after independent review, actual600s outage/recovery,304-group final
+regression/build, browser11+7 and unchanged read/write gates. R5 local scope and
+R7a remain complete; external identity is deferred by user choice. R6, other R7
+and wider product lifecycle remain open. Earlier dated checkpoints below are
+history, not claims that the whole remediation is complete. No M10/main merge.
+
 Earlier checkpoint progression (latest closure below): R0 and R1 are implemented; R1 independently passed the
 database credential/resource threat model. R3a was pulled forward because it
 does not depend on storage format. Its original reference floor passed; the
@@ -409,10 +416,23 @@ not establish distributed
 edge quotas, durable rejection retention or the other R7 requirements below.
 No M10 or production promotion is introduced.
 
-- Separate broker delivery and consumer processing deadlines; retry based on
-  outage budgets with backoff. Provide least-privilege reviewed replay/quarantine
-  controls and explain aggregate ordering consequences. Test at least a ten-minute
-  consumer outage without exhausting a five-attempt budget immediately.
+**R7b is also bounded PASS:** ADR062–063 and the
+[report](M9R_R7B_IMPLEMENTATION_REPORT.md) separate5s publication leases from15m
+receipt windows, with20 backed-off attempts and existing3s Go processing budgets.
+Event jobs require RC and direct restrictive RLS; API/workflow snapshots stay RR.
+All three independent findings close at product031c8a1/reviewa15d629. Corrected
+source survives600 real seconds and recovers3 exact local facts of each kind,
+retaining19 attempts. Final full304-group check/test/build, browser11+7 and
+unchanged numeric-read/32-client-write gates pass. Migration57 enforces a drained
+maintenance cutover and refuses active old readers/binders; no online revocation
+or raw-process liveness guarantee. First failed600s recovery remains unclassified
+and preserved. Current read/write p95 values158.903/349.656ms pass their original
+750/500ms limits but are slower than R7a; broader profiling remains open.
+
+- Provide least-privilege reviewed replay/quarantine controls and explain
+  dead-predecessor ordering consequences. Broker-loss repair may wait the
+  remaining15m receipt window; subscriber/recovery operations remain separate.
+  A database processing-lease protocol is not supplied by the bounded Go budget.
 - Version consumer/subscription and payload contracts. Keep reference-only broker
   messages and idempotent inbox behavior where appropriate; make business event
   payload semantics explicit rather than assuming record ID/version is enough.
@@ -477,7 +497,8 @@ start another milestone automatically.
 **Checkpoint status: R0/R1, R2a/R2b and bounded R2c preview evolution, bounded R4,
 governed numeric, text/civil-date, enum/reference, datetime/boolean and bounded full-text search R3b, R5a/R5b, R5c server and preview UI administration, R5d and
 R5e, bounded R5f sign-in, R5g local role UI/deployment preparation, bounded R3c
-uniqueness, bounded R3d SQL aggregation and R7a process-local request admission
+uniqueness, bounded R3d SQL aggregation, R7a process-local request admission and
+R7b publication/receipt outage budgets
 independently verified with final root gates. Production R2 execution, broader
 query/search/uniqueness lifecycle, external
 identity deployment and R6–R7 remain open. External provider verification is
