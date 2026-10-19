@@ -143,7 +143,7 @@ Authoring-time check: every human case must agree with the oracle, else the spec
 is rejected (a human declaring `500001 INR → finance approval` for `GT 500 USD` is
 rejected).
 
-### Verifier `verifier-v1` (vocabulary `acceptance-vocabulary-v1`)
+### Verifier `verifier-v2` (vocabulary `acceptance-vocabulary-v1`)
 Inputs: restored `compiler.Program` (never compiles), requirement set,
 acceptance spec, `ClassifyStorage` delta, tool catalog + plan pins, sandbox
 evidence. Executes: for threshold cases, set the money field and the case's other
@@ -175,6 +175,7 @@ path, tool exceeding `max_side_effect`.
 | risk | `Evaluate(latest policy, bound facts + current volume)` level ≤ bound | RISK_ESCALATED |
 | sandbox evidence | row exists, FROZEN, hash/IR/schema equal | EVIDENCE_INVALID |
 | IR version | still in `SupportedIRVersions()` | UNSUPPORTED_RUNTIME |
+| runtime components | recorded `ComponentsHash` equals the running binary's (`RuntimeComponents()`); empty never matches | RUNTIME_CHANGED |
 
 Sorted, deduplicated; pure over plain inputs; never stored.
 

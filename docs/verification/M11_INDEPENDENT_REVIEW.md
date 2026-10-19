@@ -388,3 +388,29 @@ h.run(def, mode, KindSend, testKey, map[string]any{"amount": "1.00"})
 - ADR037 #6 bundle bytes, recovery by `EXECUTE` revocation, UI.
 
 M11 review STATUS: PASS WITH FINDINGS
+
+---
+
+## Fix status (added by the fixes; the reviewer's text above is unchanged)
+
+Written by the builder agent on `claude/m11-fixes`; **not independently reviewed**. The `TestM11R*` tests were run
+on the tree without migration 00051 first and failed there (reasons in the table); with 00051 `TestM11` passes
+13/13 on the FIX stack. Design notes and the residuals are in ADR037 "Amendments" (2026-10-19).
+
+| Finding | Disposition | Commit | Test (integration) and the failure on the reviewed code |
+|---|---|---|---|
+| R01 MEDIUM | FIXED: freeze refuses while a send is in flight, an outcome is unknown or a workflow is in RECONCILE; ledger ports refuse a frozen sandbox; ledger rows are fenced | `6135391` | `TestM11RFreezeWaitsForTheLedgerToSettleAndTheFrozenLedgerNeverChanges` (reviewed code: freeze answered 200 mid-send), `TestM11RUnknownOutcomeBlocksTheFreeze`, `TestM11RLedgerPortsRefuseAFrozenSandbox` |
+| R02 MEDIUM | FIXED: `tool_begin` FOR SHARE vs `freeze_sandbox` FOR UPDATE, and the freeze runs READ COMMITTED (a plain lock under REPEATABLE READ is not enough: the freeze would wait, then aggregate from an older snapshot) | `6135391` | `TestM11RToolBeginAndFreezeSerialise` (reviewed code: froze with evidence ledger count 0 and live count 1; the begin commits inside the freeze's lock wait), `TestM11RFreezeRunsReadCommittedAndRefusesAnyOtherIsolation` |
+| R03 MEDIUM | FIXED in the database: fence on workflow instance/history/receipt/signal rows of a frozen sandbox; API 409 `sandbox_frozen`. Deviation: in-flight workflows do not block the freeze (an existing test freezes with one by design); they stay parked | `6135391` | `TestM11RFrozenSandboxWorkflowsAreFenced` (reviewed code: cancel answered 200, instance moved) |
+| R04 LOW | FIXED: fences on `record_links`, `dataset_bindings`, `dataset_generations`; no update of a frozen sandbox's dataset row. The manifest-column rewrite of the probe was already refused on the reviewed tree in this run; link insert/delete and rebind were accepted | `6135391` | `TestM11RFrozenSandboxIsReadOnlyAtTheSQLLayer` |
+| R05 LOW | FIXED for the role (owner/admin in both ports). RESIDUAL: the catalog and policy hashes stay port arguments (documented in ADR037 Amendment 3) | `6135391` | `TestM11RSandboxPortsRequireOwnerOrAdmin` (reviewed code: a plain member froze with forged hashes) |
+| R06 LOW | FIXED: `COLLATE "C"`, `manifest_order: bytewise` in new bodies; old bodies immutable, nothing recomputes them | `6135391` | `TestM11RManifestsAreOrderedBytewise` (reviewed code: stored hash differs from the bytewise one) |
+| R07 LOW | ALREADY FIXED by gateway F4 (`e26dfaf`); the unit test was extended to READ_ONLY and REROUTE ceilings | `dded11b` | `TestNarrowedTestAccountToolNeverResolvesItsSandboxCredential` (unit; passed before and after) |
+| Gateway F5-F8 | FIXED (see ADR036 amendment of 2026-10-19) | `9d68a54` (tests `dded11b`) | `TestSuccessResponseNeedsIdentityEncodingAndJSONMediaType`, `TestDefinitionHashCoversTheDecodedFixtureNotItsSpelling`, `TestScalarsRejectTrailingBytesAndHashNeverCollapses`, `TestDeniedAddressCorpus` (unit; failed on the reviewed code) |
+| Gateway F9 | DOCUMENTATION: ADR036 #6 and the README already agree (policy denial is permanent) | — | none (documentation) |
+| Integrity | the replaced functions keep every guard of their latest definitions; the fence triggers are present on 9 tables and part of the workflow readiness contract | `6135391` | `TestM11RMigration51KeepsEveryGuardOfTheFunctionsItReplaces` |
+
+Not covered: the tool-catalog and policy hash residual (R05); in-flight workflows of a frozen sandbox are parked, not
+retired (the worker keeps failing against the fence until its lease policy gives up); `tool_reconcile` still admits any
+non-viewer member (ADR036 open item C7); no concurrency test for a freeze racing a record write (the READ COMMITTED
+freeze makes the locks sufficient by construction, but only the tool-begin race is executed).

@@ -411,16 +411,31 @@ func TestSecondReleaseBindsAndVerifiesAgainstItsBase(t *testing.T) {
 
 	// Staleness is derived from the stored candidate.
 	_, baseSchema, _ := compiler.Storage(firstProgram)
+	_, currentComponents := RuntimeComponents()
 	bound := BoundState{BaseRelease: b.BaseRelease, BaseGeneration: b.BaseGeneration, BaseSchemaHash: b.Dependencies.BaseSchemaHash, PolicyBundleHash: b.Dependencies.PolicyBundleHash, ToolPins: b.Dependencies.ToolPins,
-		IRVersion: b.IR.Version, RiskPolicyVersion: b.Risk.PolicyVersion, RiskLevel: risk.High, RiskFacts: b.Risk.Facts, EvidenceHash: b.Sandbox.EvidenceHash}
+		IRVersion: b.IR.Version, RiskPolicyVersion: b.Risk.PolicyVersion, RiskLevel: risk.High, RiskFacts: b.Risk.Facts, EvidenceHash: b.Sandbox.EvidenceHash, ComponentsHash: b.RuntimeContract.ComponentsHash}
 	current := CurrentState{ActiveRelease: baseCandidate.Hash(), ActiveGeneration: 1, BaseSchemaHash: baseSchema, PolicyBundleHash: b.Dependencies.PolicyBundleHash,
-		ToolStatus: func(ToolPin) ToolPinStatus { return ToolOK }, SupportedIR: compiler.SupportedIRVersions(), Volume: b.Risk.Facts.Volume, Evidence: EvidenceState{Exists: true, Frozen: true, Hash: b.Sandbox.EvidenceHash}}
+		ToolStatus: func(ToolPin) ToolPinStatus { return ToolOK }, SupportedIR: compiler.SupportedIRVersions(), Volume: b.Risk.Facts.Volume, Evidence: EvidenceState{Exists: true, Frozen: true, Hash: b.Sandbox.EvidenceHash}, ComponentsHash: currentComponents}
 	if got := Staleness(bound, current); len(got) != 0 {
 		t.Fatalf("a fresh candidate is stale: %v", got)
 	}
 	current.ActiveGeneration = 2
 	if got := Staleness(bound, current); !reflect.DeepEqual(got, []StaleReason{StaleBaseGeneration}) {
 		t.Fatalf("%v", got)
+	}
+	current.ActiveGeneration = 1
+
+	// A candidate recorded by a binary with another component set (here the
+	// workflow DSL list before the tool-plan DSL) is self-consistent, so it
+	// still restores, but it reads stale: it is rebuilt, never revived.
+	older := b.RuntimeContract.Components
+	older.WorkflowDSL = append([]string{}, older.WorkflowDSL[:len(older.WorkflowDSL)-1]...)
+	if hashComponents(older) == b.RuntimeContract.ComponentsHash {
+		t.Fatal("the older component set must hash differently")
+	}
+	bound.ComponentsHash = hashComponents(older)
+	if got := Staleness(bound, current); !reflect.DeepEqual(got, []StaleReason{StaleRuntimeChanged}) {
+		t.Fatalf("an older component set: %v", got)
 	}
 }
 

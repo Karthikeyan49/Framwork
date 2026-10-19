@@ -45,12 +45,17 @@ var (
 		netip.MustParseAddr("fd00:ec2::23"):    true,
 	}
 	// 0/8 "this network" (unspecified), 224/4 multicast, 240/4 reserved
-	// including the limited broadcast 255.255.255.255.
-	neverV4 = mustPrefixes("0.0.0.0/8", "224.0.0.0/4", "240.0.0.0/4")
-	// Loopback, RFC1918, link-local, CGNAT, IETF protocol assignments,
+	// including the limited broadcast 255.255.255.255, and the whole IPv4
+	// link-local block 169.254.0.0/16 (AWS, GCP, Azure, ECS, EKS, Tencent and any
+	// provider that follows the convention keep their metadata services there)
+	// plus the Azure WireServer 168.63.129.16 (gateway review F8).
+	neverV4 = mustPrefixes("0.0.0.0/8", "169.254.0.0/16", "168.63.129.16/32", "224.0.0.0/4", "240.0.0.0/4")
+	// AWS's IPv6 service block (instance metadata, DNS, time) is never allowed.
+	neverV6 = netip.MustParsePrefix("fd00:ec2::/32")
+	// Loopback, RFC1918, CGNAT, IETF protocol assignments,
 	// documentation, benchmarking and the deprecated 6to4 relay anycast.
 	internalV4 = mustPrefixes(
-		"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+		"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
 		"172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24",
 		"192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
 	)
@@ -99,7 +104,16 @@ func classifyAddress(ip netip.Addr) addressClass {
 		}
 		return addressPublic
 	}
+	// ISATAP interface identifiers (0000:5efe or 0200:5efe followed by an IPv4 address)
+	// reach the embedded IPv4 whatever the prefix: a non-public one is never allowed.
+	if b := ip.As16(); b[8]&0xfd == 0 && b[9] == 0 && b[10] == 0x5e && b[11] == 0xfe {
+		if classifyAddress(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})) != addressPublic {
+			return addressNever
+		}
+	}
 	switch {
+	case neverV6.Contains(ip):
+		return addressNever
 	case ip == v6Loopback:
 		return addressInternal
 	// NAT64 prefixes begin with a zero byte, so they must be matched before

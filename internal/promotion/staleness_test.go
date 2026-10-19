@@ -20,9 +20,9 @@ var (
 func freshPair() (BoundState, CurrentState) {
 	pin := ToolPin{"tool.a.b", "1.0.0", h3}
 	facts := risk.Facts{Storage: risk.StorageFact{Class: risk.ClassEqual, Reasons: []string{}}, Volume: risk.VolumeNone, Tools: []risk.ToolFact{}, ToolDeclarations: []risk.ToolDeclFact{}}
-	bound := BoundState{BaseRelease: h1, BaseGeneration: 4, BaseSchemaHash: h2, PolicyBundleHash: h3, ToolPins: []ToolPin{pin}, IRVersion: "1.2.0", RiskPolicyVersion: risk.PolicyV1, RiskLevel: risk.Low, RiskFacts: facts, EvidenceHash: h1}
+	bound := BoundState{BaseRelease: h1, BaseGeneration: 4, BaseSchemaHash: h2, PolicyBundleHash: h3, ToolPins: []ToolPin{pin}, IRVersion: "1.2.0", RiskPolicyVersion: risk.PolicyV1, RiskLevel: risk.Low, RiskFacts: facts, EvidenceHash: h1, ComponentsHash: h2}
 	current := CurrentState{ActiveRelease: h1, ActiveGeneration: 4, BaseSchemaHash: h2, PolicyBundleHash: h3, ToolStatus: func(ToolPin) ToolPinStatus { return ToolOK },
-		SupportedIR: []string{"1.0.0", "1.2.0"}, Volume: risk.VolumeNone, Evidence: EvidenceState{Exists: true, Frozen: true, Hash: h1}}
+		SupportedIR: []string{"1.0.0", "1.2.0"}, Volume: risk.VolumeNone, Evidence: EvidenceState{Exists: true, Frozen: true, Hash: h1}, ComponentsHash: h2}
 	return bound, current
 }
 
@@ -64,6 +64,9 @@ func TestStalenessReasons(t *testing.T) {
 		{"evidence not frozen", func(b *BoundState, c *CurrentState) { c.Evidence.Frozen = false }, []StaleReason{StaleEvidenceInvalid}},
 		{"evidence hash differs", func(b *BoundState, c *CurrentState) { c.Evidence.Hash = h2 }, []StaleReason{StaleEvidenceInvalid}},
 		{"unsupported ir", func(b *BoundState, c *CurrentState) { c.SupportedIR = []string{"1.0.0"} }, []StaleReason{StaleUnsupportedRuntime}},
+		{"runtime components changed", func(b *BoundState, c *CurrentState) { c.ComponentsHash = h3 }, []StaleReason{StaleRuntimeChanged}},
+		{"candidate without a components hash fails closed", func(b *BoundState, c *CurrentState) { b.ComponentsHash = "" }, []StaleReason{StaleRuntimeChanged}},
+		{"binary without a components hash fails closed", func(b *BoundState, c *CurrentState) { b.ComponentsHash, c.ComponentsHash = "", "" }, []StaleReason{StaleRuntimeChanged}},
 		{"several, sorted", func(b *BoundState, c *CurrentState) {
 			c.PolicyBundleHash, c.Evidence.Frozen, c.SupportedIR = h1, false, nil
 		}, []StaleReason{StaleEvidenceInvalid, StalePolicyChanged, StaleUnsupportedRuntime}},

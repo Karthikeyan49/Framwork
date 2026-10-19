@@ -22,7 +22,7 @@ import (
 
 // VerifierVersion names the verification procedure. A change to the checks needs
 // a new version, never an edit.
-const VerifierVersion = "verifier-v1"
+const VerifierVersion = "verifier-v2"
 
 // Outcomes. Precedence is BLOCKED > FAIL > PASS.
 const (

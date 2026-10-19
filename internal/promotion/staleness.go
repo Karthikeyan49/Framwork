@@ -20,6 +20,7 @@ const (
 	StaleRiskEscalated      StaleReason = "RISK_ESCALATED"
 	StaleEvidenceInvalid    StaleReason = "EVIDENCE_INVALID"
 	StaleUnsupportedRuntime StaleReason = "UNSUPPORTED_RUNTIME"
+	StaleRuntimeChanged     StaleReason = "RUNTIME_CHANGED"
 )
 
 // ToolPinStatus is the live state of one pin in the operator catalog.
@@ -44,6 +45,8 @@ type BoundState struct {
 	RiskLevel         risk.Level
 	RiskFacts         risk.Facts
 	EvidenceHash      string
+	// ComponentsHash is the runtime components hash recorded in the candidate.
+	ComponentsHash string
 }
 
 // EvidenceState is the live state of the candidate's sandbox evidence.
@@ -64,6 +67,8 @@ type CurrentState struct {
 	SupportedIR      []string
 	Volume           string
 	Evidence         EvidenceState
+	// ComponentsHash is the running binary's runtime components hash.
+	ComponentsHash string
 }
 
 // Staleness derives, never stores, why a candidate is stale. An empty (non-nil)
@@ -114,6 +119,12 @@ func Staleness(bound BoundState, current CurrentState) []StaleReason {
 	}
 	if !supported {
 		set[StaleUnsupportedRuntime] = true
+	}
+	// A candidate was verified against the component versions it recorded (DSLs,
+	// verifier, risk policies, specs). Any other running set means it is rebuilt,
+	// never revived; an empty hash on either side never matches.
+	if bound.ComponentsHash == "" || bound.ComponentsHash != current.ComponentsHash {
+		set[StaleRuntimeChanged] = true
 	}
 	out := make([]StaleReason, 0, len(set))
 	for r := range set {

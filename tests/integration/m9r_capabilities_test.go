@@ -230,7 +230,7 @@ func TestM9REventConsumerUsesLiveTenantCapabilities(t *testing.T) {
 		t.Fatal("revoked event consumed", err)
 	}
 	var effects, receipts int
-	if err := f.operator.QueryRow(`SELECT (SELECT count(*) FROM runtime.m8_test_effects WHERE tenant_id=$1),(SELECT count(*) FROM runtime.event_inbox WHERE tenant_id=$1)`, f.tenantA).Scan(&effects, &receipts); err != nil || effects != 1 || receipts != 1 {
+	if err := f.operator.QueryRow(`SELECT (SELECT count(*) FROM m8_fixture.effects WHERE tenant_id=$1),(SELECT count(*) FROM runtime.event_inbox WHERE tenant_id=$1)`, f.tenantA).Scan(&effects, &receipts); err != nil || effects != 1 || receipts != 1 {
 		t.Fatal("revoked event committed effects", err, effects, receipts)
 	}
 }

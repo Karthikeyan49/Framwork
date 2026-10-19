@@ -168,7 +168,8 @@ recomputation at approval is the backstop (see §4 limit).
 `Staleness(bound, current)` returns sorted reasons: `BASE_CHANGED`,
 `BASE_GENERATION_ADVANCED`, `SCHEMA_CHANGED`, `POLICY_CHANGED`, `TOOL_CHANGED`,
 `TOOL_REMOVED`, `TOOL_TENANT_DENIED`, `RISK_ESCALATED`, `EVIDENCE_INVALID`,
-`UNSUPPORTED_RUNTIME`. The detail route returns `stale` and `stale_reasons` (the list route does not);
+`UNSUPPORTED_RUNTIME`, `RUNTIME_CHANGED` (the runtime-components hash recorded in the
+candidate differs from the running binary's, or either is empty). The detail route returns `stale` and `stale_reasons` (the list route does not);
 M13 re-evaluates inside its
 approval and activation transactions. Source head moving is not stale; a stale
 candidate is rebuilt to a new hash and never revived.
@@ -282,10 +283,108 @@ intent is unchanged.
    fields and 6 values per field); a mined world that cannot be evaluated or that
    ends in `failed` is skipped, never blocking and never a pass; (d) a plan-only
    workflow change around a pinned tool inherits the tool's level (F7).
+   (e) ratios of the threshold (1/4, 1/2, 3/4, 5/4, 3/2, 3, 5, 7 times, rounded to the currency's minor unit)
+   catch an exemption band between the boundary probes (re-verification FR-02). The verifier version is now
+   `verifier-v2` (a change to the checks needs a new version); candidates recorded under `verifier-v1` read stale.
    Still true: this is a bounded mechanical floor, not a proof. Decimal, money,
    date and datetime fields other than the threshold are not mined, two-field
    interactions beyond one extra value per run are not explored, and a bypass that
    needs a pinned value is outside what the requirement promises.
+
+## Amendments after the independent API review (2026-10-19)
+
+Recorded by the fixes for `docs/verification/M12_API_INDEPENDENT_REVIEW.md` (F1–F12; the
+"Fix status" section of that report maps every finding to its commit and test). These fixes were
+written by the builder and are NOT independently reviewed.
+
+10. **Recomputation is memoised and bounded (§1, F9).** Restoring a stored candidate (risk,
+    verification, dependency hashes) and verifying it against its own base (diff, storage class,
+    evolution plan) are pure functions of immutable, content-addressed bytes and of this binary.
+    `promotion.Recompute` therefore (a) remembers a SUCCESSFUL outcome under the SHA-256 of the exact
+    bytes that were verified plus the base program hash, the supported-IR set and the runtime-components
+    hash (a hit proves "these very bytes verified", nothing else; the bytes are read under the caller's
+    row-level security on every request); (b) lets concurrent callers of one key share one computation;
+    (c) admits at most `max(2, GOMAXPROCS/2)` cold computations per process and half of that (at least 1)
+    per tenant, refusing the rest at once with a typed `release_busy` answer (429 for the tenant bound,
+    503 for the process bound, both with `Retry-After`; nothing computed or written; audited with the closed
+    refusal code `RECOMPUTE_BUSY_TENANT|PROCESS`). Staleness, approvals, the active pointer, role snapshots
+    and tool status are NEVER remembered; a failure is never remembered; the M13 approve and activate paths
+    load through the same `LoadCandidate`, so they stay fail closed (a busy refusal decides nothing). A
+    request that outlives the 3 s transaction budget answers a typed audited 503 `release_timeout` with
+    `Retry-After`. A candidate just built is remembered, so its first read is a hit. Measured on the
+    reviewer's fixture (14 bulk entities x 30 fields, 1000 acceptance cases, a base release, shared 4-core
+    host): ten parallel detail reads of a viewer went from ten 503 after eight attempts each (36 s, a cheap
+    `GET /access` waiting 3.6 s) to ten 200 in 0.22 s; the embedded tzdata digest is computed once (the
+    largest single cost of a restore). Residual: the memo is per process (a restart or another replica starts
+    cold), and a cold computation of a very large candidate still costs about 0.35 s of one core.
+11. **Release API hardening (F1, F2, F4, F5, F6, F7, F8, F10, F11, F12).**
+    (F1) a stage writes exactly one audit row, `release.candidate_staged`, correlated with the request and the
+    decision; the M6R store-level `release.staged` row is gone (Amendment 8 now describes what is written).
+    (F2) role operations are selected by the registered pattern, not by a path suffix, so a release artifact
+    whose last segment is `roles` is authorized and audited as a release read. (F12) a malformed application id
+    of an authenticated request is audited as `<action>.rejected` with its tenant, not as
+    `authentication.denied`. (F6) a rejected build records the closed refusal code (`VERIFICATION_FAILED`,
+    `STORAGE_BREAKING`, ...) and the hash of the risk assessment in the audit state, besides the report hash;
+    never free text. (F7) `POST candidates` and `POST acceptance-specs` are idempotent by content and are
+    repeated (at most three attempts inside the 4 s budget) after a known abort, so concurrent identical
+    requests converge on one 201 and replays; the compare-and-set append of requirement sets is not repeated
+    (one winner, the others 409). Under the admission bound of Amendment 10 a concurrent identical build of
+    one tenant may instead be answered 429 with `Retry-After`; its retry is the replay. (F10) the head above
+    `policy.MaxRoleHeads` is refused at publication (409 `role_limit`; heads cannot be retired, deactivated
+    heads count); a tenant that is above the bound anyway (a raced publication, a direct call of the
+    definer port, which still accepts it) gets a typed, audited 409 `release_policy_snapshot_too_large`
+    instead of an unaudited 503. The database does not enforce the bound (no migration was needed).
+    (F4, documentation) the effective body limit of every release authoring request is
+    `metadata.MaxBytes + 4096` = 266,240 bytes, 32 nesting levels and 16,000 nodes (`metadata.DecodeJSON`),
+    inside the 1 MiB transport cap; `intent.MaxAcceptanceBytes` (1 MiB) and the database CHECK are storage
+    upper bounds this route cannot reach. The same envelope bounds the M11 sandbox witness, which carries the
+    compiled IR: applications whose source is roughly above half of the metadata limit cannot be sandboxed and
+    so cannot be built. (F8, documentation) §6 "the base is the current active release or absent" means as of
+    the build's REPEATABLE READ snapshot; a candidate staged against a base that was replaced by a commit
+    during the build reads STALE (`BASE_CHANGED`) on its first detail read and M13 refuses it at approval and
+    activation. (F11, documentation) release reads disclose the opaque user ids of the requester, the
+    decider, the acceptance author, the sandbox freezer and the source author to every role that holds the read
+    action; approvers need them to check separation of duties. The membership list stays owner/admin only.
+    (F5) the shipped tests now exercise stored custom roles through `PolicyLoader` and assert the cross-tenant
+    refusal with a user that belongs to the other tenant only.
+
+## Amendment after the independent database review (2026-10-19)
+
+Recorded by the fixes for `docs/verification/M12_DB_INDEPENDENT_REVIEW.md` (the "Fix status" section of that
+report maps every finding to its disposition, commit and test). Enforced by migration 00052 (additive,
+forward-only; 48, 49 and 50 unchanged). Written by the builder agent, NOT independently reviewed.
+
+12. **The definer ports read the bytes Go reads (F2), replay is idempotent (F3), embedded documents are the
+    stored rows (F4), the worker guard is derived (F5).**
+    (F2) `append_requirements`, `author_acceptance` and `stage_candidate` refuse (22023) a body that is not one
+    object without surrounding whitespace, that has a duplicate member at any depth (the jsonb view keeps the last
+    one and is case-sensitive, Go's decoder is case-insensitive), a number spelled with an exponent or a leading
+    zero, a key outside the key set of the Go type (bundle, source, ir, storage, risk, requirements, acceptance,
+    sandbox, verification; requirement set; acceptance spec: `control.candidate_body_keys`, compared with the Go
+    struct tags in both directions by `TestM12RBodyKeyListsMatchTheGoStructs`), or a wrong scalar type in a field the
+    port reads. This closes the F1 chain (a self-consistent body whose index row disagrees with the bytes) and the
+    activation/rollback ports' reads of `Storage.class` and `Risk.Rollback` from the jsonb view. **Residual, unchanged:**
+    the database still cannot recompute risk, verification, the diff or the IR; a compromised API process can stage a
+    self-consistent forged body, and the Go recomputation (`Restore`, `VerifyWithBase` at load, at approval and at
+    activation) is the control. The migration comment that every index column is "copied from the verified body" is
+    corrected: the index is copied from a body the database has checked for form and for the bindings listed in
+    Amendments 4 and 7, not verified.
+    (F3) staging bytes that were already staged by the same requester returns `false` (a replay) whatever happened to the
+    base since; the check precedes the base check. A body that was never staged and names a base that is no longer
+    current is still refused (55000), and a replay by another member is still refused (22023). The API never reaches
+    the replay-after-the-base-moved path with an honest client: it rebuilds against the current base, which is a new
+    hash. Amendment 8 (`release.candidate_replayed`) is now true at the database as well.
+    (F4) the source document, the requirement set and the acceptance spec a bundle embeds must equal the stored rows
+    as JSON values, not only their hashes (55000 otherwise). The IR is not stored by the database and stays a
+    Go-side check. (F5) `control.worker_grants_safe()` is false when the worker effectively holds any privilege that
+    `control.worker_guard_granted()` does not list on any relation of control, runtime, iam and audit (table and
+    column level, REFERENCES and TRIGGER included), or CREATE on one of those schemas; a relation added by a later
+    migration is refused by default, and a migration that deliberately gives the worker a privilege must add it to the
+    list (`TestM12RWorkerGuardClassifiesEveryRelation` compares the list with the live catalog). Test fixtures that
+    grant the worker anything (the M8 consumer-effects table) are revoked by the tests that assert the guard is safe.
+    F1 (direct approval/activation by `framework_app`) was closed by migration 00049 (`TestM13AdversarialLegacyWritePathsAreClosed`,
+    `TestM13PortsCloseTheM6RWriteGap`) and F6 (worker-asserted approval flag) by migration 00050 (`TestM10R02*`);
+    neither is touched here.
 
 ## Consequences
 

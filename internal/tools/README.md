@@ -28,7 +28,10 @@ keys, unknown fields, trailing data and unsafe definitions:
 - sandbox behavior; a sandbox endpoint differs from production and a sandbox
   secret is never the production secret.
 
-Each definition has a canonical hash. Plans pin it, and `Catalog.Lookup` never
+Each definition has a canonical hash. It covers the decoded `simulated_output`
+fixture, not the spelling of its values (an escape, padding or a null optional
+member does not re-pin a tool); a definition that cannot be encoded hashes to
+`tools.Unhashable`, never to a digest. Plans pin it, and `Catalog.Lookup` never
 lets a changed definition satisfy an existing pin. DSL 2.2.0 plans also pin the
 database-enforced contract (`workflow.ToolContractOf`: approval, side effect,
 idempotency/retry mode, replay window, settle interval, timeout).
@@ -70,13 +73,16 @@ sent only as `Authorization: Bearer`.
 
 Hosts are resolved by the gateway and **every** answer is validated; the
 connection goes to a validated literal address, so there is no second lookup to
-rebind. `DeniedAddress` refuses loopback, unspecified, RFC1918, link-local
-(including cloud metadata), CGNAT, multicast, broadcast, reserved, IPv6 ULA,
-documentation and benchmarking ranges, plus IPv4-mapped, NAT64 and 6to4 forms
-carrying a denied IPv4 address. Internal ranges are allowed only for an endpoint
+rebind. `DeniedAddress` refuses loopback, unspecified, RFC1918, link-local,
+CGNAT, multicast, broadcast, reserved, IPv6 ULA, documentation and benchmarking
+ranges, plus IPv4-mapped, NAT64, 6to4 and ISATAP forms carrying a denied IPv4
+address. Internal ranges are allowed only for an endpoint
 declared `internal` in a process started with `AllowInternal` (production
-composition rejects it). Metadata addresses, unspecified, multicast and broadcast
-stay denied even then. The address is re-checked at `connect(2)`.
+composition rejects it). Unspecified, multicast, broadcast, the whole IPv4
+link-local block 169.254.0.0/16 (where AWS, GCP, Azure, ECS, EKS and Tencent keep
+their metadata services), 100.100.100.200, 192.0.0.192, AWS's fd00:ec2::/32 and the
+Azure WireServer 168.63.129.16 stay denied even then. The list is a best-effort
+floor, not a proof that no credential endpoint is reachable. The address is re-checked at `connect(2)`.
 
 The transport ignores proxy environment variables, follows no redirects, disables
 compression and keep-alive reuse, speaks HTTP/1.1 over TLS 1.2+ with verification
@@ -95,7 +101,7 @@ connector limit, and parses a single strict flat JSON object (no duplicate keys)
 | 408, 409, 5xx; 3xx on a write | `UNKNOWN` `server_error` |
 | Failure after the connection was used; caller cancel | `UNKNOWN` `transport` |
 | Deadline after the connection was used | `UNKNOWN` `timeout` |
-| 2xx with oversize or invalid body | `UNKNOWN` `invalid_response` |
+| 2xx with oversize or invalid body, a content coding other than identity, or a media type other than `application/json` (charset utf-8 only) | `UNKNOWN` `invalid_response` |
 | 2xx with a valid typed body | `SUCCESS` with the declared output only |
 
 These are attempt outcomes. The ledger (`control.tool_finish`, ADR036

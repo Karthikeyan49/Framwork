@@ -156,7 +156,11 @@ func (Store) Candidates(ctx context.Context, q postgres.Executor, a tenant.Acces
 // are restored (risk, verification and every base-independent derivation are
 // recomputed) and then verified against the candidate's own base release (diff,
 // storage class and evolution plan are recomputed) before anything is returned.
-func (Store) LoadCandidate(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash string, supported []string) (Candidate, CandidateRow, error) {
+// Both recomputations are pure functions of immutable bytes, so a success is
+// remembered under their digests (Recompute); the bytes are read from the database
+// under the caller's row-level security on every call, and nothing that depends on
+// live state is remembered.
+func (st Store) LoadCandidate(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash string, supported []string) (Candidate, CandidateRow, error) {
 	if !ValidHash(hash) {
 		return Candidate{}, CandidateRow{}, ErrNotFound
 	}
@@ -168,7 +172,8 @@ func (Store) LoadCandidate(ctx context.Context, q postgres.Executor, a tenant.Ac
 	if err != nil {
 		return Candidate{}, CandidateRow{}, err
 	}
-	c, err := Restore(raw, hash, supported)
+	rc := st.Recompute.orDefault()
+	got, err := rc.restore(ctx, raw, hash, supported)
 	if err != nil {
 		return Candidate{}, CandidateRow{}, err
 	}
@@ -176,35 +181,43 @@ func (Store) LoadCandidate(ctx context.Context, q postgres.Executor, a tenant.Ac
 	// candidate's own base and finish the recomputation before anything is shown
 	// or decided on.
 	resolve := func(baseHash string) (compiler.Program, error) {
-		base, e := (Store{}).Release(ctx, q, a, app, baseHash, supported)
-		if e != nil {
-			return compiler.Program{}, e
-		}
-		return base.Program(supported)
+		_, program, e := st.ReleaseProgram(ctx, q, a, app, baseHash, supported)
+		return program, e
 	}
-	if err = c.VerifyWithBase(resolve, supported); err != nil {
+	if err = rc.verifyWithBase(ctx, got, resolve, supported); err != nil {
 		return Candidate{}, CandidateRow{}, err
 	}
 	row, err := scanCandidate(q.QueryRowContext(ctx, `SELECT `+candidateColumns+` FROM control.release_candidates WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3`, a.TenantID(), app, hash))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, CandidateRow{}, ErrNotFound
 	}
-	return c, row, err
+	return got.candidate, row, err
 }
 
 // Release reads and restores any stored bundle (1.0.0 or 2.0.0), for example the
 // active base of a new candidate.
-func (Store) Release(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash string, supported []string) (Candidate, error) {
+func (st Store) Release(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash string, supported []string) (Candidate, error) {
+	c, _, err := st.ReleaseProgram(ctx, q, a, app, hash, supported)
+	return c, err
+}
+
+// ReleaseProgram is Release that also returns the executable program of the bundle's
+// IR, which the restore had to build anyway.
+func (st Store) ReleaseProgram(ctx context.Context, q postgres.Executor, a tenant.Access, app, hash string, supported []string) (Candidate, compiler.Program, error) {
 	if !ValidHash(hash) {
-		return Candidate{}, ErrNotFound
+		return Candidate{}, compiler.Program{}, ErrNotFound
 	}
 	var raw []byte
 	err := q.QueryRowContext(ctx, `SELECT body FROM control.release_bundles WHERE tenant_id=$1 AND app_id=$2 AND artifact_hash=$3`, a.TenantID(), app, hash).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Candidate{}, ErrNotFound
+		return Candidate{}, compiler.Program{}, ErrNotFound
 	}
 	if err != nil {
-		return Candidate{}, err
+		return Candidate{}, compiler.Program{}, err
 	}
-	return Restore(raw, hash, supported)
+	got, err := st.Recompute.orDefault().restore(ctx, raw, hash, supported)
+	if err != nil {
+		return Candidate{}, compiler.Program{}, err
+	}
+	return got.candidate, got.program, nil
 }

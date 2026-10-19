@@ -293,6 +293,42 @@ These supersede the matching sentences above where they differ.
    `rollback_target_rejected` (found by the adversarial suite).
 10. **Decoder hardening found on the way.** `metadata.DecodeJSON` now rejects keys that differ
    only by Unicode case folding (they previously decoded to the last spelling).
+11. **Bounded recomputation (after the M12 API review, F9; ADR038 Amendment 10).** Approve,
+   reject, activate and rollback load the candidate through the same memoised
+   `LoadCandidate`. A cold recomputation beyond the per-tenant or per-process bound is refused
+   before any port call with 429 / 503 `release_busy` and `Retry-After`, audited with the closed
+   refusal code `RECOMPUTE_BUSY_TENANT|PROCESS`; it decides nothing, so the routes stay fail
+   closed (`TestM12APIColdRecomputationIsBoundedTypedAndAudited`). Staleness, approvals and the
+   pointer are read again on every request and never remembered.
+
+12. **Independent review fixes (2026-10-19; `docs/verification/M13_INDEPENDENT_REVIEW.md`, migration 53).**
+   - *M13R-01, a veto is not overtaken (§3, §4, §8).* `reject_release` and `activate_release` both write
+     one `control.release_fences` row per hash (an upsert that bumps a counter). Under REPEATABLE READ the
+     transaction with the older snapshot therefore aborts with `40001` (mapped as the other concurrency
+     refusals) instead of committing next to a rejection it could not see; a lock-only fence does not
+     have this effect. Different hashes use different rows and never conflict. `approve_release` does not
+     write the row: an approval recorded beside a committed rejection is harmless because activation reads
+     the rejection again. A rejection that loses to a committed activation fails with `40001` and succeeds
+     on retry (a release can be vetoed after it ran). Tests: `TestM13R01*`.
+   - *M13R-02, the rollback class gate covers the span (§5).* The gate reads the `Risk.Rollback` class of the
+     current release and of every history entry newer than the target's latest entry
+     (`control.release_rollback_class`); anything but exactly `POINTER_SAFE` among them needs the acknowledged
+     plan with its hash. The handler assesses the same span (at most `MaxRollbackSpan` = 32 releases; a longer
+     span counts as unreadable and needs a plan); the port is the authority. Tests: `TestM13R02*`.
+   - *M13R-04, keys are plain ASCII (§7).* `encoding/json` matches field names under Unicode folding (U+017F
+     folds to "s", U+212A to "k"), so "every key spelled exactly" was false for those. The strict reader now
+     refuses any object key that is not ASCII `[a-z0-9_]` before decoding.
+   - *M13R-05, invisible marks (§3).* Rejection notes may not contain U+061C, U+200B, U+200E, U+200F or
+     U+FEFF (Go, the port and the table constraint; older rows are not re-validated). The zero width joiners
+     U+200C and U+200D stay legal because emoji sequences and several scripts need them.
+13. **Documented residuals of the same review.** *M13R-03:* the database floor counts every approver who is
+   still an active non-viewer member, so a member demoted to a role without `releases.approve` still counts at
+   activation (`TestM13R03DemotedApproverStillCounts` pins this); the policy engine cannot be evaluated inside
+   the port. *M13R-06:* a candidate recorded under other runtime components now reads stale
+   (`RUNTIME_CHANGED`, M12 API fixes) and the verifier version is part of the components (`verifier-v2`).
+   *FR-01 (re-verification):* a worker can set status, termination and failure of its own leased instance
+   without a transition; this is the ADR024 residual of a compromised worker inside its exact lease.
+   *Informational items I-1..I-8* of the review stand as written there.
 
 ## Consequences
 

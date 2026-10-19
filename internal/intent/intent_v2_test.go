@@ -257,6 +257,11 @@ func TestDerivedProbes(t *testing.T) {
 		"zero": "0.00 USD NO_APPROVAL", "negative": "-0.01 USD NO_APPROVAL", "currency": "500.00 EUR INPUT_REJECTED(CURRENCY)",
 		// Far-from-boundary decades (independent review F3: a cap such as "<= 1000000" must be seen).
 		"x10": "5000.00 USD APPROVAL_REQUIRED[admin]", "x1000": "500000.00 USD APPROVAL_REQUIRED[admin]",
+		// Ratios of the threshold (an exemption band such as 600..900 must be seen).
+		"ratio-1-4": "125.00 USD NO_APPROVAL", "ratio-1-2": "250.00 USD NO_APPROVAL", "ratio-3-4": "375.00 USD NO_APPROVAL",
+		"ratio-5-4": "625.00 USD APPROVAL_REQUIRED[admin]", "ratio-3-2": "750.00 USD APPROVAL_REQUIRED[admin]",
+		// ratio-2-1 (1000.00) collapses into plus1e3, the first kind with that amount.
+		"ratio-3-1": "1500.00 USD APPROVAL_REQUIRED[admin]", "ratio-5-1": "2500.00 USD APPROVAL_REQUIRED[admin]", "ratio-7-1": "3500.00 USD APPROVAL_REQUIRED[admin]",
 	}
 	for _, e := range []int{3, 6, 9, 12, 15, 18} {
 		scale := "1" + strings.Repeat("0", e) + ".00 USD"

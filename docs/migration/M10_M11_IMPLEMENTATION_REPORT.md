@@ -43,13 +43,13 @@ No new Go or npm dependency.
 | `make test-e2e` at `bf70752` | PASS, 5 tests |
 | Targeted M10/M11 integration tests (idempotency modes, crash after send, late response, lease fencing, approval freshness, sandbox isolation, ceiling forgery) | PASS |
 | Full integration run before `bf70752` | FAIL: `m9r_record_access_test` pinned the policy version string; the assertion was made milestone-agnostic (`bf70752`), then PASS |
-| Independent adversarial reviews | PARTIAL. M10 ledger/protocol review (docs/verification/M10_INDEPENDENT_REVIEW.md, in progress): M10R-01..05 found (2 HIGH: a compromised worker can skip the approval gate inside its own lease; a transient lookup failure turns an UNKNOWN write into a blind resend; 3 MEDIUM) — fixes are NOT merged yet. Gateway review (GATEWAY_INDEPENDENT_REVIEW.md, in progress): F1–F9 found; F1–F4 fixed on this branch, F5–F9 (LOW) open. M11 sandbox review: NOT RUN to completion (no findings recorded) |
+| Independent adversarial reviews | COMPLETE for the three slices. M10 ledger/protocol review (`docs/verification/M10_INDEPENDENT_REVIEW.md`): M10R-01..05 (2 HIGH, 3 MEDIUM), all FIXED by migration 50 and DSL 2.2.0 tool plans (`TestM10R*`); a separate agent re-verified the fixes against 34 variants of its own and they HELD (`docs/verification/FIX_REVERIFICATION.md`). Gateway review (`GATEWAY_INDEPENDENT_REVIEW.md`): F1–F9; F1–F4 and F5–F8 fixed, F9 is documentation. M11 sandbox review (`M11_INDEPENDENT_REVIEW.md`): PASS WITH FINDINGS, R01–R07; R01–R06 fixed by migration 51 (`TestM11R*`), R07 was already fixed by gateway F4. The migration 51 and gateway F5–F8 fixes are not independently re-verified |
 
 ## Known gaps and residuals
 
-- Independent two-agent review is incomplete (see the table above): the M10 findings
-  M10R-01..05 are open until the fix branch is merged, and the M11 review has not
-  produced results. Do not treat these slices as reviewed.
+- Independent review status is in the table above. Open items recorded by the reviews: the catalog and policy
+  hashes stay arguments of the sandbox ports (ADR037 Amendment 3); in-flight workflows of a frozen sandbox are
+  parked, not retired; `tool_reconcile` admits any non-viewer member (ADR036 C7); ADR036 C8 and C9.
 - Tools longer than about 2 s need lease renewal (not built). Provider callbacks,
   compensation tools, financial/destructive tools and provider breadth are
   deferred (M13/M17).

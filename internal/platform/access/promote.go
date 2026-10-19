@@ -105,26 +105,42 @@ func readPromotionRequest(r *http.Request, dest any) error {
 		return data.ErrInvalid
 	}
 	value, err := metadata.DecodeJSON(raw)
-	if err != nil || !lowercaseKeys(value) {
+	if err != nil || !asciiKeys(value) {
 		return data.ErrInvalid
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	return readDatasetRequest(r, dest)
 }
 
-func lowercaseKeys(value any) bool {
+// asciiKeys reports whether every object key of the decoded document is plain ASCII snake_case.
+// encoding/json matches struct fields case-insensitively under Unicode folding (U+017F folds to
+// "s", U+212A to "k"), so a key that merely folds to a field name must be refused before decoding
+// (M13R-04); every key of the promotion requests is ASCII.
+func asciiKeys(value any) bool {
 	switch v := value.(type) {
 	case map[string]any:
 		for key, child := range v {
-			if key != strings.ToLower(key) || !lowercaseKeys(child) {
+			if !asciiSnake(key) || !asciiKeys(child) {
 				return false
 			}
 		}
 	case []any:
 		for _, child := range v {
-			if !lowercaseKeys(child) {
+			if !asciiKeys(child) {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func asciiSnake(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		if c := key[i]; !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return false
 		}
 	}
 	return true
@@ -244,12 +260,12 @@ func auditHash(v string) string {
 // (never Restore directly) and requires its database index row to agree with the
 // restored body; either failure is candidate_failed_verification.
 func (a API) loadPromotable(ctx context.Context, q postgres.Executor, access tenant.Access, app, hash string, evidence *audit.Entry) (promotable, *reply, error) {
-	c, row, err := (promotion.Store{}).LoadCandidate(ctx, q, access, app, hash, compiler.SupportedIRVersions())
+	c, row, err := a.store().LoadCandidate(ctx, q, access, app, hash, compiler.SupportedIRVersions())
 	if err != nil && !errors.Is(err, promotion.ErrNotFound) && errors.Is(err, promotion.ErrGate) {
 		// LoadCandidate also refuses a 1.0.0 (M6R) bundle, which has no
 		// candidate row and can never be promoted: that is not found, not a
 		// failed verification.
-		if legacy, lerr := (promotion.Store{}).Release(ctx, q, access, app, hash, compiler.SupportedIRVersions()); lerr == nil && legacy.Header().Version != promotion.BundleVersion2 {
+		if legacy, lerr := a.store().Release(ctx, q, access, app, hash, compiler.SupportedIRVersions()); lerr == nil && legacy.Header().Version != promotion.BundleVersion2 {
 			return promotable{}, nil, promotion.ErrNotFound
 		}
 		return promotable{}, failedVerification(evidence), nil
@@ -280,7 +296,7 @@ func staleReply(r *http.Request, reasons []promotion.StaleReason) reply {
 // refuseUndecidable refuses a rejected or stale candidate before any port call.
 // The database re-checks both (rejection, bound base) under its own locks.
 func (a API) refuseUndecidable(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app string, p promotable, evidence *audit.Entry) (*reply, error) {
-	rejections, err := (promotion.Store{}).Rejections(ctx, q, access, app, p.candidate.Hash())
+	rejections, err := a.store().Rejections(ctx, q, access, app, p.candidate.Hash())
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +321,7 @@ func (a API) refuseUndecidable(ctx context.Context, q postgres.Executor, r *http
 // lifecycle fills the derived ADR039 fields of a candidate view. Nothing here is
 // stored: status is recomputed from the recorded decisions and the pointer.
 func (a API) lifecycle(ctx context.Context, q postgres.Executor, access tenant.Access, app string, view *CandidateView, au authority) error {
-	store := promotion.Store{}
+	store := a.store()
 	hash := view.ArtifactHash
 	approvals, err := store.Approvals(ctx, q, access, app, hash)
 	if err != nil {
@@ -356,7 +372,7 @@ func (a API) loadRelease(ctx context.Context, q postgres.Executor, access tenant
 	if !errors.Is(err, promotion.ErrNotFound) {
 		return promotion.Candidate{}, nil, nil, err
 	}
-	c, err := (promotion.Store{}).Release(ctx, q, access, app, hash, compiler.SupportedIRVersions())
+	c, err := a.store().Release(ctx, q, access, app, hash, compiler.SupportedIRVersions())
 	if err != nil && !errors.Is(err, promotion.ErrNotFound) && errors.Is(err, promotion.ErrGate) {
 		return promotion.Candidate{}, nil, failedVerification(evidence), nil
 	}
@@ -389,7 +405,7 @@ func (a API) releaseView(ctx context.Context, q postgres.Executor, access tenant
 // A 1.0.0 body, a body that no longer restores or a missing class all yield ""
 // (plan required); only a database failure is an error.
 func (a API) rollbackClass(ctx context.Context, q postgres.Executor, access tenant.Access, app, hash string) (string, error) {
-	c, err := (promotion.Store{}).Release(ctx, q, access, app, hash, compiler.SupportedIRVersions())
+	c, err := a.store().Release(ctx, q, access, app, hash, compiler.SupportedIRVersions())
 	if errors.Is(err, promotion.ErrNotFound) || err != nil && errors.Is(err, promotion.ErrGate) {
 		return "", nil
 	}
@@ -403,6 +419,29 @@ func (a API) rollbackClass(ctx context.Context, q postgres.Executor, access tena
 		}
 	}
 	return "", nil
+}
+
+// rollbackSpanClass widens the class of the current release to every release a rollback to
+// target moves the pointer across (M13R-02): the worst class among them decides whether a
+// plan is required. A span longer than promotion.MaxRollbackSpan is not assessed and counts
+// as unreadable, which needs a plan.
+func (a API) rollbackSpanClass(ctx context.Context, q postgres.Executor, access tenant.Access, app, current, target string) (string, error) {
+	span, err := a.store().RolledBackAcross(ctx, q, access, app, target)
+	if err != nil {
+		return "", err
+	}
+	if len(span) > promotion.MaxRollbackSpan {
+		return promotion.WorseRollbackClass(current, ""), nil
+	}
+	class := current
+	for _, hash := range span {
+		c, err := a.rollbackClass(ctx, q, access, app, hash)
+		if err != nil {
+			return "", err
+		}
+		class = promotion.WorseRollbackClass(class, c)
+	}
+	return class, nil
 }
 
 func separationRefused(role string) reply {
@@ -436,7 +475,7 @@ func (a API) approveCandidate(ctx context.Context, q postgres.Executor, r *http.
 	if barred || risk.CheckSeparation(risk.Separation{Approvals: 1, Excluded: p.authority.excluded()}, p.authority.parties, []string{actor}) != nil {
 		return separationRefused(role), nil
 	}
-	store := promotion.Store{}
+	store := a.store()
 	before, err := store.Approvals(ctx, q, access, app, hash)
 	if err != nil {
 		return reply{}, err
@@ -477,7 +516,7 @@ func (a API) rejectCandidate(ctx context.Context, q postgres.Executor, r *http.R
 		return derefReply(refusal), err
 	}
 	// A veto is always safe (ADR039 section 3): no staleness or separation check.
-	recorded, err := (promotion.Store{}).RejectRelease(ctx, q, access, app, hash, promotion.RejectReason(body.Reason), body.Note)
+	recorded, err := a.store().RejectRelease(ctx, q, access, app, hash, promotion.RejectReason(body.Reason), body.Note)
 	if err != nil {
 		return reply{}, err
 	}
@@ -521,7 +560,7 @@ func (a API) activateCandidate(ctx context.Context, q postgres.Executor, r *http
 	if base != p.bundle.BaseRelease || generation != p.bundle.BaseGeneration {
 		return denied(409, "base_changed", "The expected base is not the active release this candidate was built on; reload it"), nil
 	}
-	store := promotion.Store{}
+	store := a.store()
 	approvals, err := store.Approvals(ctx, q, access, app, hash)
 	if err != nil {
 		return reply{}, err
@@ -565,7 +604,7 @@ func (a API) rollbackRelease(ctx context.Context, q postgres.Executor, r *http.R
 			return denied(409, "rollback_plan_required", "The rollback plan must confirm storage compatibility and reviewed external effects"), nil
 		}
 	}
-	store := promotion.Store{}
+	store := a.store()
 	current, currentGeneration, err := store.ActiveBase(ctx, q, access, app)
 	if err != nil {
 		return reply{}, err
@@ -602,6 +641,11 @@ func (a API) rollbackRelease(ctx context.Context, q postgres.Executor, r *http.R
 	if len(rejections) > 0 {
 		return denied(409, "rollback_target_rejected", "A rejected release is not a rollback target"), nil
 	}
+	class, err = a.rollbackSpanClass(ctx, q, access, app, class, body.Target)
+	if err != nil {
+		return reply{}, err
+	}
+	evidence.State.RollbackClass = class
 	if promotion.RollbackClassNeedsPlan(class) && body.Plan == nil {
 		return denied(409, "rollback_plan_required", "Rolling back this release requires an acknowledged rollback plan"), nil
 	}
@@ -622,7 +666,7 @@ func (a API) rollbackRelease(ctx context.Context, q postgres.Executor, r *http.R
 }
 
 func (a API) releaseHistory(ctx context.Context, q postgres.Executor, access tenant.Access, app string) (reply, error) {
-	entries, err := (promotion.Store{}).History(ctx, q, access, app, promotion.MaxHistory)
+	entries, err := a.store().History(ctx, q, access, app, promotion.MaxHistory)
 	if err != nil {
 		return reply{}, err
 	}
@@ -630,7 +674,7 @@ func (a API) releaseHistory(ctx context.Context, q postgres.Executor, access ten
 }
 
 func (a API) activeRelease(ctx context.Context, q postgres.Executor, access tenant.Access, app string, evidence *audit.Entry) (reply, error) {
-	hash, generation, err := (promotion.Store{}).ActiveBase(ctx, q, access, app)
+	hash, generation, err := a.store().ActiveBase(ctx, q, access, app)
 	if err != nil {
 		return reply{}, err
 	}

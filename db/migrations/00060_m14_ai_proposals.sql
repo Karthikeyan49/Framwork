@@ -6,8 +6,7 @@
 -- happens outside any transaction (begin -> provider -> record + finish). Raw prompts and
 -- raw model output are never columns here: hashes, the validated canonical body and
 -- server-derived facts only.
--- Replaced functions: control.worker_grants_safe() (from its latest definition, 00049,
--- with control.ai_proposals, control.ai_invocations and control.ai_usage added).
+-- Replaced functions: none (the worker drift guard of migration 52 is derived and needs no extension).
 -- +goose Up
 CREATE TABLE control.ai_usage(
  tenant_id uuid NOT NULL,usage_day date NOT NULL,
@@ -287,12 +286,8 @@ GRANT EXECUTE ON FUNCTION control.ai_begin(text,text,text,bigint,text,bigint,big
  control.ai_record_attempt(text,uuid,integer,text,text,text,text,text,text,bigint,bigint,integer,text,text,text),
  control.ai_finish(text,uuid,text,bytea,text,jsonb,jsonb,text,text,text,integer,bigint,bigint),
  control.ai_decide(text,uuid,text,bigint,bigint,text,text,text) TO framework_app;
--- Extend the worker drift guard (latest definition: migration 49) to the AI tables.
--- +goose StatementBegin
-CREATE OR REPLACE FUNCTION control.worker_grants_safe() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
- SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname||'.'||c.relname IN('iam.roles','runtime.records','runtime.record_sets','runtime.record_links','runtime.unique_projections','runtime.outbox_intents','control.metadata_heads','control.metadata_versions','control.release_bundles','control.worker_context','control.worker_principals','runtime.datasets','runtime.dataset_bindings','runtime.command_receipts','runtime.numeric_indexes','runtime.numeric_projections','runtime.dataset_generations','runtime.record_identity','runtime.identity_shares','runtime.dataset_evolutions','runtime.event_data_sources','control.evolution_context','runtime.read_records','runtime.read_shares','runtime.read_preview_records','runtime.record_shares','control.role_heads','control.role_versions','runtime.sandboxes','runtime.sandbox_evidence','control.requirement_sets','control.acceptance_specs','control.release_candidates','control.release_approvals','control.active_releases','control.release_rejections','control.release_history','control.ai_proposals','control.ai_invocations','control.ai_usage') AND (pg_catalog.has_table_privilege(session_user,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR pg_catalog.has_any_column_privilege(session_user,c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
-$$;
--- +goose StatementEnd
+-- The worker drift guard is derived since migration 52 (control.worker_grants_safe refuses every relation of control,
+-- runtime, iam and audit that it does not list): the AI tables grant the worker nothing, so it needs no extension.
 -- Fail the migration if any runtime role (or PUBLIC) can still write the AI tables
 -- directly, if a worker can read them, if a permissive write policy remains, or if the
 -- ports lost the owner policy they rely on or got a wrong owner, search_path or grant.

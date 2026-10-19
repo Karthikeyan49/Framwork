@@ -96,6 +96,12 @@ type State struct {
 	AIInputTokens     int64  `json:"ai_input_tokens,omitempty"`
 	AIOutputTokens    int64  `json:"ai_output_tokens,omitempty"`
 	AISourceRevision  int64  `json:"ai_source_revision,omitempty"`
+
+	// Release refusal evidence (ADR038 amendments 8 and 10): why a request was
+	// refused, as a closed upper-case code, and the hash of the risk assessment a
+	// refused build was judged by. Never free text, never an actor id.
+	RefusalCode    string `json:"refusal_code,omitempty"`
+	AssessmentHash string `json:"assessment_hash,omitempty"`
 }
 type Entry struct {
 	ActorID, TenantID, Action, Resource, DecisionID, PolicyVersion, RequestID, TraceID string
@@ -194,7 +200,7 @@ func validPromotionEvidence(s State) bool {
 		!closedCode(s.RollbackClass, "POINTER_SAFE", "DATA_NOT_REVERSIBLE", "EXTERNAL_EFFECTS") || !upperCode(s.StorageClass, 16) {
 		return false
 	}
-	if !hexHash(s.PreviousHash) || !hexHash(s.PlanHash) || len(s.StaleReasons) > 16 {
+	if !hexHash(s.PreviousHash) || !hexHash(s.PlanHash) || !hexHash(s.AssessmentHash) || !upperCode(s.RefusalCode, 40) || len(s.StaleReasons) > 16 {
 		return false
 	}
 	for _, r := range s.StaleReasons {

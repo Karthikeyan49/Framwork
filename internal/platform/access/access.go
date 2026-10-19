@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 	"github.com/Karthikeyan49/Framwork/internal/tools"
@@ -47,7 +49,15 @@ type API struct {
 	// AI is the optional AI builder (ADR040). The zero value leaves every AI route
 	// answering 503 ai_unavailable.
 	AI AIConfig
+
+	// Recompute remembers the pure recomputation of stored release candidates and
+	// bounds the cold ones per tenant and per process (ADR038 amendment 10). Nil is
+	// the process default.
+	Recompute *promotion.Recompute
 }
+
+// store is the release store of this API: its recomputations share one memo.
+func (a API) store() promotion.Store { return promotion.Store{Recompute: a.Recompute} }
 
 func (a API) catalog() compiler.Catalog {
 	if a.CompilerCatalog != nil {
@@ -138,6 +148,9 @@ type reply struct {
 	// (the AI provider phase and its result transaction, ADR040 A8). Its reply
 	// replaces this one.
 	next func(context.Context) reply
+
+	// retryAfter, when positive, is sent as a Retry-After header in whole seconds.
+	retryAfter time.Duration
 }
 
 // A service rejection must roll back its entire business transaction before
@@ -145,15 +158,30 @@ type reply struct {
 type requestRejection struct {
 	response reply
 	evidence *audit.Entry
+	// cause is the error the response was mapped from, when a retry may depend on it.
+	cause error
 }
 
 func (e *requestRejection) Error() string { return "request rejected" }
+
+// Unwrap exposes the database error a handler mapped to its typed response, so that the
+// retry of an idempotent request can recognise a known abort.
+func (e *requestRejection) Unwrap() error { return e.cause }
 
 func denied(status int, code, message string) reply {
 	return reply{status: status, code: code, message: message}
 }
 
 func (a API) transaction(ctx context.Context, run func(context.Context, postgres.Executor) error) error {
+	return a.transactionAt(ctx, sql.LevelRepeatableRead, run)
+}
+
+// freezePattern is the one route whose port needs READ COMMITTED: runtime.freeze_sandbox locks the
+// sandbox, the dataset and the ledger first and must then read the committed state, not the snapshot
+// of a transaction that started before the locks were granted (M11 review R02).
+const freezePattern = "POST /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/freeze"
+
+func (a API) transactionAt(ctx context.Context, level sql.IsolationLevel, run func(context.Context, postgres.Executor) error) error {
 	if a.Admission != nil {
 		queueCtx, span := otel.Tracer("framework/postgres").Start(ctx, "postgres.request.admission")
 		release, err := a.Admission.Acquire(queueCtx)
@@ -163,7 +191,7 @@ func (a API) transaction(ctx context.Context, run func(context.Context, postgres
 		}
 		defer release()
 	}
-	return postgres.WithRuntime(ctx, a.DB, run)
+	return postgres.WithRuntimeIsolation(ctx, a.DB, level, run)
 }
 func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	if a.Auth == nil || a.Policy == nil || a.Audit == nil {
@@ -185,6 +213,18 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The POSTs of the release builder that are idempotent by content (a candidate with the
+	// same bytes, an acceptance spec with the same body) repeat after a known abort, so that
+	// concurrent identical requests converge on the replay instead of one 409 each (review F7).
+	retryRelease := releaseIdempotentPOST[r.Pattern] && r.Body != nil
+	if retryRelease {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		if err != nil || len(body) > 1<<20 {
+			httpserver.Error(w, r, 400, "invalid_release_request", "Request body is invalid")
+			return
+		}
+	}
 	parentContext := r.Context()
 	if localCommand {
 		var cancel context.CancelFunc
@@ -194,10 +234,14 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	run := func(parent context.Context) error {
 		response, rejectedEvidence = reply{}, audit.Entry{}
 		p, authErr = identity.Principal{}, identity.ErrUnauthenticated
-		if localCommand {
+		if localCommand || retryRelease {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		return a.transaction(parent, func(ctx context.Context, tx postgres.Executor) error {
+		level := sql.LevelRepeatableRead
+		if r.Pattern == freezePattern {
+			level = sql.LevelReadCommitted
+		}
+		return a.transactionAt(parent, level, func(ctx context.Context, tx postgres.Executor) error {
 			if len(headers) == 1 && strings.HasPrefix(headers[0], "Bearer ") {
 				p, authErr = a.Auth.Verify(strings.TrimPrefix(headers[0], "Bearer "))
 			}
@@ -231,6 +275,8 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		if postgres.KnownAbort(err) {
 			err = &requestRejection{response: denied(409, "concurrent_conflict", "Concurrent changes prevented this command; reconcile its key and reload before retrying")}
 		}
+	} else if retryRelease {
+		err = postgres.RetryLocalWhen(parentContext, run, releaseKnownAbort)
 	} else {
 		err = run(parentContext)
 	}
@@ -273,6 +319,9 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	// No protected response or security success is sent before the outer commit.
 	if response.status == 401 {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="framework"`)
+	}
+	if response.retryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int((response.retryAfter+time.Second-1)/time.Second)))
 	}
 	if len(response.issues) > 0 {
 		httpserver.JSON(w, response.status, struct {
@@ -411,7 +460,10 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			action = aiAction
 		}
 	}
-	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") {
+	// Exact registered patterns only (as for teams below): a path suffix would capture
+	// any route whose last variable segment is literally "roles", for example a release
+	// artifact id (M12 API review F2).
+	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || rolePatterns[r.Pattern] {
 		resource = "role"
 		action = "roles.read"
 		if r.Method == http.MethodPost {
@@ -434,6 +486,11 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	if resource == "preview" || resource == "metadata" {
 		appID = r.PathValue("app")
 		if len(appID) > 160 || !metadataAppID.MatchString(appID) {
+			// An authenticated, tenant-resolved request: record it as such (tenant, the
+			// action it asked for) and not as an authentication failure (review F12).
+			evidence.TenantID = access.TenantID()
+			evidence.Action = action + ".rejected"
+			evidence.Resource = resource
 			return denied(400, "invalid_application", "Invalid application selection"), evidence, nil
 		}
 		evidence.State.MetadataApp = appID
@@ -509,6 +566,10 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		}{access.TenantID(), access.Roles(), d}
 	}
 	return reply{status: 200, body: result}, evidence, nil
+}
+
+var rolePatterns = map[string]bool{
+	"POST /v1/tenants/{tenant}/roles": true,
 }
 
 var teamPatterns = map[string]bool{
