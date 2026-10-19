@@ -345,6 +345,12 @@ These supersede the matching sentences above where they differ.
    without a transition; this is the ADR024 residual of a compromised worker inside its exact lease.
    *Informational items I-1..I-8* of the review stand as written there.
 
+14. **Tool-pin staleness is executed through the handlers (2026-10-19).** A candidate whose IR pins an operator tool reads
+   stale with `TOOL_CHANGED` when the definition changes and `TOOL_REMOVED` when it disappears, in the view, at approve and
+   at activate, and is fresh again when the exact definition returns (`TestM13ToolPin*`). The tenant list belongs to the
+   definition hash, so narrowing it is `TOOL_CHANGED`; a build that pins a tool the tenant may not use is refused at
+   build (`BLOCK.tool_unresolved`), which leaves `TOOL_TENANT_DENIED` as defence in depth that no API path reaches.
+
 ## Consequences
 
 Approval and promotion authority no longer rests on Go code alone: the database now

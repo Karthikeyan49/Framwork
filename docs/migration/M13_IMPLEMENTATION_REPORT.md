@@ -145,6 +145,25 @@ change documentation only), against the isolated M14 database stack reset from t
 | `make test-e2e` (5 browser tests) | PASS, 25.3 s |
 | `TestM8RedisACLStreamLossAndPendingRecovery` | NOT RUN (restarts the shared Redis; fails on isolated stacks by design) |
 
+## Follow-up: tool-pin staleness executed through the handlers (2026-10-19)
+
+The closure that asks the operator catalog about each pin (`releases.go: staleness`) was reviewed by reading only. The
+tests build a real candidate whose workflow calls an operator READ tool (schema 1.3.0 tool activity, a resolved
+`tool_effect` requirement with a `HOLDS` case: the verifier blocks a changed tool activity without one), then move the
+catalog.
+
+| Case | Result (view, approve and activate answer the same) |
+|---|---|
+| tool definition changed | `candidate_stale` with `TOOL_CHANGED`; nothing written |
+| tool removed from the catalog | `candidate_stale` with `TOOL_REMOVED`; nothing written |
+| exact definition restored | the same candidate is fresh again and activates (staleness is derived, never stored) |
+| catalog that does not allow the tenant, at build time | 422 `BLOCKED_BY_RISK` (`BLOCK.tool_unresolved`); a tenant-denied pin never reaches approval |
+| tenant list narrowed after the build | `TOOL_CHANGED`, because the tenant list is part of the pinned definition hash; `TOOL_TENANT_DENIED` of the pure rule therefore cannot arise through the API and stays defence in depth |
+
+`TestM13ToolPinStalenessAtViewApproveAndActivate` and `TestM13ToolPinTenantListIsPartOfThePinAndOfTheBuildCheck` PASS on
+the isolated M13 stack, `-race`, 9.4 s. A mutation (every pin reports unchanged) fails the first test. Only these two
+tests were run for this addition.
+
 ## Threat model and limits
 
 - **Identity is bound by the API process** (session settings after token verification). A fully
@@ -159,6 +178,7 @@ change documentation only), against the isolated M14 database stack reset from t
 - **Activation of a non-EQUAL storage class** is allowed (HIGH/CRITICAL approval applies) but nothing
   migrates data; a production data plane must refuse to serve a release whose storage is not provisioned.
 - A HIGH candidate needs three distinct people, CRITICAL two more approvers; tenants must add members.
-- Tool-catalog staleness at approve/activate is covered by unit tests only (the integration order app has no tool pins).
+- Tool-catalog staleness at view, approve and activate is executed through the HTTP handlers (`TestM13ToolPin*`, see the
+  follow-up section); it was unit-tested only in the first gate and listed as not covered by the M12 API and M13 reviews.
 - Not built (ADR039 §10): production data plane, approval expiry, configurable approver roles (R5e),
   volume measurement, a separate verifier credential, UI, release lifecycle events.
