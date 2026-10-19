@@ -13,6 +13,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Human decisions (ADR040 A9). A decision is always a separate, authenticated
@@ -111,7 +112,7 @@ func (s *Service) Apply(ctx context.Context, q postgres.Executor, a tenant.Acces
 		return ApplyResult{}, err
 	}
 	if head == 0 {
-		return ApplyResult{}, ErrNoDraft
+		return ApplyResult{}, refuse(ErrNoDraft)
 	}
 	if head != in.ExpectedRevision {
 		return ApplyResult{}, refuse(ErrDraftChanged)
@@ -328,6 +329,11 @@ func (s *Service) Confirm(ctx context.Context, q postgres.Executor, a tenant.Acc
 	}
 	stored, err := pstore.AppendRequirements(ctx, q, a, in.App, head, canonical)
 	if err != nil {
+		// The set moved between the read and the append, or an id exists already.
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && (pg.Code == "55000" || pg.Code == "23505") {
+			return ConfirmResult{}, refuse(ErrRequirementsChanged)
+		}
 		return ConfirmResult{}, err
 	}
 	record, _ := json.Marshal(struct {

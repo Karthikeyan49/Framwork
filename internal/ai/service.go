@@ -215,13 +215,19 @@ type PlatformInputs struct {
 	CompilerHash string
 }
 
-// reserveFor is the pessimistic token reservation of one run: every attempt may
-// read the whole context and write a full answer.
-func reserveFor(l ServiceLimits, draftBytes, requestBytes int) int64 {
-	input := draftBytes + requestBytes + 2048
+// repairOverheadBytes covers what an attempt after the first adds to the request: the
+// repair lead-in and at most MaxDiagnostics capped diagnostics.
+const repairOverheadBytes = 26 << 10
+
+// reserveFor is the pessimistic token reservation of one run: every attempt may read
+// the whole context, the closed output schema and the repair feedback, and write a
+// full answer. The schema is part of every request, so it is part of the reservation.
+func reserveFor(l ServiceLimits, draftBytes, requestBytes, schemaBytes int) int64 {
+	input := draftBytes + requestBytes + 4096
 	if input > MaxContextBytes {
 		input = MaxContextBytes
 	}
+	input += schemaBytes + repairOverheadBytes
 	per := int64((input+3)/4) + int64(l.MaxOutputTokens)
 	reserve := int64(l.MaxAttempts) * per
 	if reserve > maxReserve {
@@ -246,10 +252,10 @@ func (s *Service) Admit(ctx context.Context, q postgres.Executor, a tenant.Acces
 		return nil, err
 	}
 	if head == 0 {
-		return nil, ErrNoDraft
+		return nil, refuse(ErrNoDraft)
 	}
 	if in.ExpectedRevision != nil && *in.ExpectedRevision != head {
-		return nil, ErrDraftChanged
+		return nil, refuse(ErrDraftChanged)
 	}
 	version, err := s.Registry.Get(ctx, q, a, in.App, head)
 	if err != nil {
@@ -260,7 +266,13 @@ func (s *Service) Admit(ctx context.Context, q postgres.Executor, a tenant.Acces
 		return nil, fmt.Errorf("stored draft is unreadable")
 	}
 	limits := s.Limits.Effective()
-	reserve := reserveFor(limits, len(version.Document), len(in.Request))
+	schema := RequirementOutputSchema()
+	if in.Kind == ProposalPatch {
+		if schema, err = PatchOutputSchema(doc.SchemaVersion); err != nil {
+			return nil, &PortError{Kind: ErrInvalidRequest}
+		}
+	}
+	reserve := reserveFor(limits, len(version.Document), len(in.Request), len(schema))
 	requestHash := apiDigest([]byte(in.Request))
 	lease := int((limits.WallClock + leaseMargin + time.Second - 1) / time.Second)
 	id, err := st.Begin(ctx, q, a, BeginArgs{App: in.App, Kind: in.Kind, RequestHash: requestHash, DraftRevision: head, DraftHash: version.SourceHash,
