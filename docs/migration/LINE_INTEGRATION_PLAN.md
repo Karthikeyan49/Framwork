@@ -59,6 +59,34 @@ The two lines diverged after migration `00044`. 33 files are changed by both (do
 * The development database `MAIN` is migrated with the milestone line's numbers (`migrate status`, read only, shows
   `00045` to `00053` and `00060` applied). After a renumbering it has to be rebuilt, not migrated.
 
+## Work done twice, and work about to be (compared at `7f2b29b` and `b00da36`)
+
+The lines mostly built different things. Five places solve the same problem twice, in different ways; three more would
+become duplicates if the agents are not told. This comparison read the shared files, the migrations and the commit
+subjects; it did not read every commit of the remediation line.
+
+| # | Problem | Milestone line | Remediation line | At the merge |
+|---|---|---|---|---|
+| 1 | Worker grant guard `control.worker_grants_safe()` | derived from the catalogs, so a new relation is refused by default (migration 52) | a fixed list of relation names, redefined again in migrations 47, 51 and 52 | the migration that runs last wins; the derived guard has to run last, and every new relation of the remediation line must be shown to pass it |
+| 2 | A READ COMMITTED runtime transaction | `WithRuntimeIsolation`, for the sandbox freeze | `WithEventRuntime`, `withRuntime` and `RuntimeSnapshot`, for events, in the same file | textual conflict in `transaction.go`; keep one wrapper and express the other on it |
+| 3 | The authoring schema file `application-v1.3.schema.json` | adds tool activities | adds approval roles (and the line also has `application-v1.4.schema.json`) | one version token with two meanings; one side moves to a new version |
+| 4 | Integration test and CI timeouts (`Makefile`, `ci.yml`) | `-timeout 40m`, job 50 minutes | `-timeout=20m`, job 35 minutes | both values are too low for the merged suite (the milestone suite alone takes about 29 minutes) |
+| 5 | A status ledger for the foundation findings | `docs/verification/FOUNDATION_GAP_ANALYSIS.md` | `docs/migration/M9R_FINDING_STATUS.md` | keep the remediation ledger as the one source; the other becomes history |
+
+Heading for duplication:
+
+* **R6 of the remediation plan is M11 to M14.** The plan itself assigns requirement and verification authority to the
+  milestones M11, M12, M13 and M14; the milestone line implements it (requirements, executable acceptance, risk,
+  approval and promotion) except the production data plane and a separate verifier credential. The remediation line
+  still lists R6 as pending.
+* **Approval freshness.** The remediation line lists "current-record approval freshness" for workflows as pending; the
+  milestone line's `control.tool_begin` already demands approval evidence and a fresh record version before a tool send.
+* **A separate verifier credential** is pending on both sides and started on neither.
+
+Similar but complementary, not duplicates: request admission before authentication (R7a) and the bound on cold
+recomputation (M12); workflow approval roles (R5e) and the check that a release approver still holds the authority
+(M13R-03); retry budgets for event publication (R7b) and for tool attempts (M10).
+
 ## Options
 
 **A. Replay the milestone line on top of the remediation line (recommended).** `CLAUDE.md` puts the remediation gate
