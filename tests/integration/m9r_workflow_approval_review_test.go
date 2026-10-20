@@ -29,7 +29,7 @@ func r5eReviewFacts(t *testing.T, m *m9Fixture, id string) r5eReviewWitness {
  (SELECT count(*) FROM runtime.workflow_history WHERE tenant_id=$1 AND instance_id=$2),
  (SELECT count(*) FROM runtime.workflow_outbox WHERE tenant_id=$1 AND instance_id=$2),
  (SELECT count(*) FROM runtime.workflow_signals WHERE tenant_id=$1 AND instance_id=$2),
- (SELECT count(*) FROM runtime.m9_test_effects WHERE tenant_id=$1 AND instance_id=$2)
+ (SELECT count(*) FROM m9_fixture.effects WHERE tenant_id=$1 AND instance_id=$2)
  FROM runtime.workflow_instances WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, id).Scan(&w.version, &w.history, &w.outbox, &w.signals, &w.effects); err != nil {
 		t.Fatal("cannot load disposable workflow witnesses")
 	}

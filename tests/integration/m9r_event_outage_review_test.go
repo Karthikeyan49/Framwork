@@ -377,7 +377,7 @@ func TestR7bReviewAlreadyBoundSnapshotBlocksUnsafeCutover(t *testing.T) {
 		t.Fatal("historical cached-authority positive control changed")
 	}
 	// Successful installation must not overlap this known historical reader.
-	_, err = provider.Up(context.Background())
+	_, err = provider.UpTo(context.Background(), r7bLastMigration)
 	var pg *pgconn.PgError
 	if !errors.As(err, &pg) || pg.Code != "55P03" {
 		t.Fatal("live old reader did not refuse migration57 at NOWAIT barrier")
@@ -403,7 +403,7 @@ func TestR7bReviewAlreadyBoundSnapshotBlocksUnsafeCutover(t *testing.T) {
 		t.Log("already-bound RR inbox insertion denied42501 after cutover")
 	}
 	tx.Rollback()
-	applied, err = provider.Up(context.Background())
+	applied, err = provider.UpTo(context.Background(), r7bLastMigration)
 	if err != nil || len(applied) != 1 {
 		t.Fatal("drained cutover did not install migration57")
 	}
@@ -490,7 +490,7 @@ func TestR7bReviewPreCutoverExportedSnapshotCannotBindAfterUpgrade(t *testing.T)
 	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, f.operator, migrations.Files, goose.WithDisableGlobalRegistry(true))
 	scalarSQL(t, err)
-	applied, err := provider.Up(context.Background())
+	applied, err := provider.UpTo(context.Background(), r7bLastMigration)
 	if err != nil || len(applied) != 2 {
 		t.Fatal("review migrations56 and57 after snapshot export")
 	}

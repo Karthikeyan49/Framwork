@@ -288,6 +288,9 @@ var m13DroppedMessages = map[string][]string{
 	},
 	// 00022 (M9R) moves claiming to the dispatcher role: the error is reworded to "dispatcher required".
 	"control.claim_workflow/1": {"worker required"},
+	// 00047 (R3b text/date, remediation line) moves the shared index quota into runtime.check_index_budget, which
+	// register_numeric_index now calls: the message is still raised, one function deeper.
+	"runtime.register_numeric_index/9": {"index budget"},
 	// 00022/00023 (M9R) turn the worker check of the lease probe into a false result (control.worker_principal()).
 	"control.check_workflow_lease/5": {"scoped worker required"},
 }

@@ -231,6 +231,10 @@ func r7bManifest(t *testing.T, db *sql.DB) []string {
 	return result
 }
 
+// r7bLastMigration is the last R7b migration (00057, the isolation cutover). The cutover rehearsals apply the R7b migrations up to it
+// and stop there: the integrated tree has later migrations (00080 and up, the milestone line) that are not part of what they rehearse.
+const r7bLastMigration int64 = 57
+
 func TestR7bForwardMigrationPreservesIssuedStateAndEvidence(t *testing.T) {
 	m8DatabaseAt(t, 54)
 	f, h, base, token, _ := m5Fixture(t)
@@ -274,10 +278,10 @@ func TestR7bForwardMigrationPreservesIssuedStateAndEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal("migration provider")
 	}
-	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 3 {
+	if applied, err := provider.UpTo(context.Background(), r7bLastMigration); err != nil || len(applied) != 3 {
 		t.Fatal("additive migrations55 through57")
 	}
-	if applied, err := provider.Up(context.Background()); err != nil || len(applied) != 0 {
+	if applied, err := provider.UpTo(context.Background(), r7bLastMigration); err != nil || len(applied) != 0 {
 		t.Fatal("migrations55 through57 repeatability")
 	}
 	after := r7bManifest(t, f.operator)
