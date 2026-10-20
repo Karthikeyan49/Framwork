@@ -57,3 +57,29 @@ test('API request admission tuning reaches only the API process',()=>{
   for(const kind of ['worker','dispatcher','web'])assert.equal(runtimeEnv(configured,kind)[key],undefined)
  }
 })
+
+test('AI provider and tool settings reach only the processes that use them',()=>{
+ const configured={...source,AI_PROVIDER_FILE:'/synthetic/ai-provider.json',TOOL_CATALOG_FILE:'/synthetic/tools.json',TOOL_SECRETS_DIR:'/synthetic/tool-secrets',TOOL_CA_FILE:'/synthetic/tool-ca.pem',TOOL_ALLOW_INTERNAL:'true'}
+ const expected={api:{AI_PROVIDER_FILE:true,TOOL_CATALOG_FILE:true},worker:{TOOL_CATALOG_FILE:true,TOOL_SECRETS_DIR:true,TOOL_CA_FILE:true,TOOL_ALLOW_INTERNAL:true},dispatcher:{},web:{}}
+ for(const kind of ['api','worker','dispatcher','web']){
+  const env=runtimeEnv(configured,kind)
+  for(const key of ['AI_PROVIDER_FILE','TOOL_CATALOG_FILE','TOOL_SECRETS_DIR','TOOL_CA_FILE','TOOL_ALLOW_INTERNAL'])assert.equal(env[key],expected[kind][key]?configured[key]:undefined,`${kind} ${key}`)
+ }
+ // Unset stays unset: no empty string is invented for a process that has no such setting.
+ for(const kind of ['api','worker'])for(const key of ['AI_PROVIDER_FILE','TOOL_CATALOG_FILE','TOOL_SECRETS_DIR','TOOL_CA_FILE','TOOL_ALLOW_INTERNAL'])assert.equal(Object.hasOwn(runtimeEnv(source,kind),key),false,`${kind} ${key}`)
+})
+
+test('the documented launcher hands the configured AI and tool settings to its API and worker children',()=>{
+ // with-env.mjs is what make api/worker run; it must build the child environment with runtimeEnv, not copy the parent's.
+ const script=fileURLToPath(new URL('./with-env.mjs',import.meta.url))
+ const probe="process.stdout.write(JSON.stringify(Object.fromEntries(['AI_PROVIDER_FILE','TOOL_CATALOG_FILE','TOOL_SECRETS_DIR','TOOL_CA_FILE','TOOL_ALLOW_INTERNAL','MIGRATION_DATABASE_URL'].map(k=>[k,process.env[k]]))))"
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'launcher-'));try{
+  fs.mkdirSync(path.join(temp,'bin'));const fake=path.join(temp,'bin','api');fs.writeFileSync(fake,'#!'+process.execPath+'\n'+probe+'\n',{mode:0o755})
+  const env={PATH:process.env.PATH,AI_PROVIDER_FILE:'/synthetic/ai.json',TOOL_CATALOG_FILE:'/synthetic/tools.json',TOOL_SECRETS_DIR:'/synthetic/secrets',MIGRATION_DATABASE_URL:'operator-credential'}
+  const result=spawnSync(process.execPath,[script,fake],{cwd:temp,env,encoding:'utf8'})
+  assert.equal(result.status,0,result.stderr)
+  const seen=JSON.parse(result.stdout)
+  assert.equal(seen.AI_PROVIDER_FILE,'/synthetic/ai.json');assert.equal(seen.TOOL_CATALOG_FILE,'/synthetic/tools.json')
+  assert.equal(seen.TOOL_SECRETS_DIR,undefined,'tool secrets directory must not reach the API process');assert.equal(seen.MIGRATION_DATABASE_URL,undefined)
+ }finally{fs.rmSync(temp,{recursive:true,force:true})}
+})

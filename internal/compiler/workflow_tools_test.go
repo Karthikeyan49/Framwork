@@ -13,8 +13,8 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
-// Reviewed pre-ADR100 identities (commit a6889dd). Adding schema 1.3.0 must not
-// change any existing source, IR or plan byte.
+// Reviewed pre-ADR100 identities (commit a6889dd). Adding the tool contract (schema 1.5.0; the milestone line first
+// numbered it 1.3.0) must not change any existing source, IR or plan byte.
 const (
 	workflowV12IRHash   = "ea566c0483e6b67ecf2d9b94a9e99c75b397d1c4f16ca6c929ed5c8052c32f8b"
 	workflowV12PlanHash = "3efbb3583986e389b5dd37373634e7c44c5f18d17f51cdb66c73792de9f3da30"
@@ -111,7 +111,7 @@ func TestToolWorkflowCompilesPinsAndRestoresDeterministically(t *testing.T) {
 	ir := p.IR()
 	platformJSON, _ := json.Marshal(PlatformCatalog())
 	if ir.IRVersion != ToolWorkflowIRVersion || ir.CompilerVersion != ToolWorkflowCompilerVersion || ir.CatalogHash != digest(platformJSON) || len(ir.Workflows) != 1 {
-		t.Fatal("1.3 IR identity or tool catalog leaked into CatalogHash", ir.IRVersion, ir.CompilerVersion)
+		t.Fatal("1.5 IR identity or tool catalog leaked into CatalogHash", ir.IRVersion, ir.CompilerVersion)
 	}
 	again, ds := Compile(s, toolCompilerCatalog(testToolCatalog(t)))
 	if len(ds) != 0 || again.Hash() != p.Hash() || !bytes.Equal(again.JSON(), p.JSON()) {
@@ -128,7 +128,7 @@ func TestToolWorkflowCompilesPinsAndRestoresDeterministically(t *testing.T) {
 
 	restored, e := Restore(p.JSON(), p.Hash(), SupportedIRVersions())
 	if e != nil || !MatchesStoredSource(restored, s) {
-		t.Fatal("1.3 restore", e)
+		t.Fatal("1.5 restore", e)
 	}
 	w, e := restored.Workflow("workflow.vendor.onboard")
 	if e != nil {

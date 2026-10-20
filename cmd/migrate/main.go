@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -30,6 +31,12 @@ func run(ctx context.Context, args []string) error {
 	defer db.Close()
 	if db.PingContext(ctx) != nil {
 		return fmt.Errorf("migration database unavailable")
+	}
+	if err := postgres.CheckMigrationLineage(ctx, db); err != nil {
+		if errors.Is(err, postgres.ErrForeignMigrationNumbering) {
+			return err
+		}
+		return fmt.Errorf("migration lineage check failed")
 	}
 	locker, err := lock.NewPostgresSessionLocker()
 	if err != nil {

@@ -104,9 +104,9 @@ type Retry struct {
 	MaxBackoffMS     int `json:"max_backoff_ms"`
 }
 
-// Activity is a local or (schema 1.3.0) tool activity. Every published schema
+// Activity is a local or (schema 1.5.0) tool activity. Every published schema
 // requires timeout_ms >= 1 for local/legacy activities, so omitting the zero
-// value never changes the bytes of an existing valid document or plan; 1.3.0
+// value never changes the bytes of an existing valid document or plan; 1.5.0
 // tool activities have no timeout (the trusted catalog bounds it). Inputs maps
 // a tool input name to a field of the workflow entity.
 type Activity struct {

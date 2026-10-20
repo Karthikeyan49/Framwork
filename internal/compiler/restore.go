@@ -45,6 +45,11 @@ func Restore(raw []byte, expectedHash string, supportedIR []string) (Program, er
 	if ir.IRVersion == IntegrityIRVersion && (ir.Application.SchemaVersion != metadata.IntegritySchemaVersion || ir.CompilerVersion != IntegrityCompilerVersion) || validateIntegrity(ir.Application.SchemaVersion, ir.Entities) != nil {
 		return Program{}, errors.New("invalid stored integrity contract")
 	}
+	// The tool contract is a superset of the integrity contract and keeps its exact application/IR/compiler pairing. Earlier IR
+	// versions deliberately keep their historical compiler provenance and are not narrowed by this check.
+	if ir.IRVersion == ToolWorkflowIRVersion && (ir.Application.SchemaVersion != metadata.ToolWorkflowSchemaVersion || ir.CompilerVersion != ToolWorkflowCompilerVersion) {
+		return Program{}, errors.New("invalid stored tool contract")
+	}
 	if validateStoredRules(ir) != nil {
 		return Program{}, errors.New("stored rule model disagrees with application")
 	}
