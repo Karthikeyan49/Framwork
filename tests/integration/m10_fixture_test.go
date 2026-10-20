@@ -326,7 +326,7 @@ func m10Tools(port int) []tools.Definition {
 }
 
 // m10Flow is a bounded workflow: start -> [approval] -> tool -> complete.
-func m10Flow(tool string, inputs map[string]string, approval bool) map[string]any {
+func m10Flow(tool string, inputs map[string]string, approval bool, approvers []string) map[string]any {
 	cond := map[string]any{"op": "eq", "args": []any{map[string]any{"op": "field", "field_ref": "field.contact.status"}, map[string]any{"op": "literal", "value": "active"}}}
 	first := "state.tool"
 	states := []any{
@@ -336,7 +336,7 @@ func m10Flow(tool string, inputs map[string]string, approval bool) map[string]an
 	}
 	if approval {
 		first = "state.approval"
-		states = append(states, map[string]any{"id": "state.approval", "type": "approval", "approval_roles": []any{"admin", "owner"}, "approval_timeout_ms": 300000, "transitions": []any{map[string]any{"to": "state.tool", "on": "approved"}, map[string]any{"to": "state.failed", "on": "rejected"}}})
+		states = append(states, map[string]any{"id": "state.approval", "type": "approval", "approval_roles": approvers, "approval_timeout_ms": 300000, "transitions": []any{map[string]any{"to": "state.tool", "on": "approved"}, map[string]any{"to": "state.failed", "on": "rejected"}}})
 	}
 	states = append(states, map[string]any{"id": "state.start", "type": "start", "transitions": []any{map[string]any{"to": first, "condition": cond}, map[string]any{"to": "state.failed"}}})
 	return map[string]any{"dsl_version": "2.1.0", "version": "1.0.0", "timeout_ms": 600000, "entity_ref": "entity.contact", "trigger": "manual", "initial_state": "state.start", "states": states}
@@ -347,6 +347,8 @@ type m10Options struct {
 	allowInternal  bool
 	tenantOnly     string // restrict every tool to one tenant ("" = all)
 	omitFromWorker bool
+	approvers      []string // roles of the approval state of every flow (nil: admin and owner)
+	customRoles    bool     // the API decides with the tenant-defined roles, as the production wiring does
 }
 
 type m10Fixture struct {
@@ -417,12 +419,16 @@ func m10Setup(t *testing.T, o m10Options) *m10Fixture {
 		}
 		kept = append(kept, def)
 	}
+	approvers := o.approvers
+	if approvers == nil {
+		approvers = []string{"admin", "owner"}
+	}
 	for name, flow := range m10Flows {
 		def := map[string]any{}
 		for k, v := range template {
 			def[k] = v
 		}
-		def["id"], def["label"], def["workflow"] = "workflow.contact."+name, "Tool "+name, m10Flow(flow.tool, flow.inputs, flow.approval)
+		def["id"], def["label"], def["workflow"] = "workflow.contact."+name, "Tool "+name, m10Flow(flow.tool, flow.inputs, flow.approval, approvers)
 		kept = append(kept, def)
 	}
 	doc["definitions"] = kept
@@ -431,6 +437,9 @@ func m10Setup(t *testing.T, o m10Options) *m10Fixture {
 	compilerCatalog := compiler.PlatformCatalog()
 	compilerCatalog.ToolCatalog = catalog
 	api := access.API{DB: f.db, Auth: f.verifier, Policy: policy.Native{}, Audit: audit.Postgres{}, Registry: m3Registry(t), PreviewEnabled: true, WorkflowsEnabled: true, CompilerCatalog: &compilerCatalog, ToolCatalog: catalog}
+	if o.customRoles {
+		api.PolicyLoader = (policy.RoleStore{}).Load
+	}
 	h := httpserver.Handler(httpserver.Options{Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Register: api.Register, AllowPOST: api.AcceptsPOST})
 	token := f.token(t, f.aliceSubject, nil)
 	root := "/v1/tenants/" + f.tenantA + "/preview/" + app + "/versions/1"
