@@ -19,6 +19,13 @@ import (
 // contract. This rehearses real adoption rather than bypassing the new trigger.
 func uniqueFixture(t *testing.T, count int, duplicates bool) (*iamFixture, http.Handler, string, string, string, data.Scope) {
 	t.Helper()
+	return uniqueFixtureAt(t, count, duplicates, "1.4.0")
+}
+
+// uniqueFixtureAt authors the unique-field draft at the given authoring schema version: 1.4.0 introduced field.unique and its
+// superset 1.5.0 (the tool contract) carries it too.
+func uniqueFixtureAt(t *testing.T, count int, duplicates bool, version string) (*iamFixture, http.Handler, string, string, string, data.Scope) {
+	t.Helper()
 	f, h, old, token, app := scalarFixture(t, 1)
 	scope := scalarScope(t, h, old, token)
 	_, err := f.operator.Exec(`INSERT INTO runtime.record_sets(tenant_id,app_id,metadata_revision,ir_hash) VALUES($1,$2,2,$3) ON CONFLICT DO NOTHING`, f.tenantA, app, scope.Hash())
@@ -46,14 +53,14 @@ func uniqueFixture(t *testing.T, count int, duplicates bool) (*iamFixture, http.
 	if json.Unmarshal(raw, &doc) != nil {
 		t.Fatal("unique document")
 	}
-	doc["schema_version"] = "1.4.0"
+	doc["schema_version"] = version
 	defs := []any{}
 	for _, item := range doc["definitions"].([]any) {
 		d := item.(map[string]any)
 		if d["kind"] == "rule" || d["kind"] == "workflow" {
 			continue
 		}
-		d["schema_version"] = "1.4.0"
+		d["schema_version"] = version
 		if d["id"] == "field.contact.memo0" {
 			d["field"].(map[string]any)["unique"] = true
 		}
