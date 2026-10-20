@@ -92,11 +92,17 @@ func (s *testServer) last() seen {
 }
 
 // wait blocks until the server has been released, a hard stop for handlers
-// that simulate a stalled provider.
+// that simulate a stalled provider. When the client leaves first (its deadline
+// passed) the handler aborts the connection instead of returning: a return
+// makes the server send a default 200, and net/http can hand that answer to a
+// client whose deadline has just passed instead of the deadline error (about 1
+// request in 100 on a loaded host), so a test asserting the timeout class saw
+// invalid_response.
 func (s *testServer) wait(r *http.Request, max time.Duration) {
 	select {
 	case <-s.release:
 	case <-r.Context().Done():
+		panic(http.ErrAbortHandler)
 	case <-time.After(max):
 	}
 }
