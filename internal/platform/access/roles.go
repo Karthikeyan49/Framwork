@@ -24,6 +24,8 @@ func roleReply(value any, err error) (reply, error) {
 	status, code := 0, ""
 	var pg *pgconn.PgError
 	switch {
+	case errors.Is(err, policy.ErrTooManyRoles):
+		status, code = 409, "role_limit"
 	case errors.Is(err, policy.ErrDefinition):
 		status, code = 400, "invalid_role"
 	case errors.Is(err, policy.ErrScope):

@@ -11,6 +11,26 @@ const RuleSchemaVersion = "1.1.0"
 const WorkflowSchemaVersion = "1.2.0"
 const ApprovalSchemaVersion = "1.3.0"
 const IntegritySchemaVersion = "1.4.0"
+
+// ToolWorkflowSchemaVersion is the opt-in ADR100 authoring contract: identical
+// to IntegritySchemaVersion (which includes ApprovalSchemaVersion) except that
+// an activity may reference a tool. 1.3.0 and 1.4.0 are the approval-role and
+// integrity contracts and never admit a tool activity.
+const ToolWorkflowSchemaVersion = "1.5.0"
+
+// IntegritySchema reports the authoring versions that admit governed integrity
+// claims (field.unique): 1.4.0 and its superset ToolWorkflowSchemaVersion.
+func IntegritySchema(v string) bool {
+	return v == IntegritySchemaVersion || v == ToolWorkflowSchemaVersion
+}
+
+// WorkflowSchema reports the authoring versions with rule/workflow V2 (DSL2)
+// semantics: 1.2.0 and every later contract. Tool activities exist only in
+// ToolWorkflowSchemaVersion.
+func WorkflowSchema(v string) bool {
+	return v == WorkflowSchemaVersion || v == ApprovalSchemaVersion || v == IntegritySchemaVersion || v == ToolWorkflowSchemaVersion
+}
+
 const MaxBytes = 256 << 10
 
 type Document struct {
@@ -83,14 +103,21 @@ type Retry struct {
 	InitialBackoffMS int `json:"initial_backoff_ms"`
 	MaxBackoffMS     int `json:"max_backoff_ms"`
 }
+
+// Activity is a local or (schema 1.3.0) tool activity. Every published schema
+// requires timeout_ms >= 1 for local/legacy activities, so omitting the zero
+// value never changes the bytes of an existing valid document or plan; 1.3.0
+// tool activities have no timeout (the trusted catalog bounds it). Inputs maps
+// a tool input name to a field of the workflow entity.
 type Activity struct {
-	ToolRef              string `json:"tool_ref,omitempty"`
-	LocalRef             string `json:"local_ref,omitempty"`
-	Version              string `json:"version,omitempty"`
-	TimeoutMS            int    `json:"timeout_ms"`
-	Retry                Retry  `json:"retry"`
-	CompensationToolRef  string `json:"compensation_tool_ref,omitempty"`
-	CompensationLocalRef string `json:"compensation_local_ref,omitempty"`
+	ToolRef              string            `json:"tool_ref,omitempty"`
+	LocalRef             string            `json:"local_ref,omitempty"`
+	Version              string            `json:"version,omitempty"`
+	Inputs               map[string]string `json:"inputs,omitempty"`
+	TimeoutMS            int               `json:"timeout_ms,omitempty"`
+	Retry                Retry             `json:"retry"`
+	CompensationToolRef  string            `json:"compensation_tool_ref,omitempty"`
+	CompensationLocalRef string            `json:"compensation_local_ref,omitempty"`
 }
 type Transition struct {
 	To        string      `json:"to"`

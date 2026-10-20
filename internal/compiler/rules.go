@@ -43,7 +43,7 @@ func validateStoredRules(ir IR) error {
 		}
 		return nil
 	}
-	if !(ir.IRVersion == RuleIRVersion && ir.Application.SchemaVersion == metadata.RuleSchemaVersion || ir.IRVersion == WorkflowIRVersion && ir.Application.SchemaVersion == metadata.WorkflowSchemaVersion || ir.IRVersion == ApprovalIRVersion && ir.Application.SchemaVersion == metadata.ApprovalSchemaVersion || ir.IRVersion == IntegrityIRVersion && ir.Application.SchemaVersion == metadata.IntegritySchemaVersion) {
+	if !(ir.IRVersion == RuleIRVersion && ir.Application.SchemaVersion == metadata.RuleSchemaVersion || ir.IRVersion == WorkflowIRVersion && ir.Application.SchemaVersion == metadata.WorkflowSchemaVersion || ir.IRVersion == ApprovalIRVersion && ir.Application.SchemaVersion == metadata.ApprovalSchemaVersion || ir.IRVersion == IntegrityIRVersion && ir.Application.SchemaVersion == metadata.IntegritySchemaVersion || ir.IRVersion == ToolWorkflowIRVersion && ir.Application.SchemaVersion == metadata.ToolWorkflowSchemaVersion) {
 		return rules.ErrInvalid
 	}
 	index := 0

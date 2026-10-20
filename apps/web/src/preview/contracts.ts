@@ -97,7 +97,7 @@ export function decodePreview(
     throw new Error("Invalid preview");
   const ir = raw.ir;
   if (
-    (ir.ir_version !== rendererVersion && ir.ir_version !== "1.1.0" && ir.ir_version !== "1.2.0" && ir.ir_version !== "1.3.0" && ir.ir_version !== "1.4.0") ||
+    (ir.ir_version !== rendererVersion && ir.ir_version !== "1.1.0" && ir.ir_version !== "1.2.0" && ir.ir_version !== "1.3.0" && ir.ir_version !== "1.4.0" && ir.ir_version !== "1.5.0") ||
     typeof ir.compiler_version !== "string" ||
     ir.compiler_version.length === 0 ||
     ir.compiler_version.length > 80 ||
@@ -143,7 +143,7 @@ export function decodePreview(
         ].includes(f.type) ||
         typeof f.required !== "boolean" ||
         typeof f.core_id !== "boolean" ||
-        (f.unique !== undefined && (ir.ir_version !== "1.4.0" || typeof f.unique !== "boolean" || (f.unique && f.core_id)))
+        (f.unique !== undefined && ((ir.ir_version !== "1.4.0" && ir.ir_version !== "1.5.0") || typeof f.unique !== "boolean" || (f.unique && f.core_id)))
       )
         throw new Error("Invalid field");
       if (

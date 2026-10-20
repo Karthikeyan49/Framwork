@@ -15,12 +15,29 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
 // Version retains the closed legacy role contract. TenantRoleVersion opts in to tenant role identifiers.
 const Version = "2.0.0"
 const TenantRoleVersion = "2.1.0"
+
+// ToolDSLVersion marks plans with at least one ADR100 tool activity whose
+// state pins the tool contract (approval requirement and delivery capability)
+// so the database can enforce it without the catalog (ADR100 Amendment A1).
+// Plans without tools keep their version and byte-identical encoding. A tool
+// plan uses tenant role identifiers, as TenantRoleVersion does.
+const ToolDSLVersion = "2.2.0"
+
+// LegacyToolDSLVersion is the M10 tool DSL without a pinned contract. Stored
+// plans keep restoring byte-for-byte; the compiler never emits it again and
+// the database derives conservative rules for it (ADR100 Amendment A1). The
+// token is shared with TenantRoleVersion (both lines used 2.1.0): a stored 2.1.0
+// plan with at least one tool state is this legacy shape, one without is a
+// tenant-role plan.
+const LegacyToolDSLVersion = TenantRoleVersion
 const ActivityVersion = "1.0.0"
+const MaxToolInputs = 32
 const MaxPlanBytes = 1 << 20
 
 var ErrInvalid = errors.New("invalid workflow contract")
@@ -31,6 +48,9 @@ var ErrLease = errors.New("workflow lease is stale")
 var idPattern = regexp.MustCompile(`^(workflow|entity|state|local)\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 var rolePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var versionPattern = regexp.MustCompile(`^[1-9][0-9]{0,3}\.[0-9]{1,4}\.[0-9]{1,4}$`)
+var toolRefPattern = regexp.MustCompile(`^tool\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
+var toolInputPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+var toolHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type Transition struct {
 	To        string      `json:"to"`
@@ -45,7 +65,44 @@ type State struct {
 	ApprovalRoles     []string           `json:"approval_roles,omitempty"`
 	TimerMS           int                `json:"timer_ms,omitempty"`
 	ApprovalTimeoutMS int                `json:"approval_timeout_ms,omitempty"`
+	// ToolHash pins the trusted catalog definition's canonical hash (ADR100).
+	// Runtime resolves only Lookup(ref, version, ToolHash); a changed or removed
+	// definition never replaces the pin.
+	ToolHash string `json:"tool_hash,omitempty"`
+	// ToolContract pins the approval requirement and delivery capability of the
+	// pinned definition (DSL ToolDSLVersion only). The database derives the
+	// approval gate, resend admission and proof-of-absence rules from it.
+	ToolContract *ToolContract `json:"tool_contract,omitempty"`
 }
+
+// ToolContract is the database-enforced subset of a trusted tool definition.
+// It is derived from the definition whose hash is pinned beside it.
+type ToolContract struct {
+	SideEffect      string `json:"side_effect"`
+	Approval        string `json:"approval"`
+	IdempotencyMode string `json:"idempotency_mode"`
+	RetryMode       string `json:"retry_mode"`
+	ReplayWindowMS  int64  `json:"replay_window_ms"`
+	SettleMS        int    `json:"settle_ms"`
+	TimeoutMS       int    `json:"timeout_ms"`
+}
+
+func validToolContract(c ToolContract) bool {
+	keyed := c.IdempotencyMode == "NATIVE_KEY" || c.IdempotencyMode == "DEDUPE_WINDOW"
+	return includes([]string{"NONE", "READ", "WRITE"}, c.SideEffect) && includes([]string{"NONE", "REQUIRED"}, c.Approval) && (c.SideEffect != "WRITE" || c.Approval == "REQUIRED") &&
+		includes([]string{"NATIVE_KEY", "LOOKUP_BY_REFERENCE", "DEDUPE_WINDOW", "NONE"}, c.IdempotencyMode) && includes([]string{"NEVER", "SAFE_RETRY", "RECONCILE_FIRST"}, c.RetryMode) &&
+		c.ReplayWindowMS >= 0 && c.ReplayWindowMS <= 7*86400000 && keyed == (c.ReplayWindowMS > 0) &&
+		c.SettleMS >= 0 && c.SettleMS <= MaxSettleMS && (c.SettleMS == 0 || c.IdempotencyMode == "LOOKUP_BY_REFERENCE") && c.TimeoutMS >= 1 && c.TimeoutMS <= 2000
+}
+
+// MaxSettleMS bounds a declared provider settle interval (ADR100 Amendment A4).
+const MaxSettleMS = tools.MaxSettleMS
+
+// IsTool reports an ADR100 tool activity state.
+func (s State) IsTool() bool {
+	return s.Type == "activity" && s.Activity != nil && s.Activity.ToolRef != ""
+}
+
 type Plan struct {
 	DSLVersion   string        `json:"dsl_version"`
 	ID           string        `json:"id"`
@@ -75,9 +132,27 @@ func (p Program) State(id string) (State, bool) {
 	}
 	return State{}, false
 }
+
+// HasTools reports whether any state is a tool activity (DSL ToolDSLVersion).
+func (p Program) HasTools() bool {
+	for _, s := range p.Plan().States {
+		if s.IsTool() {
+			return true
+		}
+	}
+	return false
+}
+
+// FieldIDs lists the record fields captured into the immutable input snapshot:
+// fields read by transition conditions and fields mapped to tool inputs.
 func (p Program) FieldIDs() []string {
 	seen := map[string]bool{}
 	for _, s := range p.Plan().States {
+		if s.IsTool() {
+			for _, id := range s.Activity.Inputs {
+				seen[id] = true
+			}
+		}
 		for _, t := range s.Transitions {
 			if t.Condition != nil {
 				raw, _ := json.Marshal(t.Condition)
@@ -97,16 +172,47 @@ func (p Program) FieldIDs() []string {
 	sort.Strings(out)
 	return out
 }
+
+// ToolResolver returns the canonical catalog hash for a tool activity that the
+// trusted compiler has already resolved and type-checked. This package never
+// reads a tool catalog; a nil resolver admits no tool activity.
+type ToolResolver func(ref, version string) (ToolResolution, bool)
+
+// ToolResolution is the pin of one resolved tool activity.
+type ToolResolution struct {
+	Hash     string
+	Contract ToolContract
+}
+
 func CompileDefinition(id string, w metadata.Workflow, fields []rules.Field, capabilities []string) (Program, error) {
+	return CompileDefinitionWithTools(id, w, fields, capabilities, nil)
+}
+
+// CompileDefinitionWithTools also admits tool activities, pinning each to the
+// resolver's hash. A plan with a tool uses ToolDSLVersion; otherwise the output
+// is byte-identical to CompileDefinition.
+func CompileDefinitionWithTools(id string, w metadata.Workflow, fields []rules.Field, capabilities []string, tools ToolResolver) (Program, error) {
 	fs, _, e := rules.CanonicalInputs(fields, nil)
 	if e != nil {
 		return Program{}, ErrInvalid
 	}
 	p := Plan{Version: w.Version, DSLVersion: w.DSLVersion, ID: id, EntityID: w.EntityRef, Trigger: w.Trigger, TimeoutMS: w.TimeoutMS, InitialState: w.InitialState, Fields: fs, States: []State{}}
+	hasTools := false
 	for _, s := range w.States {
 		x := State{ID: s.ID, Type: s.Type, Transitions: []Transition{}, Activity: s.Activity, ApprovalRoles: append([]string(nil), s.ApprovalRoles...), TimerMS: s.TimerMS, ApprovalTimeoutMS: s.ApprovalTimeoutMS}
 		sort.Strings(x.ApprovalRoles)
-		if x.Activity != nil {
+		if x.Activity != nil && x.Activity.ToolRef != "" {
+			if tools == nil {
+				return Program{}, ErrInvalid
+			}
+			pin, ok := tools(x.Activity.ToolRef, x.Activity.Version)
+			if !ok || !validToolContract(pin.Contract) {
+				return Program{}, ErrInvalid
+			}
+			contract := pin.Contract
+			x.ToolHash, x.ToolContract = pin.Hash, &contract
+			hasTools = true
+		} else if x.Activity != nil {
 			if !includes(capabilities, x.Activity.LocalRef) || (x.Activity.CompensationLocalRef != "" && !includes(capabilities, x.Activity.CompensationLocalRef)) {
 				return Program{}, ErrInvalid
 			}
@@ -131,6 +237,13 @@ func CompileDefinition(id string, w metadata.Workflow, fields []rules.Field, cap
 			x.Transitions = append(x.Transitions, tr)
 		}
 		p.States = append(p.States, x)
+	}
+	if hasTools {
+		// Tool activities exist only in the 1.5.0 contract, whose workflows author DSL 2.1.0.
+		if p.DSLVersion != TenantRoleVersion {
+			return Program{}, ErrInvalid
+		}
+		p.DSLVersion = ToolDSLVersion
 	}
 	sort.Slice(p.States, func(i, j int) bool { return p.States[i].ID < p.States[j].ID })
 	raw, e := json.Marshal(p)
@@ -159,16 +272,28 @@ func Restore(raw []byte, hash string) (Program, error) {
 	return Program{append([]byte(nil), raw...), hash}, nil
 }
 func validatePlan(p Plan) error {
-	if !includes([]string{Version, TenantRoleVersion}, p.DSLVersion) || !validID(p.ID, "workflow") || !validID(p.EntityID, "entity") || !versionPattern.MatchString(p.Version) || p.TimeoutMS < 1 || p.TimeoutMS > 604800000 || !includes([]string{"manual", "record.created", "record.updated"}, p.Trigger) || len(p.States) < 2 || len(p.States) > 100 {
+	hasToolState := false
+	for _, s := range p.States {
+		hasToolState = hasToolState || s.IsTool()
+	}
+	pinned := p.DSLVersion == ToolDSLVersion
+	legacyTools := p.DSLVersion == LegacyToolDSLVersion && hasToolState
+	withTools := pinned || legacyTools
+	if !includes([]string{Version, TenantRoleVersion, ToolDSLVersion}, p.DSLVersion) || !validID(p.ID, "workflow") || !validID(p.EntityID, "entity") || !versionPattern.MatchString(p.Version) || p.TimeoutMS < 1 || p.TimeoutMS > 604800000 || !includes([]string{"manual", "record.created", "record.updated"}, p.Trigger) || len(p.States) < 2 || len(p.States) > 100 {
 		return ErrInvalid
 	}
 	fs, _, e := rules.CanonicalInputs(p.Fields, nil)
 	if e != nil || !reflect.DeepEqual(fs, p.Fields) || len(fs) < 1 || len(fs) > 32 {
 		return ErrInvalid
 	}
+	declared := map[string]bool{}
+	for _, f := range fs {
+		declared[f.ID] = true
+	}
 	states := map[string]State{}
 	last := ""
 	total := 0
+	toolStates := 0
 	for _, s := range p.States {
 		if !validID(s.ID, "state") || s.ID <= last || !includes([]string{"start", "activity", "approval", "timer", "complete", "failed"}, s.Type) {
 			return ErrInvalid
@@ -181,10 +306,23 @@ func validatePlan(p Plan) error {
 		if s.TimerMS < 0 || s.TimerMS > 86400000 || s.ApprovalTimeoutMS < 0 || s.ApprovalTimeoutMS > p.TimeoutMS {
 			return ErrInvalid
 		}
+		if s.ToolHash != "" && !s.IsTool() || s.ToolContract != nil && (!s.IsTool() || !pinned) || pinned && s.IsTool() && (s.ToolContract == nil || !validToolContract(*s.ToolContract)) {
+			return ErrInvalid
+		}
 		if s.Activity != nil {
 			a := s.Activity
 			r := a.Retry
-			if !validID(a.LocalRef, "local") || a.Version != ActivityVersion || a.ToolRef != "" || a.CompensationToolRef != "" || (a.CompensationLocalRef != "" && !validID(a.CompensationLocalRef, "local")) || a.TimeoutMS < 1 || a.TimeoutMS > 1000 || r.MaxAttempts < 1 || r.MaxAttempts > 10 || r.InitialBackoffMS < 100 || r.InitialBackoffMS > 60000 || r.MaxBackoffMS < r.InitialBackoffMS || r.MaxBackoffMS > 3600000 {
+			if r.MaxAttempts < 1 || r.MaxAttempts > 10 || r.InitialBackoffMS < 100 || r.InitialBackoffMS > 60000 || r.MaxBackoffMS < r.InitialBackoffMS || r.MaxBackoffMS > 3600000 {
+				return ErrInvalid
+			}
+			if a.ToolRef != "" {
+				// Only the tool DSLs admit tools. A tool has no local ref, timeout
+				// (the trusted catalog bounds it) or compensation (deferred, ADR100).
+				if !withTools || len(a.ToolRef) > 160 || !toolRefPattern.MatchString(a.ToolRef) || !versionPattern.MatchString(a.Version) || !toolHashPattern.MatchString(s.ToolHash) || a.LocalRef != "" || a.CompensationLocalRef != "" || a.CompensationToolRef != "" || a.TimeoutMS != 0 || !validToolInputs(a.Inputs, declared) {
+					return ErrInvalid
+				}
+				toolStates++
+			} else if !validID(a.LocalRef, "local") || a.Version != ActivityVersion || a.CompensationToolRef != "" || (a.CompensationLocalRef != "" && !validID(a.CompensationLocalRef, "local")) || a.TimeoutMS < 1 || a.TimeoutMS > 1000 || len(a.Inputs) != 0 {
 				return ErrInvalid
 			}
 		}
@@ -239,6 +377,9 @@ func validatePlan(p Plan) error {
 			return ErrInvalid
 		}
 	}
+	if withTools && toolStates == 0 {
+		return ErrInvalid
+	}
 	initial, ok := states[p.InitialState]
 	if !ok || initial.Type != "start" {
 		return ErrInvalid
@@ -269,6 +410,17 @@ func validatePlan(p Plan) error {
 		return ErrInvalid
 	}
 	return nil
+}
+func validToolInputs(inputs map[string]string, fields map[string]bool) bool {
+	if len(inputs) < 1 || len(inputs) > MaxToolInputs {
+		return false
+	}
+	for name, field := range inputs {
+		if !toolInputPattern.MatchString(name) || !fields[field] {
+			return false
+		}
+	}
+	return true
 }
 func validID(id, kind string) bool {
 	return len(id) <= 160 && idPattern.MatchString(id) && len(id) > len(kind)+1 && id[:len(kind)+1] == kind+"."
@@ -314,18 +466,35 @@ func (p Program) Next(ctx context.Context, state, on string, values map[string]j
 }
 
 // MatchesDefinition compares the persisted versioned model with authored source;
-// no current compiler is invoked on restore.
+// no current compiler is invoked on restore. Authored source has no tool hash:
+// every tool state must carry a well-formed pin, which the runtime re-checks
+// against the live trusted catalog before any send.
 func (p Program) MatchesDefinition(id string, w metadata.Workflow, fields []rules.Field) bool {
 	x := p.Plan()
+	dsl := w.DSLVersion
+	for _, s := range w.States {
+		if s.Activity != nil && s.Activity.ToolRef != "" {
+			// A pre-amendment plan was authored under DSL 2.0.0 and keeps matching its source.
+			if w.DSLVersion != TenantRoleVersion && !(w.DSLVersion == Version && x.DSLVersion == LegacyToolDSLVersion) {
+				return false
+			}
+			dsl = ToolDSLVersion
+			if x.DSLVersion == LegacyToolDSLVersion {
+				// A stored pre-amendment plan still matches its source.
+				dsl = LegacyToolDSLVersion
+			}
+		}
+	}
 	fs, _, e := rules.CanonicalInputs(fields, nil)
-	if e != nil || x.ID != id || x.EntityID != w.EntityRef || x.DSLVersion != w.DSLVersion || x.Version != w.Version || x.Trigger != w.Trigger || x.TimeoutMS != w.TimeoutMS || x.InitialState != w.InitialState || !reflect.DeepEqual(x.Fields, fs) || len(x.States) != len(w.States) {
+	if e != nil || x.ID != id || x.EntityID != w.EntityRef || x.DSLVersion != dsl || x.Version != w.Version || x.Trigger != w.Trigger || x.TimeoutMS != w.TimeoutMS || x.InitialState != w.InitialState || !reflect.DeepEqual(x.Fields, fs) || len(x.States) != len(w.States) {
 		return false
 	}
 	for _, s := range w.States {
 		stored, ok := p.State(s.ID)
 		roles := append([]string(nil), s.ApprovalRoles...)
 		sort.Strings(roles)
-		if !ok || stored.Type != s.Type || !reflect.DeepEqual(stored.Activity, s.Activity) || !reflect.DeepEqual(stored.ApprovalRoles, roles) || stored.TimerMS != s.TimerMS || stored.ApprovalTimeoutMS != s.ApprovalTimeoutMS || len(stored.Transitions) != len(s.Transitions) {
+		tool := s.Activity != nil && s.Activity.ToolRef != ""
+		if !ok || stored.Type != s.Type || !reflect.DeepEqual(stored.Activity, s.Activity) || stored.IsTool() != tool || tool != toolHashPattern.MatchString(stored.ToolHash) || !reflect.DeepEqual(stored.ApprovalRoles, roles) || stored.TimerMS != s.TimerMS || stored.ApprovalTimeoutMS != s.ApprovalTimeoutMS || len(stored.Transitions) != len(s.Transitions) {
 			return false
 		}
 		for i, t := range s.Transitions {

@@ -26,7 +26,7 @@ func validateIntegrity(version string, entities []Entity) error {
 			if !f.Unique {
 				continue
 			}
-			if version != metadata.IntegritySchemaVersion || f.CoreID || !contains([]string{"string", "integer", "decimal", "money", "bool", "date", "datetime", "enum", "reference"}, f.Type) {
+			if !metadata.IntegritySchema(version) || f.CoreID || !contains([]string{"string", "integer", "decimal", "money", "bool", "date", "datetime", "enum", "reference"}, f.Type) {
 				return errors.New("unsupported unique field")
 			}
 			count++

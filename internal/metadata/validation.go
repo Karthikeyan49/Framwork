@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	contracts "github.com/Karthikeyan49/Framwork/contracts/jsonschema"
@@ -47,11 +48,12 @@ func (s Source) Hash() string          { return s.hash }
 func (s Source) JSON() json.RawMessage { return append(json.RawMessage(nil), s.raw...) }
 
 type Validator struct {
-	schema          *js.Schema
-	rulesSchema     *js.Schema
-	workflowSchema  *js.Schema
-	approvalSchema  *js.Schema
-	integritySchema *js.Schema
+	schema             *js.Schema
+	rulesSchema        *js.Schema
+	workflowSchema     *js.Schema
+	approvalSchema     *js.Schema
+	integritySchema    *js.Schema
+	toolWorkflowSchema *js.Schema
 }
 type noLoader struct{}
 
@@ -111,7 +113,11 @@ func compileEmbeddedSchemas() (*Validator, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Validator{old, next, workflows, approvals, integrity}, nil
+	toolWorkflows, e := compile("application-v1.5.schema.json", ToolWorkflowSchemaVersion)
+	if e != nil {
+		return nil, e
+	}
+	return &Validator{old, next, workflows, approvals, integrity, toolWorkflows}, nil
 }
 func (v *Validator) Parse(raw []byte) (Source, error) { return v.parse(raw, MaxBytes) }
 
@@ -140,6 +146,9 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 	}
 	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == IntegritySchemaVersion {
 		active = v.integritySchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == ToolWorkflowSchemaVersion {
+		active = v.toolWorkflowSchema
 	}
 	if active == nil {
 		return Source{}, ErrUnavailable
@@ -190,6 +199,23 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 // DecodeJSON rejects duplicate keys, invalid UTF-8, trailing data and excessive
 // nesting before schema validation. Numbers are exact decimal values with at most
 // 18 fractional digits and bounded exponents; no floating-point hash conversion.
+// foldKey canonicalises a JSON object key the way encoding/json matches struct
+// fields (Unicode simple folding): every rune becomes the smallest member of its
+// folding orbit.
+func foldKey(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		smallest := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < smallest {
+				smallest = f
+			}
+		}
+		b.WriteRune(smallest)
+	}
+	return b.String()
+}
+
 func DecodeJSON(raw []byte) (any, error) { return decodeJSON(raw, MaxBytes+4096) }
 func decodeJSON(raw []byte, maxBytes int) (any, error) {
 	if len(raw) == 0 || len(raw) > maxBytes || !utf8.Valid(raw) {
@@ -212,6 +238,7 @@ func decodeJSON(raw []byte, maxBytes int) (any, error) {
 		case json.Delim:
 			if token == '{' {
 				values := map[string]any{}
+				foldedKeys := map[string]string{}
 				for dec.More() {
 					key, err := dec.Token()
 					if err != nil {
@@ -224,6 +251,15 @@ func decodeJSON(raw []byte, maxBytes int) (any, error) {
 					if _, exists := values[name]; exists {
 						return nil, invalid("", "duplicate_key", "Duplicate JSON keys are forbidden")
 					}
+					// encoding/json matches struct fields with Unicode simple folding, so
+					// {"revision":1,"Revision":2} (or "revisioN" spelled with a folded rune)
+					// would decode to the LAST spelling while any other JSON reader sees two
+					// unrelated keys. Keys that fold to the same name are duplicates.
+					folded := foldKey(name)
+					if other, exists := foldedKeys[folded]; exists && other != name {
+						return nil, invalid("", "duplicate_key", "JSON keys that differ only by case are forbidden")
+					}
+					foldedKeys[folded] = name
 					value, err := read(depth + 1)
 					if err != nil {
 						return nil, err

@@ -21,8 +21,10 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/platform/traffic"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -43,7 +45,21 @@ type API struct {
 	WorkflowsEnabled bool
 	// Trusted platform configuration, never selected by a request or metadata.
 	CompilerCatalog *compiler.Catalog
+	// ToolCatalog is the operator-owned tool registry (ADR100); it feeds
+	// sandbox evidence and, with the compiler, tool admission.
+	ToolCatalog tools.Catalog
+	// AI is the optional AI builder (ADR104). The zero value leaves every AI route
+	// answering 503 ai_unavailable.
+	AI AIConfig
+
+	// Recompute remembers the pure recomputation of stored release candidates and
+	// bounds the cold ones per tenant and per process (ADR102 amendment 10). Nil is
+	// the process default.
+	Recompute *promotion.Recompute
 }
+
+// store is the release store of this API: its recomputations share one memo.
+func (a API) store() promotion.Store { return promotion.Store{Recompute: a.Recompute} }
 
 func (a API) catalog() compiler.Catalog {
 	if a.CompilerCatalog != nil {
@@ -75,6 +91,14 @@ func (a API) Register(mux *http.ServeMux) {
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/bindings", a.serve)
 		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions", a.serve)
 		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/sandboxes", a.serve)
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}", a.serve)
+		mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/freeze", a.serve)
+		mux.HandleFunc("GET /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/evidence", a.serve)
+		for pattern := range releasePatterns {
+			mux.HandleFunc(pattern, a.serve)
+		}
+		a.registerAI(mux)
 		for _, op := range []string{"advance", "activate", "abort", "reverify"} {
 			mux.HandleFunc("POST /v1/tenants/{tenant}/preview/{app}/datasets/{dataset}/evolutions/{evolution}/"+op, a.serve)
 		}
@@ -137,6 +161,24 @@ type reply struct {
 	code, message string
 	body          any
 	issues        []metadata.Issue
+	// next, when set, continues the request after the first transaction committed
+	// (the AI provider phase and its result transaction, ADR104 A8). Its reply
+	// replaces this one.
+	next func(context.Context) reply
+	// nextWithin, when positive, moves the connection's write deadline to that long
+	// from now before next runs: the server-wide write timeout is 10 s and the
+	// provider phase may take longer.
+	nextWithin time.Duration
+
+	// retryAfter, when positive, is sent as a Retry-After header in whole seconds.
+	retryAfter time.Duration
+}
+
+// extendWriteDeadline moves the write deadline of the request's connection to d from
+// now. Writers that do not support deadlines (a test recorder) are left alone: the
+// call is best effort and its failure changes nothing but the available time.
+func extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
 }
 
 // A service rejection must roll back its entire business transaction before
@@ -144,15 +186,30 @@ type reply struct {
 type requestRejection struct {
 	response reply
 	evidence *audit.Entry
+	// cause is the error the response was mapped from, when a retry may depend on it.
+	cause error
 }
 
 func (e *requestRejection) Error() string { return "request rejected" }
+
+// Unwrap exposes the database error a handler mapped to its typed response, so that the
+// retry of an idempotent request can recognise a known abort.
+func (e *requestRejection) Unwrap() error { return e.cause }
 
 func denied(status int, code, message string) reply {
 	return reply{status: status, code: code, message: message}
 }
 
 func (a API) transaction(ctx context.Context, run func(context.Context, postgres.Executor) error) error {
+	return a.transactionAt(ctx, sql.LevelRepeatableRead, run)
+}
+
+// freezePattern is the one route whose port needs READ COMMITTED: runtime.freeze_sandbox locks the
+// sandbox, the dataset and the ledger first and must then read the committed state, not the snapshot
+// of a transaction that started before the locks were granted (M11 review R02).
+const freezePattern = "POST /v1/tenants/{tenant}/preview/{app}/sandboxes/{sandbox}/freeze"
+
+func (a API) transactionAt(ctx context.Context, level sql.IsolationLevel, run func(context.Context, postgres.Executor) error) error {
 	if a.Admission != nil {
 		queueCtx, span := otel.Tracer("framework/postgres").Start(ctx, "postgres.request.admission")
 		release, err := a.Admission.Acquire(queueCtx)
@@ -162,7 +219,7 @@ func (a API) transaction(ctx context.Context, run func(context.Context, postgres
 		}
 		defer release()
 	}
-	return postgres.WithRuntime(ctx, a.DB, run)
+	return postgres.WithRuntimeIsolation(ctx, a.DB, level, run)
 }
 func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	if a.rateRejected(w, r, a.Traffic.Peer(r.Context(), r.RemoteAddr)) {
@@ -201,6 +258,18 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The POSTs of the release builder that are idempotent by content (a candidate with the
+	// same bytes, an acceptance spec with the same body) repeat after a known abort, so that
+	// concurrent identical requests converge on the replay instead of one 409 each (review F7).
+	retryRelease := releaseIdempotentPOST[r.Pattern] && r.Body != nil
+	if retryRelease {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		if err != nil || len(body) > 1<<20 {
+			httpserver.Error(w, r, 400, "invalid_release_request", "Request body is invalid")
+			return
+		}
+	}
 	parentContext := r.Context()
 	if localCommand {
 		var cancel context.CancelFunc
@@ -210,10 +279,14 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	run := func(parent context.Context) error {
 		response, rejectedEvidence = reply{}, audit.Entry{}
 		p, authErr = identity.Principal{}, preError
-		if localCommand {
+		if localCommand || retryRelease {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		return a.transaction(parent, func(ctx context.Context, tx postgres.Executor) error {
+		level := sql.LevelRepeatableRead
+		if r.Pattern == freezePattern {
+			level = sql.LevelReadCommitted
+		}
+		return a.transactionAt(parent, level, func(ctx context.Context, tx postgres.Executor) error {
 			// Recheck valid signatures/time bounds after admission/queue waits and
 			// on each known-aborted retry. No token validity or policy cache.
 			if preError == nil {
@@ -249,6 +322,8 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		if postgres.KnownAbort(err) {
 			err = &requestRejection{response: denied(409, "concurrent_conflict", "Concurrent changes prevented this command; reconcile its key and reload before retrying")}
 		}
+	} else if retryRelease {
+		err = postgres.RetryLocalWhen(parentContext, run, releaseKnownAbort)
 	} else {
 		err = run(parentContext)
 	}
@@ -285,9 +360,18 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		httpserver.Error(w, r, 503, "service_unavailable", "A required service or security transaction is unavailable")
 		return
 	}
+	if err == nil && response.next != nil {
+		if response.nextWithin > 0 {
+			extendWriteDeadline(w, response.nextWithin)
+		}
+		response = response.next(parentContext)
+	}
 	// No protected response or security success is sent before the outer commit.
 	if response.status == 401 {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="framework"`)
+	}
+	if response.retryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int((response.retryAfter+time.Second-1)/time.Second)))
 	}
 	if len(response.issues) > 0 {
 		httpserver.JSON(w, response.status, struct {
@@ -423,8 +507,23 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {
 			action = "datasets.evolve"
 		}
+		if sandboxPatterns[r.Pattern] {
+			action = "sandbox.read"
+			if r.Method == http.MethodPost {
+				action = "sandbox.manage"
+			}
+		}
+		if releaseAction, ok := releasePatterns[r.Pattern]; ok {
+			action = releaseAction
+		}
+		if aiAction, ok := aiPatterns[r.Pattern]; ok {
+			action = aiAction
+		}
 	}
-	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || strings.HasSuffix(r.URL.Path, "/roles") || r.Pattern == "GET /v1/tenants/{tenant}/role-contract" {
+	// Exact registered patterns only (as for teams below): a path suffix would capture
+	// any route whose last variable segment is literally "roles", for example a release
+	// artifact id (M12 API review F2).
+	if r.PathValue("role") != "" || r.PathValue("policy_operation") != "" || rolePatterns[r.Pattern] {
 		resource = "role"
 		action = "roles.read"
 		if r.Method == http.MethodPost {
@@ -447,6 +546,11 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 	if resource == "preview" || resource == "metadata" {
 		appID = r.PathValue("app")
 		if len(appID) > 160 || !metadataAppID.MatchString(appID) {
+			// An authenticated, tenant-resolved request: record it as such (tenant, the
+			// action it asked for) and not as an authentication failure (review F12).
+			evidence.TenantID = access.TenantID()
+			evidence.Action = action + ".rejected"
+			evidence.Resource = resource
 			return denied(400, "invalid_application", "Invalid application selection"), evidence, nil
 		}
 		evidence.State.MetadataApp = appID
@@ -478,6 +582,12 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 			evidence.State.CommandKey = r.PathValue("command")
 			receipt, err = data.CommandReceipt(ctx, tx, access, appID, r.PathValue("command"))
 			result = reply{status: 200, body: receipt}
+		} else if _, ok := releasePatterns[r.Pattern]; ok {
+			result, err = a.release(ctx, tx, r, u, access, &evidence)
+		} else if _, ok := aiPatterns[r.Pattern]; ok {
+			result, err = a.ai(ctx, tx, r, u, access, &evidence)
+		} else if sandboxPatterns[r.Pattern] {
+			result, err = a.sandbox(ctx, tx, r, u, access, &evidence)
 		} else if r.PathValue("evolution") != "" || strings.HasSuffix(r.URL.Path, "/evolutions") {
 			result, err = a.evolution(ctx, tx, r, access, &evidence)
 		} else if strings.Contains(r.URL.Path, "/datasets") {
@@ -529,6 +639,12 @@ func (a API) perform(ctx context.Context, tx postgres.Executor, r *http.Request,
 		}{access.TenantID(), access.Roles(), d}
 	}
 	return reply{status: 200, body: result}, evidence, nil
+}
+
+var rolePatterns = map[string]bool{
+	"GET /v1/tenants/{tenant}/roles":         true,
+	"GET /v1/tenants/{tenant}/role-contract": true,
+	"POST /v1/tenants/{tenant}/roles":        true,
 }
 
 var teamPatterns = map[string]bool{

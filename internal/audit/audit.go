@@ -49,6 +49,15 @@ type State struct {
 	AccessOperation      string `json:"access_operation,omitempty"`
 	AccessTeamID         string `json:"access_team_id,omitempty"`
 	TeamVersion          int64  `json:"team_version,omitempty"`
+	ToolRef              string `json:"tool_ref,omitempty"`
+	ToolVersion          string `json:"tool_version,omitempty"`
+	ToolMode             string `json:"tool_mode,omitempty"`
+	ToolAttempt          int64  `json:"tool_attempt,omitempty"`
+	ToolOutcome          string `json:"tool_outcome,omitempty"`
+	RequirementsVersion  int64  `json:"requirements_version,omitempty"`
+	AcceptanceID         string `json:"acceptance_id,omitempty"`
+	RiskLevel            string `json:"risk_level,omitempty"`
+	VerifierOutcome      string `json:"verifier_outcome,omitempty"`
 	MetadataApp          string `json:"metadata_app,omitempty"`
 	MetadataRevision     int64  `json:"metadata_revision,omitempty"`
 	MetadataHash         string `json:"metadata_hash,omitempty"`
@@ -56,6 +65,43 @@ type State struct {
 	Role                 string `json:"role,omitempty"`
 	UserActive           *bool  `json:"user_active,omitempty"`
 	MembershipActive     *bool  `json:"membership_active,omitempty"`
+
+	// Promotion evidence (ADR103): hashes, closed codes and counts only.
+	ReleaseGeneration int64    `json:"release_generation,omitempty"`
+	ApprovalCount     int64    `json:"approval_count,omitempty"`
+	ApprovalsRequired int64    `json:"approvals_required,omitempty"`
+	RejectReason      string   `json:"reject_reason,omitempty"`
+	PreviousHash      string   `json:"previous_hash,omitempty"`
+	PlanHash          string   `json:"plan_hash,omitempty"`
+	StorageClass      string   `json:"storage_class,omitempty"`
+	RollbackClass     string   `json:"rollback_class,omitempty"`
+	StaleReasons      []string `json:"stale_reasons,omitempty"`
+
+	// AI proposal evidence (ADR104 A10): ids, hashes, closed codes, labels and
+	// counts only. A prompt, a request text, model output or definition text is
+	// never an audit field.
+	AIProposalID      string `json:"ai_proposal_id,omitempty"`
+	AIKind            string `json:"ai_kind,omitempty"`
+	AIStatus          string `json:"ai_status,omitempty"`
+	AIFailure         string `json:"ai_failure,omitempty"`
+	AIRequestHash     string `json:"ai_request_hash,omitempty"`
+	AIContextHash     string `json:"ai_context_hash,omitempty"`
+	AIProposalHash    string `json:"ai_proposal_hash,omitempty"`
+	AIDiagnosticsHash string `json:"ai_diagnostics_hash,omitempty"`
+	AIAckHash         string `json:"ai_ack_hash,omitempty"`
+	AITemplate        string `json:"ai_template,omitempty"`
+	AIProvider        string `json:"ai_provider,omitempty"`
+	AIModel           string `json:"ai_model,omitempty"`
+	AIAttempts        int64  `json:"ai_attempts,omitempty"`
+	AIInputTokens     int64  `json:"ai_input_tokens,omitempty"`
+	AIOutputTokens    int64  `json:"ai_output_tokens,omitempty"`
+	AISourceRevision  int64  `json:"ai_source_revision,omitempty"`
+
+	// Release refusal evidence (ADR102 amendments 8 and 10): why a request was
+	// refused, as a closed upper-case code, and the hash of the risk assessment a
+	// refused build was judged by. Never free text, never an actor id.
+	RefusalCode    string `json:"refusal_code,omitempty"`
+	AssessmentHash string `json:"assessment_hash,omitempty"`
 }
 type Entry struct {
 	ActorID, TenantID, Action, Resource, DecisionID, PolicyVersion, RequestID, TraceID string
@@ -101,6 +147,18 @@ func encodeEntry(e Entry) ([]any, error) {
 	if (e.State.AccessOperation != "" && e.State.AccessOperation != "owner" && e.State.AccessOperation != "share" && e.State.AccessOperation != "unshare") || len(e.State.AccessTeamID) > 36 || e.State.TeamVersion < 0 || e.State.TeamVersion > 1e9 {
 		return nil, errors.New("invalid record access evidence")
 	}
+	if len(e.State.ToolRef) > 160 || len(e.State.ToolVersion) > 20 || len(e.State.ToolMode) > 16 || e.State.ToolAttempt < 0 || e.State.ToolAttempt > 20 || len(e.State.ToolOutcome) > 80 {
+		return nil, errors.New("invalid tool evidence")
+	}
+	if e.State.RequirementsVersion < 0 || e.State.RequirementsVersion > 1000000 || len(e.State.AcceptanceID) > 36 || len(e.State.RiskLevel) > 16 || len(e.State.VerifierOutcome) > 16 {
+		return nil, errors.New("invalid release evidence")
+	}
+	if !validPromotionEvidence(e.State) {
+		return nil, errors.New("invalid promotion evidence")
+	}
+	if !validAIEvidence(e.State) {
+		return nil, errors.New("invalid AI evidence")
+	}
 	if len(e.State.CommandKey) > 36 {
 		return nil, errors.New("invalid command evidence")
 	}
@@ -130,4 +188,100 @@ func encodeEntry(e Entry) ([]any, error) {
 		return nil, err
 	}
 	return []any{e.ActorID, e.TenantID, e.Action, e.Resource, e.Allow, e.DecisionID, e.PolicyVersion, e.RequestID, e.TraceID, state}, nil
+}
+
+// validPromotionEvidence bounds the ADR103 fields. A rejection note is free
+// text and never enters audit state; the reason is a closed code.
+func validPromotionEvidence(s State) bool {
+	if s.ReleaseGeneration < 0 || s.ReleaseGeneration > 9007199254740991 || s.ApprovalCount < 0 || s.ApprovalCount > 1000000 || s.ApprovalsRequired < 0 || s.ApprovalsRequired > 8 {
+		return false
+	}
+	if !closedCode(s.RejectReason, "REQUIREMENTS_NOT_MET", "RISK_UNACCEPTABLE", "EVIDENCE_INSUFFICIENT", "SUPERSEDED", "WITHDRAWN", "OTHER") ||
+		!closedCode(s.RollbackClass, "POINTER_SAFE", "DATA_NOT_REVERSIBLE", "EXTERNAL_EFFECTS") || !upperCode(s.StorageClass, 16) {
+		return false
+	}
+	if !hexHash(s.PreviousHash) || !hexHash(s.PlanHash) || !hexHash(s.AssessmentHash) || !upperCode(s.RefusalCode, 40) || len(s.StaleReasons) > 16 {
+		return false
+	}
+	for _, r := range s.StaleReasons {
+		if r == "" || !upperCode(r, 32) {
+			return false
+		}
+	}
+	return true
+}
+
+// validAIEvidence bounds the ADR104 fields. Labels (provider, model, template) are
+// short [A-Za-z0-9._:/@+-] strings; kinds, statuses and failures are closed codes.
+func validAIEvidence(s State) bool {
+	if len(s.AIProposalID) > 36 || s.AIAttempts < 0 || s.AIAttempts > 16 || s.AIInputTokens < 0 || s.AIInputTokens > 100000000 || s.AIOutputTokens < 0 || s.AIOutputTokens > 100000000 ||
+		s.AISourceRevision < 0 || s.AISourceRevision > 1000000000 {
+		return false
+	}
+	if !closedCode(s.AIKind, "patch", "requirements") ||
+		!closedCode(s.AIStatus, "PENDING", "READY", "NEEDS_HUMAN", "FAILED", "EXPIRED", "APPLIED", "CONFIRMED", "REJECTED") ||
+		!upperCode(s.AIFailure, 24) {
+		return false
+	}
+	for _, h := range []string{s.AIRequestHash, s.AIContextHash, s.AIProposalHash, s.AIDiagnosticsHash, s.AIAckHash} {
+		if !hexHash(h) {
+			return false
+		}
+	}
+	for _, l := range []struct {
+		v   string
+		max int
+	}{{s.AITemplate, 40}, {s.AIProvider, 64}, {s.AIModel, 128}} {
+		if len(l.v) > l.max {
+			return false
+		}
+		for i := 0; i < len(l.v); i++ {
+			if c := l.v[i]; !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '/' || c == '@' || c == '+' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// closedCode accepts the empty value or one of the listed codes.
+func closedCode(v string, codes ...string) bool {
+	if v == "" {
+		return true
+	}
+	for _, c := range codes {
+		if v == c {
+			return true
+		}
+	}
+	return false
+}
+
+// upperCode accepts the empty value or at most max bytes of [A-Z0-9_].
+func upperCode(v string, max int) bool {
+	if len(v) > max {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; !(c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// hexHash accepts the empty value or a lowercase 64-hex digest.
+func hexHash(v string) bool {
+	if v == "" {
+		return true
+	}
+	if len(v) != 64 {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }

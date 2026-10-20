@@ -92,11 +92,18 @@ func m9SetupDocument(t *testing.T, change func(*metadata.Document)) *m9Fixture {
 	if e = tx.Commit(); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.operator.Exec(`CREATE TABLE runtime.m9_test_effects(tenant_id uuid NOT NULL,instance_id uuid NOT NULL,step_key text NOT NULL,PRIMARY KEY(tenant_id,instance_id,step_key)); SELECT runtime.install_tenant_rls('runtime.m9_test_effects'); REVOKE ALL ON runtime.m9_test_effects FROM framework_app; CREATE POLICY test_worker ON runtime.m9_test_effects TO framework_worker USING(iam.worker_tenant_scope(tenant_id) AND instance_id::text=current_setting('app.job_id',true)) WITH CHECK(iam.worker_tenant_scope(tenant_id) AND instance_id::text=current_setting('app.job_id',true)); GRANT SELECT,INSERT ON runtime.m9_test_effects TO framework_worker`); e != nil {
+	// Outside the four schemas the worker drift guard (migration 87) derives its allowed privileges for.
+	if _, e = f.operator.Exec(`CREATE SCHEMA m9_fixture; GRANT USAGE ON SCHEMA m9_fixture TO framework_worker; GRANT USAGE,CREATE ON SCHEMA m9_fixture TO framework_schema_owner;
+ CREATE TABLE m9_fixture.effects(tenant_id uuid NOT NULL,instance_id uuid NOT NULL,step_key text NOT NULL,PRIMARY KEY(tenant_id,instance_id,step_key));
+ ALTER TABLE m9_fixture.effects ENABLE ROW LEVEL SECURITY; ALTER TABLE m9_fixture.effects FORCE ROW LEVEL SECURITY;
+ CREATE POLICY schema_owner_access ON m9_fixture.effects TO framework_schema_owner USING(true) WITH CHECK(true);
+ CREATE POLICY test_worker ON m9_fixture.effects TO framework_worker USING(iam.worker_tenant_scope(tenant_id) AND instance_id::text=current_setting('app.job_id',true)) WITH CHECK(iam.worker_tenant_scope(tenant_id) AND instance_id::text=current_setting('app.job_id',true));
+ GRANT SELECT,INSERT ON m9_fixture.effects TO framework_worker;
+ ALTER TABLE m9_fixture.effects OWNER TO framework_schema_owner`); e != nil {
 		t.Fatal(e)
 	}
 	store.Activity = func(ctx context.Context, q postgres.Executor, a tenant.Access, r workflow.ActivityRequest) (json.RawMessage, error) {
-		if _, e := q.ExecContext(ctx, `INSERT INTO runtime.m9_test_effects(tenant_id,instance_id,step_key) VALUES($1,$2,$3)`, a.TenantID(), r.InstanceID, r.StepKey); e != nil {
+		if _, e := q.ExecContext(ctx, `INSERT INTO m9_fixture.effects(tenant_id,instance_id,step_key) VALUES($1,$2,$3)`, a.TenantID(), r.InstanceID, r.StepKey); e != nil {
 			return nil, e
 		}
 		return workflow.Noop(ctx, q, a, r)
@@ -186,7 +193,7 @@ func (m *m9Fixture) until(t *testing.T, id, status string) workflow.Instance {
 func (m *m9Fixture) counts(t *testing.T, x workflow.Instance, effects int) {
 	t.Helper()
 	var history, outbox, n int
-	if e := m.f.operator.QueryRow(`SELECT (SELECT count(*) FROM runtime.workflow_history WHERE tenant_id=$1 AND instance_id=$2),(SELECT count(*) FROM runtime.workflow_outbox WHERE tenant_id=$1 AND instance_id=$2),(SELECT count(*) FROM runtime.m9_test_effects WHERE tenant_id=$1 AND instance_id=$2)`, m.f.tenantA, x.ID).Scan(&history, &outbox, &n); e != nil {
+	if e := m.f.operator.QueryRow(`SELECT (SELECT count(*) FROM runtime.workflow_history WHERE tenant_id=$1 AND instance_id=$2),(SELECT count(*) FROM runtime.workflow_outbox WHERE tenant_id=$1 AND instance_id=$2),(SELECT count(*) FROM m9_fixture.effects WHERE tenant_id=$1 AND instance_id=$2)`, m.f.tenantA, x.ID).Scan(&history, &outbox, &n); e != nil {
 		t.Fatal(e)
 	}
 	if int64(history) != x.Version || history != outbox || n != effects {

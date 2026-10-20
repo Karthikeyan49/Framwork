@@ -19,7 +19,11 @@ Additional business adapters need their own policy/data contracts; M10 owns tool
 States: READY, WAITING_TIMER, WAITING_APPROVAL, RETRY_WAIT, SUCCEEDED, FAILED,
 CANCELLED, TIMED_OUT, DEAD, RECONCILE, COMPENSATING, COMPENSATION_FAILED.
 Timers/deadlines use PostgreSQL time. Known local rollback permits bounded retry;
-unknown effect outcomes pause for reviewed reconciliation. A lost commit response
+unknown effect outcomes pause for reviewed reconciliation. Tool steps (ADR100
+Amendments): every fresh non-success outcome is counted, backed off and bounded
+by `max_attempts`; a tool step with an unknown outcome outstanding ends in
+RECONCILE, never DEAD; worker state changes must follow an `always` transition
+of the pinned plan (database trigger), and tool receipts must equal the ledger. A lost commit response
 is resolved by stored receipts and versions. Lease crashes retain append-only
 routing attempts;20 failed leases cause routing DEAD. Disabled actors produce
 BLOCKED routing without reading payloads.

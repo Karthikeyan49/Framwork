@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/config"
 	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/identity"
@@ -29,7 +31,53 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
+
+// newToolGateway composes the governed outbound gateway from operator paths.
+// Secrets stay in files outside the database and metadata; the process proxy
+// environment is ignored by the gateway itself.
+func newToolGateway(c config.Config) (*tools.Gateway, error) {
+	options := tools.GatewayOptions{AllowInternal: c.ToolAllowInternal}
+	if c.ToolSecretsDir != "" {
+		options.Secrets = tools.FileSecrets{Dir: c.ToolSecretsDir}
+	}
+	if c.ToolCAFile != "" {
+		pem, err := os.ReadFile(c.ToolCAFile)
+		if err != nil {
+			return nil, errors.New("tool certificate authority unavailable")
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, errors.New("tool certificate authority invalid")
+		}
+		options.RootCAs = pool
+	}
+	return tools.NewGateway(options)
+}
+
+// loadToolCatalog reads the operator-owned registry (ADR100). No path means no
+// tools; an unreadable or invalid file stops startup rather than registering a
+// partial catalog. Tenants, requests and metadata can never alter it.
+func loadToolCatalog(c config.Config) (tools.Catalog, error) {
+	if c.ToolCatalogFile == "" {
+		return tools.EmptyCatalog(), nil
+	}
+	file, err := os.Open(c.ToolCatalogFile)
+	if err != nil {
+		return tools.Catalog{}, errors.New("tool catalog unavailable")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, tools.MaxCatalogBytes+1))
+	_ = file.Close()
+	if err != nil || len(raw) > tools.MaxCatalogBytes {
+		return tools.Catalog{}, errors.New("tool catalog unavailable")
+	}
+	catalog, err := tools.LoadCatalog(raw)
+	if err != nil {
+		return tools.Catalog{}, errors.New("tool catalog invalid")
+	}
+	return catalog, nil
+}
 
 func Run(ctx context.Context, service string, c config.Config, logger *slog.Logger) error {
 	telemetry, err := observability.Start(ctx, service, c.Environment, c.OTelEndpoint, logger)
@@ -105,7 +153,19 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 				}
 				return (identity.Store{}).ResolveWorker(ctx, q, id)
 			})
-			logger.Info("workflow execution started", "mode", "preview")
+			toolCatalog, e := loadToolCatalog(c)
+			if e != nil {
+				return e
+			}
+			store.ToolCatalog = toolCatalog
+			if toolCatalog.Len() > 0 {
+				gateway, e := newToolGateway(c)
+				if e != nil {
+					return e
+				}
+				store.Tools = gateway
+			}
+			logger.Info("workflow execution started", "mode", "preview", "tools", toolCatalog.Len())
 			wg.Go(func() { (workflow.Worker{DB: db, Store: store}).Run(jobCtx, logger) })
 		}
 		if !c.EventsEnabled {
@@ -197,7 +257,17 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 	if err != nil {
 		return err
 	}
-	accessAPI := access.API{DB: db, Admission: admission, Traffic: trafficGate, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled}
+	toolCatalog, err := loadToolCatalog(c)
+	if err != nil {
+		return err
+	}
+	platformCatalog := compiler.PlatformCatalog()
+	platformCatalog.ToolCatalog = toolCatalog
+	aiConfig, aiProbe, err := newAI(c, registry, db, logger)
+	if err != nil {
+		return err
+	}
+	accessAPI := access.API{CompilerCatalog: &platformCatalog, ToolCatalog: toolCatalog, DB: db, Admission: admission, Traffic: trafficGate, Auth: auth, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: c.Environment == "development" || c.Environment == "test", WorkflowsEnabled: c.WorkflowsEnabled, AI: aiConfig}
 	signIn := signin.API{Development: c.Environment != "production"}
 	var signInStore *cache.Client
 	if c.OIDC != nil {
@@ -225,7 +295,7 @@ func Run(ctx context.Context, service string, c config.Config, logger *slog.Logg
 			return nil
 		}
 		return signInStore.ReadyLoginFlows(ctx)
-	}, "policy": func(ctx context.Context) error { return (policy.RoleStore{}).Ready(ctx, db, false) }, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }}})
+	}, "policy": func(ctx context.Context) error { return (policy.RoleStore{}).Ready(ctx, db, false) }, "events": func(ctx context.Context) error { return events.Ready(ctx, db, "framework_app") }, "identity": identityProbe, "tenant": func(ctx context.Context) error { return (tenant.Store{}).Ready(ctx, db) }, "audit": func(ctx context.Context) error { return (audit.Postgres{}).Ready(ctx, db) }, "data": func(ctx context.Context) error { return (data.Store{}).Ready(ctx, db) }, "metadata": func(ctx context.Context) error { return registry.Ready(ctx, db) }, "ai": aiProbe}})
 	server := httpserver.New(c.HTTPAddr, handler)
 	listener, err := net.Listen("tcp", c.HTTPAddr)
 	if err != nil {

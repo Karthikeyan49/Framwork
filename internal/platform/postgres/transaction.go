@@ -69,6 +69,17 @@ func WithEventRuntime(parent context.Context, db *sql.DB, run func(context.Conte
 	return withRuntime(parent, db, run, sql.LevelReadCommitted)
 }
 
+// WithRuntimeIsolation is WithRuntime at an explicit isolation level. Only a port whose own
+// contract needs a fresh snapshot per statement after it holds its locks (runtime.freeze_sandbox,
+// ADR101 Amendment 2) uses READ COMMITTED; everything else keeps REPEATABLE READ. Like
+// WithEventRuntime, a READ COMMITTED executor does not certify a runtime snapshot.
+func WithRuntimeIsolation(parent context.Context, db *sql.DB, level sql.IsolationLevel, run func(context.Context, Executor) error) error {
+	if level != sql.LevelRepeatableRead && level != sql.LevelReadCommitted {
+		return ErrUnavailable
+	}
+	return withRuntime(parent, db, run, level)
+}
+
 func withRuntime(parent context.Context, db *sql.DB, run func(context.Context, Executor) error, isolation sql.IsolationLevel) (result error) {
 	if db == nil || run == nil {
 		return ErrUnavailable

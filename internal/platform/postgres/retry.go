@@ -30,11 +30,18 @@ func KnownAbort(err error) bool {
 // only for buffered local database operations with no external side effects.
 // Each attempt must own/finish its transaction and resolve live authorization.
 func RetryLocal(parent context.Context, run func(context.Context) error) error {
+	return RetryLocalWhen(parent, run, KnownAbort)
+}
+
+// RetryLocalWhen is RetryLocal with the caller's predicate for the failures that are known to
+// have aborted the attempt without effect and that the operation may repeat. The budget and the
+// number of attempts are the same; the predicate must be as narrow as KnownAbort.
+func RetryLocalWhen(parent context.Context, run func(context.Context) error, retriable func(error) bool) error {
 	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
 	defer cancel()
 	for attempt := 0; ; attempt++ {
 		err := run(ctx)
-		if !KnownAbort(err) || attempt == 2 || ctx.Err() != nil {
+		if !retriable(err) || attempt == 2 || ctx.Err() != nil {
 			return err
 		}
 		n, e := rand.Int(rand.Reader, big.NewInt(21))

@@ -1,0 +1,60 @@
+{
+ "schema_version": "1.5.0",
+ "app_id": "app.orders",
+ "namespace": "acme.orders",
+ "base_version": null,
+ "definitions": [
+  {"id": "entity.customer", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Customer", "kind": "entity",
+   "entity": {"fields": ["field.customer.id", "field.customer.name"]}},
+  {"id": "field.customer.id", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Customer identifier", "kind": "field",
+   "field": {"entity_ref": "entity.customer", "type": "string", "required": true}},
+  {"id": "field.customer.name", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Customer name", "kind": "field",
+   "field": {"entity_ref": "entity.customer", "type": "string", "required": true}},
+  {"id": "entity.order", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Order", "kind": "entity",
+   "entity": {"fields": ["field.order.id", "field.order.title", "field.order.total", "field.order.status", "field.order.customer_ref"]}},
+  {"id": "field.order.id", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Order identifier", "kind": "field",
+   "field": {"entity_ref": "entity.order", "type": "string", "required": true}},
+  {"id": "field.order.title", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Title", "kind": "field",
+   "field": {"entity_ref": "entity.order", "type": "string", "required": true}},
+  {"id": "field.order.total", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Order total", "kind": "field",
+   "field": {"entity_ref": "entity.order", "type": "money", "required": true, "currency": "USD"}},
+  {"id": "field.order.status", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Status", "kind": "field",
+   "field": {"entity_ref": "entity.order", "type": "enum", "required": false, "enum_values": ["draft", "submitted", "approved"]}},
+  {"id": "field.order.customer_ref", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Customer", "kind": "field",
+   "field": {"entity_ref": "entity.order", "type": "reference", "required": false, "reference_to": "entity.customer"}},
+  {"id": "relationship.order.customer", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Order customer", "kind": "relationship",
+   "relationship": {"from_entity": "entity.order", "to_entity": "entity.customer", "from_field": "field.order.customer_ref", "to_field": "field.customer.id", "cardinality": "many_to_one"}},
+  {"id": "page.order.edit", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Order editor", "kind": "page",
+   "page": {"entity_ref": "entity.order", "components": [
+     {"type": "section", "label": "Order", "children": [
+       {"type": "form", "children": [
+         {"type": "text_input", "field_ref": "field.order.title", "label": "Title"},
+         {"type": "money_input", "field_ref": "field.order.total", "label": "Total"},
+         {"type": "select", "field_ref": "field.order.status", "label": "Status"},
+         {"type": "relation_picker", "field_ref": "field.order.customer_ref", "label": "Customer"}
+       ]}
+     ]}
+   ]}},
+  {"id": "page.order.list", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Order list", "kind": "page",
+   "page": {"entity_ref": "entity.order", "components": [{"type": "table", "entity_ref": "entity.order"}]}},
+  {"id": "rule.order.high_value", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "High value order", "kind": "rule",
+   "rule": {"entity_ref": "entity.order", "result_type": "bool", "dsl_version": "2.0.0",
+    "expression": {"op": "gt", "args": [
+      {"op": "field", "field_ref": "field.order.total"},
+      {"op": "typed_literal", "value_type": "money", "value": {"amount": "500", "currency": "USD"}}]}}},
+  {"id": "workflow.order.approval", "schema_version": "1.5.0", "namespace": "acme.orders", "label": "Order approval", "kind": "workflow",
+   "workflow": {"dsl_version": "2.1.0", "version": "1.0.0", "timeout_ms": 600000, "entity_ref": "entity.order", "trigger": "manual", "initial_state": "state.start",
+    "states": [
+     {"id": "state.start", "type": "start", "transitions": [
+       {"to": "state.approval", "condition": {"op": "gt", "args": [
+         {"op": "field", "field_ref": "field.order.total"},
+         {"op": "typed_literal", "value_type": "money", "value": {"amount": "500", "currency": "USD"}}]}},
+       {"to": "state.complete"}]},
+     {"id": "state.approval", "type": "approval", "approval_roles": ["admin", "owner"], "approval_timeout_ms": 300000, "transitions": [
+       {"to": "state.complete", "on": "approved"},
+       {"to": "state.failed", "on": "rejected"}]},
+     {"id": "state.complete", "type": "complete", "transitions": []},
+     {"id": "state.failed", "type": "failed", "transitions": []}
+    ]}}
+ ]
+}

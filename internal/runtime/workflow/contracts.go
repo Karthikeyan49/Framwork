@@ -8,6 +8,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/events"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 	"time"
 )
 
@@ -46,6 +47,10 @@ type Authorizer func(context.Context, postgres.Executor, tenant.Access, string, 
 // ApprovalAuthority checks current membership/head and fences revocation through commit.
 // The pinned role list is a requirement, never a capability grant.
 type ApprovalAuthority func(context.Context, postgres.Executor, tenant.Access, []string) (bool, error)
+
+// MultiAuthorizer decides several actions over a single read of the leased
+// record and returns one audit entry per decided action (the denied one last).
+type MultiAuthorizer func(context.Context, postgres.Executor, tenant.Access, []string, Pin, []string) ([]audit.Entry, error)
 type Capture func(context.Context, postgres.Executor, tenant.Access, Pin, []string) (Snapshot, error)
 type ActivityRequest struct {
 	InstanceID, StepKey, ActivityRef, Version, RequestHash string
@@ -92,21 +97,33 @@ func Noop(ctx context.Context, _ postgres.Executor, _ tenant.Access, r ActivityR
 }
 
 type Instance struct {
-	Mode         string    `json:"mode"`
-	ID           string    `json:"id"`
-	ActorID      string    `json:"actor_id"`
-	Pin          Pin       `json:"pin"`
-	StateID      string    `json:"state_id"`
-	Status       string    `json:"status"`
-	Version      int64     `json:"version"`
-	Attempt      int       `json:"attempt"`
-	EnteredAt    time.Time `json:"entered_at"`
-	DueAt        time.Time `json:"due_at"`
-	Deadline     time.Time `json:"deadline"`
-	Termination  string    `json:"termination,omitempty"`
-	Failure      string    `json:"failure,omitempty"`
-	RoutingState string    `json:"routing_state"`
-	History      []History `json:"history,omitempty"`
+	Mode         string       `json:"mode"`
+	ID           string       `json:"id"`
+	ActorID      string       `json:"actor_id"`
+	Pin          Pin          `json:"pin"`
+	StateID      string       `json:"state_id"`
+	Status       string       `json:"status"`
+	Version      int64        `json:"version"`
+	Attempt      int          `json:"attempt"`
+	EnteredAt    time.Time    `json:"entered_at"`
+	DueAt        time.Time    `json:"due_at"`
+	Deadline     time.Time    `json:"deadline"`
+	Termination  string       `json:"termination,omitempty"`
+	Failure      string       `json:"failure,omitempty"`
+	RoutingState string       `json:"routing_state"`
+	History      []History    `json:"history,omitempty"`
+	Tools        []ToolStatus `json:"tools,omitempty"`
+}
+type ToolStatus struct {
+	StepKey     string `json:"step_key"`
+	ToolRef     string `json:"tool_ref"`
+	ToolVersion string `json:"tool_version"`
+	Mode        string `json:"mode"`
+	State       string `json:"state"`
+	Attempts    int    `json:"attempts"`
+	Class       string `json:"outcome_class,omitempty"`
+	HTTPStatus  int    `json:"http_status,omitempty"`
+	Simulated   bool   `json:"simulated,omitempty"`
 }
 type History struct {
 	Sequence   int64     `json:"sequence"`
@@ -144,11 +161,17 @@ type Durability interface {
 type Store struct {
 	Restore   RestoreRelease
 	Authorize Authorizer
-	Approver  ApprovalAuthority
-	Capture   Capture
-	Audit     audit.Writer
-	Events    events.LifecycleWriter
-	Activity  LocalActivity
+	// AuthorizeActions is an optimization: nil falls back to sequential Authorize.
+	AuthorizeActions MultiAuthorizer
+	Approver         ApprovalAuthority
+	Capture          Capture
+	Audit            audit.Writer
+	Events           events.LifecycleWriter
+	Activity         LocalActivity
+	// Tools executes governed external effects outside transactions (ADR100).
+	// ToolCatalog is trusted operator configuration; plans pin its hashes.
+	Tools       tools.Executor
+	ToolCatalog tools.Catalog
 }
 
 func (s Store) configured() bool {

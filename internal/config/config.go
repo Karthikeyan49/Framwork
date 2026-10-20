@@ -43,6 +43,14 @@ type Config struct {
 	AuthClockSkew         time.Duration
 	OIDC                  *identity.Provider
 	SignInRedisURL        string
+	// Trusted M10 tool registry configuration; values are paths, never secrets.
+	ToolCatalogFile   string
+	ToolSecretsDir    string
+	ToolCAFile        string
+	ToolAllowInternal bool
+	// AIProviderFile names an ai-provider-v1 file (ADR104); empty leaves the AI
+	// builder unconfigured (its routes answer 503). A path, never a secret.
+	AIProviderFile string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -93,6 +101,30 @@ func Load(getenv func(string) string) (Config, error) {
 	case "development", "test", "production":
 	default:
 		return c, fmt.Errorf("APP_ENV must be development, test, or production")
+	}
+	c.ToolCatalogFile, c.ToolSecretsDir, c.ToolCAFile = getenv("TOOL_CATALOG_FILE"), getenv("TOOL_SECRETS_DIR"), getenv("TOOL_CA_FILE")
+	switch getenv("TOOL_ALLOW_INTERNAL") {
+	case "", "false":
+	case "true":
+		c.ToolAllowInternal = true
+	default:
+		return c, fmt.Errorf("TOOL_ALLOW_INTERNAL must be true or false")
+	}
+	if c.ToolAllowInternal && c.Environment == "production" {
+		return c, fmt.Errorf("TOOL_ALLOW_INTERNAL is restricted to development/test network policies")
+	}
+	for _, p := range []string{c.ToolCatalogFile, c.ToolSecretsDir, c.ToolCAFile} {
+		if p != "" && (len(p) > 4096 || strings.ContainsRune(p, 0)) {
+			return c, fmt.Errorf("tool configuration paths are invalid")
+		}
+	}
+	if c.AIProviderFile = getenv("AI_PROVIDER_FILE"); c.AIProviderFile != "" {
+		if len(c.AIProviderFile) > 4096 || strings.ContainsRune(c.AIProviderFile, 0) {
+			return c, fmt.Errorf("AI_PROVIDER_FILE is invalid")
+		}
+		if c.Environment == "production" {
+			return c, fmt.Errorf("AI_PROVIDER_FILE is restricted to development/test: the AI builder is a preview capability")
+		}
 	}
 	c.AuthIssuer = getenv("AUTH_ISSUER")
 	c.AuthAudience = getenv("AUTH_AUDIENCE")

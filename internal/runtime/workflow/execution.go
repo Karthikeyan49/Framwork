@@ -35,6 +35,8 @@ type activityFailure struct {
 	err             error
 	instanceVersion int64
 	step            string
+	// abandon settles an unrecorded tool send as UNKNOWN in the failure transaction.
+	abandon bool
 }
 
 func (f activityFailure) Error() string { return "workflow local activity aborted" }
@@ -43,7 +45,22 @@ func (f activityFailure) Unwrap() error { return f.err }
 func (w Worker) Claim(ctx context.Context) (jobs.WorkflowLease, bool, error) {
 	return jobs.AssignedWorkflow(ctx, w.DB)
 }
+
+// Step advances one leased instance. A tool step commits its attempt intent,
+// sends outside any transaction, records the fenced outcome and continues.
 func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
+	for i := 0; i < 3; i++ {
+		var dispatch *toolDispatch
+		if err := w.step(ctx, lease, &dispatch); err != nil || dispatch == nil {
+			return err
+		}
+		if err := w.sendTool(ctx, lease, *dispatch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (w Worker) step(ctx context.Context, lease jobs.WorkflowLease, dispatch **toolDispatch) error {
 	if !w.Store.configured() || w.Store.Activity == nil || lease.Generation < 1 || !tenant.ValidID(lease.Token) {
 		return ErrInvalid
 	}
@@ -66,7 +83,7 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 		ctx = (propagation.TraceContext{}).Extract(ctx, propagation.MapCarrier{"traceparent": x.Pin.TraceParent})
 		ctx, span := otel.Tracer("framework/workflow").Start(ctx, "workflow.step", trace.WithAttributes(attribute.String("tenant_id", a.TenantID()), attribute.String("actor_id", a.ActorID()), attribute.String("workflow_instance_id", x.ID), attribute.String("workflow_id", x.Pin.WorkflowID), attribute.String("workflow_version", x.Pin.WorkflowVersion), attribute.String("metadata_version", x.Pin.IRHash), attribute.String("request_id", x.Pin.RequestID)))
 		defer span.End()
-		entry, e := w.Store.Authorize(ctx, q, a, "workflows.execute", x.Pin, x.inputs.Fields)
+		entry, toolEntries, e := w.Store.authorizeStep(ctx, q, a, x)
 		if e != nil {
 			if (errors.Is(e, ErrDenied) || errors.Is(e, ErrNotFound)) && errors.Is(checkLease(ctx, q, a, x, lease), ErrLease) {
 				return ErrLease
@@ -140,7 +157,17 @@ func (w Worker) Step(ctx context.Context, lease jobs.WorkflowLease) error {
 			if e != nil {
 				return e
 			}
-			if e = w.Store.call(ctx, q, a, &x, call, state, lease); e != nil {
+			if _, tool := toolState(state); tool {
+				d, e := w.Store.toolActivity(ctx, q, a, &x, state, call, now, toolEntries)
+				if e != nil {
+					return e
+				}
+				if d != nil {
+					// Commit only the attempt intent; no state transition yet.
+					*dispatch = d
+					return nil
+				}
+			} else if e = w.Store.call(ctx, q, a, &x, call, state, lease); e != nil {
 				return e
 			}
 			entry.State.WorkflowStep = call.StepKey
@@ -262,6 +289,10 @@ func (s Store) pendingActivity(ctx context.Context, q postgres.Executor, a tenan
 		call.StepKey = x.StateID
 		call.ActivityRef = state.Activity.LocalRef
 		call.Version = state.Activity.Version
+		if t, ok := toolState(state); ok {
+			// The pinned definition hash is part of the request identity.
+			call.ActivityRef = toolActivityRef(t)
+		}
 	}
 	body, _ := json.Marshal(struct{ Instance, Plan, Step, Activity, Input, Output string }{x.ID, x.Pin.PlanHash, call.StepKey, call.ActivityRef, Hash(mustJSON(x.inputs)), Hash(call.OriginalOutput)})
 	call.RequestHash = Hash(body)
@@ -314,11 +345,11 @@ func (s Store) call(ctx context.Context, q postgres.Executor, a tenant.Access, x
 	}
 	cancel()
 	if e != nil {
-		return activityFailure{e, x.Version, call.StepKey}
+		return activityFailure{err: e, instanceVersion: x.Version, step: call.StepKey}
 	}
 	canonical, e := canonicalOutput(out)
 	if e != nil {
-		return activityFailure{Permanent(), x.Version, call.StepKey}
+		return activityFailure{err: Permanent(), instanceVersion: x.Version, step: call.StepKey}
 	}
 	if e = checkLease(ctx, q, a, *x, lease); e != nil {
 		return e
@@ -339,6 +370,10 @@ func callResultHash(ctx context.Context, q postgres.Executor, a tenant.Access, x
 	_ = q.QueryRowContext(ctx, `SELECT output_hash FROM runtime.workflow_receipts WHERE tenant_id=$1 AND instance_id=$2 AND step_key=$3`, a.TenantID(), x.ID, step).Scan(&hash)
 	return hash
 }
+
+// settleMargin covers commit latency between the send intent and the request.
+const settleMargin = 50 * time.Millisecond
+
 func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f activityFailure) error {
 	return jobs.WithJob(ctx, w.DB, lease.Ticket, func(ctx context.Context, q postgres.Executor, a tenant.Access) error {
 		x, e := w.Store.load(ctx, q, a, lease.Ticket.JobID(), true)
@@ -354,6 +389,12 @@ func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f a
 		entry, e := w.Store.Authorize(ctx, q, a, "workflows.execute", x.Pin, x.inputs.Fields)
 		if e != nil {
 			return e
+		}
+		if f.abandon {
+			var settled bool
+			if e = q.QueryRowContext(ctx, `SELECT control.tool_abandon($1)`, f.step).Scan(&settled); e != nil {
+				return e
+			}
 		}
 		var now time.Time
 		if e = q.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); e != nil {
@@ -375,8 +416,28 @@ func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f a
 			initial = state.Activity.Retry.InitialBackoffMS
 			backoffMax = state.Activity.Retry.MaxBackoffMS
 		}
-		if x.Failure == "unknown" {
+		// M10R-04: a tool step whose earlier send has an unknown outcome never
+		// ends DEAD (unreconcilable); every terminal failure parks in RECONCILE.
+		outstanding := false
+		var notBefore time.Time
+		if _, tool := toolState(state); tool && x.Termination == "" {
+			l, found, e := loadToolLedger(ctx, q, a, x.ID, f.step)
+			if e != nil {
+				return e
+			}
+			outstanding = found && l.outstanding
+			// M10R-05: the lookup that may prove absence waits for the latest
+			// send's deadline plus the provider's declared settle interval.
+			if c := state.ToolContract; outstanding && c != nil && c.IdempotencyMode == "LOOKUP_BY_REFERENCE" && c.SettleMS > 0 && !l.lastSendStarted.IsZero() {
+				notBefore = l.lastSendStarted.Add(time.Duration(c.TimeoutMS+c.SettleMS)*time.Millisecond + settleMargin)
+			}
+		}
+		if x.Failure != "permanent" && x.Attempt < max {
+			outstanding = false
+		}
+		if x.Failure == "unknown" || outstanding {
 			x.Status = "RECONCILE"
+			x.Failure = "unknown"
 			x.DueAt = now
 		} else if x.Failure == "permanent" || x.Attempt >= max {
 			if x.Termination != "" {
@@ -396,6 +457,9 @@ func (w Worker) recordFailure(ctx context.Context, lease jobs.WorkflowLease, f a
 				delay = backoffMax
 			}
 			x.DueAt = now.Add(time.Duration(delay) * time.Millisecond)
+			if x.DueAt.Before(notBefore) {
+				x.DueAt = notBefore
+			}
 		}
 		return w.save(ctx, q, a, &x, lease, entry, "activity_failed", f.step, "")
 	})

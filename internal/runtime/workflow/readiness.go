@@ -34,7 +34,9 @@ func Ready(ctx context.Context, db *sql.DB, expected string) error {
  AND has_column_privilege('runtime.workflow_outbox','body','INSERT')
  AND NOT has_table_privilege('runtime.workflow_bindings','UPDATE')
  AND NOT has_table_privilege('runtime.workflow_history','DELETE')
- AND NOT has_table_privilege('control.workflow_jobs','SELECT')`).Scan(&valid)
+ AND NOT has_table_privilege('control.workflow_jobs','SELECT')
+ AND (SELECT count(*)=6 FROM pg_catalog.pg_trigger WHERE tgname='sandbox_frozen_fence' AND tgenabled='O' AND NOT tgisinternal AND tgfoid='runtime.fence_frozen_instance()'::regprocedure
+  AND tgrelid IN('runtime.workflow_instances'::regclass,'runtime.workflow_history'::regclass,'runtime.workflow_receipts'::regclass,'runtime.workflow_signals'::regclass,'runtime.tool_invocations'::regclass,'runtime.tool_attempts'::regclass))`).Scan(&valid)
 	if e != nil || !valid {
 		return errors.New("workflow storage contract unavailable")
 	}
@@ -89,6 +91,19 @@ func Ready(ctx context.Context, db *sql.DB, expected string) error {
 		if e = db.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid=$1::regclass AND attnum>0 AND NOT attisdropped AND has_column_privilege(attrelid,attname,'UPDATE'))`, table).Scan(&valid); e != nil || !valid {
 			return ErrDenied
 		}
+	}
+	// M10 tool ledger: RLS-forced, owner-held, retained, and changed only by
+	// the reviewed lease-bound (worker) or reconcile (API) definer ports.
+	if e = db.QueryRowContext(ctx, `SELECT (SELECT count(*)=2 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity AND c.relowner='framework_schema_owner'::regrole) FROM pg_catalog.pg_class c WHERE c.oid IN('runtime.tool_invocations'::regclass,'runtime.tool_attempts'::regclass))
+ AND (SELECT count(*)=2 FROM pg_catalog.pg_trigger WHERE tgenabled='O' AND tgfoid='runtime.retain_tool_evidence()'::regprocedure AND tgrelid IN('runtime.tool_invocations'::regclass,'runtime.tool_attempts'::regclass))
+ AND (SELECT count(*)=4 AND bool_and(p.prosecdef AND p.proowner='framework_schema_owner'::regrole AND p.proconfig @> ARRAY['search_path=pg_catalog, pg_temp']) FROM pg_catalog.pg_proc p WHERE p.oid IN('control.tool_begin(text,text,text,text,text,text,text,boolean)'::regprocedure,'control.tool_finish(text,integer,text,text,boolean,integer,boolean,bytea)'::regprocedure,'control.tool_abandon(text)'::regprocedure,'control.tool_reconcile(uuid,uuid,text,boolean)'::regprocedure))
+ AND has_table_privilege('runtime.tool_invocations','SELECT') AND NOT has_table_privilege('runtime.tool_invocations','INSERT,UPDATE,DELETE,TRUNCATE') AND NOT has_table_privilege('runtime.tool_attempts','INSERT,UPDATE,DELETE,TRUNCATE')
+ AND has_function_privilege('control.tool_begin(text,text,text,text,text,text,text,boolean)','EXECUTE')=($1='framework_worker')
+ AND has_function_privilege('control.tool_finish(text,integer,text,text,boolean,integer,boolean,bytea)','EXECUTE')=($1='framework_worker')
+ AND has_function_privilege('control.tool_reconcile(uuid,uuid,text,boolean)','EXECUTE')=($1='framework_app')
+ AND EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='runtime.workflow_instances'::regclass AND tgname='guard_worker_transition' AND tgenabled='O' AND tgfoid='runtime.guard_worker_transition()'::regprocedure)
+ AND EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='runtime.workflow_receipts'::regclass AND tgname='guard_tool_receipt' AND tgenabled='O' AND tgfoid='runtime.guard_tool_receipt()'::regprocedure)`, expected).Scan(&valid); e != nil || !valid {
+		return errors.New("tool ledger contract unavailable")
 	}
 	if e = db.QueryRowContext(ctx, `SELECT NOT has_column_privilege('runtime.workflow_bindings','actor_id','INSERT') AND NOT has_column_privilege('runtime.workflow_history','actor_id','INSERT') AND NOT has_column_privilege('runtime.workflow_signals','actor_id','INSERT') AND NOT has_column_privilege('runtime.workflow_instances','deadline','UPDATE') AND NOT has_table_privilege('control.workflow_attempts','SELECT')`).Scan(&valid); e != nil || !valid {
 		return ErrDenied

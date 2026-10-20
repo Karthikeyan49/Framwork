@@ -136,6 +136,14 @@ func (s Store) Signal(ctx context.Context, q postgres.Executor, a tenant.Access,
 			return Instance{}, e
 		}
 		step = call.StepKey
+		if _, tool := toolState(state); tool && !call.Compensation {
+			// Close the tool ledger with the operator's decision in the same
+			// transaction; NOT_APPLIED permits exactly one fresh send path.
+			var settled bool
+			if e = q.QueryRowContext(ctx, `SELECT control.tool_reconcile($1,$2,$3,$4)`, a.TenantID(), id, call.StepKey, r.Outcome == "APPLIED").Scan(&settled); e != nil {
+				return Instance{}, e
+			}
+		}
 		if r.Outcome == "APPLIED" {
 			out, e := canonicalOutput(r.Output)
 			if e != nil {

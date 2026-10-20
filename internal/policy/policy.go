@@ -11,9 +11,15 @@ import (
 
 // R5a adds explicit owner-only role administration to the bootstrap adapter;
 // R5c-a (v5) adds owner/admin record access administration; R5c-b (v6) adds
-// owner/admin team administration.
+// owner/admin team administration; M10 (v7) adds non-viewer tools.invoke; M11 (v8)
+// adds sandbox.read (all roles) and owner/admin sandbox.manage; M12 (v9) adds
+// requirements/acceptance/candidates read (all roles) and owner/admin
+// requirements.decide, acceptance.author and candidates.build; M13 (v10) adds
+// releases.read (all roles) and owner/admin releases.approve (approve and
+// reject), releases.activate and releases.rollback; M14 (v11) adds ai.read (all
+// roles) and owner/admin ai.propose and ai.apply (ADR104 A6).
 // Retained evidence keeps its original version.
-const Version = "m9r-native-v6"
+const Version = "m14-native-v11"
 
 type Resource struct{ TenantID, Type, OwnerID, AppID, EntityID, FieldID, RecordID, RuleID, WorkflowID string }
 type Subject struct {
@@ -68,6 +74,27 @@ func permits(actor, tenantID string, roles []string, action string, resource Res
 			}
 		case "roles.write", "roles.assign":
 			if resource.Type == "role" && role == "owner" {
+				return true
+			}
+		case "sandbox.read", "requirements.read", "acceptance.read", "candidates.read", "releases.read", "ai.read":
+			if resource.Type == "preview" && resource.AppID != "" {
+				return true
+			}
+		case "requirements.decide", "acceptance.author", "candidates.build", "releases.approve", "releases.activate", "releases.rollback", "ai.propose", "ai.apply":
+			// M12/M13: release content and promotion authority stays with tenant
+			// administrators by default; custom roles may be granted these
+			// explicitly (never viewer). The database ports re-check membership,
+			// separation of duties and quorum (ADR103).
+			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
+				return true
+			}
+		case "sandbox.manage":
+			if resource.Type == "preview" && resource.AppID != "" && (role == "owner" || role == "admin") {
+				return true
+			}
+		case "tools.invoke":
+			// M10: governed tool sends run only through pinned workflow plans.
+			if role != "viewer" && resource.Type == "workflow" && resource.AppID != "" && resource.EntityID != "" && resource.RecordID != "" && resource.WorkflowID != "" {
 				return true
 			}
 		case "teams.read", "teams.manage":

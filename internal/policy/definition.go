@@ -45,7 +45,7 @@ type Defined struct {
 }
 
 // Action names are capabilities, never executable code or privilege wildcards.
-const actionCatalog = `tenant.access profile.read memberships.read metadata.read metadata.compile metadata.write preview.read preview.write commands.reconcile datasets.manage datasets.evolve indexes.manage rules.evaluate events.consume workflows.read workflows.start workflows.execute workflows.activity workflows.cancel workflows.approve workflows.reject workflows.recover workflows.reconcile data.entity.read data.field.read data.row.read data.aggregate.read data.entity.write data.field.write data.row.write data.row.share data.row.assign roles.read roles.write roles.assign teams.read teams.manage`
+const actionCatalog = `tenant.access profile.read memberships.read metadata.read metadata.compile metadata.write preview.read preview.write commands.reconcile datasets.manage datasets.evolve indexes.manage rules.evaluate events.consume workflows.read workflows.start workflows.execute workflows.activity workflows.cancel workflows.approve workflows.reject workflows.recover workflows.reconcile data.entity.read data.field.read data.row.read data.aggregate.read data.entity.write data.field.write data.row.write data.row.share data.row.assign roles.read roles.write roles.assign teams.read teams.manage tools.invoke sandbox.read sandbox.manage requirements.read requirements.decide acceptance.read acceptance.author candidates.read candidates.build releases.read releases.approve releases.activate releases.rollback ai.read ai.propose ai.apply`
 
 func knownAction(action string) bool { return slices.Contains(strings.Fields(actionCatalog), action) }
 
@@ -165,11 +165,11 @@ func supportedRoleAction(role, action string) bool {
 	if action == "roles.write" || action == "roles.assign" {
 		return role == "owner"
 	}
-	if action == "datasets.manage" || action == "datasets.evolve" || action == "indexes.manage" {
+	if action == "datasets.manage" || action == "datasets.evolve" || action == "indexes.manage" || action == "sandbox.manage" {
 		return role == "owner" || role == "admin"
 	}
 	if role == "viewer" {
-		return action != "preview.write" && action != "teams.manage" && action != "data.row.share" && action != "data.row.assign" && !(strings.HasPrefix(action, "data.") && strings.HasSuffix(action, ".write")) && action != "workflows.start" && action != "workflows.execute" && action != "workflows.activity" && action != "events.consume"
+		return action != "preview.write" && action != "teams.manage" && action != "tools.invoke" && action != "sandbox.manage" && action != "requirements.decide" && action != "acceptance.author" && action != "candidates.build" && action != "releases.approve" && action != "releases.activate" && action != "releases.rollback" && action != "ai.propose" && action != "ai.apply" && action != "data.row.share" && action != "data.row.assign" && !(strings.HasPrefix(action, "data.") && strings.HasSuffix(action, ".write")) && action != "workflows.start" && action != "workflows.execute" && action != "workflows.activity" && action != "events.consume"
 	}
 	return true
 }
@@ -257,6 +257,10 @@ func validResource(action string, r Resource, actor string) bool {
 		return r.Type == "role"
 	case "teams.read", "teams.manage":
 		return r.Type == "team"
+	case "sandbox.read", "sandbox.manage", "requirements.read", "requirements.decide", "acceptance.read", "acceptance.author", "candidates.read", "candidates.build", "releases.read", "releases.approve", "releases.activate", "releases.rollback", "ai.read", "ai.propose", "ai.apply":
+		return r.Type == "preview" && r.AppID != ""
+	case "tools.invoke":
+		return r.Type == "workflow" && r.AppID != "" && r.EntityID != "" && r.RecordID != "" && r.WorkflowID != ""
 	case "metadata.read", "metadata.compile", "metadata.write":
 		return r.Type == "metadata" && r.AppID != ""
 	case "preview.read", "preview.write", "commands.reconcile", "datasets.manage", "datasets.evolve", "indexes.manage":

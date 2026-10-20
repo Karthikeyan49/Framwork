@@ -1,5 +1,8 @@
-// Package promotion owns release integrity contracts. Public promotion services
-// and sandbox execution are later milestones; preview routes cannot activate it.
+// Package promotion owns release integrity contracts: hash-bound bundles and
+// their restore, server-built candidates, staleness, and the store wrappers of
+// the database ports that stage, approve, reject, activate and roll back them
+// (ADR102, ADR103). Nothing serves an activated release yet: the production
+// data plane is a later milestone (ADR103 section 10).
 package promotion
 
 import (
@@ -90,24 +93,42 @@ func Build(source metadata.Source, program compiler.Program, b Bundle) (Candidat
 	return Candidate{raw, Hash(raw)}, nil
 }
 
+// Restore re-derives everything a stored bundle claims that does not need its base
+// release and requires byte equality. It is pure; the request paths use a Recompute
+// (recompute.go), which remembers a success under the digest of the exact bytes.
 func Restore(raw []byte, hash string, supportedIR []string) (Candidate, error) {
-	if len(raw) > 8<<20 || Hash(raw) != hash {
-		return Candidate{}, ErrGate
+	c, _, err := restoreProgram(raw, hash, supportedIR)
+	return c, err
+}
+
+// restoreProgram is Restore that also returns the executable program of the IR it
+// had to restore anyway.
+func restoreProgram(raw []byte, hash string, supportedIR []string) (Candidate, compiler.Program, error) {
+	if len(raw) > MaxBundleBytes || Hash(raw) != hash {
+		return Candidate{}, compiler.Program{}, ErrGate
+	}
+	var probe struct{ Version string }
+	if json.Unmarshal(raw, &probe) != nil {
+		return Candidate{}, compiler.Program{}, ErrGate
+	}
+	if probe.Version == BundleVersion2 {
+		return restoreV2(raw, hash, supportedIR)
 	}
 	var b Bundle
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&b) != nil || validateBundle(b, supportedIR) != nil {
-		return Candidate{}, ErrGate
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
 	canonical, e := json.Marshal(b)
 	if e != nil || !bytes.Equal(raw, canonical) {
-		return Candidate{}, ErrGate
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
-	if _, e = compiler.Restore(b.IR, b.IRHash, supportedIR); e != nil {
-		return Candidate{}, ErrGate
+	program, e := compiler.Restore(b.IR, b.IRHash, supportedIR)
+	if e != nil {
+		return Candidate{}, compiler.Program{}, ErrGate
 	}
-	return Candidate{append([]byte(nil), raw...), hash}, nil
+	return Candidate{append([]byte(nil), raw...), hash}, program, nil
 }
 
 func validateBundle(b Bundle, supported []string) error {
@@ -163,28 +184,10 @@ func validateBundle(b Bundle, supported []string) error {
 	return nil
 }
 
-type Approval struct{ artifact, actor, tenantID string }
-
-func (a Approval) ActorID() string { return a.actor }
-
+// Gate is the composition-root authorization of Store.Stage. Approval and
+// promotion authority is enforced by the database ports, never by a Gate.
 type Gate interface {
 	AuthorizeRelease(tenantID, actorID, action, artifactHash string) bool
-}
-
-// Approval and activation must use the same frozen artifact and current base.
-func Approve(c Candidate, exactHash, tenantID, actor string, gate Gate) (Approval, error) {
-	b := c.Bundle()
-	if c.hash == "" || exactHash != c.hash || !tenant.ValidID(tenantID) || actor == "" || gate == nil || !gate.AuthorizeRelease(tenantID, actor, "approve", c.hash) || b.HighRisk && actor == b.RequesterID {
-		return Approval{}, ErrGate
-	}
-	return Approval{c.hash, actor, tenantID}, nil
-}
-func ValidateActivation(c Candidate, a Approval, currentBase string, current Dependencies, tenantID, actor string, gate Gate) error {
-	b := c.Bundle()
-	if c.hash == "" || a.artifact != c.hash || a.actor == "" || a.tenantID != tenantID || !tenant.ValidID(tenantID) || b.BaseRelease != currentBase || b.Dependencies != current || gate == nil || !gate.AuthorizeRelease(tenantID, actor, "activate", c.hash) {
-		return ErrGate
-	}
-	return nil
 }
 
 type ExecutionPin struct{ ReleaseHash, WorkflowID, WorkflowVersion string }

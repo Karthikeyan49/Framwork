@@ -12,6 +12,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
 	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
 const Version = "1.0.0"
@@ -25,8 +26,13 @@ const ApprovalCompilerVersion = "1.3.0"
 const IntegrityIRVersion = "1.4.0"
 const IntegrityCompilerVersion = "1.4.0"
 
+// ToolWorkflowIRVersion is emitted only for opt-in schema 1.5.0 (ADR100). 1.3.0 and 1.4.0
+// belong to the approval-role and integrity contracts.
+const ToolWorkflowIRVersion = "1.5.0"
+const ToolWorkflowCompilerVersion = "1.5.0"
+
 func SupportedIRVersions() []string {
-	return []string{IRVersion, RuleIRVersion, WorkflowIRVersion, ApprovalIRVersion, IntegrityIRVersion}
+	return []string{IRVersion, RuleIRVersion, WorkflowIRVersion, ApprovalIRVersion, IntegrityIRVersion, ToolWorkflowIRVersion}
 }
 
 const SchemaSnapshot = "hybrid-preview-v1"
@@ -40,6 +46,10 @@ type Catalog struct {
 	Version     string   `json:"version"`
 	Permissions []string `json:"permissions"`
 	Tools       []string `json:"tools"`
+	// ToolCatalog is the operator-owned trusted tool registry (ADR100). It is
+	// excluded from CatalogHash: each resolved definition's canonical hash is
+	// pinned inside the workflow plan instead, so existing IR hashes are stable.
+	ToolCatalog tools.Catalog `json:"-"`
 }
 
 func PlatformCatalog() Catalog {
@@ -269,7 +279,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if r := d.Rule; r != nil {
 			resolve(r.EntityRef, "entity", path)
-			if doc.SchemaVersion == metadata.RuleSchemaVersion || doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion || doc.SchemaVersion == metadata.IntegritySchemaVersion {
+			if doc.SchemaVersion == metadata.RuleSchemaVersion || metadata.WorkflowSchema(doc.SchemaVersion) {
 				var entity Entity
 				for _, e := range entities {
 					if e.ID == r.EntityRef {
@@ -295,7 +305,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		if w := d.Workflow; w != nil {
 			resolve(w.EntityRef, "entity", path)
-			if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion || doc.SchemaVersion == metadata.IntegritySchemaVersion {
+			if metadata.WorkflowSchema(doc.SchemaVersion) {
 				var entity Entity
 				for _, e := range entities {
 					if e.ID == w.EntityRef {
@@ -303,9 +313,16 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 					}
 				}
 				definition := ruleDefinition(d.ID, metadata.Rule{EntityRef: w.EntityRef}, entity)
-				executable, err := workflow.CompileDefinition(d.ID, *w, definition.Fields, []string{"local.noop"})
+				var resolver workflow.ToolResolver
+				toolErrors := false
+				if doc.SchemaVersion == metadata.ToolWorkflowSchemaVersion {
+					resolver, toolErrors = toolActivities(w, path, entity, catalog.ToolCatalog, add)
+				}
+				executable, err := workflow.CompileDefinitionWithTools(d.ID, *w, definition.Fields, []string{"local.noop"}, resolver)
 				if err != nil {
-					add(path, "workflow_contract", "Workflow V2 violates graph, condition, activity or approval contracts")
+					if !toolErrors {
+						add(path, "workflow_contract", "Workflow V2 violates graph, condition, activity or approval contracts")
+					}
 				} else {
 					workflowPlans = append(workflowPlans, executable.Plan())
 					tests = append(tests, TestCase{d.ID, "workflow_failure_recovery"})
@@ -355,7 +372,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		ir.CompilerVersion = RuleCompilerVersion
 		ir.Rules = rulePlans
 	}
-	if doc.SchemaVersion == metadata.WorkflowSchemaVersion || doc.SchemaVersion == metadata.ApprovalSchemaVersion || doc.SchemaVersion == metadata.IntegritySchemaVersion {
+	if metadata.WorkflowSchema(doc.SchemaVersion) {
 		ir.IRVersion = WorkflowIRVersion
 		ir.CompilerVersion = WorkflowCompilerVersion
 		ir.Rules = rulePlans
@@ -368,6 +385,10 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 	if doc.SchemaVersion == metadata.IntegritySchemaVersion {
 		ir.IRVersion = IntegrityIRVersion
 		ir.CompilerVersion = IntegrityCompilerVersion
+	}
+	if doc.SchemaVersion == metadata.ToolWorkflowSchemaVersion {
+		ir.IRVersion = ToolWorkflowIRVersion
+		ir.CompilerVersion = ToolWorkflowCompilerVersion
 	}
 	raw, err := json.Marshal(ir)
 	if err != nil {

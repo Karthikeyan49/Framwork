@@ -1,0 +1,16 @@
+{
+ "schema_version": "1.5.0",
+ "app_id": "app.notes",
+ "namespace": "acme.notes",
+ "base_version": null,
+ "definitions": [
+  {"id": "entity.note", "schema_version": "1.5.0", "namespace": "acme.notes", "label": "Note", "kind": "entity",
+   "entity": {"fields": ["field.note.id", "field.note.body"]}},
+  {"id": "field.note.id", "schema_version": "1.5.0", "namespace": "acme.notes", "label": "Note identifier", "kind": "field",
+   "field": {"entity_ref": "entity.note", "type": "string", "required": true}},
+  {"id": "field.note.body", "schema_version": "1.5.0", "namespace": "acme.notes", "label": "Body", "kind": "field",
+   "field": {"entity_ref": "entity.note", "type": "string", "required": false}},
+  {"id": "page.note.list", "schema_version": "1.5.0", "namespace": "acme.notes", "label": "Notes", "kind": "page",
+   "page": {"entity_ref": "entity.note", "components": [{"type": "table", "entity_ref": "entity.note"}]}}
+ ]
+}
