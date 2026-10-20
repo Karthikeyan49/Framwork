@@ -116,7 +116,7 @@ project were not touched). Durations are wall clock on this host; each suite ran
 | Step | Result |
 |---|---|
 | `make check` (docs checksums 84 + 43, format, vet, `go mod verify`, eslint, tsc) | PASS |
-| `make test-unit` (27 Go packages with `-race`, 5 script tests, 126 frontend tests in 19 files) | PASS, 211 s |
+| `make test-unit` (27 Go packages with `-race`, 9 script tests, 126 frontend tests in 19 files) | PASS, 211 s |
 | Empty database, all migrations | 67 migrations apply (`00001` to `00057`, `00080` to `00089`); the derived worker guard evaluated as `framework_worker` is true, with no unlisted privilege and no stale allowlist entry |
 | Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` (439 tests listed, 438 run) | 1904 s: 436 PASS, 2 FAIL. Both failures are `TestM9ROIDC*` and are environmental: the isolated stack's environment had no `SIGNIN_REDIS_URL` and no `framework_signin` Redis user. With that ACL user created as `scripts/m8-env.mjs` defines it, both PASS (11 s). After the test alignment above, the 7 earlier failures also PASS |
 | `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS (5 targets of 10 s) |
