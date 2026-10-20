@@ -1,5 +1,41 @@
 # External review finding status
 
+## Current checkpoint — 20 October 2026 (Asia/Kolkata)
+
+**Overall M9R: PARTIAL. Combined acceptance: FAIL.** Product tree
+`552fa9e` combines remediation with M10–M14 development/test preview. Review
+checkpoint `a1d8b00` is pushed on `remediation/m9r-foundation`; main stays
+`9da3f5f`, and no main merge, PR or production deployment is performed.
+
+- [A re-baseline](M9R_MERGED_REBASELINE_REPORT.md): integration 439 PASS, browsers 11+7,
+  nine fuzz targets and actual 600s outage PASS; seven/eight reference targets
+  PASS, aggregate HTTP capacity FAIL (worst 822.729ms against 750ms), injected
+  driver-panic recovery FAIL.
+- [B merge review](M9R_MERGE_REVIEW_B_REPORT.md): all 23 files reviewed; fresh
+  full integration 438 PASS/1 FAIL/zero skips, 2061.520s. Worker-policy initial
+  SELECT exceeds 2000ms; check/unit and separate build PASS. B-01/B-02/B-05
+  confirmed OPEN, B-03 full-artifact compatibility restriction and B-04 wording
+  remain. No product fix is applied in C. A's PASS cannot replace B's failure.
+- R6 is implemented preview coverage in M11–M14, held for the milestone agent;
+  production data plane and separate verifier credential remain architectural
+  deliverables, alongside residuals, integration fixes and acceptance evidence.
+  No real model/provider deployment is verified. Independent M14/merge review
+  is NOT RUN under the user's deferral until 22 October, 21:00 UTC.
+- R7a/R7b and local R5 retain their bounded historical evidence. Remaining R7
+  D1–D7 are proposed, not started; the user's order confirmation is required.
+  External IdP/MFA/HTTPS verification and wider R2/R3/R5 product features remain
+  deferred/request-only. See the [current plan](M9R_REMEDIATION_PLAN.md).
+- C updates live documentation and the [handoff](AGENT_HANDOFFS.md);
+  [agent-rule changes](M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md) are proposed only.
+  Historical reviews/checkpoints and the milestone audit appendix are retained,
+  not re-graded as evidence for the merged tree.
+
+## Historical checkpoint progression (through 19 October 2026)
+
+The following progression describes the dated sources it names. Its M10 pause,
+absent-tool/AI and green-gate wording is historical. The current checkpoint and
+live rows below supersede those status claims.
+
 Current checkpoint, 19 October 2026: [R7b event outage budgets](M9R_R7B_IMPLEMENTATION_REPORT.md)
 pass bounded independent review at product `031c8a1` and review `a15d629`.
 All three review findings are closed within the enforced drained-cutover scope.
@@ -143,71 +179,69 @@ which claims were reproduced, source-confirmed, corrected or unverified. The
 [remediation plan](M9R_REMEDIATION_PLAN.md) owns implementation and acceptance.
 Historical timing measurements and audit percentages are not current guarantees.
 
+## Live findings — merged preview
+
 | Finding | Current disposition | Remaining acceptance / owner |
 |---|---|---|
 | Compromised worker credential can discover another tenant and mutate unrelated records | Fixed within the independently tested database credential/resource threat model; R1 PASS | Preserve exact lease, record, field and tenant confinement in every later adapter; process/OS secret isolation still requires deployment verification |
-| Normal roles own tables / broad worker grants | NOLOGIN ownership retained; worker grants and drift admission hardened | Regression required for each new table and function |
+| Normal roles own tables / broad worker grants | NOLOGIN ownership retained; derived worker grant allowlist from migration 00087 is latest on the merged tree; A evaluates it as framework_worker and passes drift/confinement regressions | Preserve latest worker_guard_granted/worker_grants_safe on every new relation/port; tool/leased-state residuals remain in ADR100/103, not a blanket compromised-process safety claim |
 | Tenant-controlled shared DDL | Generic JSONB runtime has no such path; existing ALTER denial retained | Future indexes/migrations must remain governed platform operations |
-| Records disappear across compatible compiler/release changes | R2a/R2b and [R2c preview schema evolution](M9R_R2C_IMPLEMENTATION_REPORT.md) independently PASS: immutable generation maps, checkpointed transforms, current access/tombstones and workflow data pins; actual 100k migration and post-cutover queries verified | Production active-release execution remains M12/M13; dataset-management UI, automatic index inheritance and denser/larger migration capacity remain separate work |
+| Records disappear across compatible compiler/release changes | R2a/R2b and bounded R2c governed preview continuity/evolution retain independent evidence; A/B regressions preserve generation maps, current access and pinned data. Default legacy revision routes remain deliberately isolated; B-03 demonstrates full old milestone tool IR is unsupported after renumbering | Production immutable active-release execution is milestone R6/M13; dataset UI/index inheritance and wider migration capacity are request-only. Preserve original full artifact bytes and inventory old pinned releases before any real cutover |
 | RLS membership checked once per row | Replaced by statement-level membership evaluation; populated isolation and SQL plans verified | Preserve live authorization and fail-closed RLS; HTTP latency gate remains below |
-| End-to-end query performance | Governed numeric, text/civil-date, enum/reference, datetime/boolean and [selective full-text search](M9R_R3B_SEARCH_IMPLEMENTATION_REPORT.md) independently PASS within stated workloads. Final root p95 on18 October: numeric118.359ms, text/date worst264.759ms, enum/reference worst209.020ms, native worst207.305ms, search worst169.357ms; zero errors, unchanged750ms target. Source and target cold-scan amplification were reproduced and fixed with correlated live-view point lookups | Register/build a supported index; overflow, general/unindexed/selective and broad/common-term workloads require their own evidence. Deep projection traversal is not constant time |
-| Shared dataset writer counter | Bounded R4 independently PASS at `94932e3`: overlapping writers/CAS/reference/fault checks and FIFO workload p95 340.575 ms, zero errors | Preserve regressions during indexing/evolution; previous failed runs retained |
-| Write retries / duplicate effects / unknown COMMIT | Bounded R4 independently PASS: known-abort retries, owned receipts and commit-response/browser reconciliation verified | External delivery is not covered; first historical 503 cause remains unconfirmed |
+| End-to-end query performance | A merged reference-v2: numeric HTTP p95 124.505ms, scalar worst 385.771ms, choice 271.953ms, native 244.004ms, selective search 184.812ms; zero unexpected errors. Historical bounded independent reviews and correlated live-view lookup fixes retained | Supported index registration/build and workload limits remain; these five PASS targets do not clear the aggregate FAIL below or certify unindexed/broad-term/general query capacity |
+| Shared dataset writer counter | Bounded R4 independently verified at 94932e3; A 32-client/60s workload completes 7,968 writes, p95 301.897ms, zero errors/lost updates. B local command/CAS/deadlock tests pass | Preserve local integrity during later work; external tool outcomes have separate M10 contracts; earlier failed runs remain evidence |
+| Write retries / duplicate effects / unknown COMMIT | Bounded R4 known-abort retries, owned receipts and uncertain-commit reconciliation retained; B regression cases pass. M10 has a separate durable external-attempt/unknown-outcome ledger | Keep unknown local commit and external provider outcomes distinct; no blind replay. First historical 503 cause remains unconfirmed; M10 provider/reconciliation residuals remain milestone-owned |
 | Late command rejection can commit a record without receipt/outbox | Independently reproduced fault and independently closed; real RLS-policy regression verifies zero business facts on rejection | Preserve whole-command rollback |
 | Same-login navigation loses an in-flight command key | Independently reproduced and closed; actor-owned pre-dispatch journal/navigation/account recovery verified | Browser-restart persistence intentionally absent |
-| Custom field indexes / unique projections | Integer/decimal/money, string/civil-date, enum/reference, datetime/boolean and fixed plain full-text indexes plus [R3c typed unique-field enforcement](M9R_R3C_IMPLEMENTATION_REPORT.md) independently verified; source JSONB, existing records, old readers/cursors and immutable releases retained. Populated backfill, conflict rollback, private permits, raw roles, concurrent claims/receipt replay and 100k/32-client gates pass | Uniqueness UI/READY removal/constraint-preserving evolution and search UI/ranking/languages/broad-term capacity remain separate. Bounded R3d aggregation now passes; wider planner features remain outside that acceptance |
-| Aggregates and bounded join planner | [R3d](M9R_R3D_IMPLEMENTATION_REPORT.md) bounded PASS: opt-in exact SQL count/sums, transactional numeric validity witness, certified physical/canonical snapshot planning and configurable bounded API concurrency. Independent23-group race review, full269 integration groups, browser9+7, all24 aggregate capacity cases and all eight reference targets pass; earlier failures retained | No arbitrary expressions, GROUP BY, join expansion, aggregate/report UI or general workload guarantee. Worst aggregate p95 leaves only37.970ms headroom. Injected driver-panic recovery remains R7; production active-runtime wiring remains R6/M11–M14 |
-| Production active-release runtime / public promotion lifecycle | Not implemented; current preview and release contracts are explicitly qualified | M12/M13 verified candidate, authoritative approval and immutable active-release execution |
-| Caller-supplied risk / PASS / independence / requirement classification | Still incomplete authority integration | R6 and M12–M14 executable independent acceptance, authenticated provenance and server-derived risk |
+| Custom field indexes / unique projections | Bounded typed indexes/search and schema 1.4 governed unique claims retain historical independent evidence. A unique target passes (fresh keys 331.310ms, conflicts 479.989ms, writes 350.588ms). Merged schema 1.5 accepts unique metadata but B-05 registration returns 400; B-02 compiler pairing also remains open | Coordinated additive version fix and populated 1.5 lifecycle/conflict/denial proof required; do not describe the 1.5 superset as fully usable. UI/READY removal/constraint-preserving evolution and broader search remain request-only |
+| Aggregates and bounded join planner | R3d bounded functional review retained. A runs all 24 exact-oracle cases with zero request errors, but current performance gate FAILS: mapped-current filtered_money 755.156ms; mapped-retained sum_money 822.729ms and filtered_money 755.607ms versus 750ms. Worst SQL p95 309.775ms versus 500ms | R7 D5 profiles/fixes the measured tier without relaxing budgets or weakening authorization; no causal merge attribution. General GROUP BY/expressions/join expansion/report UI and production runtime remain separate |
+| Production active-release runtime / public promotion lifecycle | M12 candidate and M13 approval/rejection/activation/rollback HTTP control plane is implemented preview, with SQL ports, exact hash, CAS/history and recomputation. Active pointer is auditable state; no production data plane serves it | Milestone R6/M13 owns production datasets, provisioned compatible storage/migration execution and immutable release-pinned routes. Control-plane activation is not a deployed ERP release |
+| Caller-supplied risk / PASS / independence / requirement classification | M12 derives diff/storage/risk and executes acceptance-v2/verifier-v2 with requirement floors and authenticated authors; M14 captures typed human-confirmed proposals. Public authority fields are rejected. Four supported acceptance categories do not imply arbitrary business completeness | R6 PARTIAL, held for milestone agent: separate verifier credential/attestation and production data plane absent; compromised API can bind identities and forge self-consistent claims below Go checks. Latest fixes and M14/merge independent review remain unverified; no human-authorship guarantee |
 | DataScope returns ALL for permitted built-in roles | [R5a](M9R_R5A_IMPLEMENTATION_REPORT.md) independently PASS: tenant role versions/CAS, live API scopes, exact operation reconciliation, bound engines and trusted worker revocation; bootstrap roles remain broad | R5b bounded PASS: raw leased source/business ports enforce current head/actions/fields/record scopes, with per-row lease fences. [R5c-a](M9R_R5C_IMPLEMENTATION_REPORT.md) independently PASS: governed CAS-fenced record owner/team/share administration (`data.row.assign`/`data.row.share`). R5c-b team hierarchy/membership administration (ADR035) independently PASS. [R5e](M9R_R5E_IMPLEMENTATION_REPORT.md) custom workflow approval roles and legacy compatibility independently verified, including the closed audit-context follow-up; final full checks/tests/build and browser5/5 PASS. [R5d](M9R_R5D_IMPLEMENTATION_REPORT.md) field masking/partial writes now pass bounded independent and final full/browser/performance checks; [R5c record/team UI](M9R_R5C_UI_IMPLEMENTATION_REPORT.md) passes independent/full/browser gates; R5f provider sign-in/clock tolerance now passes bounded independent/full checks; [R5g role definition/assignment UI](M9R_R5G_IMPLEMENTATION_REPORT.md) now has independent and full local verification; real provider/gateway/MFA deployment remains DEFERRED/NOT RUN at user request |
 | finance_manager / fixed four roles | Tenant capability roles and opt-in DSL2.1/IR1.3 custom workflow approvers implemented and independently verified; original1.2 reader/hash retained | Final full checks/tests/build PASS (integration629.247s) and browser5/5 PASS. Legacy schemas retain their declared four-role contract; role references do not provision authority. Record/team administration UI now has bounded independent/full/browser evidence; R5g role-definition/member-assignment UI now also passes local independent/full gates |
 | Whole-request field denial / unrelated fields required for every update | [R5d](M9R_R5D_IMPLEMENTATION_REPORT.md) bounded PASS: SQL masking, explicit partial writes and strict pinned-input guards independently reviewed; three demonstrated HIGH findings fixed; final full-suite/build/browser/performance checks passed | Preserve trusted owner/snapshot proofs, opaque 32-header bounds, condition-write restrictions and hidden-size reservations; record/team administration UI now has bounded independent/full/browser evidence. The intermittent connection failure remains an open R7 diagnostic item |
 | R5g inconsistent publication receipt / canceled preparation state | Independent review reproduced one MEDIUM and one LOW defect; fix `5c05d0b` and strengthened regressions `ba21eb0` close both. Final local results are in the R5g report | Preserve normalized definition rehashing before journal release, client/key preparation fences, actor-owned memory recovery and no automatic POST retries. External identity deployment remains a separate gate |
 | JWT skew and token-paste development login | [R5f](M9R_R5F_IMPLEMENTATION_REPORT.md) bounded PASS: configured public-client OIDC/PKCE, pinned ID/API token validation, one-time browser-bound Redis flows, explicit 0–120s tolerance and provider-first memory-only browser connection. Independent cookie-race finding closed; full regression passed | External provider/client interoperability, production gateway/query-log verification and MFA assurance remain release gates. No refresh/provider logout, implicit enrollment, SAML or SCIM. Manual token entry is development-labelled and hidden by the production descriptor |
 | Intermittent workflow fixture connection failure during R5d verification | One full run failed with `driver: bad connection` while advancing an approval fixture; the unchanged test then passed three focused repetitions | R7 connection/deadline diagnostics and repeatability follow-up; cause unconfirmed. Preserve the failed run and final whole-suite evidence in the R5d report; do not describe reruns as a reliability fix |
-| Worker policy receipt-scan capacity | R5c UI final regression hit the unchanged 2s statement timeout during EXPLAIN on the existing 96-receipt/63-node policy fixture; preceding query 1657.145ms. Three isolated unchanged-budget repetitions then passed (16.066s total), as did the final full rerun (worker first query 1146.412ms). Historical R5b already documented narrow timing headroom | R7 profile statement/identity/lease/anti-join costs and repeatability under representative load. Preserve first failure; aggregate suite timeout adjustment is separate and no capacity fix is claimed |
-| Injected database driver/tracer panic | Independent [R3d review](../verification/M9R_R3D_INDEPENDENT_REVIEW.md) reproduces database/sql rollback lock hang in a supervised subprocess; explicit diagnostic FAIL7.272s. Ordinary callback-panic rollback/reuse passes; default connector installs no custom tracer | IR-R3d-01 remains an open R7 infrastructure/process recovery limit; do not claim arbitrary driver panics recover or are bounded by the transaction deadline |
-| M8 short outage window / dead predecessor / one consumer | [R7b](M9R_R7B_IMPLEMENTATION_REPORT.md) closes bounded publication/receipt outage budgets:5s/15m,20 backed-off attempts, actual600s outage/recovery and independently verified live RC/RLS authority plus drained cutover | Still preview delivery. Least-privilege replay/quarantine, dead-predecessor operation, subscriber/payload versioning and faster broker-loss repair remain R7; no raw-process liveness or universal external exactly-once claim |
+| Worker policy receipt-scan capacity | Current B full integration FAIL: TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry initial compensation SELECT times out at unchanged 2000ms on 96 receipts/63 scope nodes (case 5.34s), before EXPLAIN/late-lease checks. Earlier R5c EXPLAIN failure and narrow-margin passes remain historical evidence | R7 D1 diagnosis under representative load; preserve failure and unchanged budgets. No passing replacement rerun, recovery claim or proven merge cause; A full PASS does not replace B 438 PASS / 1 FAIL |
+| Injected database driver/tracer panic | A supervised diagnostic FAIL 6.857s Go: injected driver/tracer panic does not finish rollback/pool recovery. Historical IR-R3d-01 remains; ordinary callback-panic rollback/reuse passes in A/B and default connector has no custom tracer | R7 D1 infrastructure/process recovery diagnosis; never claim database/sql can recover arbitrary leaked driver locks merely because callbacks or deadlines are bounded |
+| M8 short outage window / dead predecessor / one consumer | [R7b](M9R_R7B_IMPLEMENTATION_REPORT.md) closes bounded publication/receipt outage budgets:5s/15m,20 backed-off attempts, actual 600s outage/recovery and independently verified live RC/RLS authority plus drained cutover | Still preview delivery. Least-privilege replay/quarantine, dead-predecessor operation, subscriber/payload versioning and faster broker-loss repair remain R7; no raw-process liveness or universal external exactly-once claim |
 | Audit volume / retention / partitioning | Atomic, immutable audit retained; lifecycle not implemented | R7 measured audit policy and retention/archive design; do not delete receipts/evidence to retry |
-| M9 DAG, noop, lease/timer/history limits and copied IR | Documented limits retained | Workflow lifecycle expansion requires explicit design, renewal/fencing tests and capacity evidence |
-| Workflow approval uses start snapshot, not current document | Existing snapshot semantics retained | Before business side effects, bind current-document version or explicitly approve a snapshot and validate freshness |
-| Rules have no consumer | Original statement corrected: preview and workflow conditions consume rule plans | Business tools remain later work; a rule result never grants authorization |
-| External exactly-once and AI steps | No external tool/AI implementation or universal exactly-once claim | M10 per-tool delivery/reconciliation; AI milestones preserve deterministic authority |
+| M9 DAG, noop, lease/timer/history limits and copied IR | Bounded DAG/lifecycle limits and per-instance IR copies remain. M10 adds operator-catalog tool activities in preview alongside local.noop; this does not add revise cycles, longer leases or general workflow capacity | R7 D3 owns budgeted cycles, archival, renewal/fencing and deduplication design; milestone owns provider/tool breadth and tool-state residuals; preserve existing pinned artifacts |
+| Workflow approval uses start snapshot, not current document | Ordinary approvals retain start-snapshot semantics. M10 ADR100 A1/migration00085 derives approval need from pinned tool contracts and checks current-record version in control.tool_begin; B tool/approval regression cases pass | R7 D3 chooses general snapshot/current-record approval semantics and invalidation, extending the existing SQL tool gate rather than duplicating or weakening it |
+| Rules have no consumer | Original claim corrected: preview evaluation and workflow conditions consume pinned rule plans; M10 can execute the resulting governed tool path | Rule results never confer authorization; preserve typed budgets, exact math and independent policy checks |
+| External exactly-once and AI steps | M10 governed HTTPS tools, per-tool idempotency/retry/unknown/reconciliation and M14 draft/requirement proposals are implemented preview. M14 has scripted/generic HTTPS-JSON adapters; no real model/provider deployment verified. B-01 prevents configured launchers from passing provider/tool settings | No universal exactly-once or AI workflow activity is delivered. Milestone owner retains provider/callback/reconcile residuals, real-model evidence and reviews; B-01 must be fixed and reverified |
 | Rate limiting / invalid authentication DB amplification | [R7a](M9R_R7A_IMPLEMENTATION_REPORT.md) implements bounded process-local peer/global/verified-subject admission and invalid-bearer budgets before SQL, with closed rejection counters and aggregated redacted429 logs. Independent actual before/after binary attack, queued expiry/cancellation, known-abort retries and parallel abuse tests pass | Distributed gateway/proxy quotas, deployed abuse envelope, telemetry export/tail loss and durable security retention remain R7/deployment work. Valid signed but unprovisioned users still require live SQL under general quotas; no negative membership cache |
-| Per-request compile / repeated validator construction / catalog checks | R3c/ADR045 profiles and removes repeated construction of immutable embedded JSON-Schema graphs only; concurrent validation and final read/write gates pass. Per-request source compilation and live catalog checks remain | Broader R7 profiling/admission/caching still open; preserve exact immutable keys, live membership/revocation and privilege drift detection |
-| Two conflicting rulebooks / missing supersession map | R0 map and concise agent rules implemented; source kits retained verbatim | Keep clause-level authority and current capability inventory updated |
-| No numeric verification gates / migration ownership | R2–R4 ADRs and reference targets now explicit | Execution must pass those gates; design and numbers alone are insufficient |
+| Per-request compile / repeated validator construction / catalog checks | ADR045 shares immutable embedded schema graphs. M12 also has bounded pure candidate-recomputation memo/admission. Preview source compilation and live catalog checks remain; these are not tenant/authorization caches | R7 D5 profiles whole paths and current failed capacity; preserve exact version keys, live revocation and role-drift admission before proposing further caches |
+| Two conflicting rulebooks / missing supersession map | R0 source-kit map retained; C reconciles current remediation/integration statuses while preserving dated histories. AGENTS.md and CLAUDE.md still contain stale preview-absence wording | Exact root-rule updates are PROPOSED ONLY in M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md. Current user lane instructions govern; applying the proposal needs a later task. Frozen V2/V3 sources remain unchanged |
+| No numeric verification gates / migration ownership | R2–R4 reference budgets are executable. A ran all eight targets; aggregate target FAILS. Merged migrations 1–57/80–89 apply fresh; default Goose lower-number upgrade ordering remains unresolved | Gate evidence must retain failures; CI/default tests do not automatically prove reference capacity. Agree fresh/upgrade-equivalent ordering before adding reserved 58–79; never edit/renumber pushed migrations or silently enable out-of-order |
 | Portability claim | Qualified as deferred; format and round-trip proof absent | M17 concrete export/import specification and executed portability verification |
 | CI/deployment, SSO/search/localization/residency/import/DR | Foundation CI exists; product/deployment subprojects remain scheduled gaps | Assign concrete production release deliverables; do not infer readiness from foundation tests |
 | Large review batches / thin review / concurrent edits | Remediation uses smaller stable commits and independent executed probes | Preserve review evidence and fix findings before accepting each boundary; AI review does not replace human release ownership |
-| Stacked unmerged branches | Latest current implementation pushed on `remediation/m9r-foundation`; main remains M6 | Pushing is not merging; no main merge or production deployment performed |
+| Stacked unmerged branches | Both lines are combined on remediation/m9r-foundation (product `552fa9e`, review checkpoint `a1d8b00`); integration/m9r-m14 remains `552fa9e`. Main stays `9da3f5f`; no main merge or PR | Push only remediation; milestone agent merges it into integration and re-verifies. Preview merge/push is not production acceptance or permission to rewrite/delete branch history |
+| B-01 Runtime launcher configuration loss | Confirmed in pure runtimeEnv and real with-env child probes: API provider/catalog and worker catalog/gateway options disappear; positive sign-in/admission controls survive | Milestone/shared launcher coordination; minimum per-process allowlist and real launcher tests. Never forward the entire parent environment. OPEN; no code fix in A/B/C |
+| B-02 Compiler 1.5 exact pairing | Normal 1.4/1.5 unique artifacts restore; after replacing compiler label/recomputing hash, 1.4 rejects and 1.5 accepts unsupported-compiler | Shared compiler/milestone 1.5 owner: preserve inherited version invariant and historical older provenance. OPEN; no approved-hash bypass demonstrated |
+| B-03 Full pre-renumbering tool IR | Actual `60da6f2` producer self-restores tool IR/compiler 1.3. Merged full Restore rejects unchanged bytes while its standalone DSL 2.2 plan restores exactly | Compatibility restriction, not a second meaning for 1.3: inventory real old releases, preserve reader/bytes and agree cutover. No customer migration/no-loss proof is claimed |
+| B-04 Tool version wording | Activity comment and compiler assertion still name old tool schema/IR 1.3 rather than 1.5 | Milestone/shared comment correction; LOW and OPEN. Do not change serialized tokens or frozen source kits |
+| B-05 Schema 1.5 uniqueness registration | Populated owned API/SQL probe: 1.4 register 200, 1.5 register 400, 3 records remain in each; unready writes 409. SQL registration selector still admits only 1.4 | Coordinated runtime/schema additive fix after migration-order decision; keep latest guards and verify both versions, conflict/denial and full lifecycle. OPEN, fail-closed availability defect |
 
 ## Execution order and stop gate
 
-Bounded R4 and the configured numeric, text/civil-date, enum/reference,
-datetime/boolean and selective full-text search R3b HTTP gates are independently verified.
-R2c preview dataset evolution now passes independent fault/capacity tests, the
-full root suite/build and browser regressions. Preserve those regressions.
-Bounded R3c uniqueness and R3d SQL aggregation now also pass independent review
-and final root gates, including all eight reference capacity targets. Broader
-search, aggregate/report UI, general query planning and uniqueness administration/
-removal/evolution remain separate. The bounded APIs do not complete product search
-or general query capacity. R5 local role UI and deployment preparation now pass;
-external provider verification is deferred. R7a local request admission now
-passes independent/full/browser/all-eight capacity gates. R7b outage budgets now
-pass independent/full/browser, actual600s recovery and representative unchanged
-read/write gates. R6 and other R7 remain separate
-product/security/operations deliverables. R5b closes the bounded raw-worker
-capability gap; its synthetic receipt test has a narrow timeout margin and is
-not a wider capacity guarantee. The independent report records which final
-checks used existing tests and which new probes were not run.
-Production, AI and external ERP actions are not enabled by a foundation PASS.
+The implemented bounded R1–R5/R7a/R7b slices retain their historical reviews.
+M10–M14 are merged preview implementations; they are not paused or absent,
+and their presence does not clear current acceptance failures. R6 stays
+PARTIAL/held for the milestone agent, including its missing production data
+plane and separate verifier credential. Preserve latest-review qualifications
+and the compromised-process trust limits in the milestone reports.
 
-The bounded foundation gate and final backend/frontend/integration/browser
-regressions now pass. M10 remains paused pending a separate user task; it must
-not depend on unfinished capabilities or imply production readiness. Do not erase
-failed runs, weaken assertions or substitute contract-only tests for wired
-product behavior.
+Current combined gate is FAIL: A aggregate/driver diagnostics and B's
+worker-policy timeout remain, as do B-01/B-02/B-05. No replacement reruns,
+budget changes or documentation edits close those findings. General R7
+operations, request-only product features and deferred identity deployment
+remain open. The D1–D7 order in the plan is a proposal requiring the user's
+confirmation before implementation. Stop after C; do not begin D, R6 or M10+
+feature work automatically. A push is not a merge, production activation or
+independent verification.
 
 ## Appendix: milestone-line audit (history, written before the two lines were integrated)
 

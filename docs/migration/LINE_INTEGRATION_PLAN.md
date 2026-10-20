@@ -1,4 +1,39 @@
-# Integrating the milestone line (M10–M14) with the remediation line (R-slices)
+# Integrating the milestone line (M10–M14) with remediation
+
+## Current remediation checkpoint — 20 October 2026
+
+**M9R PARTIAL; combined acceptance FAIL.** The original merge record below
+remains historical evidence at `552fa9e`. Remediation now includes it and
+review checkpoint `a1d8b00` on `remediation/m9r-foundation`. Integration
+still points to `552fa9e`; main remains `9da3f5f`. No PR/main merge or
+production deployment is performed.
+
+[Slice A](M9R_MERGED_REBASELINE_REPORT.md) subsequently ran the complete owned
+gate: full integration/browsers/outage/fuzz pass, but aggregate capacity and
+injected driver-panic recovery FAIL. [Slice B](M9R_MERGE_REVIEW_B_REPORT.md)
+reviewed all 23 resolutions and records a fresh full integration FAIL
+(438 PASS, 1 worker-policy statement timeout, zero skips), plus the confirmed
+launcher, compiler-pair and SQL uniqueness-version gaps. These later results
+supersede an unqualified current-green reading of the earlier merge gate.
+No causal merge regression is proved without controlled comparison.
+
+Current scope, R6 coverage/ownership, open evidence and proposed R7 sequence are
+in the [remediation plan](M9R_REMEDIATION_PLAN.md),
+[live finding ledger](M9R_FINDING_STATUS.md) and [handoff](AGENT_HANDOFFS.md).
+M10–M14 exist as preview; this agent builds remediation only. R6 stays held for
+the milestone agent, including production data plane and verifier credential.
+M14/merge independent review is NOT RUN; latest fixes retain their review limits.
+Root-rule updates are [proposed only](M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md).
+
+Current user reservations are remediation migrations 00058–00079/ADR064–099
+and milestone migrations 00080–00099/ADR100–119; the older “00090 and up free”
+wording below is historical. A database already at 89 needs an agreed, verified
+fresh/upgrade ordering strategy before new lower-number migrations. No automatic
+out-of-order switch, migration renumbering or shared database rebuild is
+authorized by this document. The old milestone-numbered MAIN database is
+preserved; any real data cutover needs a recovery plan.
+
+## Original integration record (historical; retained verbatim below)
 
 Status: **merged on the branch `integration/m9r-m14` on 2026-10-20; the gate below was run on it and is green after one environment fix (see the table).** Nothing was merged into `main`,
 no pull request exists, and the two source branches are untouched: `origin/remediation/m9r-foundation` is still `b00da36` and

@@ -151,3 +151,49 @@ M9R remains **PARTIAL**, combined acceptance **FAIL**. Stop after B.
 Next is C: reconcile plan/ledger with preview M10–M14 and propose agent-rule
 changes without applying them. D implementation ordering still needs the
 user's decision; none is started here.
+
+## FROM remediation TO milestone — 20 October 2026 (Asia/Kolkata), slice C
+
+Subject: current documentation reconciled; agent-rule edits proposed only.
+
+Fetched and merged integration before C: already up to date at `552fa9e`,
+starting from remediation `a1d8b00`. No application/test/migration/contract or
+dependency is changed. Current plan and live ledger recognize preview M10–M14;
+R6 remains implemented preview coverage held for your lane, with production
+data plane and separate verifier credential still missing. Latest fix/review,
+limited acceptance-category, compromised-process and real-provider limits remain.
+Do not duplicate R6 or treat control-plane activation as production execution.
+
+The updated ledger retains A's aggregate/driver failures, B's worker-policy
+initial SELECT timeout and B-01/B-02/B-05 as open. B-03 artifact compatibility
+and B-04 wording also remain. Historical checkpoint progression and milestone
+audit appendix are unchanged. The integration plan now has a current notice;
+its original merge record is retained as history, not a current green gate.
+
+[Agent-rule proposal](M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md) contains an exact
+unapplied patch with baseline hashes. Actual `AGENTS.md` and `CLAUDE.md` remain
+byte-identical; a later user task is needed to apply it. It covers preview
+scope/ownership, version meanings, latest SQL/worker guards, migration-order
+coordination, owned stacks and the temporary independent-review deferral.
+
+The only SHARED edits are `docs/migration/M9R_FINDING_STATUS.md` and
+`docs/migration/LINE_INTEGRATION_PLAN.md`. Other changes are remediation plan,
+proposal, [C report](M9R_DOC_RECONCILIATION_C_REPORT.md) and this handoff.
+Prior handoff entries and A/B reports are preserved. C verification and exact
+commands are in the report. C documentation/static gate PASS: make check,
+16 preservation/status/scope/credential checks, 91 relative links and the
+read-only patch applicability check; root rules remain unchanged.
+Application/fault/performance suites are not rerun
+for documentation edits, and their recorded FAIL results remain acceptance
+failures. Independent review NOT RUN; no agents spawned or awaited.
+
+Proposed remaining R7 order: D1 diagnostics, D2 event operations, D3 workflow
+lifecycle, D4 audit, D5 profiling/caching, D6 deployment quotas, D7 DR. This is
+not permission to start D. The user's order confirmation is still required.
+Approval freshness must extend ADR100 A1, not create a competing tool gate.
+Migration ordering before reserved lower numbers is still unresolved; no new
+number or out-of-order behavior is introduced. Wider R2/R3/R5 UI/product work
+and real IdP/MFA/HTTPS verification remain request-only/deferred.
+
+M9R **PARTIAL**, combined acceptance **FAIL**. Stop after C; push remediation
+only. Milestone agent merges this documentation checkpoint into integration.
