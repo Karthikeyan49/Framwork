@@ -8,10 +8,13 @@ package integration
 // regression tests built on it also run against the tree they were written for.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync"
 	"testing"
@@ -98,11 +101,50 @@ func (e *m13Env) m12apiPrepareBig(threshold string, bulk, cases int) m12Artifact
 	return m12Artifacts{revision: revision, requirementsVersion: stored.Version, acceptanceID: spec.ID, sandboxID: sandbox}
 }
 
+// m12apiRetrying repeats a request that the API refused with 429 or 503, up to attempts times in all, pausing for the
+// Retry-After it was given (at most 2 s). Bodies are buffered so that the repetition sends the same bytes.
+type m12apiRetrying struct {
+	inner    http.Handler
+	attempts int
+}
+
+func (h m12apiRetrying) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(r.Body)
+	}
+	for attempt := 1; ; attempt++ {
+		clone := r.Clone(r.Context())
+		clone.Body = io.NopCloser(bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		h.inner.ServeHTTP(rec, clone)
+		if (rec.Code != 429 && rec.Code != 503) || attempt >= h.attempts {
+			for k, v := range rec.Header() {
+				w.Header()[k] = v
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(rec.Body.Bytes())
+			return
+		}
+		pause := 500 * time.Millisecond
+		if seconds, err := strconv.Atoi(rec.Header().Get("Retry-After")); err == nil && seconds > 0 {
+			pause = min(time.Duration(seconds)*time.Second, 2*time.Second)
+		}
+		time.Sleep(pause)
+	}
+}
+
 // m12apiBigRelease builds a large candidate requested by carol. With activate it is
 // approved by dave and activated by erin as well (so the next one has an active base).
 func (e *m13Env) m12apiBigRelease(threshold string, activate bool) string {
 	t := e.t
 	t.Helper()
+	// Building the large candidate is the set-up, not the claim: on a slow host it can exceed the 3 s transaction budget of
+	// one request, which the API answers with a typed 503 ("nothing was changed, retry"). The set-up repeats such requests
+	// like a client that honours Retry-After; the claims are measured afterwards on the unwrapped handler (review IR-03).
+	direct := e.h
+	e.h = m12apiRetrying{inner: direct, attempts: 6}
+	defer func() { e.h = direct }()
 	bulk, cases := 14, 1000
 	if raceBuild {
 		// The race detector multiplies the cost of building the candidate itself past the 3 s envelope; the

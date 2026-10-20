@@ -62,6 +62,7 @@ test: test-unit test-integration
 check: docs-verify
 	./scripts/check-format.sh
 	$(GO) vet $(GO_PACKAGES)
+	$(GO) vet -tags=integration,performance ./tests/integration
 	$(GO) mod verify
 	$(NPM) run lint
 	$(NPM) run typecheck

@@ -59,7 +59,7 @@ func TestM12APIDetailReadsOfALargeCandidateConverge(t *testing.T) {
 	}()
 
 	start := time.Now()
-	reads := e.m12apiParallelReads(10, 8, e.viewer, "/candidates/"+second, 400*time.Millisecond)
+	reads := e.m12apiParallelReads(10, 20, e.viewer, "/candidates/"+second, 400*time.Millisecond)
 	took := time.Since(start)
 	close(stop)
 	poller.Wait()
