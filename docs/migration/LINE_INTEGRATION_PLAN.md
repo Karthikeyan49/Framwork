@@ -1,6 +1,119 @@
 # Integrating the milestone line (M10–M14) with the remediation line (R-slices)
 
-Status: **analysis only, 2026-10-19. Nothing was merged or renumbered.** The facts below come from executed trial
+Status: **merged on the branch `integration/m9r-m14` on 2026-10-20; the gate below was run on it and is green after one environment fix (see the table).** Nothing was merged into `main`,
+no pull request exists, and the two source branches are untouched: `origin/remediation/m9r-foundation` is still `b00da36` and
+`claude/m14-ai-builder` (also `claude/dazzling-goldberg-69wbkn`) is still `60da6f2`. This merge is a branch for the repository owner to
+review. It does not certify production readiness, and it does not make M10 to M14 accepted: the independent review of M14 is still not
+run, and what M11 to M14 do not build of R6 (the production data plane, a separate verifier credential) and the rest of R7 (audit retention,
+profiling, restore drill) are as open as they were.
+
+## What the branch is
+
+| | Value |
+|---|---|
+| Branch | `integration/m9r-m14` |
+| First parent | `b00da36` (the remediation line after R7b, 116 commits and 264 files since the common base `e6305df`) |
+| Second parent | `integ/prep-m14` (not pushed; `60da6f2` plus one commit that renumbers the milestone line, 189 commits and 253 files since the base) |
+| Merge commit | records 23 resolved conflicts (below) |
+| Follow-up commits | test alignment, see "What had to change besides the conflicts" |
+
+The renumbering commit is the only change the milestone line needed before the merge; it keeps the content and order of everything it renames.
+
+## The number map (read old reports through this)
+
+| Kind | Milestone line before | Now | Note |
+|---|---|---|---|
+| Migrations | `00045` to `00053`, `00060` | `00080` to `00089` in the same order (45 to 80, 46 to 81, 47 to 82, 48 to 83, 49 to 84, 50 to 85, 51 to 86, 52 to 87, 53 to 88, 60 to 89) | `00058` to `00079` and `00090` and up stay free for the remediation line and for later work; the remediation migrations `00045` to `00057` are unchanged |
+| ADRs | `036` to `040` (M10 to M14) | `100` to `104` | `064` to `099` stay free for the remediation line; ADR036 to ADR063 are the remediation line's |
+| Tests renamed | `TestM13IntegrationUpgradeFrom48...`, `TestM11RMigration51...` | `...From83...`, `...Migration86...` | names carried a migration number |
+| Authoring schema, IR, compiler with tool activities | `1.3.0` | `1.5.0` | `1.3.0` (tenant approval roles) and `1.4.0` (`field.unique`) are the remediation line's and admit no tool |
+| Example document | `contracts/examples/workflow-tool-draft-v1.3.json` | `workflow-tool-draft-v1.5.json` | |
+| Policy version | `m14-native-v11` | `m14-native-v11` | the remediation line never changed it (`m9r-native-v6`); it only added the descriptive role contract |
+
+`docs/verification/*` keeps the numbers its reviewers saw. Read those reports through this table.
+
+## Decisions taken in the 23 conflicts
+
+* **One meaning per version token.** Schema 1.3.0 stays approval roles, 1.4.0 stays integrity, and tool activities get 1.5.0 as a superset of
+  1.4.0 (`application-v1.5.schema.json` was produced by a three-way merge of the tool delta into the 1.4.0 schema, no conflicts). Every gate
+  that listed the approval and integrity versions also admits 1.5.0: `metadata.WorkflowSchema`, the new `metadata.IntegritySchema`, the compiler's
+  rule, workflow and integrity restore checks, `SupportedIRVersions`, the frontend renderer (`contracts.ts`) and the AI schema map.
+* **Workflow DSL.** `2.0.0` closed roles, `2.1.0` tenant roles (workflows author it in 1.3.0 and later), `2.2.0` pinned tool plans. The
+  milestone line had used `2.1.0` for its pre-amendment tool shape; that shape is kept restore-only and is recognised by its tool states, so
+  a tenant-role plan and a legacy tool plan never mix. Tool plans accept the tenant role grammar.
+* **Migration `00080` rewrites a CHECK that both lines rewrite.** Remediation `00045` and `00052` install `metadata_versions_schema_version_check`
+  with 1.3.0 and 1.4.0; the milestone version would have replaced it with a list that rejects 1.4.0 (and, on a database that already holds
+  1.4.0 documents, would have failed). It now lists 1.0.0 to 1.5.0. This was the only object that both lines' migrations changed
+  (a comparison of functions, tables, constraints, policies, triggers, indexes and grants found nothing else).
+* **The derived worker guard.** `control.worker_grants_safe()` is redefined by three remediation migrations (fixed list) and by `00087`
+  (derived). `00087` runs last, so it wins; evaluated as `framework_worker` on the merged schema it is true, and a diagnostic query found no
+  privilege the worker holds that `worker_guard_granted()` does not list and no stale entry (the new remediation relations grant the worker
+  nothing). `TestM12RWorkerGuard*` pass.
+* **Runtime transaction wrappers.** `WithRuntimeIsolation` is now a thin wrapper on the remediation `withRuntime`; a READ COMMITTED executor does not
+  certify a runtime snapshot (the sandbox freeze port does not need it; the index paths fall back).
+* **HTTP front door.** Remediation traffic admission and token pre-verification stay first. The freeze route keeps READ COMMITTED, idempotent release
+  POSTs keep body replay on a known abort, and role routes are matched by exact registered patterns (now including the remediation `GET` roles and
+  `GET` role-contract routes, which a path suffix used to cover).
+* **Wiring, configuration, Makefile and CI** carry both lines (tool catalog, AI provider, traffic gate, admission queue, sign-in store, probes). The
+  integration test deadline moved to 90 minutes (CI job 120): both old values (20 and 40 minutes) are below what the merged suite needs.
+* **Finding ledger.** `docs/migration/M9R_FINDING_STATUS.md` keeps the remediation table as the live ledger; the milestone line's audit
+  (2026-10-17 and 2026-10-19) is an appendix with a number map. No row was re-graded by the merge.
+
+## What had to change besides the conflicts
+
+Seven integration tests failed on the first targeted run, none of them a product defect:
+
+* `TestM13IntegrationReplacedFunctionsKeepTheirGuards` (milestone test) found that `runtime.register_numeric_index` lost the message `index budget`:
+  remediation `00047` moved the shared quota into `runtime.check_index_budget`, which the function now calls. Recorded in `m13DroppedMessages`.
+  This is the test doing the job it was written for, across both lines' migrations (39 functions compared).
+* Three R7b cutover rehearsals applied "all remaining migrations" and counted them; they now stop at 57 (`r7bLastMigration`).
+* `TestM9RWorkflowApprovalReview*` read `runtime.m9_test_effects`, a fixture table that the milestone line had to move out of the guarded schemas
+  (`m9_fixture.effects`).
+
+The fixtures that said 1.3.0 for tools (AI corpus of 412 items, tool example, renderer, unit and integration tests) say 1.5.0, with workflows at DSL 2.1.0
+and rules unchanged at 2.0.0 (a first mechanical pass moved one rule too; the AI corpus caught it).
+
+## Gate
+
+All runs were made on this branch on 2026-10-20 against the isolated Compose stack of this host (the development database `MAIN` and its Compose
+project were not touched). Durations are wall clock on this host; each suite ran once, so the evidence says nothing about flake rates.
+
+| Step | Result |
+|---|---|
+| `make check` (docs checksums 84 + 43, format, vet, `go mod verify`, eslint, tsc) | PASS |
+| `make test-unit` (27 Go packages with `-race`, 5 script tests, 126 frontend tests in 19 files) | PASS, 211 s |
+| Empty database, all migrations | 67 migrations apply (`00001` to `00057`, `00080` to `00089`); the derived worker guard evaluated as `framework_worker` is true, with no unlisted privilege and no stale allowlist entry |
+| Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` (439 tests listed, 438 run) | 1904 s: 436 PASS, 2 FAIL. Both failures are `TestM9ROIDC*` and are environmental: the isolated stack's environment had no `SIGNIN_REDIS_URL` and no `framework_signin` Redis user. With that ACL user created as `scripts/m8-env.mjs` defines it, both PASS (11 s). After the test alignment above, the 7 earlier failures also PASS |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS (5 targets of 10 s) |
+| `make build` (binaries and `vite build`) | PASS |
+| `make test-e2e` | 11 passed, 37 s |
+| `make test-signin-e2e` | 7 passed, 9 s |
+| `make test-event-outage` (real ten-minute consumer absence, R7b) | PASS, 610 s |
+| R7a invalid-bearer burst against the built `bin/api` (`-tags integration,trafficreview`, binary pinned by its SHA-256) | PASS: 40 requests, 20 x 401, 20 x 429, 20 denied audits |
+
+Not run, and so not claimed: the reference-scale performance gates of the remediation line (build tag `performance`, seven files), the `driverpanic`
+diagnostic, `TestM8RedisACLStreamLossAndPendingRecovery` (coupled to the main Compose project, skipped on isolated stacks as it was on the milestone
+line), the opt-in checks of retained legacy API artifacts, the individual `t.Skip` sites (the run was not repeated with `-v` to count them), and any
+independent review of the merge (brief: `/home/user/briefs/54-rev-integration.md`). The merged integration suite takes about 32 minutes here
+(the milestone line alone took about 29), so the new deadlines (Makefile 90 minutes, CI job 120) leave room for a slower runner.
+
+## For the owner and for the remediation agent
+
+* **R6 is delivered by M11 to M14 on this branch** (requirements, executable acceptance, risk, approval and promotion), except the production
+  data plane and a separate verifier credential. The remediation agent should hold R6 so that it is not built twice.
+* **Reserved numbers.** The remediation line must not use migrations `00080` to `00089` or ADRs `100` to `104`. It keeps `00058` to `00079` and
+  `064` to `099`. New remediation commits come in with a merge of `origin/remediation/m9r-foundation` into this branch.
+* **The two contract files are stale for this branch.** `AGENTS.md` and `CLAUDE.md` (which this work may not edit) still say that M10 is
+  not to be continued before the remediation gate and know nothing of ADR100 to ADR104. Whether this branch becomes the working line is the
+  owner's decision.
+* **The development database `MAIN` has to be rebuilt, not migrated.** It holds the milestone line's old numbers (`00045` to `00053`, `00060`),
+  which collide with the remediation migrations of the same version. Nothing here touched it.
+* Not done and not claimed: M15 to M19, the production data plane, a separate verifier credential, release and AI UI, a real model provider, the
+  independent review of M14 (its brief exists), and the open residuals of the gap analysis.
+
+## History: the analysis written before the merge (2026-10-19)
+
+Status when written: **analysis only, 2026-10-19. Nothing was merged or renumbered.** The facts below come from executed trial
 merges in scratch worktrees that were never pushed (the numbers were refreshed once, after the remediation line
 completed R7b). The recommendation needs a decision from the repository owner, because the remediation line is being
 developed by another agent. That agent's own report still lists M10 to M14 as future work ("M10 remains paused"): it has
