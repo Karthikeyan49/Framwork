@@ -25,6 +25,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/access"
 	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
 )
 
@@ -43,6 +44,7 @@ type m14Options struct {
 	gateway     ai.Gateway
 	gatewayOpts ai.Options
 	catalog     *compiler.Catalog // compile catalog of the API (nil: the platform catalog)
+	admission   int               // database admission slots of the API (0: the default of Register)
 }
 
 func m14Setup(t *testing.T, opts m14Options, steps ...ai.ScriptStep) *m14Env {
@@ -56,6 +58,12 @@ func m14Setup(t *testing.T, opts m14Options, steps ...ai.ScriptStep) *m14Env {
 	e.svc = ai.NewService(gateway, registry, opts.limits)
 	e.api = access.API{DB: e.f.db, Auth: e.f.verifier, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: true, WorkflowsEnabled: true}
 	e.api.CompilerCatalog = opts.catalog
+	if opts.admission > 0 {
+		var err error
+		if e.api.Admission, err = postgres.NewAdmission(opts.admission, 128); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if !opts.noService {
 		e.api.AI = access.AIConfig{Service: e.svc}
 	}

@@ -181,6 +181,20 @@ func extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
 }
 
+// replayedBody is the request body that a handler reads after serve consumed it: the bytes received, then the error that
+// ended the read (nil: the end of the body).
+func replayedBody(body []byte, cause error) io.ReadCloser {
+	reader := io.Reader(bytes.NewReader(body))
+	if cause != nil {
+		reader = io.MultiReader(reader, failingReader{cause})
+	}
+	return io.NopCloser(reader)
+}
+
+type failingReader struct{ err error }
+
+func (f failingReader) Read([]byte) (int, error) { return 0, f.err }
+
 // A service rejection must roll back its entire business transaction before
 // becoming an HTTP response. Audit the rejection in a fresh live-identity scope.
 type requestRejection struct {
@@ -270,6 +284,22 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Every other body is read here too, before the admission slot and the transaction: the handlers read it later, and a
+	// client that sends its bytes slowly would otherwise hold a database slot for as long as the server's read timeout
+	// (independent review IR-02: four such connections stalled the whole API and lost AI results). Only a request whose
+	// bearer already verified is read, so an anonymous caller cannot make the server buffer anything. The handlers keep
+	// their own limits and error codes: they read the replay, which ends with the error of the front door's 1 MiB cap
+	// when the body was larger, exactly as the live body would have.
+	preRead := preError == nil && !localCommand && !retryRelease && r.Method == http.MethodPost && r.Body != nil && (r.ContentLength != 0 || len(r.TransferEncoding) > 0)
+	var bodyErr error
+	if preRead {
+		body, bodyErr = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		var tooLarge *http.MaxBytesError
+		if bodyErr != nil && !errors.As(bodyErr, &tooLarge) {
+			httpserver.Error(w, r, 400, "invalid_request", "Request body could not be read")
+			return
+		}
+	}
 	parentContext := r.Context()
 	if localCommand {
 		var cancel context.CancelFunc
@@ -281,6 +311,8 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		p, authErr = identity.Principal{}, preError
 		if localCommand || retryRelease {
 			r.Body = io.NopCloser(bytes.NewReader(body))
+		} else if preRead {
+			r.Body = replayedBody(body, bodyErr)
 		}
 		level := sql.LevelRepeatableRead
 		if r.Pattern == freezePattern {
