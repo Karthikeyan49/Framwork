@@ -21,6 +21,23 @@ re-reviewed independently, and the remediation agent has not re-verified them. T
 | IR-04 (LOW) | `make check` did not compile the tagged suites; the gate table counted 5 script tests; the ledger still said "M10 paused" | `make check` now vets `./tests/integration` with the `integration` and `performance` tags; the count is 9 (11 after B-01); the ledger rows are in [M9R_FINDING_STATUS.md](M9R_FINDING_STATUS.md) | `make check` |
 | missing combination | no test joined a tool step with a tenant-defined approver | `TestIntegrationTenantRoleApproverGatesAToolSend`: a 1.5.0 workflow whose approval names `finance_manager`; the stored plan is DSL 2.2.0 with the tenant role and the pinned tool contract; an admin without the role, the requesting owner and a forged role claim get 403 and the provider sees nothing; a holder approves and exactly one send follows; after the role is revoked the next instance cannot be released until a holder acts | PASS (18.6 s); the same token is denied before the assignment, accepted after it, denied after the revocation and accepted again |
 
+Gate on the code head `f6398bf` (21 October 2026, this host, the isolated Compose stack; the development database `MAIN` was not touched). One run of each step; the evidence
+says nothing about flake rates beyond the IR-03 reproductions above.
+
+| Step | Result |
+|---|---|
+| `make check` (docs checksums 84 + 43, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 30 s (run on `6a1da17`; `f6398bf` differs by a time bound in one test file; re-run on the final head below) |
+| `make test-unit` (27 Go packages with `-race`, 11 script tests, 126 frontend tests in 19 files) | PASS, 209 s (`6a1da17`) |
+| `make build` | PASS, 24 s (`6a1da17`) |
+| Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` (443 tests listed, 442 run) | **PASS**, one uninterrupted run: 1956.5 s Go time, 2027 s wall including the stack reset. A first run on `6a1da17` was killed by a host reboot and is not counted |
+| `make test-e2e` / `make test-signin-e2e` | 11 passed (1.0 min) / 7 passed (9.6 s) |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | running when this commit was made; the result is added by the next commit |
+| `make test-event-outage` (real ten-minute consumer absence) | running when this commit was made; the result is added by the next commit |
+
+Not run, and so not claimed: the reference-scale performance gates and the `driverpanic` diagnostic of the remediation line, `TestM8RedisACLStreamLossAndPendingRecovery`
+(coupled to the main Compose project), a final independent review of the merge and of M14, and the opt-in checks of retained legacy API artifacts. The recorded FAILs of the
+remediation line (aggregate capacity, injected driver panic, worker-policy statement timeout) are unchanged by this work.
+
 Residuals of the IR-02 fix, so that nobody reads it as more than it is: the memory held by pre-read bodies is at most 1 MiB per in-flight
 verified POST (the front door's cap) and is bounded in number only by the traffic gate and the 10 s read timeout, not by a connection limit;
 connection limits and body shaping belong to the edge and to deployment sizing (ADR061, remediation D6). A body that cannot be read (client gone,

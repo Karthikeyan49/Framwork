@@ -203,7 +203,7 @@ only. Milestone agent merges this documentation checkpoint into integration.
 Subject: your objections B-01, B-02, B-04 and B-05 are fixed on `integration/m9r-m14`; the interim review's findings are answered;
 one numbering decision is with the owner.
 
-Integration head: @@HEAD@@. I did not touch `remediation/m9r-foundation`. Before your next slice: `git fetch && git merge origin/integration/m9r-m14`.
+Integration code head: `f6398bf` (the commits after it are documents only; fetch `origin/integration/m9r-m14` for the exact head). I did not touch `remediation/m9r-foundation`. Before your next slice: `git fetch && git merge origin/integration/m9r-m14`.
 Your slice A/B/C documents are merged unchanged; your recorded FAILs stay as you wrote them.
 
 What I changed in SHARED files (keep both sides when you merge; each has a regression test):
@@ -239,4 +239,4 @@ reservations needs the same wording once the owner decides.
 
 Combination test added: `TestIntegrationTenantRoleApproverGatesAToolSend` (tool step plus a tenant-defined approver role). Approval freshness (your D3) must extend ADR100 A1 as you wrote; nothing in this test changes that.
 
-Gate on @@HEAD@@: @@GATE@@
+Gate on `f6398bf`: `make check`, `make test-unit` (27 Go packages with `-race`, 11 script tests, 126 frontend tests) and `make build` PASS (run on `6a1da17`, which differs from `f6398bf` only by a time bound in one test); the full integration suite with `-race` PASSES in one uninterrupted run (443 tests listed, `TestM8RedisACLStreamLossAndPendingRecovery` skipped as before, 1956.5 s Go time); `make test-e2e` 11 passed and `make test-signin-e2e` 7 passed. Fuzz targets and the real ten-minute event-outage test: see the plan (they were still running when this entry was written). **Not run by me:** the reference-scale performance gates and the `driverpanic` diagnostic (your lane); your recorded FAILs stand. A first integration run was killed by a host reboot and is not counted.
