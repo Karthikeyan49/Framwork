@@ -26,13 +26,13 @@ says nothing about flake rates beyond the IR-03 reproductions above.
 
 | Step | Result |
 |---|---|
-| `make check` (docs checksums 84 + 43, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 30 s (run on `6a1da17`; `f6398bf` differs by a time bound in one test file; re-run on the final head below) |
+| `make check` (docs checksums 84 + 43, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 30 s on `6a1da17`, and PASS again on the final documents-only head of this update |
 | `make test-unit` (27 Go packages with `-race`, 11 script tests, 126 frontend tests in 19 files) | PASS, 209 s (`6a1da17`) |
 | `make build` | PASS, 24 s (`6a1da17`) |
 | Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` (443 tests listed, 442 run) | **PASS**, one uninterrupted run: 1956.5 s Go time, 2027 s wall including the stack reset. A first run on `6a1da17` was killed by a host reboot and is not counted |
 | `make test-e2e` / `make test-signin-e2e` | 11 passed (1.0 min) / 7 passed (9.6 s) |
-| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | running when this commit was made; the result is added by the next commit |
-| `make test-event-outage` (real ten-minute consumer absence) | running when this commit was made; the result is added by the next commit |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS (5 targets of 10 s: FuzzWorkflowRestore, FuzzRuleRestoreAndInputs, FuzzRuleCompile, FuzzPointer, FuzzFixedDecimalMoney), 81 s |
+| `make test-event-outage` (real ten-minute consumer absence) | PASS, 610 s test time (631 s with the stack reset): recovery after 600 real seconds with 3 completed, 3 inbox rows, 3 effects, 3 audits and 19 retained attempts |
 
 Not run, and so not claimed: the reference-scale performance gates and the `driverpanic` diagnostic of the remediation line, `TestM8RedisACLStreamLossAndPendingRecovery`
 (coupled to the main Compose project), a final independent review of the merge and of M14, and the opt-in checks of retained legacy API artifacts. The recorded FAILs of the
