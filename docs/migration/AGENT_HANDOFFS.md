@@ -240,3 +240,20 @@ reservations needs the same wording once the owner decides.
 Combination test added: `TestIntegrationTenantRoleApproverGatesAToolSend` (tool step plus a tenant-defined approver role). Approval freshness (your D3) must extend ADR100 A1 as you wrote; nothing in this test changes that.
 
 Gate on `f6398bf`: `make check`, `make test-unit` (27 Go packages with `-race`, 11 script tests, 126 frontend tests) and `make build` PASS (run on `6a1da17`, which differs from `f6398bf` only by a time bound in one test); the full integration suite with `-race` PASSES in one uninterrupted run (443 tests listed, `TestM8RedisACLStreamLossAndPendingRecovery` skipped as before, 1956.5 s Go time); `make test-e2e` 11 passed and `make test-signin-e2e` 7 passed. The five fuzz targets PASS and the real ten-minute event-outage test PASSES (610 s). **Not run by me:** the reference-scale performance gates and the `driverpanic` diagnostic (your lane); your recorded FAILs stand. A first integration run was killed by a host reboot and is not counted.
+
+## FROM milestone TO remediation — 21 October 2026 (UTC), addendum: D1 worker-policy statement cost
+
+I diagnosed and fixed the first of your open D1 items because the cause was a query shape, not the budget: `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry`.
+This touches a SHARED file (`internal/runtime/workflow/execution.go`) and your test (`tests/integration/m9r_worker_policy_test.go`); the failures you recorded stay recorded.
+
+- Cause (measured on the spare `fix` stack with `track_functions='all'`, `EXPLAIN (ANALYZE, BUFFERS)` and pg_stat_user_functions): the row-level worker policy qual
+  `iam.worker_identity_scope(tenant_id)` is evaluated per row read and costs about 160 microseconds (it calls `control.worker_authority`, `iam.current_tenant_id` 6 times, `control.worker_principal`):
+  111,744 calls, 18.1 s in one probe. The compensation scan was a correlated `NOT EXISTS ... c.step_key=r.step_key||':compensate'`; the planner keeps it a nested loop with a join filter
+  (the concatenation is not leakproof, so it cannot become an index condition below the policy, and with the policy quals the row estimate is 1 even after `ANALYZE`), so every candidate re-read all
+  receipts: 96 x 96 policy evaluations = 1.5-1.7 s. Extrapolated with the measured per-row cost (not run): about 6 s at 200 receipts and 160 s at 1,000, so the old statement bounded the instance size by the budget.
+- Fix: uncorrelated `NOT IN` (hashed sub-plan, one pass), exported as `workflow.CompensationScanSQL` so the test runs the real text. 96 receipts: 50-75 ms with `-race`. The test now asserts that every scan of
+  `workflow_receipts` runs once (the old text fails it; I ran that negative control) and that compensation still goes in reverse order and skips compensated receipts.
+- Not done, yours if you want it: the per-row policy cost itself (the new statement reads each receipt twice, so 2N x 160 us: about 320 ms at 1,000 receipts, extrapolated, not run). The API policies already use a statement-level `(SELECT ...)`; the worker policy could do the same
+  with a hoisted tenant value. That changes security-critical policies on many tables and needs your review. Other worker-side correlated subqueries I looked at (`tool_step.go:93`) are per instance, not per receipt.
+- Not run: a slow host. On the reviewer's host the old statement measured 2.24 s; the new one should have more than 30 times of headroom there, but that is arithmetic, not a measurement.
+
