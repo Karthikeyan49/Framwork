@@ -264,6 +264,9 @@ func TestHTTPProviderDeadlines(t *testing.T) {
 		select {
 		case <-time.After(5 * time.Second):
 		case <-r.Context().Done():
+			// The client left. Aborting the connection, instead of returning, keeps the server from sending a default 200
+			// that net/http can hand to a client whose deadline has just passed, in place of the deadline error.
+			panic(http.ErrAbortHandler)
 		}
 	})
 	p := s.provider(t, "")

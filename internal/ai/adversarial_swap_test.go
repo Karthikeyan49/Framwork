@@ -50,7 +50,7 @@ func httpReplay(t *testing.T, c corpus.Case) (*HTTPJSONProvider, *atomic.Int64, 
 			select {
 			case <-time.After(time.Duration(s.Step.DelayMS) * time.Millisecond):
 			case <-r.Context().Done():
-				return
+				panic(http.ErrAbortHandler) // the client left: send nothing (a default 200 could still reach a client past its deadline)
 			}
 		}
 		switch s.Step.Error {
