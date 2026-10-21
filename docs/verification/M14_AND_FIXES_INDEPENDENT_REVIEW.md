@@ -18,7 +18,8 @@ STATUS: IN PROGRESS (interim commit).
 | 19:53 | worktree verified at `be6ec7c`; Docker stacks ready; required reading done | done |
 | 20:00 | baseline: stack reset + `TestM14SlowRequestBodiesDoNotHoldDatabaseSlots`, `TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema`, `TestMigrationLineageRefusesTheMilestoneLinesOldNumbering`, `TestIntegrationTenantRoleApproverGatesAToolSend` (`-race`) | PASS, 34.5 s |
 | 20:03-20:10 | A1 body pre-read: raw-socket probes against `httpserver.New` on the pinned tree and on a scratch copy with the pre-read disabled; memory measurement; mutation check of the slow-body test | done, F-01, F-02 |
-| next | A2-A6, then Part B (M14) | pending |
+| 20:10-20:18 | A2 live catalog scan, 89 -> 90 attribute diff, unique duplicate/abort lifecycle under 1.4.0 and 1.5.0, scanner spellings, negative control; A3 restore matrix; A4 real launcher with fake binaries; A5 real `migrate` binary against seven database shapes and a fresh database; A6 tools harness under `-race`, mutation of the tenant-approver test | done, F-03, F-04 |
+| next | Part B (M14) | pending |
 
 ## Findings
 
@@ -75,6 +76,33 @@ anything". The release idempotent POSTs (`retryRelease`: `candidates`, `acceptan
 0.02 s. Identical on the pre-fix copy, so this is not a regression of the fix, but the invariant the fix relies on does not hold. Bounded by
 the invalid-bearer budget (20 per peer, 50 global burst, 10/s), so about 150 MiB at most.
 
+### F-03 LOW - the version-gate scan is narrower than "the next superset cannot repeat it"
+
+`internal/metadata/sql_version_gate_test.go` reads only dollar-quoted function bodies and only single-quoted `'1.N.0'` literals;
+`00090`'s own post-check matches only `schema_version = '1.4.0'`. Executed (`familyGaps` fed 16 spellings of a single-version gate):
+reported for `=`, one-member `IN`, `IS NOT DISTINCT FROM`, `->>` path equality, `E'...'`, `CASE ... WHEN`, `= ANY(ARRAY[...])`; **not reported**
+for `'1.4.'||'0'`, `$v$1.4.0$v$`, `@> '{"schema_version":"1.4.0"}'`, a jsonpath `== "1.4.0"`, `LIKE '1.4%'`, `~ '^1\.4\.'` and `'1.4'`; it
+also flags the harmless `>= '1.4.0'`. Policies, trigger `WHEN` clauses, other CHECKs, defaults, views and index predicates are not scanned at
+all. No defect today: a live catalog scan of a migrated head database (150 functions, 1,090 constraints, 225 policies, 102 triggers, 165
+defaults, 3 views, 19 expression/partial indexes; `TestZZReviewA2CatalogVersionGates`) finds only the fixed function, the complete CHECK,
+the event envelope literal `'1.0.0'` in `runtime.freeze_event` and two column defaults `'1.0.0'` (overwritten from the document / a record
+format version), none of which gates on a subset of the authoring family. The negative control holds: with `00090` removed in a scratch copy
+`TestSQLFunctionsNameWholeSchemaVersionFamilies` FAILS on `runtime.register_unique_constraint`.
+
+### F-04 LOW - launcher kind detection fails open, and two evidence statements overstate their tests
+
+* `scripts/with-env.mjs` picks the allowlist only for the exact argument forms `./cmd/<kind>`, `bin/<kind>` and `*/bin/<kind>`; anything else
+  gets the parent's whole environment. Executed with the real launcher, a synthetic `.env` and fake binaries:
+  `bin/api`, `bin/worker`, `bin/dispatcher`, `./bin/worker`, an absolute `.../bin/worker`, `go run ./cmd/api` and `go run ./cmd/worker` receive
+  exactly the allowlists (API: `AI_PROVIDER_FILE`, `TOOL_CATALOG_FILE`; worker: the four `TOOL_*`; dispatcher: none; no `MIGRATION_DATABASE_URL`
+  anywhere). `go run ./cmd/worker/` (trailing slash) and `go run github.com/Karthikeyan49/Framwork/cmd/worker` receive **everything**,
+  including `MIGRATION_DATABASE_URL`, `POSTGRES_PASSWORD`, `MIGRATOR_PASSWORD` and the operator Redis URL (AGENTS.md: "Keep operator
+  credentials out of runtime subprocesses"). The Makefile targets use the exact forms, so the documented launchers are safe; pre-existing, not
+  introduced by `dfec052`.
+* The plan says the B-01 launcher test starts "a fake `bin/api` and `bin/worker`": `scripts/runtime-env.test.mjs` starts only `bin/api`.
+  The plan cites `tests/integration/m_migration_lineage_test.go` as "executed against the real `migrate` command": the test calls
+  `postgres.CheckMigrationLineage` only (A5 below runs the real binary).
+
 ## Attacks that held
 
 ### A1 body pre-read (`f997efe`, `f6398bf`)
@@ -94,6 +122,67 @@ the invalid-bearer budget (20 per peer, 50 global burst, 10/s), so about 150 MiB
 * **Anonymous / invalid bearer on pre-read routes**: AI and metadata POSTs answer 401 in 0.02 s without reading (both trees).
 * **Content-Length 0, chunked empty body, protocol-level forms**: size 0 with `Content-Length: 0` and with an empty chunked body give the
   handlers' own typed 400 on all nine routes on both trees.
+* Note for readers of timing probes: with an announced body below 256 KiB, net/http itself drains the rest of the body before it writes any
+  answer (`maxPostHandlerReadBytes`), so a stalled small body gets no answer on either tree, but no database slot is held while net/http
+  drains (the slot is released before the response is written). The who-is-read probe therefore announces 900,000 bytes.
+
+### A2 migration `00090` and the version-gate scan (`46d8a2a`)
+
+* **Function attributes 89 -> 90** (`TestZZReviewA2RegisterUniqueBeforeAfter`, disposable database at 89, then `UpTo(90)`): owner
+  `framework_schema_owner`, `SECURITY DEFINER`, `search_path=pg_catalog, pg_temp`, ACL `{framework_schema_owner=X, framework_app=X}`, volatility,
+  parallel safety, leakproof, return type and the EXECUTE matrix of app/worker/dispatcher/migrator/schema owner/sign-in/PUBLIC are identical;
+  only the body digest changes. A text diff of the two bodies differs only in `CREATE OR REPLACE` and the `IN('1.4.0','1.5.0')` predicate.
+* **Unique lifecycle with populated entities**: the builder's `TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema` PASSES (60 rows);
+  my variation `TestZZReviewA2UniqueDuplicateAbortUnder15` (40 duplicate rows) gives the same sequence under 1.4.0 and 1.5.0: register BUILDING/1,
+  duplicate build 409, abort ABORTED, re-register BUILDING generation 2, 0 leaked claims, 1 history row, claim source schema = the document's.
+* **No unique under older contracts**: authoring a 1.3.0 or 1.2.0 document with `unique: true` is refused (400 `invalid_metadata`).
+* **Live catalog scan** (see F-03): no other SQL object gates on part of the authoring family.
+
+### A3 restore pairing (`dfec052`)
+
+`TestZZReviewRestoreMatrix` (unit, `internal/compiler`): the compiled 1.5.0 tool artifact relabelled over 6 IR versions x 8 compiler labels x
+6 application schema versions (document and every definition relabelled, freshly hashed): **1 of 288 restores**, the original triple. A tool-free
+integrity artifact restores only as (1.4.0, 1.4.0, 1.4.0) or (1.5.0, 1.5.0, 1.5.0), which is the documented superset. A single definition
+relabelled 1.4.0 or 1.3.0 inside a 1.5.0 artifact, a changed namespace and a migration class are refused. Plan DSL: 2.2.0 with contracts and the
+documented restore-only legacy shape (2.1.0 without contracts) restore; 2.0.0, 2.1.0 with contracts, 2.2.0 without contracts and 2.3.0 are
+refused. A forged `catalog_hash` restores (only checked non-empty; it feeds only the diff's `IRUpgrade` flag), and the send path re-derives the
+contract from the live catalog and fails closed on disagreement (`tool_step.go:243-247`). Read, not executed: `MatchesDefinition`,
+`promotion` staleness (`SupportedIR`), `dependencies.runtimeComponents` (DSL 2.0.0/2.1.0/2.2.0), `contracts.ts` (IR list and `unique` only for
+1.4.0/1.5.0), `internal/ai/schema_text.go` (1.3.0/1.4.0/1.5.0 schema files): consistent with the restore checks.
+
+### A4 runtime environment (`dfec052`)
+
+Every variable that `config.Load` (including `loadTraffic` and the OIDC block) and the app wiring read for the API, worker and dispatcher is on
+the matching allowlist, `TOOL_SECRETS_DIR`/`TOOL_CA_FILE`/
+`TOOL_ALLOW_INTERNAL` reach only the worker, `AI_PROVIDER_FILE` only the API, the dispatcher and the web server get none of them and no
+process gets `MIGRATION_DATABASE_URL` (executed with the real launcher, see F-04 for the fail-open forms).
+
+### A5 lineage guard (`dfec052`)
+
+`TestZZReviewA5Lineage` / `TestZZReviewA5FreshDatabase` run the real `cmd/migrate` binary built from the pinned tree (`status`, then `up`):
+
+| database | guard | `status` / `up` | version after |
+|---|---|---|---|
+| fresh (no version table, no objects) | pass | 0 / 0, 68 applied | 90 |
+| remediation numbering at 57 | pass | 0 / 0, 11 applied | 90 |
+| merged at 89 / at 90 | pass | 0 / 0, 1 / 0 applied | 90 |
+| shared prefix at 44 | pass | 0 / 0, 24 applied | 90 |
+| old milestone migrations (from `60da6f2`) at old 45, old 53, old 45-53 + 60 (the MAIN shape) | refused, typed error | 1 / 1, nothing applied | 45 / 53 / 60 |
+
+No false positive and no false negative among these shapes (migrations 1-44 are byte-identical on both lines, checked).
+
+### A6 test-side changes (`1fb0110`, `6c4cee6`, `bbf2465`)
+
+* **Mutation check of `TestIntegrationTenantRoleApproverGatesAToolSend`**: in a scratch copy where `policy.RoleStore.LockWorkflowApprover` no
+  longer requires the actor's role to be in the plan's approval roles, the test FAILS at the first refusal (the admin without
+  `finance_manager` gets 200). Not vacuous. On the pinned tree it PASSES (18.6 s). Observation: that list check exists only in Go; the SQL port
+  `control.lock_workflow_approver` receives only the actor's own role and fences its revocation.
+* **`wait` panicking `http.ErrAbortHandler`**: all three callers are handlers of the test server; the client has already decided its outcome
+  when its context ends. `go test -race -count=3 ./internal/tools` PASS (10.3 s) and the three tests that use `wait` `-count=20` PASS (18.8 s,
+  load 2.7-3.3).
+* **`m12apiRetrying`** (read): wraps only the set-up of the two large releases, retries only 429/503 up to six times, and the measured readers
+  use the unwrapped handler. It can hide a set-up flake, not a claim.
+* **`m10Options.approvers` / `customRoles`** (read): `nil` keeps `admin, owner`; `customRoles` only adds `RoleStore.Load` for the new test.
 
 ## Not covered
 
