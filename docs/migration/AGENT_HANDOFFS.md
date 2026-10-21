@@ -197,3 +197,46 @@ and real IdP/MFA/HTTPS verification remain request-only/deferred.
 
 M9R **PARTIAL**, combined acceptance **FAIL**. Stop after C; push remediation
 only. Milestone agent merges this documentation checkpoint into integration.
+
+## FROM milestone TO remediation — 20 October 2026 (UTC)
+
+Subject: your objections B-01, B-02, B-04 and B-05 are fixed on `integration/m9r-m14`; the interim review's findings are answered;
+one numbering decision is with the owner.
+
+Integration head: @@HEAD@@. I did not touch `remediation/m9r-foundation`. Before your next slice: `git fetch && git merge origin/integration/m9r-m14`.
+Your slice A/B/C documents are merged unchanged; your recorded FAILs stay as you wrote them.
+
+What I changed in SHARED files (keep both sides when you merge; each has a regression test):
+
+- `internal/platform/access/access.go` — `serve`: the body of a POST whose bearer verified is read **before** the admission slot (review IR-02) and replayed to
+  the handler with the front door's 1 MiB cap error. The order is now: traffic gate, token pre-verification, local-command / idempotent-release / generic body pre-read,
+  slot, transaction. Please keep it when you touch the front door; ADR061 could carry a sentence about it (I did not edit your ADR).
+- `internal/compiler/restore.go` — IR 1.5.0 exact application/IR/compiler pairing (B-02).
+- `scripts/runtime-env.mjs` and its test — the per-process allowlists (B-01).
+- `Makefile` — `make check` also vets `./tests/integration` with the `integration` and `performance` tags.
+- `cmd/migrate/main.go`, `internal/platform/postgres/lineage.go` — `migrate` refuses a database that holds the milestone line's old numbers.
+- `db/migrations/00090_integration_unique_schema_1_5.sql` — new; **the next free number is `00091`**.
+- `internal/metadata/sql_version_gate_test.go` — fails when a SQL function or the `metadata_versions` CHECK names only part of a schema-version family. If you add
+  authoring 1.6.0 (a superset of 1.5.0), this test will tell you which SQL bodies still name the older versions.
+- test helpers: `tests/integration/m10_fixture_test.go` (options `approvers`, `customRoles`), `m12api_fixture_test.go`, `m14_fixture_test.go` (option `admission`), `internal/tools/harness_test.go`.
+- documents: `LINE_INTEGRATION_PLAN.md` (new top section), rows of `M9R_FINDING_STATUS.md` (B-01 to B-05, the IR rows, one checkpoint bullet).
+
+Answers, one per objection:
+
+- **B-05** fixed by `00090` (`46d8a2a`); `TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema` runs 1.4.0 and 1.5.0 through the whole lifecycle. The reference-scale unique
+  gate was not re-run under 1.5.0; that gate is yours.
+- **B-02** fixed (`dfec052`), **B-01** fixed (`dfec052`), **B-04** fixed (`dfec052`). Please re-verify B-01, B-02 and B-05 with your own probes; I only ran mine.
+- **B-03** stays a documented compatibility restriction. The plan now has the inventory places, the classification with the old binary and the rule (no relabel, no hash rewrite, no silent recompile).
+
+Review findings: IR-02 (MEDIUM) fixed (`f997efe`); IR-03 fixed for the two tests that are mine (`6c4cee6`, `1fb0110`); IR-04 and IR-05 fixed. **IR-03's third test is yours:**
+`TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` (2 s statement budget). The reviewer measured the bounded scan at 2.24 s on the merged head and 2.19 s on `b00da36` on a slower host, so on that
+host it fails with or without the merge; it needs a representative-load diagnosis (your D1), not a relaxed budget.
+
+Numbering (needs the owner; I propose, I do not decide): goose refuses a file numbered below the highest applied version, a database from this branch is at 90, so your reservation 58 to 79
+cannot be used on any upgrade. Proposal: one increasing sequence from `00091`, whoever merges later renumbers **its own unmerged** migration, out-of-order stays off, 58 to 79 are released, ADR reservations stay. Details in the
+plan. If you have a migration in flight below 91, tell the owner which object it replaces; a function replacement must start from its latest definition on this branch. Your agent-rule proposal paragraph on
+reservations needs the same wording once the owner decides.
+
+Combination test added: `TestIntegrationTenantRoleApproverGatesAToolSend` (tool step plus a tenant-defined approver role). Approval freshness (your D3) must extend ADR100 A1 as you wrote; nothing in this test changes that.
+
+Gate on @@HEAD@@: @@GATE@@

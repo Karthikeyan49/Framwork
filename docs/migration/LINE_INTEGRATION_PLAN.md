@@ -1,5 +1,66 @@
 # Integrating the milestone line (M10–M14) with remediation
 
+## Milestone-agent follow-up on the integration branch — 20 October 2026 (UTC)
+
+The findings of the remediation agent's slice B (B-01, B-02, B-04, B-05) and of the interim
+[independent review](../verification/INTEGRATION_INDEPENDENT_REVIEW.md) (IR-01 to IR-05) that fall in the milestone lane or in
+the shared integration code are **fixed on `integration/m9r-m14`**. "Fixed" here means: the probe that failed now passes, a
+regression test pins it (and, where stated, was shown to fail without the change), and the milestone agent ran it. No fix has been
+re-reviewed independently, and the remediation agent has not re-verified them. The recorded FAILs of the remediation line
+(aggregate capacity, injected driver panic, worker-policy statement timeout) are untouched: they are its lane (D1).
+
+| Finding | What was wrong | Fix | Evidence |
+|---|---|---|---|
+| B-05 / IR-01 (MEDIUM) | `runtime.register_unique_constraint` selected only metadata 1.4.0. Under 1.5.0, the only schema that admits tools, no unique claim could be registered and every write to a unique field failed closed (409 forever): an availability defect, no integrity breach | migration `00090_integration_unique_schema_1_5.sql` replaces the function from its latest definition (`00052`) with `schema_version IN ('1.4.0','1.5.0')`; owner, grants and guards unchanged, a post-check refuses any other state. `internal/metadata/sql_version_gate_test.go` scans the latest body of every SQL function and the last rewrite of the `metadata_versions` CHECK for a gate that names only part of a version family, so the next superset cannot repeat it | the scan fails without `00090` (negative control); `TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema` takes 1.4.0 and 1.5.0 through 409, registration, READY, a create that succeeds and a duplicate that conflicts |
+| B-02 | `Restore` pinned the schema/compiler pair of an integrity IR (1.4.0) but not of the 1.5.0 IR: a re-hashed 1.5.0 artifact with a forged compiler label restored | `internal/compiler/restore.go` pins the pair for IR 1.5.0 too; older IR keep their historical provenance | `internal/compiler/tool_ir_identity_test.go` re-hashes forgeries of both the 1.4.0 and the 1.5.0 artifact (unsupported compiler, `0`, the other contract's compiler, an approval IR label, a moved unique flag), with a control that restores the unmodified artifact |
+| B-01 | `scripts/runtime-env.mjs` dropped `AI_PROVIDER_FILE` and `TOOL_CATALOG_FILE` for the API and the catalog, secrets, CA and internal-network settings for the worker, so a configured launcher ran without AI or tools | the minimum per-process allowlists; the web server and the dispatcher still receive none of them | two script tests: the pure allowlist, and the real `with-env.mjs` launcher starting a fake `bin/api` and `bin/worker` (11 script tests now) |
+| B-04 | stale wording that named tool schema/IR 1.3 | comment and assertion text only; no serialized token changed | `make check` |
+| IR-05 (LOW) | nothing refused a database that holds the milestone line's old migration numbers; it was safe only because migration 54 happened to need objects of the skipped ones | `postgres.CheckMigrationLineage` and `cmd/migrate` stop with a typed error when `runtime.tool_invocations` exists but `00080` is not applied | `tests/integration/m_migration_lineage_test.go`, executed against the real `migrate` command |
+| IR-02 (MEDIUM) | a POST body was read by the handler inside the database admission slot, so four connections of a tenant owner that announced a body and sent a byte every 0.7 s held all four slots for the 10 s read timeout: an honest read waited 8 s and an AI proposal lost its result | `serve` reads the body of a verified-bearer POST before the slot and replays it, with the error of the front door's 1 MiB cap, to the handler; the handlers keep their own limits and error codes; an anonymous caller is never read | `TestM14SlowRequestBodiesDoNotHoldDatabaseSlots` (real `httpserver.New` server, production timeouts, four slots): honest read 8.55 s **without** the change (FAIL), honest AI proposal 201 READY in 1.6 s with it; unit tests of the replay; `TestM14\|TestM13API\|TestM12API\|TestM3` pass |
+| IR-03 (LOW) | two timing-bound tests failed on a slower host | (a) `TestM12APIDetailReadsOfALargeCandidateConverge` built its two large releases with single requests that can exceed the 3 s transaction budget; the set-up now repeats a typed 503/429 like a client honouring Retry-After and the readers get 20 attempts, while the claims are still measured on the unwrapped handler. (b) `TestTimeoutWhileServerSleepsIsUnknownAndBounded`: when the client's deadline passed, the sleeping test handler returned a default 200 that net/http can deliver instead of the deadline error (a standalone client and server show the same, 3 of 300), so the class was `invalid_response` instead of `timeout`; both are UNKNOWN_REQUIRES_RECONCILIATION, so the gateway was safe, but the test asserted one of two outcomes. The test server now aborts such a handler | (a) 3 of 3 PASS with the test pinned to 2 CPUs of which one is taken by a busy loop (about a quarter of the normal capacity); with almost no CPU left the set-up still fails on a 3 s request, which no retry repairs. (b) reproduced in 11 of 150 runs under load, 0 failures in 600 executions after the change. **Not changed:** `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` (the 2 s statement budget of the remediation line; the reviewer measured 2.24 s merged against 2.19 s before the merge on a slower host): D1 of the remediation line |
+| IR-04 (LOW) | `make check` did not compile the tagged suites; the gate table counted 5 script tests; the ledger still said "M10 paused" | `make check` now vets `./tests/integration` with the `integration` and `performance` tags; the count is 9 (11 after B-01); the ledger rows are in [M9R_FINDING_STATUS.md](M9R_FINDING_STATUS.md) | `make check` |
+| missing combination | no test joined a tool step with a tenant-defined approver | `TestIntegrationTenantRoleApproverGatesAToolSend`: a 1.5.0 workflow whose approval names `finance_manager`; the stored plan is DSL 2.2.0 with the tenant role and the pinned tool contract; an admin without the role, the requesting owner and a forged role claim get 403 and the provider sees nothing; a holder approves and exactly one send follows; after the role is revoked the next instance cannot be released until a holder acts | PASS (18.6 s); the same token is denied before the assignment, accepted after it, denied after the revocation and accepted again |
+
+Residuals of the IR-02 fix, so that nobody reads it as more than it is: the memory held by pre-read bodies is at most 1 MiB per in-flight
+verified POST (the front door's cap) and is bounded in number only by the traffic gate and the 10 s read timeout, not by a connection limit;
+connection limits and body shaping belong to the edge and to deployment sizing (ADR061, remediation D6). A body that cannot be read (client gone,
+read timeout) is answered 400 `invalid_request` before the transaction and writes no audit row, where the old path let the handler answer a typed 400
+inside it. A client that sends its headers slowly or never finishes its body still occupies a connection until the read timeout; it no longer
+occupies a database slot.
+
+### Migration numbers from here on (proposal; the owner decides)
+
+Facts: `cmd/migrate` opens goose without out-of-order support, and goose refuses any file numbered below the highest applied
+version (the review's IR-05 probe shows "missing (out-of-order) migrations lower than database version"). A database built from
+this branch is at 90. A migration numbered 58 to 79, which the earlier reservation gave to the remediation line, would therefore
+be refused on every upgrade, and switching out-of-order on would make a fresh install (58 before 80) and an upgraded database (58
+after 90) apply the same files in different orders, which is not the same schema state wherever two migrations touch one function.
+
+Rule proposed (until the owner decides otherwise the reservation of 58 to 79 is **not** used by anyone):
+
+1. There is one increasing sequence. The next number is `00091`; every later migration takes the highest number on
+   `integration/m9r-m14` plus one at the time its line merges the integration branch. Numbers 58 to 79 stay unused, as in every database built so far.
+2. A number is final when it is pushed on `integration/m9r-m14`. If two lines add the same number, the line that merges later renumbers
+   **its own unmerged** migration (and the tests and documents that name it) before merging. Nobody renumbers a merged one.
+3. Out-of-order execution stays off. Forward rehearsals use `UpTo(n)`, never a counted `Up`.
+4. ADR numbers keep their reservations (064 to 099 remediation, 100 to 119 milestone): documents have no order constraint.
+
+### Data written by the milestone line before the merge (B-03)
+
+The merged `Restore` refuses a complete tool IR/compiler 1.3.0 (what `60da6f2` produced), by design: 1.3.0 keeps one meaning (approval
+roles) and admits no tool activity. The standalone workflow plan inside such an artifact (DSL 2.2.0, or the legacy 2.1.0 tool shape) still restores
+byte for byte, but that does not make the surrounding release restorable. Consequences and the cutover rule:
+
+* Known holders of such data: only the development database `MAIN` (numbers 45 to 53 and 60). No production database exists (the configuration rejects workflows and
+  events in production). `MAIN` was not touched; `migrate` now refuses it (IR-05).
+* Before any real old milestone database or artifact is moved, inventory three places: pinned releases (`control.release_bundles.body`, the candidate and
+  active-release rows that reference them), pinned workflow instances (`runtime.workflow_bindings.ir_body` and `plan_body`) and source documents
+  (`control.metadata_versions` rows of schema 1.3.0 that carry a tool activity). Classify each with the **old** binary (the branch
+  `claude/m14-ai-builder` at `60da6f2` stays untouched for this) and choose per release: keep and serve it with the old reader, or re-author the source
+  under 1.5.0 and build a new candidate through the normal approval path.
+* Never relabel the stored bytes, rewrite a hash or recompile an in-flight instance silently. A pinned artifact keeps its bytes.
+* Nothing here is an executed migration: no customer data exists to inventory and no old database was migrated.
+
 ## Current remediation checkpoint — 20 October 2026
 
 **M9R PARTIAL; combined acceptance FAIL.** The original merge record below
