@@ -269,12 +269,23 @@ func checkLease(ctx context.Context, q postgres.Executor, a tenant.Access, x sto
 	}
 	return nil
 }
+
+// CompensationScanSQL selects the latest receipt that has a compensation reference and no compensation receipt yet.
+//
+// The compensation receipts are read ONCE, as an uncorrelated NOT IN that the planner executes as a hashed sub-plan. The
+// correlated NOT EXISTS it replaces (c.step_key=r.step_key||':compensate') read every receipt of the instance again for every
+// candidate: the planner cannot use the non-leakproof concatenation as an index condition below the row-level policy, and the
+// worker policy costs about 160 microseconds per row read, so the statement was quadratic in the receipts (96 receipts used
+// 1.5 s of the 2 s statement budget, and it fails on a host about a third slower; remediation review B, IR-03). step_key is
+// NOT NULL, so NOT IN has no NULL trap. tests/integration pins the plan: no scan of the receipts may run more than once.
+const CompensationScanSQL = `SELECT r.step_key,r.compensation_ref,r.output FROM runtime.workflow_receipts r WHERE r.tenant_id=$1 AND r.instance_id=$2 AND r.compensation_ref<>'' AND r.step_key||':compensate' NOT IN(SELECT c.step_key FROM runtime.workflow_receipts c WHERE c.tenant_id=$1 AND c.instance_id=$2) ORDER BY r.sequence DESC,r.step_key DESC LIMIT 1`
+
 func (s Store) pendingActivity(ctx context.Context, q postgres.Executor, a tenant.Access, x stored) (ActivityRequest, error) {
 	call := ActivityRequest{InstanceID: x.ID, Pin: x.Pin, Inputs: x.inputs, Version: ActivityVersion}
 	if x.Termination != "" {
 		var original string
 		var output []byte
-		e := q.QueryRowContext(ctx, `SELECT r.step_key,r.compensation_ref,r.output FROM runtime.workflow_receipts r WHERE r.tenant_id=$1 AND r.instance_id=$2 AND r.compensation_ref<>'' AND NOT EXISTS(SELECT 1 FROM runtime.workflow_receipts c WHERE c.tenant_id=r.tenant_id AND c.instance_id=r.instance_id AND c.step_key=r.step_key||':compensate') ORDER BY r.sequence DESC,r.step_key DESC LIMIT 1`, a.TenantID(), x.ID).Scan(&original, &call.ActivityRef, &output)
+		e := q.QueryRowContext(ctx, CompensationScanSQL, a.TenantID(), x.ID).Scan(&original, &call.ActivityRef, &output)
 		if e != nil {
 			return call, e
 		}

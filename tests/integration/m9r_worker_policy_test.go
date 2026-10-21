@@ -17,6 +17,7 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/jobs"
 	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -149,11 +150,13 @@ func TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry(t *testing.T) {
 		}
 		return tx
 	}
-	const query = `SELECT r.step_key FROM runtime.workflow_receipts r WHERE r.tenant_id=$1 AND r.instance_id=$2 AND r.compensation_ref<>'' AND NOT EXISTS(SELECT 1 FROM runtime.workflow_receipts c WHERE c.tenant_id=r.tenant_id AND c.instance_id=r.instance_id AND c.step_key=r.step_key||':compensate') ORDER BY r.sequence DESC,r.step_key DESC LIMIT 1`
+	// The statement the compensation path really runs (not a copy that could drift from it).
+	const query = workflow.CompensationScanSQL
 	tx := bind()
 	start := time.Now()
-	var step string
-	if e = tx.QueryRow(query, m.f.tenantA, x.ID).Scan(&step); e != nil || step != "scan-96" {
+	var step, reference string
+	var output []byte
+	if e = tx.QueryRow(query, m.f.tenantA, x.ID).Scan(&step, &reference, &output); e != nil || step != "scan-96" || reference != "local.noop" {
 		tx.Rollback()
 		t.Fatal("bounded compensation scan", e)
 	}
@@ -167,7 +170,7 @@ func TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry(t *testing.T) {
 	if json.Unmarshal(raw, &plan) != nil {
 		t.Fatal("query plan")
 	}
-	decisions := 0
+	decisions, receiptScans := 0, 0
 	var walk func(any)
 	walk = func(node any) {
 		switch value := node.(type) {
@@ -176,6 +179,15 @@ func TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry(t *testing.T) {
 				decisions++
 				if loops, ok := value["Actual Loops"].(float64); !ok || loops > 1 {
 					t.Error("policy definition/IR evaluation still scales with receipt rows")
+				}
+			}
+			// The row-level worker policy runs once per receipt row that a scan reads. A scan of the instance's receipts per
+			// candidate row (the correlated NOT EXISTS this statement used to be) multiplies that by the number of receipts:
+			// 1.5 s for 96 receipts. Every scan of the receipts must run exactly once.
+			if value["Relation Name"] == "workflow_receipts" {
+				receiptScans++
+				if loops, ok := value["Actual Loops"].(float64); !ok || loops > 1 {
+					t.Error("the receipts of the instance are scanned once per candidate row: the row policy cost is quadratic")
 				}
 			}
 			for _, child := range value {
@@ -190,6 +202,27 @@ func TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry(t *testing.T) {
 	walk(plan)
 	if decisions == 0 {
 		t.Error("plan did not execute live authorization")
+	}
+	if receiptScans < 2 {
+		t.Error("plan did not scan the receipts for both the candidates and the compensation receipts: the structural check proved nothing")
+	}
+	if e = tx.Rollback(); e != nil {
+		t.Fatal(e)
+	}
+	// The statement keeps its meaning: compensation runs in reverse order of the receipts, a receipt whose compensation exists is
+	// skipped, and nothing is left once every receipt with a compensation reference has its compensation receipt.
+	for i, key := range []string{"scan-96:compensate", "scan-95:compensate"} {
+		if _, e = m.f.operator.Exec(`INSERT INTO runtime.workflow_receipts(tenant_id,instance_id,step_key,activity_ref,request_hash,output,output_hash,sequence) VALUES($1,$2,$3,'local.noop',repeat('b',64),convert_to('{}','UTF8'),encode(sha256(convert_to('{}','UTF8')),'hex'),$4)`, m.f.tenantA, x.ID, key, 97+i); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if _, e = m.f.operator.Exec(`UPDATE control.workflow_jobs SET lease_until=clock_timestamp()+interval '30 seconds' WHERE tenant_id=$1 AND id=$2`, m.f.tenantA, x.ID); e != nil {
+		t.Fatal(e)
+	}
+	tx = bind()
+	if e = tx.QueryRow(query, m.f.tenantA, x.ID).Scan(&step, &reference, &output); e != nil || step != "scan-94" {
+		tx.Rollback()
+		t.Fatal("the latest receipt without a compensation receipt is scan-94", step, e)
 	}
 	if e = tx.Rollback(); e != nil {
 		t.Fatal(e)
