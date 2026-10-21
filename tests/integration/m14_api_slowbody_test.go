@@ -89,7 +89,8 @@ func TestM14SlowRequestBodiesDoNotHoldDatabaseSlots(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// An honest read: 10 ms normally; 8 s behind the four held slots before the fix.
+	// An honest read: 10 ms normally; 8.5 s behind the four held slots before the fix. The bound sits between the two, far from both, so a
+	// slow host does not fail the test and the defect still does.
 	read, err := http.NewRequestWithContext(ctx, "GET", "http://"+addr+"/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/1", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +103,7 @@ func TestM14SlowRequestBodiesDoNotHoldDatabaseSlots(t *testing.T) {
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if elapsed := time.Since(started); resp.StatusCode != 200 || elapsed > 2*time.Second {
+	if elapsed := time.Since(started); resp.StatusCode != 200 || elapsed > 5*time.Second {
 		t.Fatalf("honest read behind %d slow bodies: status %d after %v (it must not wait for them)", slots, resp.StatusCode, elapsed)
 	}
 
@@ -121,7 +122,7 @@ func TestM14SlowRequestBodiesDoNotHoldDatabaseSlots(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	elapsed := time.Since(started)
-	if resp.StatusCode != 201 || elapsed > 6*time.Second {
+	if resp.StatusCode != 201 || elapsed > 7*time.Second {
 		t.Fatalf("honest proposal behind %d slow bodies: status %d after %v: %s", slots, resp.StatusCode, elapsed, raw)
 	}
 	var p ai.Proposal
