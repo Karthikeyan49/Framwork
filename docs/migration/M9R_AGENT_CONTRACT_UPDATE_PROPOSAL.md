@@ -17,6 +17,13 @@ If either file changes, re-read it and adapt the proposal rather than overwritin
 new rules. Applying this proposal belongs to a later explicit user task. The
 existing security/module rules outside these hunks are retained.
 
+Corrected on 22 October 2026 by the documentation truth audit (DT-04): the first
+version of the patch said that B-01, B-02 and B-05 were open and named a fixed
+applied migration maximum; both statements are replaced (the highest applied
+number is the reference), and the result blob id in the patch header of
+`AGENTS.md` is now `6866689` (`CLAUDE.md` `1ed343d`, unchanged). `git apply --check`
+of the patch against the two baseline files exits 0.
+
 ## Proposed corrections
 
 - Recognize M10–M14 as existing preview while keeping this agent in remediation;
@@ -37,7 +44,7 @@ work are in the [plan](M9R_REMEDIATION_PLAN.md); current findings are in the
 
 ```diff
 diff --git a/AGENTS.md b/AGENTS.md
-index fd94ab4..90bb183 100644
+index fd94ab4..6866689 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -1,9 +1,13 @@
@@ -65,8 +72,8 @@ index fd94ab4..90bb183 100644
 -  ADR044 adds opt-in schema/IR/compiler1.4 unique fields. A declaration is not
 -  enforcement: require READY claims and live full-scope authority before any new
 +  ADR044 adds opt-in schema/IR/compiler1.4 unique fields; schema 1.5 is its tool
-+  superset. B-02 compiler pairing and B-05 SQL unique registration remain open
-+  in the merge review. A declaration is not enforcement: require READY claims
++  superset: Restore pins the exact 1.5 pairing and the SQL unique-field gates name
++  1.4 and 1.5 alike. A declaration is not enforcement: require READY claims
 +  and live full-scope authority before any new
    non-null key. Preserve transaction-bound permits, exact attempt checkpoints,
    legacy denial and evolution fences. Map only the named claim constraint to409;
@@ -100,8 +107,8 @@ index fd94ab4..90bb183 100644
 +  AI draft/requirement proposals with human apply/confirm. Never duplicate R6.
 +  The deterministic verifier runs in the API trust domain; a separate verifier
 +  credential and production data plane remain missing. Real-model deployment
-+  and independent M14/merge review are unverified. B-01 launcher settings remain
-+  dropped until a verified fix lands. ADR100 A1 already derives tool approval
++  is unverified; independent merge/M14 review findings are tracked in the ledger.
++  The launcher gives AI/tool settings only to API and worker. ADR100 A1 already derives tool approval
 +  from the pinned plan and checks current-record freshness; extend that gate.
 +
 +## Integration coordination
@@ -123,13 +130,13 @@ index fd94ab4..90bb183 100644
 +  in m8_fixture/m9_fixture, outside control/runtime/iam/audit. Use UpTo(n) in
 +  forward rehearsals rather than counting all remaining migrations.
 +- Number reservations are remediation 00058–00079/ADR064–099 and milestone
-+  00080–00099/ADR100–119. The applied maximum is 89: agree and verify both
-+  fresh and upgraded ordering before adding a lower number. Do not silently
++  00080–00099/ADR100–119. A new number below the highest applied one is refused:
++  agree and verify both fresh and upgraded ordering before adding one. Do not silently
 +  enable out-of-order execution, renumber pushed migrations or rebuild MAIN.
 +- Use owned services and verify effective driver/connected targets before
 +  fixture mutations. Preserve shared/default data and private configuration.
-+  Current aggregate-capacity, worker-policy and driver-panic failures remain
-+  in the A/B reports; passing reruns or docs changes do not close them.
++  Current aggregate-capacity and driver-panic failures remain in the A/B reports
++  (the worker-policy scan was fixed, its per-row cost remains); passing reruns or docs changes do not close them.
 +
  ## Delivery and verification
 

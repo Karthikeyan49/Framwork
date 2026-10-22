@@ -96,7 +96,7 @@ These fixes are NOT independently reviewed. No separate reviewer has re-verified
 
 ```
 export PATH=/tmp/node24/node-v24.22.0-linux-x64/bin:$PATH
-/home/user/bin/dbrun13 /home/user/m13-env/reset.sh          # from the worktree root; applies migrations 1–53
+/home/user/bin/dbrun13 /home/user/m13-env/reset.sh          # from the worktree root; applies migrations 1–44 and 80–88 (then numbered 1–53)
 for g in TestM13 TestM12 TestM11 TestM10 TestM9; do
   /home/user/bin/dbrun13 node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -count=1 -timeout 40m -run "$g" ./tests/integration
 done

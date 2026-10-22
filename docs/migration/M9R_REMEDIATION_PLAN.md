@@ -5,6 +5,10 @@ reconciliation. M9R STATUS: PARTIAL. Combined acceptance: FAIL.**
 Original plan: 13 October 2026; historical milestone numbering is unchanged.
 The [validated review](../verification/M0_M9_REVIEW_VALIDATION.md) remains the
 baseline, not the current implementation inventory.
+The status lines about B-01 to B-05, the independent-review status and the
+migration ordering were corrected on 22 October 2026 against `integration/m9r-m14`
+(documentation truth audit, [DOCS_TRUTH_AUDIT.md](../verification/DOCS_TRUTH_AUDIT.md),
+DT-03, DT-10, DT-11).
 
 ## Current integration and acceptance
 
@@ -23,26 +27,37 @@ deployment is authorized here.
   inspected. Fresh full integration: **438 PASS, 1 FAIL, zero skips**; the
   96-receipt worker-policy compensation SELECT exceeds the unchanged 2000ms
   statement limit. Check/unit stages and a separately executed build pass.
-  Passing A does not replace this failed B invocation.
-- B-01 launcher option loss, B-02 the missing inherited 1.5 compiler-pair guard
-  and B-05 SQL uniqueness registration's 1.4-only selector are confirmed open
-  integration gaps. B-03 records the unsupported full pre-renumbering tool IR;
-  standalone plan compatibility does not establish full-release compatibility.
-  B-04 is stale version wording. See the [live ledger](M9R_FINDING_STATUS.md)
+  Passing A does not replace this failed B invocation. The milestone lane has
+  since reduced that scan to one pass (`9d2928d`); the per-row worker-policy
+  cost is untouched and no remediation-lane run on the fixed tree is recorded.
+- B-01 launcher option loss, B-02 the missing inherited 1.5 compiler-pair guard,
+  B-04 stale version wording and B-05 SQL uniqueness registration's 1.4-only
+  selector were confirmed integration gaps at slice B. The milestone lane fixed
+  them on `integration/m9r-m14` (B-01, B-02, B-04: `dfec052`; B-05: migration
+  `00090`, `46d8a2a`) and later hardened the launcher's command detection
+  (`953be65`) and the version-gate scan (`43d417e`); no remediation-lane
+  re-verification report exists yet. B-03 records the unsupported full
+  pre-renumbering tool IR; standalone plan compatibility does not establish
+  full-release compatibility. See the [live ledger](M9R_FINDING_STATUS.md)
   and [handoff](AGENT_HANDOFFS.md) for evidence, owners and limits.
-- Independent review of M14 and the merge is **NOT RUN**; the user deferred
-  agents until 22 October, 21:00 UTC. Historical independent reviews certify
-  their pinned slices, not this merged tree or later fixes. No causal merge
-  regression is established by these runs without a controlled pre-merge run.
+- The remediation lane ran no independent review: the user deferred agents
+  until 22 October, 21:00 UTC. A separate reviewer's interim report on the
+  merge is in this tree ([INTEGRATION_INDEPENDENT_REVIEW.md](../verification/INTEGRATION_INDEPENDENT_REVIEW.md),
+  pinned `552fa9e`); that reviewer's final reports, the M14 review and a
+  re-verification of the integration fixes exist as reports on the branches
+  `review/integration-final` and `review/m14-and-fixes`. Historical independent
+  reviews certify their pinned slices, not this merged tree or later fixes. No
+  causal merge regression is established by these runs without a controlled
+  pre-merge run.
 
 | Workstream | Current disposition and remaining gate |
 |---|---|
 | R0 authority/ownership | Current plan/ledger reconciled in C; root agent rules remain unchanged pending the [proposed update](M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md) |
 | R1 worker confinement | Existing bounded database-credential/resource review retained; preserve exact job/lease/record boundaries and later tool residuals |
 | R2 continuity/evolution | Governed preview datasets and bounded evolution verified historically; production release-bound execution belongs to milestone R6/M13; wider preview UI/index inheritance remains request-only |
-| R3 query/integrity | Bounded index/unique/aggregate reviews retained; current aggregate capacity FAIL, 1.5 unique registration B-05 and compiler pairing B-02 remain open |
+| R3 query/integrity | Bounded index/unique/aggregate reviews retained; current aggregate capacity FAIL; the 1.5 unique registration gap (B-05) and the compiler pairing gap (B-02) are fixed on the integration branch (re-verification pending) |
 | R4 local writes | Bounded concurrent/idempotent local-command evidence retained; A 32-client writes p95 301.897ms/zero errors; external delivery has separate M10 contracts |
-| R5 authorization | User-selected local role/record/team/field/sign-in work complete within its scope; real IdP/MFA/HTTPS deployment verification DEFERRED; worker-policy capacity remains R7 D1 |
+| R5 authorization | User-selected local role/record/team/field/sign-in work complete within its scope; real IdP/MFA/HTTPS deployment verification DEFERRED; the worker-policy compensation scan was reduced to one pass on the integration branch (`9d2928d`), the per-row worker-policy cost remains R7 D1 |
 | R6 requirements/verification/release authority | Implemented preview coverage in M11–M14; **PARTIAL**, held for the milestone agent. Production data plane and separate verifier credential remain architectural deliverables; review/fix acceptance and threat-model residuals remain open |
 | R7 operations | Bounded R7a admission and R7b outage work retained; diagnostics, event operations, workflow lifecycle, audit retention, profiling, edge quotas and DR remain open |
 
@@ -61,8 +76,9 @@ Coordinate through [AGENT_HANDOFFS.md](AGENT_HANDOFFS.md).
 
 Number reservations: remediation migrations 00058–00079 and ADR064–099;
 milestone migrations 00080–00099 and ADR100–119. **Migration ordering is
-unresolved:** the merged database is already at 89 and default Goose rejects
-new lower-numbered migrations. Even allowing out-of-order application could
+unresolved:** a database built from the integration branch is already at that
+branch's highest migration number and default Goose rejects new lower-numbered
+migrations. Even allowing out-of-order application could
 produce different latest function/grant definitions on fresh versus upgraded
 databases. Agree and verify both paths before allocating/applying a new
 migration. No historical migration is renumbered/edited and no out-of-order
@@ -313,7 +329,8 @@ return explicit budget errors for unsupported plans.
 
 Keep the separate R3a authorization, R3b index, R3c integrity and R3d aggregate
 boundaries and their recorded designs/reviews. Their bounded historical PASS
-results do not clear the current merged aggregate gate or B-02/B-05. Future
+results do not clear the current merged aggregate gate or the findings still open in
+the ledger. Future
 consumers may rely only on the capability and measured tier actually delivered;
 deliver fixes in small changes on the authorized branch, without a combined
 compiler/data rewrite or an automatically created PR.
@@ -463,9 +480,9 @@ Those reports retain their original gate results and review qualifications.
 | Requirement | Implemented preview coverage | Remaining boundary |
 |---|---|---|
 | Sandbox evidence | M11 server-owned synthetic datasets, capability ceilings, frozen immutable record/tool manifests | Redacted/dedicated modes, UI and residual port trust; latest fixes lack independent re-verification |
-| Business intent | M14 typed human apply/confirm of AI proposals; M12 `requirements-v2` requiredness floors and provenance | No real model/provider deployment verified; B-01 launcher loss; open/unsupported mandatory categories block |
+| Business intent | M14 typed human apply/confirm of AI proposals; M12 `requirements-v2` requiredness floors and provenance | No real model/provider deployment verified; B-01 launcher loss fixed on the integration branch (re-verification pending); open/unsupported mandatory categories block |
 | Executable acceptance | M12 `acceptance-v2`, exact independent money oracle and `verifier-v2` over pinned plans; four supported categories | Deterministic verifier runs in API trust domain; separate verifier credential/attestation is absent; no claim of arbitrary ERP acceptance |
-| Risk and exact candidate | M12 derives diff/storage/risk and builds bundle2.0; API bodies cannot declare authority; load recomputes against the candidate's own base | Database cannot independently recompute verifier/diff/risk; B-02 version guard and B-05 1.5 unique registration remain open |
+| Risk and exact candidate | M12 derives diff/storage/risk and builds bundle2.0; API bodies cannot declare authority; load recomputes against the candidate's own base | Database cannot independently recompute verifier/diff/risk; the B-02 version guard and B-05 1.5 unique registration are fixed on the integration branch (re-verification pending) |
 | Approval/activation/rollback | M13 preview HTTP lifecycle, SQL ports, exact approved hash, current authority/quorum, CAS/fences and immutable history | Active pointer is control-plane state: no production datasets/routes/storage-migration execution; credential-bound approvals and latest fix reviews remain open |
 
 The two architectural deliverables still missing from R6 are the **production
@@ -498,7 +515,7 @@ Complete and report one bounded slice before starting the next.
 
 | Proposed order | Deliverable and acceptance |
 |---|---|
-| D1 diagnostics | Diagnose unconfirmed workflow connection failure, worker-policy SELECT/EXPLAIN timeouts and injected driver-panic recovery. Preserve B's failed initial SELECT and A's driver failure; reproduce in owned populated fixtures, capture cause/recovery evidence and keep 2s/lease/auth budgets unchanged. A passing retry alone does not close a diagnostic |
+| D1 diagnostics | Diagnose unconfirmed workflow connection failure, worker-policy SELECT/EXPLAIN timeouts and injected driver-panic recovery. Preserve B's failed initial SELECT and A's driver failure; reproduce in owned populated fixtures, capture cause/recovery evidence and keep 2s/lease/auth budgets unchanged. A passing retry alone does not close a diagnostic. The milestone lane has since diagnosed the worker-policy statement cost and reduced the compensation scan to one pass (`9d2928d`); the per-row policy cost, the connection failure and the driver panic remain open here |
 | D2 events | Least-privilege replay/quarantine and dead-predecessor operations; versioned subscriber/payload contracts. Preserve R7b RC/restrictive RLS, leases, exact attempts, inbox/receipt evidence and real-outage recovery |
 | D3 workflows | Budgeted revise/resubmit and history lifecycle; renewal/fencing; explicit snapshot/current-record approvals. Extend ADR100 A1's database-derived tool approval/current-version gate; do not introduce a competing tool gate or weaken old pinned readers |
 | D4 audit | Measure business/security decision volume; design authorized retention, partitioning, archive/export and recovery. Preserve immutable business facts and never erase receipts to replay |
@@ -506,10 +523,10 @@ Complete and report one bounded slice before starting the next.
 | D6 deployment quotas | Distributed/edge limits under the actual proxy/deployment topology; preserve local R7a bounds and identity rules. Requires deployment evidence, not only another in-process limiter |
 | D7 disaster recovery | Agree tier/ownership, execute restore from backup using stored IR without compilation, verify identities/references/release pointers and recovery. Proposed RPO ≤15m/RTO ≤4h are objectives until a measured drill passes |
 
-B-01/B-02/B-05 fixes, B-03 artifact cutover, B-04 wording and migration-order
-governance remain coordinated integration work in parallel ownership lanes;
-they are not marked fixed by this proposed D sequence. No D implementation
-starts in slice C.
+B-01, B-02, B-04 and B-05 are fixed on the integration branch by the milestone
+lane and are outside this D sequence; B-03 artifact cutover and migration-order
+governance remain coordinated integration work in parallel ownership lanes. No D
+implementation starts in slice C.
 
 ### Historical R7a/R7b slice evidence (19 October 2026)
 
@@ -563,6 +580,9 @@ and preserved. Current read/write p95 values158.903/349.656ms pass their origina
   initial SELECT in B, before EXPLAIN/late-lease assertions run. Preserve all
   failures, historical narrow-margin passes and the separate unconfirmed
   workflow connection failure. Include A's reproducible injected driver panic.
+  The milestone lane reduced the failing compensation scan to a single pass
+  (`9d2928d`); reading N receipts still costs N worker-policy evaluations, which
+  stays here (a statement-level policy evaluation like the API policies).
 - Profile compilation, validator construction and catalog guards; cache only with
   explicit immutable keys and invalidation/revocation guarantees. Preserve startup
   and runtime privilege-drift detection.
@@ -607,13 +627,17 @@ the existing M0–M9 backend/frontend/integration/browser suites to pass on the
 final commit. Do not relabel deferred R5–R7 services as complete to pass this gate.
 After each bounded slice, report gate results, commit and SHARED edits and stop.
 M10–M14 remain preview work in the milestone lane. Independent review of the
-merge/M14 is NOT RUN under the user's temporary scheduling deferral; preserve
-that status rather than substituting builder-side tests.
+merge/M14 is not run by this lane under the user's temporary scheduling
+deferral; do not substitute builder-side tests for it (a separate reviewer's
+reports are listed at the top of this file).
 
 **Current stop gate: M9R PARTIAL; combined acceptance FAIL.** Historical bounded
-reviews remain evidence. Current failures are aggregate capacity, worker-policy
-receipt-scan timing, injected driver-panic recovery and B's confirmed integration
-gaps. R6 preview exists and stays milestone-owned/partial; R7 D1–D7 remain open.
+reviews remain evidence. Current failures, as of the slice A/B runs that this lane has
+not repeated on the integration tree, are aggregate capacity and injected
+driver-panic recovery; B's worker-policy statement timeout and the integration
+gaps B-01, B-02, B-04 and B-05 were fixed on the integration branch and await
+re-verification (B-03 stays a documented compatibility restriction). R6 preview
+exists and stays milestone-owned/partial; R7 D1–D7 remain open.
 Wider R2/R3/R5 product features and real IdP/MFA/HTTPS verification stay
 request-only/deferred. Slice C reconciles documentation and proposes agent
 changes; it does not resolve those code/operations gaps or authorize D ordering.
