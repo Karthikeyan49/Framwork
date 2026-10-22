@@ -3,7 +3,7 @@
 -- REPEATABLE READ snapshot is older than a committed rejection aborts with 40001 instead of acting on a hash that was vetoed in the
 -- meantime. rollback_release is the third writer of the active pointer and was left out: a rollback that began before a committed
 -- rejection of its target moved the pointer onto the rejected release. It now writes the same fence before it reads the rejections.
--- Replaces control.rollback_release(text,text,text,bigint,text,boolean) from its only definition (00088), byte for byte except for
+-- Replaces control.rollback_release(text,text,text,bigint,text,boolean) from its latest definition (00088; the function is defined in 00084 and 00088), byte for byte except for
 -- that statement. Owner, ACL and every guard are unchanged; the migration fails if the owner or the ACL moved.
 -- +goose Up
 -- +goose StatementBegin
