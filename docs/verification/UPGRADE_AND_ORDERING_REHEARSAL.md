@@ -25,7 +25,10 @@ not committed; their text is summarised here.
 | Re-run R1 on `43d417e` (00091): release data 89 -> 91 | done | **PASS** |
 | Re-run R2 on `43d417e`: populated 57 -> 91, lineage at 90/91 | done | **PASS** |
 | Re-run R3 on `43d417e`: `numbering_test.go`, `cmd/migrate` messages, hard-coded numbers | done | **PASS** (D2 fixed on the head) |
-| Re-run R4: the same for 00092 | waiting | NOT RUN (00092 not yet committed) |
+| Re-run R4 on `507c12c` (00092): release data 89 -> 92 and 91 -> 92, populated 57 -> 92, lineage 90/91/92 | done | **PASS** |
+| 00092 (a): candidates in every state at 91 -> 92, one fence row each, `writes` kept, no other table changed, dumps equal | done | **PASS** |
+| 00092 (b): fresh install 1..92 with the real binary, status, lineage at 92, numbering test | done | **PASS** |
+| 00092 (c): `SET LOCAL ROLE` backfill with the real migrator login; role of a following hypothetical 00093 | done | **PASS** |
 
 Environment: `ensure-docker` (all three stacks ready), `reset.sh` of the M13 stack from this worktree (68 migrations, head 90). Every
 database command ran under `/home/user/bin/dbrun13 nice -n 15`. The host restarted once during Task 2 (after item vi had run); the stack
@@ -466,3 +469,73 @@ The recommendation stands with three edits, all caused by numbers going stale:
 > 4. **Out-of-order stays off.** Tests bound forward rehearsals with `UpTo(n)` or derive expected counts from the embedded files; none
 >    hard-codes how many migrations `Up` applies.
 > 5. ADR numbers keep their reservations (064-099 remediation, 100-119 milestone); documents have no order constraint.
+
+## Re-run on the integration head `507c12c` (contains 00092)
+
+Pin: `507c12c` (newest local commit of `integration/m9r-m14` when the coordinator named it; `00091` = `bfa47c4`, `00092` = `37d9b14`
+`00092_m13_approve_release_fence.sql`), read by hash with `git archive` into scratch. All database work ran on the M13 stack under
+`dbrun13 nice -n 19`; nothing touched the M14 stack.
+
+Populations (kept with the scratch-only `ZZ_KEEP` patch, consumed and dropped by the upgrade probes): release data at **89** by the
+`be6ec7c` binary and at **91** by the `43d417e` binary, each with candidates in every state - R1 activated and later the rollback
+target, R2 activated and rolled back from, R3 approved twice, R4 rejected, R5 approved once, R6 CRITICAL (quorum two) approved once,
+**R7 never touched**; history `ACTIVATE, ACTIVATE, ROLLBACK`; plus the remediation population at 57 (`b00da36`).
+
+### (a) and R4-(1): release data upgraded to 92 - PASS
+
+| Check | from 91 (applied `[92]`) | from 89 (applied `[90 91 92]`) |
+|---|---|---|
+| tables other than `control.release_fences` (count and content hash) | 72 compared, **0 changed** | 72 compared, **0 changed** |
+| fence rows before -> after | 3 -> 7 | 3 -> 7 |
+| pre-existing fence rows | all 3 kept their `writes` (R1 **2**, R2 1, R4 1: R1 was fenced by its activation and by the 00091 rollback) | all 3 kept their `writes` (R1 1, R2 1, R4 1: the rollback at 89 predates 00091) |
+| rows added by the backfill | R3, R5, R6, R7, each `writes=1` | the same |
+| candidates without exactly one fence row / fence rows without a candidate | 0 / 0 | 0 / 0 |
+| what `framework_migrator` (the role of 00092's post-check) sees under forced RLS | 7 of 7 candidates, 3 of 3 fences: the post-check is not vacuous | the same |
+| `control.approve_release` | owner `framework_schema_owner`, ACL `{framework_schema_owner=X/...,framework_app=X/...}`, SECURITY DEFINER, `search_path`, identity, result and volatility **identical**; EXECUTE app yes, worker/dispatcher/PUBLIC no; line diff: one line removed (the plain pointer `SELECT`), added the same `SELECT ... FOR SHARE`, the fence `INSERT ... ON CONFLICT ... DO NOTHING` and six comment lines | the same |
+| `control.release_candidate_fence()` | new, owner `framework_schema_owner`, ACL `{framework_schema_owner=X/framework_schema_owner}` only, SECURITY DEFINER, `search_path=pg_catalog, pg_temp`; EXECUTE for app, worker, dispatcher and PUBLIC: **none**; trigger `CREATE TRIGGER release_candidate_fence AFTER INSERT ON control.release_candidates FOR EACH ROW EXECUTE FUNCTION control.release_candidate_fence()`, enabled `O` | the same |
+| `rollback_release`, `activate_release`, `reject_release` | unchanged | `rollback_release` changed by 00091 only (as in R1), the others unchanged |
+| worker guard, lineage, migrator pool afterwards | `worker_grants_safe()` true; lineage nil; `current_user`/`session_user` of the migrator pool after the upgrade `framework_migrator` | the same |
+
+The head's code on the upgraded data (both starts): the CRITICAL R6 approved once before the upgrade gets its second approval through
+the new `approve_release` -> **count 2** (the pre-upgrade approval is counted), fence `writes` unchanged (1 -> 1, `DO NOTHING`); the
+never-touched R7 -> count 1, fence unchanged; R3 (approved before the upgrade) activates (fence 1 -> 2); rollback to R2 (fence 1 -> 2);
+the now-stale R5 -> 409; **R8 staged after the upgrade gets its fence row from the trigger** (`writes=1`) and an approval counts 1;
+R1 rejected after it ran, then a rollback onto it -> 409; the pre-upgrade-rejected R4 -> 409; history `ACTIVATE ACTIVATE ROLLBACK
+ACTIVATE ROLLBACK`; still no candidate without exactly one fence row.
+
+Schema: `pg_dump --schema-only` (only `\restrict` lines removed) of the 91 -> 92 database, the 89 -> 92 database, the 57 -> 92
+database and a fresh `UpTo(92)` install are **identical**: 628066 bytes, sha256 prefix `c89270aa6f8a3947`, including the trigger, the
+new function and every owner and ACL.
+
+### R4-(2): populated 57 -> 92 - PASS
+
+Applied `[80 ... 92]`; 61 pre-existing tables, 0 changed; CHECK 1.0.0-1.5.0; worker guard true; 73 old SECURITY DEFINER functions
+without ACL drift (104 after); pinned IR restores; the 1.4.0 source recompiles byte-identically; the DSL 2.1.0 approval workflow
+finishes SUCCEEDED; events `COMPLETED=4, LEGACY_PAUSED=1`; unique registration under 1.4.0 and 1.5.0; schema identical to fresh.
+
+Fixture note (not a defect): the first 57 run used a population made about 40 minutes earlier. Consuming its SENT pointer then
+answered `event publication is unconfirmed or paused`, which fits the R7b 15-minute receipt budget having expired. The dispatcher
+re-claimed the same delivery and it was consumed (`COMPLETED=4`, inbox 4, effects 4). A fresh population upgraded at once consumes the
+pre-upgrade pointer directly (`2 more consumed`) and passes; only that run is counted.
+
+### (b) fresh install 1..92 end to end - PASS
+
+Real `migrate` built from `507c12c`: on an empty database `up` -> `applied 70 migration(s)`, `status` -> 70 applied, 0 pending;
+`CheckMigrationLineage` nil; the schema it built equals the `goose UpTo(92)` install. `go test ./db/migrations ./cmd/migrate`:
+`TestMigrationNumbersFormOneIncreasingSequence` (70 files) and `TestUpFailureNamesTheNumberingRuleAndTheFailedMigrationButNothingFromTheDriver`
+PASS. Lineage with the same binary: at 90 `status` lists `00091` and `00092` pending, `up` applies 2; at 91 one pending, `up` applies 1;
+at 92 nothing pending, `up` applies 0; never a lineage error. The database built with the milestone line's old numbering is still
+refused by `status` and `up` (exit 1, the `ErrForeignMigrationNumbering` text), versions unchanged.
+
+### (c) `SET LOCAL ROLE` in the 00092 backfill - PASS
+
+The backfill ran under the real migrator login (`framework_migrator`, the login of `MIGRATION_DATABASE_URL`) in every upgrade above
+and in every fresh install; its rows were written (see (a)). A hypothetical `00093_zz_role_probe.sql` in a scratch copy (raises unless
+`current_user` and `session_user` are both `framework_migrator`, then creates `public.zz_role_probe` with both values), built into the
+binary and run by `migrate up`: from an empty database (`applied 71 migration(s)`), from 91 (`applied 2`) and from 92 (`applied 1`),
+it succeeded each time, recorded `framework_migrator/framework_migrator`, and the probe table is owned by `framework_migrator`.
+goose runs each migration in its own transaction, so `SET LOCAL` ends at commit in any case.
+
+Observation: `RESET ROLE` inside the DO block returns to the session's login role, not to "the role before `SET LOCAL`". With
+`cmd/migrate` those are the same. Someone applying the file by hand from a session that had already run `SET ROLE` would run the rest
+of 00092 as their login role.
