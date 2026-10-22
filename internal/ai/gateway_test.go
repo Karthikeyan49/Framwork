@@ -433,8 +433,9 @@ func TestRunPatchUsageAccounting(t *testing.T) {
 		r := newRig(t, Options{})
 		r.prov.Push(ScriptStep{Payload: r.broken("G"), Usage: usage(1<<62, 1<<62)}, ScriptStep{Payload: r.good(), Usage: usage(10, 10)})
 		b := okBudget()
-		// Capped at twice what the request could cost, a huge report still charges more than this remainder: two components of at
-		// least 2*(4096+0)+1024 tokens, about 18,000 in all, against a call that is allowed to start (its bytes plus 4096).
+		// The call must be allowed to start (the remainder covers its input estimate plus the 4096 output tokens asked for) and the
+		// capped charge of a huge report must still exceed the remainder: the output alone is capped at 2*4096+1024 = 9,216 tokens
+		// and the input at twice its estimate plus 1024.
 		b.TokensRemaining = 12_000
 		run := r.run(b)
 		if run.Status != RunBudgetExceeded || r.prov.Calls() != 1 {

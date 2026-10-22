@@ -344,17 +344,30 @@ func (s *Service) Execute(ctx context.Context, adm *Admission) (out Outcome) {
 	return out
 }
 
-// apiLabel keeps the characters a trace label may carry; a provider-reported
-// label is untrusted text.
+// apiLabel reduces a provider-reported label (untrusted text) to the characters a trace label may carry, [A-Za-z0-9._:/@+-]: each
+// run of other characters becomes one underscore between two kept characters and none at either end, so "Beta-3.1 (70B)" stays
+// readable as "Beta-3.1_70B" instead of merging into "Beta-3.170B" (independent review F-07). It is idempotent, and the result is at
+// most max bytes long; fallback is returned when nothing is left.
 func apiLabel(s, fallback string, max int) string {
 	var b strings.Builder
+	gap := false
 	for _, r := range s {
-		if r < 0x80 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._:/@+-", r)) {
-			b.WriteRune(r)
+		if !(r < 0x80 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._:/@+-", r))) {
+			gap = true
+			continue
 		}
-		if b.Len() >= max {
+		need := 1
+		if gap && b.Len() > 0 {
+			need = 2
+		}
+		if b.Len()+need > max {
 			break
 		}
+		if need == 2 {
+			b.WriteByte('_')
+		}
+		gap = false
+		b.WriteRune(r)
 	}
 	if b.Len() == 0 {
 		return fallback

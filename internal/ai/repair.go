@@ -68,13 +68,14 @@ func clampTokens(v int64) int64 {
 // or less than the bytes it was sent and returned, is charged the estimate.
 func chargeUsage(reported Usage, requestBytes, payloadBytes, outTokens int) Usage {
 	in, out := estimateTokens(requestBytes), estimateTokens(payloadBytes)
-	// A figure above twice what the request could cost (its bytes plus the output it asked for) is not a measurement but a
-	// fault or an attack: one answer reporting 100 million tokens would otherwise lock the tenant out for the UTC day
-	// (independent review M14R-06). The budget is a brake, not the vendor's bill, so it is capped at the reservation's order.
-	ceiling := 2*(in+int64(outTokens)) + 1024
+	// A figure above twice what its half of the call could cost is not a measurement but a fault or an attack: one answer reporting
+	// 100 million tokens would otherwise lock the tenant out for the UTC day (independent review M14R-06). The input is capped at
+	// twice the estimate of the bytes sent and the output at twice the output that was asked for, each with a margin of 1024 tokens,
+	// so one attempt is charged about twice its reservation at most (review F-08: a cap on the sum of both halves would allow four
+	// times). The budget is a brake, not the vendor's bill. The byte estimate of a larger answer still wins.
 	return Usage{
-		InputTokens:  min(max(clampTokens(reported.InputTokens), in), max(ceiling, in)),
-		OutputTokens: min(max(clampTokens(reported.OutputTokens), out), max(ceiling, out)),
+		InputTokens:  min(max(clampTokens(reported.InputTokens), in), 2*in+1024),
+		OutputTokens: min(max(clampTokens(reported.OutputTokens), out), max(2*int64(outTokens)+1024, out)),
 	}
 }
 

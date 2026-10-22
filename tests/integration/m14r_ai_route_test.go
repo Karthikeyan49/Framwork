@@ -59,7 +59,7 @@ func countOf(list []string, want string) int {
 // M14R-01: a provider-chosen label outside [A-Za-z0-9._:/@+-] reached the audit entry raw, the audit refused it, and a paid answer
 // became a 503 with a PENDING proposal that held its in-flight slot until the lease. The labels are reduced once, in the gateway.
 func TestM14R01ProviderLabelsOutsideTheAuditCharsetKeepTheResult(t *testing.T) {
-	for label, want := range map[string]string{"alpha 4 turbo": "alpha4turbo", "Beta-3.1 (70B)": "Beta-3.170B", "модель-1": "-1", "model=fast": "modelfast"} {
+	for label, want := range map[string]string{"alpha 4 turbo": "alpha_4_turbo", "Beta-3.1 (70B)": "Beta-3.1_70B", "модель-1": "-1", "model=fast": "model_fast"} {
 		t.Run(label, func(t *testing.T) {
 			e := m14Setup(t, m14Options{limits: ai.ServiceLimits{InFlightPerTenant: 1}})
 			doc := e.draft("500")

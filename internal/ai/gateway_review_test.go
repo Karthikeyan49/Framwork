@@ -42,7 +42,7 @@ func (r *rig) withProvider(p Provider) *rig {
 
 func TestChargeUsageIsCappedNearTheSizeOfTheRequest(t *testing.T) {
 	const requestBytes, outTokens = 8000, 4096 // 2000 tokens in, 4096 asked out
-	ceiling := 2*(estimateTokens(requestBytes)+outTokens) + 1024
+	inCap, outCap := 2*estimateTokens(requestBytes)+1024, 2*int64(outTokens)+1024
 	cases := []struct {
 		name         string
 		reported     Usage
@@ -52,9 +52,10 @@ func TestChargeUsageIsCappedNearTheSizeOfTheRequest(t *testing.T) {
 		{"an honest report is charged as reported", Usage{InputTokens: 2100, OutputTokens: 900}, 3000, Usage{InputTokens: 2100, OutputTokens: 900}},
 		{"a report below the bytes is raised to the estimate", Usage{InputTokens: 1, OutputTokens: 1}, 4000, Usage{InputTokens: 2000, OutputTokens: 1000}},
 		{"a negative report is the estimate", Usage{InputTokens: -5, OutputTokens: -5}, 400, Usage{InputTokens: 2000, OutputTokens: 100}},
-		{"a figure above twice the request is capped, not clamped to 100 million", Usage{InputTokens: 1 << 62, OutputTokens: 100_000_000}, 400, Usage{InputTokens: ceiling, OutputTokens: ceiling}},
-		{"a report just inside the cap is kept", Usage{InputTokens: ceiling, OutputTokens: ceiling}, 400, Usage{InputTokens: ceiling, OutputTokens: ceiling}},
-		{"the bytes of a huge answer still win over the cap", Usage{InputTokens: 10, OutputTokens: 10}, int(ceiling)*4 + 400, Usage{InputTokens: 2000, OutputTokens: estimateTokens(int(ceiling)*4 + 400)}},
+		{"a figure above twice its half is capped, not clamped to 100 million", Usage{InputTokens: 1 << 62, OutputTokens: 100_000_000}, 400, Usage{InputTokens: inCap, OutputTokens: outCap}},
+		{"a report just inside the caps is kept", Usage{InputTokens: inCap, OutputTokens: outCap}, 400, Usage{InputTokens: inCap, OutputTokens: outCap}},
+		{"one over the caps is capped", Usage{InputTokens: inCap + 1, OutputTokens: outCap + 1}, 400, Usage{InputTokens: inCap, OutputTokens: outCap}},
+		{"the bytes of a huge answer still win over the cap", Usage{InputTokens: 10, OutputTokens: 10}, int(outCap)*4 + 400, Usage{InputTokens: 2000, OutputTokens: estimateTokens(int(outCap)*4 + 400)}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -62,6 +63,11 @@ func TestChargeUsageIsCappedNearTheSizeOfTheRequest(t *testing.T) {
 				t.Fatalf("charged %+v, want %+v", got, c.want)
 			}
 		})
+	}
+	// One attempt is charged about twice its reservation (the input estimate plus the output asked for) at most, whatever is reported.
+	worst := chargeUsage(Usage{InputTokens: 1 << 62, OutputTokens: 1 << 62}, requestBytes, 0, outTokens)
+	if reservation := estimateTokens(requestBytes) + outTokens; worst.InputTokens+worst.OutputTokens > 2*reservation+2048 {
+		t.Fatalf("an attempt is charged %d tokens against a reservation of %d", worst.InputTokens+worst.OutputTokens, reservation)
 	}
 }
 
@@ -77,11 +83,12 @@ func TestProviderLabelsAreReducedBeforeTheyAreStoredOrAudited(t *testing.T) {
 	if run.Status != RunReady || len(run.Attempts) != 1 {
 		t.Fatalf("status %s attempts %d", run.Status, len(run.Attempts))
 	}
-	// Only [A-Za-z0-9._:/@+-] survives; the audit entry and the API refuse anything else, which turned a paid answer into a 503.
-	if got := run.Attempts[0].Provider; got != "vendorbname/b" {
+	// Only [A-Za-z0-9._:/@+-] survives, each run of anything else as one underscore between two kept characters (review F-07); the
+	// audit entry and the API refuse anything else, which turned a paid answer into a 503.
+	if got := run.Attempts[0].Provider; got != "vendor_b_name_/b" {
 		t.Fatalf("provider label %q", got)
 	}
-	if got := run.Attempts[0].Model; got != "modelquotedv1.5-" {
+	if got := run.Attempts[0].Model; got != "model_quoted_v1.5-" {
 		t.Fatalf("model label %q", got)
 	}
 	empty := r.withProvider(answeringProvider{resp: ProviderResponse{Payload: r.good(), Provider: "\x00\x01", Model: "", Usage: Usage{InputTokens: 10, OutputTokens: 10}}})
@@ -172,5 +179,35 @@ func TestAbandonedProviderCallsAreBounded(t *testing.T) {
 	}
 	if got := int(p.calls.Load()); got != maxAbandonedCalls {
 		t.Fatalf("a refused run reached the adapter (%d calls)", got)
+	}
+}
+
+func TestAPILabelKeepsLabelsReadableAndIsIdempotent(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"alpha 4 turbo", "alpha_4_turbo"},
+		{"Beta-3.1 (70B)", "Beta-3.1_70B"},
+		{"model=fast", "model_fast"},
+		{"модель-1", "-1"},
+		{"  lead and trail  ", "lead_and_trail"},
+		{"a \x00\t\n b", "a_b"},
+		{"x@y/z:1+2_3.4-5", "x@y/z:1+2_3.4-5"},
+		{"vendor <b>name</b>", "vendor_b_name_/b"},
+	} {
+		got := apiLabel(c.in, "fallback", 64)
+		if got != c.want {
+			t.Errorf("apiLabel(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if again := apiLabel(got, "fallback", 64); again != got {
+			t.Errorf("apiLabel is not idempotent on %q: %q then %q", c.in, got, again)
+		}
+	}
+	if got := apiLabel("éè \x00", "unknown", 64); got != "unknown" {
+		t.Errorf("nothing left must give the fallback, got %q", got)
+	}
+	if got := apiLabel("abc def ghi", "", 8); got != "abc_def" || len(got) > 8 {
+		t.Errorf("the bound counts the underscores: %q", got)
+	}
+	if got := apiLabel("abc def", "", 4); got != "abc" {
+		t.Errorf("a character that does not fit with its underscore is dropped whole: %q", got)
 	}
 }
