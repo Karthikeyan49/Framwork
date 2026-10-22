@@ -30,7 +30,7 @@ unprovisioned identities with header-only requests); F-05 is still open.
 | 2026-10-22 11:31 | resumed with a changed scope: Part B dropped (done by another reviewer), report finished for A1-A6, then M13 release-pointer concurrency | done |
 | 11:33-11:38 | release-pointer races: 12 pairs executed with held REPEATABLE READ transactions | S2 FAIL (= IR-06), S3/S4/S5 FAIL (F-05 LOW), 8 PASS |
 | 11:40 | `TestM12APIDetailReadsOfALargeCandidateConverge` once (A6 item) | PASS, 10.8 s, load 2.5 |
-| 11:42-11:52 | re-verification of `c76968f` (F-01/F-02) and `bfa47c4` (IR-06) in a scratch copy of `bfa47c4`; mutation and negative controls of the builder's new tests | F-01 PASS, F-02 PASS, IR-06 PASS; new F-06 MEDIUM; F-05 still open |
+| 11:42-11:50 | re-verification of `c76968f` (F-01/F-02) and `bfa47c4` (IR-06) in a scratch copy of `bfa47c4`; mutation and negative controls of the builder's new tests | F-01 PASS, F-02 PASS, IR-06 PASS; new F-06 MEDIUM; F-05 still open |
 
 ## Findings
 
@@ -280,6 +280,7 @@ object store, nothing checked out); disposable databases of the M14 stack; no `-
 | 40 signed identities, 1000 connections | 32 held, 778 x 503 `service_busy`, 190 x 429; heap +38.0 MiB | bounded |
 | 40 identities, 400 chunked connections | 31 held (chunked books the 1 MiB cap), 362 x 503, 7 x 429; heap +35.2 MiB | bounded |
 | 200 abnormal endings (client closes mid-body, malformed chunk, 2 MiB cap hit, `Expect: 100-continue` then abort), then 8 concurrent full 1 MiB posts of the same identity | 4 admitted (the AI route answers 413 after reading), 4 x 429: the share is whole again, no leaked booking | **PASS** |
+| the builder's tests on the fix tree: `internal/platform/access` budget/replay units (`-race`), `TestM14PreReadBufferingIsBounded` (4 sub-tests) and the IR-02 regression `TestM14SlowRequestBodiesDoNotHoldDatabaseSlots` | PASS (1.3 s; 15.6 s and 5.3 s, `-race`, load 1.4-2.2) | the slot fix keeps working with the budget |
 | unprovisioned identity and `viewer`, 9 routes, `Content-Length: 900000` each | four bookings fit the 4 MiB share (held until the read timeout), the fifth and later are 429 at once | as designed |
 
 ### F-06 MEDIUM - the total body budget is a lock that eight identities without membership hold with header-only requests
