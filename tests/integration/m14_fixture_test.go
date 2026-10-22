@@ -43,8 +43,9 @@ type m14Options struct {
 	noService   bool // leave AI unconfigured (routes answer 503)
 	gateway     ai.Gateway
 	gatewayOpts ai.Options
-	catalog     *compiler.Catalog // compile catalog of the API (nil: the platform catalog)
-	admission   int               // database admission slots of the API (0: the default of Register)
+	catalog     *compiler.Catalog  // compile catalog of the API (nil: the platform catalog)
+	admission   int                // database admission slots of the API (0: the default of Register)
+	bodies      *access.BodyBudget // buffered request bytes of the API (nil: the process default)
 }
 
 func m14Setup(t *testing.T, opts m14Options, steps ...ai.ScriptStep) *m14Env {
@@ -58,6 +59,9 @@ func m14Setup(t *testing.T, opts m14Options, steps ...ai.ScriptStep) *m14Env {
 	e.svc = ai.NewService(gateway, registry, opts.limits)
 	e.api = access.API{DB: e.f.db, Auth: e.f.verifier, Policy: policy.Native{}, PolicyLoader: (policy.RoleStore{}).Load, Audit: audit.Postgres{}, Registry: registry, PreviewEnabled: true, WorkflowsEnabled: true}
 	e.api.CompilerCatalog = opts.catalog
+	if opts.bodies != nil {
+		e.api.Bodies = opts.bodies
+	}
 	if opts.admission > 0 {
 		var err error
 		if e.api.Admission, err = postgres.NewAdmission(opts.admission, 128); err != nil {

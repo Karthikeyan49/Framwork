@@ -52,6 +52,10 @@ type API struct {
 	// answering 503 ai_unavailable.
 	AI AIConfig
 
+	// Bodies bounds the request bytes that serve buffers before the database admission slot, in all and per verified identity.
+	// Nil is the process default (DefaultBodyBudgetBytes and DefaultBodyBudgetPerUser).
+	Bodies *BodyBudget
+
 	// Recompute remembers the pure recomputation of stored release candidates and
 	// bounds the cold ones per tenant and per process (ADR102 amendment 10). Nil is
 	// the process default.
@@ -263,41 +267,60 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	var response reply
 	var rejectedEvidence audit.Entry
 	localCommand := r.Method == http.MethodPost && r.PathValue("entity") != "" && strings.HasSuffix(r.URL.Path, "/commands")
-	var body []byte
-	if localCommand {
-		var err error
-		body, err = io.ReadAll(io.LimitReader(r.Body, data.MaxRecordBytes+1))
-		if err != nil || len(body) > data.MaxRecordBytes {
-			httpserver.Error(w, r, 400, "invalid_query_or_command", "Data request exceeds the typed request budget")
-			return
-		}
-	}
 	// The POSTs of the release builder that are idempotent by content (a candidate with the
 	// same bytes, an acceptance spec with the same body) repeat after a known abort, so that
 	// concurrent identical requests converge on the replay instead of one 409 each (review F7).
 	retryRelease := releaseIdempotentPOST[r.Pattern] && r.Body != nil
-	if retryRelease {
-		var err error
-		body, err = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
-		if err != nil || len(body) > 1<<20 {
-			httpserver.Error(w, r, 400, "invalid_release_request", "Request body is invalid")
+	// Every other body is read here too. Bodies are read before the admission slot and the transaction: the handlers read them
+	// later, and a client that sends its bytes slowly would otherwise hold a database slot for as long as the server's read timeout
+	// (independent review IR-02: four such connections stalled the whole API and lost AI results). Only a caller whose bearer
+	// already verified is read, on every route, so an anonymous caller cannot make the server buffer or wait for anything. What is
+	// buffered is booked first, per verified identity and in all (BodyBudget), and a booking that does not fit is refused before a
+	// byte is read: without it one token could pin 1.14 MiB per connection (review F-01). The handlers keep their own limits and
+	// error codes: they read the replay, which ends with the error of the front door's 1 MiB cap when the body was larger, exactly
+	// as the live body would have.
+	preRead := preError == nil && !localCommand && !retryRelease && r.Method == http.MethodPost && r.Body != nil && (r.ContentLength != 0 || len(r.TransferEncoding) > 0)
+	var body []byte
+	var bodyErr error
+	if preError == nil && (localCommand || retryRelease || preRead) {
+		limit := int64(1<<20 + 1)
+		if localCommand {
+			limit = data.MaxRecordBytes + 1
+		}
+		release, refused := a.bodies().Reserve(prePrincipal.Issuer()+"\x00"+prePrincipal.Subject(), reservation(r.ContentLength, limit))
+		if refused != "" {
+			w.Header().Set("Retry-After", "1")
+			w.Header().Set("Cache-Control", "no-store")
+			if refused == bodyRefusedSubject {
+				httpserver.Error(w, r, http.StatusTooManyRequests, "too_many_uploads", "Too many request bodies are in flight for this identity; retry shortly")
+			} else {
+				httpserver.Error(w, r, http.StatusServiceUnavailable, "service_busy", "The service is buffering too many request bodies; retry shortly")
+			}
 			return
 		}
-	}
-	// Every other body is read here too, before the admission slot and the transaction: the handlers read it later, and a
-	// client that sends its bytes slowly would otherwise hold a database slot for as long as the server's read timeout
-	// (independent review IR-02: four such connections stalled the whole API and lost AI results). Only a request whose
-	// bearer already verified is read, so an anonymous caller cannot make the server buffer anything. The handlers keep
-	// their own limits and error codes: they read the replay, which ends with the error of the front door's 1 MiB cap
-	// when the body was larger, exactly as the live body would have.
-	preRead := preError == nil && !localCommand && !retryRelease && r.Method == http.MethodPost && r.Body != nil && (r.ContentLength != 0 || len(r.TransferEncoding) > 0)
-	var bodyErr error
-	if preRead {
-		body, bodyErr = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
-		var tooLarge *http.MaxBytesError
-		if bodyErr != nil && !errors.As(bodyErr, &tooLarge) {
-			httpserver.Error(w, r, 400, "invalid_request", "Request body could not be read")
-			return
+		defer release()
+		switch {
+		case localCommand:
+			var err error
+			body, err = io.ReadAll(io.LimitReader(r.Body, data.MaxRecordBytes+1))
+			if err != nil || len(body) > data.MaxRecordBytes {
+				httpserver.Error(w, r, 400, "invalid_query_or_command", "Data request exceeds the typed request budget")
+				return
+			}
+		case retryRelease:
+			var err error
+			body, err = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+			if err != nil || len(body) > 1<<20 {
+				httpserver.Error(w, r, 400, "invalid_release_request", "Request body is invalid")
+				return
+			}
+		default:
+			body, bodyErr = io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+			var tooLarge *http.MaxBytesError
+			if bodyErr != nil && !errors.As(bodyErr, &tooLarge) {
+				httpserver.Error(w, r, 400, "invalid_request", "Request body could not be read")
+				return
+			}
 		}
 	}
 	parentContext := r.Context()
