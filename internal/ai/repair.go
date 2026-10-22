@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
@@ -65,10 +66,15 @@ func clampTokens(v int64) int64 {
 // [0, maxChargeTokens], but never less than the byte estimate of what actually
 // crossed the boundary (about four bytes per token). A provider that reports nothing,
 // or less than the bytes it was sent and returned, is charged the estimate.
-func chargeUsage(reported Usage, requestBytes, payloadBytes int) Usage {
+func chargeUsage(reported Usage, requestBytes, payloadBytes, outTokens int) Usage {
+	in, out := estimateTokens(requestBytes), estimateTokens(payloadBytes)
+	// A figure above twice what the request could cost (its bytes plus the output it asked for) is not a measurement but a
+	// fault or an attack: one answer reporting 100 million tokens would otherwise lock the tenant out for the UTC day
+	// (independent review M14R-06). The budget is a brake, not the vendor's bill, so it is capped at the reservation's order.
+	ceiling := 2*(in+int64(outTokens)) + 1024
 	return Usage{
-		InputTokens:  max(clampTokens(reported.InputTokens), estimateTokens(requestBytes)),
-		OutputTokens: max(clampTokens(reported.OutputTokens), estimateTokens(payloadBytes)),
+		InputTokens:  min(max(clampTokens(reported.InputTokens), in), max(ceiling, in)),
+		OutputTokens: min(max(clampTokens(reported.OutputTokens), out), max(ceiling, out)),
 	}
 }
 
@@ -99,14 +105,50 @@ func (g *gateway) request(spec runSpec, tpl TemplateSet, attempt, outTokens int,
 
 // call runs one provider call. A panic inside an adapter is operator code failing;
 // it becomes a refusal, which the loop never retries.
-func (g *gateway) call(ctx context.Context, req ProviderRequest) (resp ProviderResponse, err error) {
-	defer func() {
-		if recover() != nil {
-			resp, err = ProviderResponse{}, fmt.Errorf("%w: the adapter panicked", ErrProviderRefused)
-		}
+//
+// The wall clock binds the request even when an adapter ignores its context (independent review M14R-07): the call runs in its
+// own goroutine and is abandoned when the context ends, so the request, its slot and its connection are not held by an adapter that
+// never returns. An abandoned call keeps only its goroutine until the adapter returns; at most maxAbandonedCalls of them are
+// tolerated, after which new calls are refused instead of piling up.
+func (g *gateway) call(ctx context.Context, req ProviderRequest) (ProviderResponse, error) {
+	if g.abandoned.Load() >= maxAbandonedCalls {
+		return ProviderResponse{}, fmt.Errorf("%w: too many provider calls are still running after their deadline", ErrProviderUnavailable)
+	}
+	type answer struct {
+		resp ProviderResponse
+		err  error
+	}
+	var state atomic.Int32 // 0 running, 1 abandoned by the caller, 2 finished
+	done := make(chan answer, 1)
+	go func() {
+		a := answer{}
+		defer func() {
+			if recover() != nil {
+				a = answer{err: fmt.Errorf("%w: the adapter panicked", ErrProviderRefused)}
+			}
+			if !state.CompareAndSwap(0, 2) { // the caller gave up on this call earlier
+				g.abandoned.Add(-1)
+			}
+			done <- a
+		}()
+		a.resp, a.err = g.provider.Complete(ctx, req)
 	}()
-	return g.provider.Complete(ctx, req)
+	select {
+	case a := <-done:
+		return a.resp, a.err
+	case <-ctx.Done():
+		if state.CompareAndSwap(0, 1) {
+			g.abandoned.Add(1)
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return ProviderResponse{}, fmt.Errorf("%w: the adapter did not return within the wall clock", ErrProviderTimeout)
+		}
+		return ProviderResponse{}, ctx.Err()
+	}
 }
+
+// maxAbandonedCalls bounds the provider calls that outlive their deadline because the adapter ignores its context.
+const maxAbandonedCalls = 16
 
 func (g *gateway) loop(ctx context.Context, spec runSpec) loopResult {
 	var res loopResult
@@ -170,6 +212,16 @@ func (g *gateway) loop(ctx context.Context, spec runSpec) loopResult {
 
 		if perr != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {
+				// The caller left while the provider was working. The provider may have processed (and a vendor billed) the
+				// request, so it is charged like a crash that the sweep would find: the input estimate and the whole output that
+				// was reserved. Without it a member could drive provider calls that the daily budget never sees (M14R-02). The
+				// closed outcome vocabulary has no CANCELLED; TIMEOUT means the same for the budget: the effect is unknown.
+				at.Outcome = OutcomeTimeout
+				at.Usage = Usage{InputTokens: estimateTokens(len(reqJSON)), OutputTokens: int64(outTokens)}
+				res.usage.InputTokens += at.Usage.InputTokens
+				res.usage.OutputTokens += at.Usage.OutputTokens
+				res.attempts = append(res.attempts, at)
+				res.last = attemptEval{outcome: at.Outcome}
 				res.status, res.err = RunFailed, ctx.Err()
 				return res
 			}
@@ -191,8 +243,10 @@ func (g *gateway) loop(ctx context.Context, spec runSpec) loopResult {
 			return res
 		}
 
-		at.Provider, at.Model = clip(resp.Provider, 64), clip(resp.Model, MaxModelLabelRunes)
-		at.Usage = chargeUsage(resp.Usage, len(reqJSON), len(resp.Payload))
+		// A provider-reported label is untrusted text: it reaches the stored trace, the audit entry and the API. Reduce it once, here,
+		// to the characters all three accept; a label that the audit entry refused turned a paid answer into a 503 (M14R-01).
+		at.Provider, at.Model = apiLabel(resp.Provider, "unknown", 64), apiLabel(resp.Model, "", MaxModelLabelRunes)
+		at.Usage = chargeUsage(resp.Usage, len(reqJSON), len(resp.Payload), outTokens)
 		remaining -= at.Usage.InputTokens + at.Usage.OutputTokens
 		res.usage.InputTokens += at.Usage.InputTokens
 		res.usage.OutputTokens += at.Usage.OutputTokens

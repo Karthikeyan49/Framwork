@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
@@ -21,6 +22,8 @@ type Options struct {
 type gateway struct {
 	provider Provider
 	opts     Options
+	// abandoned counts provider calls that outlived their deadline because the adapter ignores its context.
+	abandoned atomic.Int32
 }
 
 // NewGateway returns the pipeline over an injected provider. It is safe for

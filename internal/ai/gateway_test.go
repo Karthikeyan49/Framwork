@@ -400,7 +400,9 @@ func TestRunPatchUsageAccounting(t *testing.T) {
 		{"reports nothing: pessimistic estimate", usage(0, 0), big, 10_000, 1 << 40},
 		{"under-reports a large answer", usage(1, 1), big, 10_000, 1 << 40},
 		{"negative numbers do not refill the budget", usage(-1_000_000, -1_000_000), nil, 0, 1 << 40},
-		{"huge numbers are clamped, the sum does not wrap", usage(1<<62, 1<<62), nil, 0, 4 * maxChargeTokens},
+		// A report above twice the request (its bytes plus the output asked for) is a fault, not a measurement (M14R-06): the
+		// charge stays at the order of the reservation instead of the 100 million that locked a tenant out for the day.
+		{"huge numbers are capped near the size of the request, the sum does not wrap", usage(1<<62, 1<<62), nil, 0, 100_000},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -431,7 +433,9 @@ func TestRunPatchUsageAccounting(t *testing.T) {
 		r := newRig(t, Options{})
 		r.prov.Push(ScriptStep{Payload: r.broken("G"), Usage: usage(1<<62, 1<<62)}, ScriptStep{Payload: r.good(), Usage: usage(10, 10)})
 		b := okBudget()
-		b.TokensRemaining = maxChargeTokens
+		// Capped at twice what the request could cost, a huge report still charges more than this remainder: two components of at
+		// least 2*(4096+0)+1024 tokens, about 18,000 in all, against a call that is allowed to start (its bytes plus 4096).
+		b.TokensRemaining = 12_000
 		run := r.run(b)
 		if run.Status != RunBudgetExceeded || r.prov.Calls() != 1 {
 			t.Fatalf("status %s calls %d", run.Status, r.prov.Calls())
