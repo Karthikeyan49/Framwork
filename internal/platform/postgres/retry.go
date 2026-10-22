@@ -37,11 +37,20 @@ func RetryLocal(parent context.Context, run func(context.Context) error) error {
 // have aborted the attempt without effect and that the operation may repeat. The budget and the
 // number of attempts are the same; the predicate must be as narrow as KnownAbort.
 func RetryLocalWhen(parent context.Context, run func(context.Context) error, retriable func(error) bool) error {
-	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
+	return RetryWithin(parent, 4*time.Second, 3, run, retriable)
+}
+
+// RetryWithin is RetryLocalWhen with the caller's total budget and number of attempts, for an operation whose conflicts are
+// frequent enough that three tries do not settle them (concurrent writers of one row under repeatable read: each round lets at
+// least one of them through) and whose result is worth more tries. The rules are the same: every attempt owns and finishes its
+// transaction, resolves live authorization and has no external side effect, and the predicate must be as narrow as KnownAbort.
+// The budget bounds the waiting, not an attempt that is running: its context is the one the attempt is given.
+func RetryWithin(parent context.Context, budget time.Duration, attempts int, run func(context.Context) error, retriable func(error) bool) error {
+	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
-	for attempt := 0; ; attempt++ {
+	for attempt := 1; ; attempt++ {
 		err := run(ctx)
-		if !retriable(err) || attempt == 2 || ctx.Err() != nil {
+		if !retriable(err) || attempt >= attempts || ctx.Err() != nil {
 			return err
 		}
 		n, e := rand.Int(rand.Reader, big.NewInt(21))

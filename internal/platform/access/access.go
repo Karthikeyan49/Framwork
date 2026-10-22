@@ -271,6 +271,9 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 	// same bytes, an acceptance spec with the same body) repeat after a known abort, so that
 	// concurrent identical requests converge on the replay instead of one 409 each (review F7).
 	retryRelease := releaseIdempotentPOST[r.Pattern] && r.Body != nil
+	// The creation of an AI proposal repeats after a known abort too: its admission writes the tenant's usage row, which
+	// concurrent creations contest, and an aborted admission has stored and charged nothing (review M14R-03).
+	retryAI := aiCreatePOST[r.Pattern]
 	// Every other body is read here too. Bodies are read before the admission slot and the transaction: the handlers read them
 	// later, and a client that sends its bytes slowly would otherwise hold a database slot for as long as the server's read timeout
 	// (independent review IR-02: four such connections stalled the whole API and lost AI results). Only a caller whose bearer
@@ -379,6 +382,11 @@ func (a API) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if retryRelease {
 		err = postgres.RetryLocalWhen(parentContext, run, releaseKnownAbort)
+	} else if retryAI {
+		err = postgres.RetryWithin(parentContext, aiAdmissionBudget, aiAdmissionAttempts, run, postgres.KnownAbort)
+		if postgres.KnownAbort(err) {
+			err = &requestRejection{response: denied(409, "ai_conflict", "A concurrent change prevented this request; reload and retry")}
+		}
 	} else {
 		err = run(parentContext)
 	}

@@ -49,6 +49,21 @@ var aiPatterns = map[string]string{
 	"POST " + aiRoot + "/proposals/{id}/reject":  "ai.apply",
 }
 
+// aiCreatePOST are the routes that create a proposal. Their first exchange writes the tenant's usage row (admission reserves
+// tokens and an in-flight slot), which concurrent creations of one tenant contest under repeatable read: the losers abort with a
+// serialization failure that leaves nothing behind, so serve repeats the exchange (independent review M14R-03).
+var aiCreatePOST = map[string]bool{
+	"POST " + aiRoot + "/patch-proposals":       true,
+	"POST " + aiRoot + "/requirement-proposals": true,
+}
+
+// The first exchange of a creation is tried up to aiAdmissionAttempts times within aiAdmissionBudget: with n creations of one
+// tenant racing for its usage row each round lets one of them through, and the pause between tries spreads the rest.
+const (
+	aiAdmissionAttempts = 5
+	aiAdmissionBudget   = 4 * time.Second
+)
+
 var aiPOST = regexp.MustCompile(`^/v1/tenants/[0-9a-f-]{36}/preview/app\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*/ai/(patch-proposals|requirement-proposals|proposals/[0-9a-f-]{36}/(apply|confirm|reject))$`)
 
 // AIConfig is the optional AI builder wiring (ADR104 A11). The zero value means
@@ -237,6 +252,15 @@ func aiReply(r *http.Request, err error) (reply, error) {
 	return reply{}, err
 }
 
+// aiReplyRetrying is aiReply for the exchanges that are repeated: a failure that a second try resolves (a serialization failure of
+// the tenant's usage row, a deadlock) is returned unchanged, so that the retry loop sees it, instead of becoming a 409 at once.
+func aiReplyRetrying(r *http.Request, err error) (reply, error) {
+	if postgres.KnownAbort(err) {
+		return reply{}, err
+	}
+	return aiReply(r, err)
+}
+
 // ai is the standard-transaction handler of the seven routes. Creation continues in
 // reply.next after this transaction commits (ADR104 A8).
 func (a API) ai(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, evidence *audit.Entry) (reply, error) {
@@ -386,7 +410,7 @@ func (a API) aiPropose(ctx context.Context, q postgres.Executor, r *http.Request
 	svc := a.AI.Service
 	adm, err := svc.Admit(ctx, q, access, ai.ProposeInput{Kind: kind, App: app, Request: body.Request, ExpectedRevision: body.ExpectedRevision})
 	if err != nil {
-		return aiReply(r, err)
+		return aiReplyRetrying(r, err)
 	}
 	inputs, err := a.aiPlatform(ctx, q, access, app)
 	if err != nil {
@@ -466,13 +490,13 @@ func (a API) aiRun(ctx context.Context, r *http.Request, app string, adm *ai.Adm
 	out := svc.Execute(ctx, adm)
 	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), 8*time.Second)
 	defer cancel()
-	return a.aiExchange(detached, r, "ai.propose", app, func(ctx context.Context, tx postgres.Executor, u identity.User, access tenant.Access, evidence *audit.Entry) (reply, error) {
+	return a.aiResultExchange(detached, r, "ai.propose", app, func(ctx context.Context, tx postgres.Executor, u identity.User, access tenant.Access, evidence *audit.Entry) (reply, error) {
 		if access.ActorID() != adm.RequesterID {
 			return aiRejection(403, "forbidden", "Access is denied")
 		}
 		p, err := svc.Finish(ctx, tx, access, adm, out)
 		if err != nil {
-			return aiReply(r, err)
+			return aiReplyRetrying(r, err)
 		}
 		aiEvidence(evidence, p)
 		if trace := out.Attempts(); len(trace) > 0 {
@@ -498,10 +522,43 @@ func (a API) aiRun(ctx context.Context, r *http.Request, app string, adm *ai.Adm
 	})
 }
 
-// aiExchange runs one transaction of a multi-exchange request with the guarantees of
+// aiHandler is the body of one exchange: it runs inside the exchange's transaction after re-authentication and policy.
+type aiHandler = func(context.Context, postgres.Executor, identity.User, tenant.Access, *audit.Entry) (reply, error)
+
+// The result exchange is repeated while its transaction ends in a known abort (independent review M14R-03). The provider has been
+// called and a paid answer is in memory when it runs, and the answer is lost if the exchange is not: results of one tenant that
+// finish together all update the tenant's usage row under repeatable read, and each round lets one of them through. A try is a whole
+// new exchange (bearer, tenant, policy and audit again), an aborted one stored nothing, and a finished proposal answers not_pending,
+// so a repetition can neither charge nor store twice. The budget stays inside the 8 s of the detached context.
+const (
+	aiResultAttempts = 6
+	aiResultBudget   = 6 * time.Second
+)
+
+// aiResultExchange is aiExchangeOnce with that repetition. When the last try still aborts, the answer is lost either way: the
+// request is refused as the conflict it is, audited, instead of a bare 503.
+func (a API) aiResultExchange(ctx context.Context, r *http.Request, action, app string, handle aiHandler) reply {
+	var response reply
+	err := postgres.RetryWithin(ctx, aiResultBudget, aiResultAttempts, func(ctx context.Context) (err error) {
+		response, err = a.aiExchangeOnce(ctx, r, action, app, handle)
+		return err
+	}, postgres.KnownAbort)
+	if postgres.KnownAbort(err) {
+		response, err = a.aiExchangeOnce(ctx, r, action, app, func(context.Context, postgres.Executor, identity.User, tenant.Access, *audit.Entry) (reply, error) {
+			return aiRejection(409, "ai_conflict", "A concurrent change prevented this request; reload and retry")
+		})
+	}
+	if err != nil {
+		return reply{status: 503, code: "service_unavailable", message: "A required service or security transaction is unavailable"}
+	}
+	return response
+}
+
+// aiExchangeOnce runs one transaction of a multi-exchange request with the guarantees of
 // the standard envelope: re-authentication, policy, audit in the same transaction and
-// rollback plus a fresh audit transaction for a refusal.
-func (a API) aiExchange(ctx context.Context, r *http.Request, action, app string, handle func(context.Context, postgres.Executor, identity.User, tenant.Access, *audit.Entry) (reply, error)) reply {
+// rollback plus a fresh audit transaction for a refusal. It returns the error of a transaction
+// that did not complete, so that a caller can repeat the exchange when the abort is a known one.
+func (a API) aiExchangeOnce(ctx context.Context, r *http.Request, action, app string, handle aiHandler) (reply, error) {
 	var response reply
 	var refused audit.Entry
 	err := a.transaction(ctx, func(ctx context.Context, tx postgres.Executor) error {
@@ -548,8 +605,5 @@ func (a API) aiExchange(ctx context.Context, r *http.Request, action, app string
 			response = rejected.response
 		}
 	}
-	if err != nil {
-		return reply{status: 503, code: "service_unavailable", message: "A required service or security transaction is unavailable"}
-	}
-	return response
+	return response, err
 }
