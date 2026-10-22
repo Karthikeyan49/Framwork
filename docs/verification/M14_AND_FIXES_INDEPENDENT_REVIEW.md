@@ -202,7 +202,12 @@ No false positive and no false negative among these shapes (migrations 1-44 are 
 * **Part B, the M14 review**: not executed by this reviewer (reassigned, see STATUS). From reading only, before the stop: the gateway
   returns a cancelled provider call without an attempt row and without any usage (`internal/ai/repair.go:171-175`), while a timeout is
   charged its input estimate and a crash its whole reservation; the other reviewer executed this as M14R-02. Not claimed here.
-* The fixes were re-verified on `be6ec7c` only; nothing of the coordinator's later fix commits on `integration/m9r-m14`.
+* Part A judged `be6ec7c`; the coordinator's later local commits up to `2ca08d8` were re-verified in the two re-verification sections
+  (scratch copies of `bfa47c4` and `2ca08d8`, nothing checked out or pushed by me). Not executed there: the token that expires during the
+  provider phase (a documented residual of `8528fde`), a known abort raised outside `Admit` (read only: now 409 instead of 503), a retry budget
+  that runs out in the middle of a try (read only: `RetryWithin` hands the attempt the budget context, so such a try is cancelled and the
+  exchange answers 503 without the 409 audit; per-tenant contention of at most eight results does not reach 6 s), and `make check` /
+  `make test-unit` / the full suite on the new head.
 * The full integration suite, `make check`, `make test-unit`, browser, fuzz and outage gates were not rerun (targeted runs only:
   the four fix regression tests, `internal/tools` `-race -count=3`, `internal/metadata` and `internal/compiler` probe units).
 * F-01 was measured in-process with one subject from one peer; a multi-peer run up to the global limit (about 12,000 held
