@@ -1,15 +1,23 @@
 package access
 
-import "sync"
+import (
+	"errors"
+	"io"
+	"sync"
+)
 
-// BodyBudget bounds the request-body bytes that serve buffers before the database admission slot (independent review F-01 of the
-// body pre-read: without a bound, one valid token could make the API hold 1.14 MiB per connection, 1,000 connections 1.15 GiB).
+// BodyBudget bounds the request-body bytes that serve holds in memory before the database admission slot (independent review F-01 of
+// the body pre-read: without a bound, one valid token could make the API hold 1.14 MiB per connection, 1,000 connections 1.15 GiB).
 //
-// A request books the most it can buffer, its declared length capped at the front door's 1 MiB, BEFORE its first byte is read and
-// gives the bytes back when it ends. A booking that would exceed the share of one verified identity, or the total, is refused
-// without reading anything, so the memory in flight is bounded by the total whatever the number of connections, and one identity
-// cannot starve the others beyond its share. The identity is the verified issuer and subject; the bearer was verified, nothing
-// else (membership, role) is known before the database is reached.
+// A request books the bytes it HAS RECEIVED, as they arrive, and gives them back when it ends. The first version booked the declared
+// Content-Length before the first byte, and the review of that (F-06) showed what it cost: identities without any membership could
+// open connections that declared a body and sent none, and eight of them filled the whole budget, so every body-carrying request of
+// every tenant was refused for as long as they kept reconnecting. Booking what is really held means a connection that sends nothing
+// holds nothing; to keep the budget full an attacker has to transmit the bytes (the total, per read timeout), from as many identities
+// as the total allows. A booking that would exceed the share of one verified identity, or the total, is refused and the read stops, so
+// the memory in flight is bounded by the total whatever the number of connections, and one identity cannot starve the others beyond
+// its share. The identity is the verified issuer and subject; the bearer was verified, nothing else (membership, role) is known before
+// the database is reached.
 type BodyBudget struct {
 	mu         sync.Mutex
 	total      int64
@@ -18,54 +26,73 @@ type BodyBudget struct {
 	bySubject  map[string]int64
 }
 
-// The defaults: a request books its declared length, so ordinary calls (a few hundred bytes to a few hundred KiB) book little and
-// the total allows hundreds of them; four 1 MiB bodies per identity is far above any honest use of this API.
+// The defaults: the share of one identity is above the largest body the front door admits (1 MiB), so an honest upload is always
+// admitted, and the total allows 16 identities to hold a share each.
 const (
 	DefaultBodyBudgetBytes   int64 = 32 << 20
-	DefaultBodyBudgetPerUser int64 = 4 << 20
+	DefaultBodyBudgetPerUser int64 = 2 << 20
 )
 
-// NewBodyBudget returns a budget of total bytes in flight, at most perSubject of them for one identity. A request that books more
-// than perSubject is always refused, so keep perSubject above the largest body the front door admits (1 MiB).
+// NewBodyBudget returns a budget of total bytes in flight, at most perSubject of them for one identity. Keep perSubject above the
+// largest body the front door admits (1 MiB), or a body of that size can never be read.
 func NewBodyBudget(total, perSubject int64) *BodyBudget {
 	return &BodyBudget{total: total, perSubject: perSubject, bySubject: map[string]int64{}}
 }
 
-// Refusal scopes of Reserve.
+// Refusal scopes of Add.
 const (
 	bodyRefusedSubject = "subject"
 	bodyRefusedTotal   = "total"
 )
 
-// Reserve books n bytes (at least one) for subject. On success it returns the release function (safe to call more than once) and
-// an empty refusal; otherwise it returns no release and the scope that is exhausted: "subject" or "total".
-func (b *BodyBudget) Reserve(subject string, n int64) (release func(), refused string) {
-	if n < 1 {
-		n = 1
+// BodyHold is the bytes one request holds. It grows with Add and is given back whole by Release.
+type BodyHold struct {
+	b        *BodyBudget
+	subject  string
+	n        int64
+	released bool
+}
+
+// Hold starts an empty hold for subject. The caller owns it: one goroutine, Release when the request ends.
+func (b *BodyBudget) Hold(subject string) *BodyHold { return &BodyHold{b: b, subject: subject} }
+
+// Add books n more bytes (n <= 0 books nothing). It returns "" when they fit, otherwise the scope that is exhausted, "subject" or
+// "total", and then books nothing.
+func (h *BodyHold) Add(n int64) (refused string) {
+	if n <= 0 || h.released {
+		return ""
 	}
+	b := h.b
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.bySubject[subject]+n > b.perSubject {
-		return nil, bodyRefusedSubject
+	if b.bySubject[h.subject]+n > b.perSubject {
+		return bodyRefusedSubject
 	}
 	if b.used+n > b.total {
-		return nil, bodyRefusedTotal
+		return bodyRefusedTotal
 	}
 	b.used += n
-	b.bySubject[subject] += n
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			b.mu.Lock()
-			defer b.mu.Unlock()
-			b.used -= n
-			if left := b.bySubject[subject] - n; left > 0 {
-				b.bySubject[subject] = left
-			} else {
-				delete(b.bySubject, subject)
-			}
-		})
-	}, ""
+	b.bySubject[h.subject] += n
+	h.n += n
+	return ""
+}
+
+// Release gives every byte of the hold back. It is safe to call more than once.
+func (h *BodyHold) Release() {
+	if h.released {
+		return
+	}
+	h.released = true
+	b := h.b
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.used -= h.n
+	if left := b.bySubject[h.subject] - h.n; left > 0 {
+		b.bySubject[h.subject] = left
+	} else {
+		delete(b.bySubject, h.subject)
+	}
+	h.n = 0
 }
 
 // InFlight reports the booked bytes and the number of identities that hold a booking.
@@ -85,11 +112,24 @@ func (a API) bodies() *BodyBudget {
 	return defaultBodies
 }
 
-// reservation is what a request books: its declared length when that is below the cap (the server never delivers more), else
-// the cap (an undeclared length, as with chunked bodies, or one above it, which the front door cuts at the cap).
-func reservation(contentLength, limit int64) int64 {
-	if contentLength >= 0 && contentLength < limit {
-		return max(contentLength, 1)
+// errBodyBudget stops a read whose bytes do not fit the budget.
+var errBodyBudget = errors.New("access: request body budget exhausted")
+
+// bookedBody books the bytes of a request body against its hold as they are read. The bytes of the read that did not fit are dropped,
+// never reported to the caller, and refused names the exhausted scope.
+type bookedBody struct {
+	src     io.Reader
+	hold    *BodyHold
+	refused string
+}
+
+func (b *bookedBody) Read(p []byte) (int, error) {
+	n, err := b.src.Read(p)
+	if n > 0 {
+		if refused := b.hold.Add(int64(n)); refused != "" {
+			b.refused = refused
+			return 0, errBodyBudget
+		}
 	}
-	return limit
+	return n, err
 }
