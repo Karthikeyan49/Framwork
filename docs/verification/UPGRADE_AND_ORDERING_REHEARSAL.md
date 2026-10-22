@@ -22,6 +22,10 @@ not committed; their text is summarised here.
 | T2 (vi) number/count assumptions | done | **PASS** (nothing breaks with 00091; list below) |
 | Verdict on the numbering rule | done | rules 1, 3 confirmed with corrections; rule 2 incomplete (D1); rule 4 NOT RUN |
 | Proposed static test | done | `db/migrations/numbering_test.go`, separate commit "proposed test" |
+| Re-run R1 on `43d417e` (00091): release data 89 -> 91 | done | **PASS** |
+| Re-run R2 on `43d417e`: populated 57 -> 91, lineage at 90/91 | done | **PASS** |
+| Re-run R3 on `43d417e`: `numbering_test.go`, `cmd/migrate` messages, hard-coded numbers | done | **PASS** (D2 fixed on the head) |
+| Re-run R4: the same for 00092 | waiting | NOT RUN (00092 not yet committed) |
 
 Environment: `ensure-docker` (all three stacks ready), `reset.sh` of the M13 stack from this worktree (68 migrations, head 90). Every
 database command ran under `/home/user/bin/dbrun13 nice -n 15`. The host restarted once during Task 2 (after item vi had run); the stack
@@ -346,3 +350,93 @@ definition (rule 3 above stays a review duty, helped by `TestM13IntegrationRepla
 * A database still at 57 receiving a file numbered 58-79 (expected to apply in file order; not run).
 * Rule 4 (ADR reservations); the real migration `00091` (not available on this head); `-race`; repeated runs (each probe ran once;
   the first 57 attempt with the integrated binary stopped at the 503 described in Task 1 and is not counted): no flake statistics.
+
+## Re-run on the integration head `43d417e` (contains 00091)
+
+Pin: `43d417e` ("test(metadata): the version-gate scan reads every spelling...", the newest commit of the local
+`integration/m9r-m14` when this round started; it contains `bfa47c4` = migration `00091_m13_rollback_release_fence.sql`, `b05494a` =
+the new `cmd/migrate` messages and `db/migrations/numbering_test.go`, which is byte-identical to the test proposed in `188e9d6`). The
+head was read from the shared object store by hash (`git archive 43d417e` into scratch); the `/home/user/integ` worktree was only
+listed (`git -C /home/user/integ log --oneline -12`). The host rebooted once more during this round; the M13 stack was rebuilt with
+`reset.sh` from this worktree before every database step. All database commands ran under `dbrun13 nice -n 10`.
+
+### R1 - release data at 89 upgraded through 00090 and 00091 - PASS
+
+Population (scratch export of `be6ec7c`, the binary that ran at 89/90, test helpers patched in scratch only so the database and the
+IAM rows are kept): `m13Setup` at 89, then through the real HTTP routes and ports: R1 (the HIGH template) approved and activated, R2
+approved and activated, a pointer-safe **rollback** to R1 (history `ACTIVATE, ACTIVATE, ROLLBACK`, pointer R1 generation 3), staged
+candidates R3 (two approvals), R4 (**rejected**, `OTHER`), R5 (one approval) and R6 (a CRITICAL candidate staged through the M12 port on
+the current pointer, quorum two, one approval by dave). Counts before the upgrade: history 3, approvals 6, rejections 1, candidates 6,
+fences 3.
+
+Upgrade and checks in a scratch export of `43d417e` (`TestZZReviewReleaseUpgrade`, `goose UpTo(91)` with the head's embedded files):
+
+| Check | Result |
+|---|---|
+| applied | `[90 91]` |
+| pre-existing rows | 73 tables compared (count and content hash), **0 changed** |
+| `control.rollback_release` | owner `framework_schema_owner`, ACL `{framework_schema_owner=X/framework_schema_owner,framework_app=X/framework_schema_owner}`, SECURITY DEFINER, `search_path=pg_catalog, pg_temp`, identity arguments, result and volatility **identical before and after**; only the body changed: a line diff of `pg_get_functiondef` shows **no removed line** and four added lines (three comment lines and `INSERT INTO control.release_fences AS f(...) VALUES(t,p_app,p_target) ON CONFLICT(...) DO UPDATE SET writes=f.writes+1;`) |
+| EXECUTE on `rollback_release` | `framework_app` yes; `framework_worker`, `framework_dispatcher` and PUBLIC **no** |
+| `approve_release`, `activate_release`, `reject_release` | unchanged (owner, ACL and body hash) |
+| all SECURITY DEFINER functions | 103 -> 103, no ACL drift; `control.worker_grants_safe()` as `framework_worker` true; lineage check nil |
+| head code on the upgraded data | second approval of R6 through `approve_release` returns **2** (the pre-upgrade approval is counted); R3, approved before the upgrade, activates (generation 4); rollback to R2 (activated before the upgrade) returns 200 generation 5 and **writes the fence** (`release_fences.writes` for R2: 1 -> 2); R1 rejected after it ran, then a rollback onto it -> 409; approving the pre-upgrade-rejected R4 -> 409; history `ACTIVATE ACTIVATE ROLLBACK ACTIVATE ROLLBACK` passes the fixture's chain check |
+| schema | `pg_dump --schema-only` (fixture schemas excluded, only `\restrict` lines removed) of the upgraded database and of a fresh `UpTo(91)` install: **identical** (626180 bytes, sha256 prefix `9c9f43261790af6f`) |
+
+The migration's header says it replaces the function "from its only definition (00088)"; `rollback_release` is defined in `00084` and
+`00088`, so "latest" is meant. The body comparison above confirms the substance ("byte for byte except for that statement"). Wording
+only; a merged migration is not edited.
+
+### R2 - populated 57 to the head, lineage at 90 and 91 - PASS
+
+The remediation-tree population (`b00da36`, as in Task 1) was re-run at 57 and the database upgraded with the head's files: applied
+`[80 ... 90 91]`; 61 pre-existing tables, 0 changed; CHECK 1.0.0-1.5.0; worker guard true; no ACL drift on the 73 old SECURITY DEFINER
+functions and no PUBLIC EXECUTE; pinned IR restores; the stored 1.4.0 source recompiles byte-identically to the pinned IR; the DSL
+2.1.0 approval workflow finishes SUCCEEDED; events consumed (`COMPLETED=4, LEGACY_PAUSED=1`); unique registration under 1.4.0 and 1.5.0
+works. The upgraded schema dump is **identical** to the fresh `UpTo(91)` dump (same sha256 prefix `9c9f43261790af6f`).
+
+Lineage with the head's real `migrate` binary (`go build ./cmd/migrate` of the head export):
+
+| Database | `status` | `up` |
+|---|---|---|
+| empty | exit 0, 69 pending | `applied 69 migration(s)` |
+| at 90 (`CheckMigrationLineage` nil) | exit 0, 68 applied, `00091_m13_rollback_release_fence.sql pending` | `applied 1 migration(s)` |
+| at 91 (`CheckMigrationLineage` nil) | exit 0, 69 applied, 0 pending | `applied 0 migration(s)` |
+| old milestone numbering (60da6f2 files) | exit 1 `database was built with the milestone line's pre-integration migration numbers (00045-00053, 00060); rebuild it from the current migrations, do not migrate it` | the same, versions unchanged (`[53 60]`) |
+
+### R3 - numbering test, `cmd/migrate` messages, hard-coded numbers - PASS
+
+* `go test ./db/migrations ./cmd/migrate` in the head export: `TestMigrationNumbersFormOneIncreasingSequence` PASS (69 files) and
+  `TestUpFailureNamesTheNumberingRuleAndTheFailedMigrationButNothingFromTheDriver` PASS.
+* The real binary built from the head plus one hypothetical file each, on a database at 91:
+
+| Variant | Message (exit 1 unless stated) |
+|---|---|
+| a second `00091` | `migration provider initialization failed: found duplicate migration version 91: existing:00091_m13_rollback_release_fence.sql current:00091_zz_line_b_marker.sql` (both `status` and `up`) |
+| `00075` below 91 | `up`: `migration refused: detected 1 missing (out-of-order) migration lower than database version (91): version 75; a migration numbered below the highest applied version is never applied (docs/migration/LINE_INTEGRATION_PLAN.md, migration numbers)`; `status`: exit 0, `00075_zz_remediation_from_00052.sql pending` |
+| a `00092` that raises | `migration 92 failed (no connection details logged); review migration and database state`; the database stays at 91 |
+
+  **D2 is fixed on the head.** Residual (LOW, operability): `migrate status` still reports a below-maximum file as plain `pending` with
+  exit 0, although `up` will always refuse it.
+* Hard-coded migration numbers in the head (grep of all Go files, `Makefile`, `.github`, `scripts`, `infra`; probes excluded): only
+  fixed intermediate points, none equal to the head and no total count except one derived from the embedded files -
+  `tests/integration/m6r_migration_test.go:78,140` (`UpTo(8)`, `UpTo(9)`), `m8_delivery_test.go:130` (`UpTo(17)`),
+  `m9r_event_policy_test.go:239,281,284` (54, `r7bLastMigration`=57), `m9r_event_outage_review_test.go:334,356-357,380,386,406-407,469,493-494`
+  (55, 56, 57), `m13_integrity_test.go:131,135,168` (83, 84), `m13_ports_test.go:1048` (83), `m_migration_lineage_test.go:23` and
+  `internal/platform/postgres/lineage.go:28` (80, the renumbering marker), `identity_policy_test.go:612-624` (count derived from the
+  files). `00091` appears only in comments (`m13r_rollback_fence_test.go:7`). `Makefile:24,26` and `.github/workflows/ci.yml:25` run
+  `migrate up`/`status` without numbers.
+* The rule text on the head (`docs/migration/LINE_INTEGRATION_PLAN.md:49-64`) is unchanged and now stale: "A database built from this
+  branch is at 90" (now 91) and "The next number is `00091`" (taken). See the wording note below.
+
+### Wording note after the re-run (changes to the recommendation above)
+
+The recommendation stands with three edits, all caused by numbers going stale:
+
+1. Rule 1 should not name the next number. `00091` is taken and `00092` is in progress, so "after `00091` the next is `00092`" is
+   already out of date. Proposed text: "A new migration takes the highest number on `integration/m9r-m14` plus one when its line
+   merges; `db/migrations/numbering_test.go` fails on a gap, a duplicate or a number in 58-79."
+2. The facts paragraph should say "a database built from this branch is at the newest migration file" instead of "at 90", and can
+   now quote what the operator sees: `migrate up` answers `migration refused: detected N missing (out-of-order) migration(s) lower than
+   database version (M): version V; ...` (D2 is fixed by `b05494a`).
+3. Rule 3 ("replace from the trunk") can cite `00091` as its model: `control.rollback_release` was replaced from its latest definition
+   (`00088`) with only the fence statement added, owner and ACL asserted unchanged in the migration's own post-check.
