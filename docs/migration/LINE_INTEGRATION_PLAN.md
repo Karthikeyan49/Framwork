@@ -126,7 +126,7 @@ profiling, restore drill) are as open as they were.
 |---|---|
 | Branch | `integration/m9r-m14` |
 | First parent | `b00da36` (the remediation line after R7b, 116 commits and 264 files since the common base `e6305df`) |
-| Second parent | `integ/prep-m14` (not pushed; `60da6f2` plus one commit that renumbers the milestone line, 189 commits and 253 files since the base) |
+| Second parent | `integ/prep-m14` (not pushed; `60da6f2` plus one commit that renumbers the milestone line, 192 commits and 253 files since the base) |
 | Merge commit | records 23 resolved conflicts (below) |
 | Follow-up commits | test alignment, see "What had to change besides the conflicts" |
 
