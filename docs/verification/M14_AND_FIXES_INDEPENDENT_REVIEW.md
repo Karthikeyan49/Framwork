@@ -9,7 +9,11 @@ Numbers: this report uses the merged numbers (migrations `00080`-`00090`, ADR100
 older reports are read through the map in `docs/migration/LINE_INTEGRATION_PLAN.md`.
 Host: 4 cores shared with two other agents (load average recorded next to timing results).
 
-STATUS: IN PROGRESS (interim commit).
+STATUS: Part A (the integration fixes) COMPLETE: 2 FAIL-grade findings of the fixes (F-01 MEDIUM, F-02 LOW) and 2 LOW gaps
+(F-03, F-04); every other attack listed below held. Part B (first independent review of M14) was NOT RUN by this reviewer: the
+coordinator reassigned it after a host restart and it was completed by another reviewer
+(`origin/review/integration-final:docs/verification/M14_INDEPENDENT_REVIEW.md`, M14R-01..04). Section "M13 release-pointer
+concurrency" below is the follow-up assignment that replaced Part B.
 
 ## Progress
 
@@ -19,7 +23,8 @@ STATUS: IN PROGRESS (interim commit).
 | 20:00 | baseline: stack reset + `TestM14SlowRequestBodiesDoNotHoldDatabaseSlots`, `TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema`, `TestMigrationLineageRefusesTheMilestoneLinesOldNumbering`, `TestIntegrationTenantRoleApproverGatesAToolSend` (`-race`) | PASS, 34.5 s |
 | 20:03-20:10 | A1 body pre-read: raw-socket probes against `httpserver.New` on the pinned tree and on a scratch copy with the pre-read disabled; memory measurement; mutation check of the slow-body test | done, F-01, F-02 |
 | 20:10-20:18 | A2 live catalog scan, 89 -> 90 attribute diff, unique duplicate/abort lifecycle under 1.4.0 and 1.5.0, scanner spellings, negative control; A3 restore matrix; A4 real launcher with fake binaries; A5 real `migrate` binary against seven database shapes and a fresh database; A6 tools harness under `-race`, mutation of the tenant-approver test | done, F-03, F-04 |
-| next | Part B (M14) | pending |
+| 20:20-20:40 | Part B reading started (ports `00089`, `internal/ai` service/gateway/store, `access/ai*.go`); no Part B attack executed before the stop | stopped (API rate limit, host restart) |
+| 2026-10-22 11:31 | resumed with a changed scope: Part B dropped (done by another reviewer), report finished for A1-A6, then M13 release-pointer concurrency | in progress |
 
 ## Findings
 
@@ -186,4 +191,22 @@ No false positive and no false negative among these shapes (migrations 1-44 are 
 
 ## Not covered
 
-pending
+* **Part B, the M14 review**: not executed by this reviewer (reassigned, see STATUS). From reading only, before the stop: the gateway
+  returns a cancelled provider call without an attempt row and without any usage (`internal/ai/repair.go:171-175`), while a timeout is
+  charged its input estimate and a crash its whole reservation; the other reviewer executed this as M14R-02. Not claimed here.
+* The fixes were re-verified on `be6ec7c` only; nothing of the coordinator's later fix commits on `integration/m9r-m14`.
+* The full integration suite, `make check`, `make test-unit`, browser, fuzz and outage gates were not rerun (targeted runs only:
+  the four fix regression tests, `internal/tools` `-race -count=3`, `internal/metadata` and `internal/compiler` probe units).
+* F-01 was measured in-process with one subject from one peer; a multi-peer run up to the global limit (about 12,000 held
+  requests) was not executed (it would exhaust the shared host), the 13.7 GiB figure is arithmetic on the measured 1.14 MiB.
+* HTTP/2 (not served on the plain listener) and a real proxy in front of the API were not exercised.
+* A2: the 1.5.0 unique lifecycle was run on the dataset-binding route of the suite's fixture; a 1.5.0 document that also
+  declares tool activities together with a unique field was not authored.
+* A6: `TestM12APIDetailReadsOfALargeCandidateConverge` (the `m12apiRetrying` change) was not run.
+
+## Probe sources
+
+The probes were temporary files (`tests/integration/zz_review_a1_test.go`, `zz_review_a2_test.go`, `zz_review_a5_test.go`,
+`internal/metadata/zz_review_scan_test.go`, `internal/compiler/zz_review_restore_test.go`), deleted before every commit; the
+snippets above are their essential parts. Scratch mutants: a copy of `be6ec7c` with `preRead := false && ...` (A1) and one with
+`|| (false && !slices.Contains(permitted, roles[0]))` in `internal/policy/approval.go` (A6), never on the branch.
