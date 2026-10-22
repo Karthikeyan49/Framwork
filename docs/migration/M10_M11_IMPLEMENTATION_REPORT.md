@@ -17,7 +17,8 @@ ready and no production activation path exists.
 **M10 — governed tools.** A trusted operator catalog (`tool-catalog-v1`,
 `TOOL_CATALOG_FILE`) is the only source of tool definitions; metadata schema
 1.3.0 adds opt-in tool activities that the compiler resolves, type-checks and
-pins by definition hash into workflow plans (DSL 2.1.0). Migrations 80 and 82
+pins by definition hash into workflow plans (DSL 2.1.0 as first built; the review
+fixes moved tool plans to DSL 2.2.0, ADR100 A1, and 2.1.0 is restore-only). Migrations 80 and 82
 add the `runtime.tool_invocations`/`tool_attempts` ledger and SECURITY DEFINER
 ports bound to the leased job and the live SQL policy decision. A tool step is
 three short transactions (authorize and record `SENDING`; send outside any
