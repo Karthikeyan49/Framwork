@@ -13,7 +13,9 @@ import (
 // metadata_versions CHECK and SQL function bodies. 1.5.0 was added as a superset of 1.4.0 and one SQL function that selected a
 // document with schema_version='1.4.0' was missed, so no unique claim could be registered under 1.5.0 (remediation review B-05,
 // independent review IR-01). These tests read the embedded migrations and fail when a SQL gate names only part of a family of
-// versions, or when the CHECK drops a version, so the next superset contract cannot repeat it.
+// versions, or when the CHECK drops a version, so the next superset contract cannot repeat it. version_family.go holds the reading
+// of a text (it also serves the scan of a live catalog, tests/integration/m9r_catalog_version_gate_test.go, which covers the
+// objects that are not function bodies: policies, triggers, defaults, views and index predicates).
 
 var (
 	sqlFunctionHeader = regexp.MustCompile(`(?is)CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_]+\.[a-z_0-9]+)\s*\(([^)]*)\)`)
@@ -22,44 +24,8 @@ var (
 	sqlVersionsCheck  = regexp.MustCompile(`(?is)ADD\s+CONSTRAINT\s+metadata_versions_schema_version_check\s+CHECK\s*\(\s*schema_version\s+IN\s*\(([^)]*)\)\s*\)`)
 )
 
-func knownSchemaVersions() []string {
-	return []string{SchemaVersion, RuleSchemaVersion, WorkflowSchemaVersion, ApprovalSchemaVersion, IntegritySchemaVersion, ToolWorkflowSchemaVersion}
-}
-
-// schemaFamilies are the version sets that Go treats as one contract: each later member is a superset of the earlier ones.
-func schemaFamilies() map[string]func(string) bool {
-	return map[string]func(string) bool{"workflow (WorkflowSchema)": WorkflowSchema, "integrity (IntegritySchema)": IntegritySchema}
-}
-
-// familyGaps reports, for one SQL body, every family in which the body names a version but leaves out a LATER member of the same
-// family. A gate on a feature may start at the version that introduced it (the earlier versions lack the feature), but every
-// superset contract after that version carries the feature too and has to be named, or its documents fall through the gate.
-func familyGaps(body string) []string {
-	named := map[string]bool{}
-	for _, m := range sqlVersionLiteral.FindAllStringSubmatch(body, -1) {
-		named[m[1]] = true
-	}
-	var gaps []string
-	for family, member := range schemaFamilies() {
-		started := false
-		var missing []string
-		for _, v := range knownSchemaVersions() {
-			if !member(v) {
-				continue
-			}
-			if named[v] {
-				started = true
-			} else if started {
-				missing = append(missing, v)
-			}
-		}
-		if len(missing) > 0 {
-			gaps = append(gaps, family+": names a version of the family but not its later member(s) "+strings.Join(missing, ", "))
-		}
-	}
-	sort.Strings(gaps)
-	return gaps
-}
+// familyGaps reports, for one SQL body, every family in which the body names a version but leaves out a later member of it.
+func familyGaps(body string) []string { return AuthoringFamilyGaps(AuthoringVersionsNamed(body)) }
 
 // latestFunctionBodies returns, for every function the migrations define, the dollar-quoted body of its LAST definition in
 // migration order (a later CREATE OR REPLACE wins, exactly as in the database) and the file that holds it.
@@ -118,7 +84,7 @@ func TestSQLFunctionsNameWholeSchemaVersionFamilies(t *testing.T) {
 	}
 	checked := 0
 	for key, body := range bodies {
-		if !sqlVersionLiteral.MatchString(body) {
+		if len(AuthoringVersionsNamed(body)) == 0 {
 			continue
 		}
 		checked++
@@ -146,11 +112,32 @@ func TestFamilyGapsSeesTheOriginalDefect(t *testing.T) {
 			t.Fatalf("the report must name the missing superset 1.5.0: %v", gaps)
 		}
 	}
+	// The spellings of a single-version gate that a literal-only scan missed (independent review F-03).
 	for name, body := range map[string]string{
-		"the whole integrity family": `WHERE m.schema_version IN('1.4.0','1.5.0')`,
-		"the whole workflow family":  `WHERE m.schema_version IN('1.2.0','1.3.0','1.4.0','1.5.0')`,
-		"only the newest contract":   `WHERE m.schema_version='1.5.0'`,
-		"an unrelated event version": `jsonb_build_object('schema_version','1.0.0')`,
+		"a concatenation":                     `WHERE m.schema_version='1.4.'||'0'`,
+		"a dollar-quoted literal":             `WHERE m.schema_version=$v$1.4.0$v$`,
+		"a jsonb containment":                 `WHERE m.document @> '{"schema_version":"1.4.0"}'`,
+		"a jsonpath equality":                 `WHERE m.document @@ '$.schema_version == "1.4.0"'`,
+		"a LIKE prefix":                       `WHERE m.schema_version LIKE '1.4%'`,
+		"a regular expression":                `WHERE m.schema_version ~ '^1\.4\.'`,
+		"a major.minor literal":               `WHERE m.schema_version='1.4'`,
+		"an escape string":                    `WHERE m.schema_version=E'1.4.0'`,
+		"a CASE":                              `CASE m.schema_version WHEN '1.4.0' THEN 1 ELSE 0 END`,
+		"an ANY array":                        `WHERE m.schema_version=ANY(ARRAY['1.4.0'])`,
+		"a policy-style IS NOT DISTINCT FROM": `m.schema_version IS NOT DISTINCT FROM '1.4.0'`,
+	} {
+		if gaps := familyGaps(body); len(gaps) == 0 {
+			t.Errorf("%s names only 1.4.0 and was not reported", name)
+		}
+	}
+	for name, body := range map[string]string{
+		"the whole integrity family":    `WHERE m.schema_version IN('1.4.0','1.5.0')`,
+		"the whole family, major.minor": `WHERE m.schema_version IN('1.4','1.5')`,
+		"every member by prefix":        `WHERE m.schema_version LIKE '1.%'`,
+		"numbers that are no version":   `SELECT 1.4 + 11.4 + x1.4`,
+		"the whole workflow family":     `WHERE m.schema_version IN('1.2.0','1.3.0','1.4.0','1.5.0')`,
+		"only the newest contract":      `WHERE m.schema_version='1.5.0'`,
+		"an unrelated event version":    `jsonb_build_object('schema_version','1.0.0')`,
 	} {
 		if gaps := familyGaps(body); len(gaps) != 0 {
 			t.Fatalf("%s was reported: %v", name, gaps)
