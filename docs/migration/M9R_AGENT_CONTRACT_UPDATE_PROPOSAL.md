@@ -21,7 +21,7 @@ Corrected on 22 October 2026 by the documentation truth audit (DT-04): the first
 version of the patch said that B-01, B-02 and B-05 were open and named a fixed
 applied migration maximum; both statements are replaced (the highest applied
 number is the reference), and the result blob id in the patch header of
-`AGENTS.md` is now `2967d51` (`CLAUDE.md` `1ed343d`, unchanged). `git apply --check`
+`AGENTS.md` is now `6866689` (`CLAUDE.md` `1ed343d`, unchanged). `git apply --check`
 of the patch against the two baseline files exits 0.
 
 ## Proposed corrections
@@ -44,7 +44,7 @@ work are in the [plan](M9R_REMEDIATION_PLAN.md); current findings are in the
 
 ```diff
 diff --git a/AGENTS.md b/AGENTS.md
-index fd94ab4..2967d51 100644
+index fd94ab4..6866689 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -1,9 +1,13 @@
@@ -72,8 +72,8 @@ index fd94ab4..2967d51 100644
 -  ADR044 adds opt-in schema/IR/compiler1.4 unique fields. A declaration is not
 -  enforcement: require READY claims and live full-scope authority before any new
 +  ADR044 adds opt-in schema/IR/compiler1.4 unique fields; schema 1.5 is its tool
-+  superset: Restore pins the exact 1.5 pairing and every SQL gate names 1.4 and
-+  1.5 alike. A declaration is not enforcement: require READY claims
++  superset: Restore pins the exact 1.5 pairing and the SQL unique-field gates name
++  1.4 and 1.5 alike. A declaration is not enforcement: require READY claims
 +  and live full-scope authority before any new
    non-null key. Preserve transaction-bound permits, exact attempt checkpoints,
    legacy denial and evolution fences. Map only the named claim constraint to409;
