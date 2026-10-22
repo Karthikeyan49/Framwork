@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// Proposed by the upgrade and ordering rehearsal (docs/verification/UPGRADE_AND_ORDERING_REHEARSAL.md); the numbering rule is the
-// owner's decision. It encodes: one increasing sequence, 00001-00057 then 00080 upward without gaps, nothing in the abandoned
+// Proposed by the upgrade and ordering rehearsal (docs/verification/UPGRADE_AND_ORDERING_REHEARSAL.md); the owner has not decided the
+// numbering rule yet (docs/migration/LINE_INTEGRATION_PLAN.md, "Migration numbers from here on"), and this test makes the proposal
+// checkable. It encodes: one increasing sequence, 00001-00057 then 00080 upward without gaps, nothing in the abandoned
 // 00058-00079 reservation, no number used twice. goose refuses a duplicate only when a provider is opened (cmd/migrate then prints
 // only "migration provider initialization failed"), and refuses a file below the highest applied version only on an upgraded
 // database, while a fresh install applies the same file in a different order. This check fails before any database is involved.
