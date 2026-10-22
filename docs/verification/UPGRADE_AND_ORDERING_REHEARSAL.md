@@ -440,3 +440,29 @@ The recommendation stands with three edits, all caused by numbers going stale:
    database version (M): version V; ...` (D2 is fixed by `b05494a`).
 3. Rule 3 ("replace from the trunk") can cite `00091` as its model: `control.rollback_release` was replaced from its latest definition
    (`00088`) with only the fence statement added, owner and ACL asserted unchanged in the migration's own post-check.
+
+### Consolidated recommended wording (supersedes the earlier text)
+
+> ### Migration numbers from here on
+>
+> Facts: `cmd/migrate` opens goose without out-of-order support. A database built from this branch is at its newest migration file.
+> goose refuses a file numbered below a database's highest applied version (`migrate up` answers `migration refused: detected N
+> missing (out-of-order) migration(s) lower than database version (M): version V; ...`), while a fresh install applies the same file in
+> number order, so allowing it would leave fresh and upgraded databases with different schemas wherever two migrations touch one object.
+>
+> 1. **One increasing sequence.** Files are `00001`-`00057` and then `00080` upward without gaps; `00058`-`00079` are never used (no
+>    database built from the remediation or integrated trees holds them; the old milestone database `MAIN` holds 60 under its
+>    pre-integration numbering and `migrate` refuses it). A new migration takes the highest number on `integration/m9r-m14` plus one
+>    when its line merges. `db/migrations/numbering_test.go` fails on a gap, a duplicate or a number in 58-79.
+> 2. **A pushed number is final.** Nobody renumbers a migration that is on `integration/m9r-m14`. If two lines add the same number, the
+>    line that merges later renumbers its own migration, with the tests and documents that name it, before merging. Every database that
+>    applied that migration under its old number (that line's development, CI and rehearsal databases) is rebuilt from the merged tree,
+>    never migrated: goose compares numbers only and would stop or silently skip the other line's migration. If such a database must be
+>    kept, the renumbering adds a lineage check keyed to an object only that migration creates, as `postgres.CheckMigrationLineage`
+>    does for `00080`.
+> 3. **Replace from the trunk.** A migration that replaces a function, policy, CHECK or grant starts from its latest definition on
+>    `integration/m9r-m14` (not on its own line's branch), keeps every guard of it (or lists a dropped message in `m13DroppedMessages`
+>    with the reason) and asserts owner and ACL in a post-check, as `00090` and `00091` do.
+> 4. **Out-of-order stays off.** Tests bound forward rehearsals with `UpTo(n)` or derive expected counts from the embedded files; none
+>    hard-codes how many migrations `Up` applies.
+> 5. ADR numbers keep their reservations (064-099 remediation, 100-119 milestone); documents have no order constraint.
