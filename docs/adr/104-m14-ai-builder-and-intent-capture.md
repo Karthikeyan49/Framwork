@@ -290,7 +290,8 @@ only ever grow). `usage_day` is the UTC date of `clock_timestamp()`; a new day i
 
 `control.worker_grants_safe()` is replaced from its latest definition (migration 84) with the
 three tables added; the migration ends with a self-check that fails it if any runtime role
-keeps a direct privilege or an extra policy on them.
+keeps a direct privilege or an extra policy on them. *(Struck by Amendment B.7: migration 00089
+does not replace the guard; since migration 87 it is derived and refuses every unlisted relation.)*
 
 ### A2. Authority and identity
 

@@ -29,7 +29,7 @@ do not certify M14 or the merge independently. R6 is held for the milestone
 agent; slice A does not duplicate it. B/C and R7 implementation are not started.
 
 Future migration-numbering concern (static evidence, no new migration attempted):
-`cmd/migrate/main.go:38` creates a Goose provider without
+`cmd/migrate/main.go` (line 38 at that time; line 47 on the integration branch after `b05494a`) creates a Goose provider without
 `WithAllowOutofOrder(true)`; the foundation fixture likewise uses the default.
 Goose v3.28.0 documents rejection of newly discovered migrations below the
 already applied maximum. This stack is now at 89, while the instruction reserves
@@ -257,3 +257,32 @@ This touches a SHARED file (`internal/runtime/workflow/execution.go`) and your t
   with a hoisted tenant value. That changes security-critical policies on many tables and needs your review. Other worker-side correlated subqueries I looked at (`tool_step.go:93`) are per instance, not per receipt.
 - Not run: a slow host. On the reviewer's host the old statement measured 2.24 s; the new one should have more than 30 times of headroom there, but that is arithmetic, not a measurement.
 
+## FROM milestone TO remediation — 22 October 2026 (UTC), second follow-up: three reviews, two fences, the body budget
+
+Subject: what changed in shared files since the head `f6398bf` of the entry above, what the reviews found, what is open, and what is yours to re-verify.
+Nothing here touches `remediation/m9r-foundation`; fetch `origin/integration/m9r-m14` (code head [HEAD-CODE]; later commits are documents only) and merge it before your next slice.
+
+Reports now in the tree (as delivered, each pinned to the commit it names): [final merge review](../verification/INTEGRATION_INDEPENDENT_REVIEW.md) (FAIL, IR-01 to IR-06),
+[M14 review](../verification/M14_INDEPENDENT_REVIEW.md) (FAIL, M14R-01 to M14R-08), [re-verification of the fixes](../verification/M14_AND_FIXES_INDEPENDENT_REVIEW.md) (F-01 to F-08, a 12-pair
+race table over the release ports), [upgrade and ordering rehearsal](../verification/UPGRADE_AND_ORDERING_REHEARSAL.md), [documentation audit](../verification/DOCS_TRUTH_AUDIT.md).
+The plan's top section says finding by finding what was fixed, with which test, and what has not been re-verified.
+
+SHARED files changed since `f6398bf` (keep both sides when you merge; each has a test):
+
+- `internal/platform/access/access.go` and the new `bodybudget.go`: the body pre-read books bytes **as they arrive** (`BodyHold.Add` per Read; 2 MiB per verified identity, 32 MiB in all; a refusal is 429
+  `too_many_uploads` or 503 `service_busy` with `Retry-After`); an anonymous or invalid caller is never read; `serve` also repeats the first exchange of the two AI creation routes after a known abort.
+  The traffic gate does not bound this budget: 16 accounts that really send 2 MiB each every read timeout can keep it full. That is an edge/sizing matter (your D6, ADR061).
+- `internal/platform/postgres/retry.go`: new `RetryWithin(parent, budget, attempts, run, retriable)`; `RetryLocalWhen` is unchanged in behaviour (4 s, 3 attempts) and calls it.
+- `internal/runtime/workflow/execution.go`: `CompensationScanSQL` (your D1 statement, see the addendum above).
+- `scripts/runtime-env.mjs`, `scripts/with-env.mjs`: `runtimeKindOf` recognises every spelling of a backend command (F-04).
+- `internal/metadata/version_family.go` (new, non-test) and `sql_version_gate_test.go`; `tests/integration/m9r_catalog_version_gate_test.go` reads the live catalog (F-03). If you add authoring 1.6.0, both tell you which objects still name only older versions; a gate written as a character class is not read.
+- `cmd/migrate/main.go` messages and `db/migrations/numbering_test.go` (D2, the numbering rule as a test).
+- migrations **`00091`** (`rollback_release` writes the release fence) and **`00092`** (`approve_release` locks the pointer `FOR SHARE` and writes the fence; every candidate gets its fence row at staging by a `SECURITY DEFINER`
+  trigger, and the existing ones in the migration, written as the schema owner). **The next free number is `00093`.** Both start from the latest definition on this branch and assert owner and ACL.
+- `internal/ai/*`, `access/ai.go` (milestone lane): provider labels, canceled-call charge, usage cap, adapter bound, repeated admission and result exchange. [ADR104 Amendment C](../adr/104-m14-ai-builder-and-intent-capture.md).
+
+What the reviews say that is yours or touches you: the per-row cost of the worker row-level policy is still the open part of D1; the aggregate capacity FAIL (D5) and the injected driver panic (D1) are unchanged and were not re-run; the reference-scale
+gates were not run again after the request path changed; the proposals for `AGENTS.md`, `CLAUDE.md` and `README.md` are the owner's (the corrected patch is in the [proposal](M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md)).
+
+Please re-verify with your own probes: B-01, B-02 and B-05 (still only mine and the reviewers'), `00091` and `00092` (especially the trigger and the backfill on a database of yours that holds candidates), and the body budget under your reference workloads. Migration numbering is still the owner's decision;
+the wording is in the plan.

@@ -7,8 +7,11 @@
 
 Date: 19 October 2026 (UTC). Source: `claude/m14-ai-builder` (built on the M13 lineage). Decisions, amendments and
 recovery are in [ADR104](../adr/104-m14-ai-builder-and-intent-capture.md). **M14 is a development/test preview
-capability. No real model was called, no provider endpoint or credential was available, and the independent review
-of M14 has not been run.** It is not production ready.
+capability. No real model was called, no provider endpoint or credential was available.** It is not production ready.
+*(Update, 22 October 2026: the first independent review of M14 has run since this report was written, verdict FAIL with
+four MEDIUM and four LOW findings, [M14_INDEPENDENT_REVIEW.md](../verification/M14_INDEPENDENT_REVIEW.md); the fixes and the
+residuals are [ADR104 Amendment C](../adr/104-m14-ai-builder-and-intent-capture.md) and the
+[integration plan](LINE_INTEGRATION_PLAN.md). The sentences below are the builder's evidence of 19 October.)*
 
 ## What changed
 

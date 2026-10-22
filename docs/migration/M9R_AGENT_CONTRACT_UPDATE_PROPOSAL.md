@@ -34,6 +34,14 @@ of the patch against the two baseline files exits 0.
   latest SQL guards, worker allowlist and migration-order decision.
 - Preserve branch/ownership restrictions, temporary independent-review deferral,
   explicit D-order confirmation and request-only/deferred product/deployment work.
+- `README.md` is outside this patch and carries the same stale statements ("Follow the
+  remediation plan before M10", "M10 stays paused", "no ... AI execution capabilities",
+  "Only `local.noop` is registered; external tools are M10", lines 14, 645, 652 and 757 at the
+  audit's pin). The exact lines and the proposed text are in the
+  [documentation audit](../verification/DOCS_TRUTH_AUDIT.md), section "Proposed text for the files
+  that stay untouched" (DT-24). Applying them is the owner's decision, like this patch.
+- The proposed `ADR103` amendment of the audit is written: ADR103 amendments 15 and 16 record the
+  rollback and approve fences (migrations 00091 and 00092).
 
 These are documentation corrections to the user's existing scope, not new
 architecture decisions or production approval. R6 ownership and remaining

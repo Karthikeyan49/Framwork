@@ -81,7 +81,7 @@ Independent adversarial review of M13 (a separate agent, 2026-10-19): **PASS WIT
 
 | Finding | Disposition | Where |
 |---|---|---|
-| M13R-01 MEDIUM an acknowledged rejection did not stop an activation that started earlier | FIXED: per-hash fence row written by both ports, the older snapshot aborts with 40001 | migration 88, ADR103 amendment 12, `TestM13R01*` |
+| M13R-01 MEDIUM an acknowledged rejection did not stop an activation that started earlier | FIXED for reject and activate: per-hash fence row written by both ports, the older snapshot aborts with 40001. The same fence was missing from rollback (IR-06, migration 00091) and approve (F-05, migration 00092): ADR103 amendments 15 and 16 | migration 88, ADR103 amendment 12, `TestM13R01*` |
 | M13R-02 MEDIUM rollback class gate read only the current release | FIXED: gate covers every release the pointer crosses | migration 88, `promote.go`, ADR103 amendment 12, `TestM13R02*` |
 | M13R-03 LOW demoted approver still counts toward quorum | FIXED in the Go layer after the first fix round: only approvers whose current role grants `releases.approve` count at activation and in the derived status; the database floor is unchanged | `promote.go` (`holdingApprovers`), `policy/holds.go`, `promotion/approver_roles.go`, ADR103 amendment 13, `TestM13R03*` |
 | M13R-04 LOW U+017F / U+212A alias a key | FIXED: request keys must be ASCII snake_case | `promote.go`, `TestM13R04*` |

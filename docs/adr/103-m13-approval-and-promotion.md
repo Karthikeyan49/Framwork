@@ -306,10 +306,13 @@ These supersede the matching sentences above where they differ.
      one `control.release_fences` row per hash (an upsert that bumps a counter). Under REPEATABLE READ the
      transaction with the older snapshot therefore aborts with `40001` (mapped as the other concurrency
      refusals) instead of committing next to a rejection it could not see; a lock-only fence does not
-     have this effect. Different hashes use different rows and never conflict. `approve_release` does not
-     write the row: an approval recorded beside a committed rejection is harmless because activation reads
-     the rejection again. A rejection that loses to a committed activation fails with `40001` and succeeds
-     on retry (a release can be vetoed after it ran). Tests: `TestM13R01*`.
+     have this effect. Different hashes use different rows and never conflict. `approve_release` did not
+     write the row when this was written, on the argument that an approval recorded beside a committed
+     rejection is harmless because activation reads the rejection again; the second independent review showed
+     that the approval is recorded and counted all the same (amendment 16), and that `rollback_release`, the
+     third writer of the pointer, was missing too (amendment 15). A rejection that loses to a committed
+     activation fails with `40001` and succeeds on retry (a release can be vetoed after it ran). Tests:
+     `TestM13R01*`.
    - *M13R-02, the rollback class gate covers the span (§5).* The gate reads the `Risk.Rollback` class of the
      current release and of every history entry newer than the target's latest entry
      (`control.release_rollback_class`); anything but exactly `POINTER_SAFE` among them needs the acknowledged
@@ -350,6 +353,33 @@ These supersede the matching sentences above where they differ.
    at activate, and is fresh again when the exact definition returns (`TestM13ToolPin*`). The tenant list belongs to the
    definition hash, so narrowing it is `TOOL_CHANGED`; a build that pins a tool the tenant may not use is refused at
    build (`BLOCK.tool_unresolved`), which leaves `TOOL_TENANT_DENIED` as defence in depth that no API path reaches.
+
+15. **`rollback_release` writes the fence (2026-10-22; independent reviews IR-06 and M14R-04; migration 00091).** The pointer has three writers:
+   activation, rollback and the first activation. Amendment 12 fenced the first and left rollback out, so a rollback whose REPEATABLE READ
+   snapshot predated a committed rejection of its target moved the pointer onto the rejected release (reproduced by two reviewers). 00091
+   replaces `control.rollback_release` from its latest definition (00088) with one added statement, the same `release_fences` upsert as
+   activation, written before the rejections are read; owner, ACL and every guard are unchanged and the migration's post-check fails if
+   they moved. Now reject, activate and rollback are fenced against each other: the transaction with the older snapshot aborts with `40001`
+   and is repeated. Tests: `TestM13R01RollbackOvertakenByACommittedRejection` (fails without 00091 with the pointer on the rejected hash),
+   `TestM13R01RejectionOfAnotherHashDoesNotBlockTheRollback`, `TestM13R01RollbackToAnAlreadyRejectedTargetIsRefused`.
+
+16. **`approve_release` is fenced too (2026-10-22; re-verification finding F-05; migration 00092).** A race run over the four ports with held
+   REPEATABLE READ transactions found that an approval whose transaction began before a committed rejection was recorded on the rejected
+   hash, and one that began before an activation or a rollback moved the pointer was recorded on the superseded candidate. The approval cannot
+   move the pointer (activation is fenced and compare-and-set), but the evidence that promotion shows and counts then contained an approval
+   made after a veto, which corrects the "harmless" of amendment 12. 00092 replaces `control.approve_release` from its only definition (00084)
+   with two statements and the order in which the pointer is read: the pointer row is locked `FOR SHARE` first (the lock order of activation and
+   rollback; a pointer that moved after the snapshot raises `40001`; approvers do not wait for each other) and the hash's fence row is written
+   with `ON CONFLICT DO NOTHING` before the rejections are read (under REPEATABLE READ that raises `40001` when the row changed after the
+   snapshot and changes nothing when it did not, so approvers never conflict on an existing row). The row has to exist before anybody's snapshot,
+   or the first approval would create it and a veto racing that moment would be the one to abort, and a veto must stay possible: every candidate
+   gets its fence row when it is staged (an `AFTER INSERT` trigger on `control.release_candidates`, `SECURITY DEFINER`, owner and ACL like the
+   other ports) and the candidates that existed get theirs in the migration, written as the schema owner. Tests: `TestF05ApprovalOvertakenBy*`
+   (S3 rejection, S4 activation, S5 rollback: fail without 00092 with "1 approvals, 1 rejections", pass with `40001` and no approval),
+   `TestF05ApprovalsStillRunTogether` (another hash's veto, concurrent approvers, a veto racing a first approval is recorded),
+   `TestF05EveryCandidateHasItsFenceRow`, and the existing `TestM13AdversarialRaceRejectVersusApprove`, which a first version of the migration
+   (the approver creating the row) failed in round 2. **Residual:** a first activation (no pointer row yet) racing an approval of another
+   first candidate cannot be fenced by a lock on a row that does not exist; the approval is inert at the pointer.
 
 ## Consequences
 
