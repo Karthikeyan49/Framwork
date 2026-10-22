@@ -48,7 +48,7 @@ says nothing about flake rates beyond the reproductions in the table.
 
 | Step | Result |
 |---|---|
-| `make check` (docs checksums 84 + 43, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 32 s on `507c12c`; PASS again (11 s) on the final documents-only head |
+| `make check` (docs checksums 84 + 43, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 32 s on `507c12c`; PASS again (11 s) on the final head, which differs from `507c12c` by documents and one comment in migration 00091 |
 | `make test-unit` (Go packages with `-race`, script tests, frontend tests) | PASS, 221 s: 29 Go packages, 13 script tests, 126 frontend tests in 19 files |
 | `make build` | PASS, 33 s |
 | Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` | **PASS**, one uninterrupted run: 1976.7 s Go time, 1986 s wall including the stack reset (459 tests listed, 458 run) |
