@@ -10,7 +10,7 @@ Later input (after the pin, read only with `git show`): the FINAL reports of the
 (`1d7867f` phase 1, `899bf68` phase 2). They are compared with the three scope documents in the section "Agreement with the final reviews";
 the pin did not move and those files were not edited.
 
-Status: COMPLETE for the scope below. `make check`: NOT RUN (reserved for the very end).
+Status: COMPLETE for the scope below. `make check`: PASS, exit 0, 39.8 s, run once on the branch at 30287ca (84 + 43 checksums, gofmt, go vet of the packages and of ./tests/integration with the integration and performance tags, go mod verify, eslint, tsc); after the later one-line edit of the M13 report only node scripts/verify-docs.mjs was repeated (PASS, 84 + 43).
 
 ## Progress
 
@@ -23,11 +23,11 @@ Status: COMPLETE for the scope below. `make check`: NOT RUN (reserved for the ve
 | 4+ | Final reviews on `origin/review/integration-final`: statements about the tree, agreement of ids, statuses, numbers | DONE (static); executed probes NOT RUN |
 | 5 | `AGENTS.md` / `CLAUDE.md` stale list (report only) | DONE |
 | 6 | Mechanical checks: links, paths, hashes, make targets, migration names, test names, version tokens, counts | DONE |
-| end | `make check` once | NOT RUN (reserved for the very end) |
+| end | `make check` once | PASS, exit 0, 39.8 s, run once on the branch at 30287ca (84 + 43 checksums, gofmt, go vet of the packages and of ./tests/integration with the integration and performance tags, go mod verify, eslint, tsc); after the later one-line edit of the M13 report only node scripts/verify-docs.mjs was repeated (PASS, 84 + 43) |
 
 ## Result in numbers
 
-162 statements were classified (full ledger at the end of this file).
+164 statements were classified (full ledger at the end of this file).
 
 | Area | Statements | TRUE | FALSE | STALE | OVERCLAIM | UNVERIFIABLE |
 |---|---:|---:|---:|---:|---:|---:|
@@ -37,13 +37,13 @@ Status: COMPLETE for the scope below. `make check`: NOT RUN (reserved for the ve
 | M9R_REMEDIATION_PLAN.md | 8 | 5 | 0 | 3 | 0 | 0 |
 | M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md | 4 | 3 | 0 | 1 | 0 | 0 |
 | V2_V3_SUPERSESSION_MAP.md | 3 | 3 | 0 | 0 | 0 | 0 |
-| M10-M14 reports and ADR100-104 | 8 | 4 | 0 | 3 | 1 | 0 |
+| M10-M14 reports and ADR100-104 | 9 | 4 | 0 | 4 | 1 | 0 |
 | independent reviews (interim, final phase 1, M14) | 10 | 7 | 0 | 0 | 0 | 3 |
 | AGENTS.md, CLAUDE.md, README.md | 8 | 2 | 1 | 5 | 0 | 0 |
-| mechanical checks over docs/ | 8 | 8 | 0 | 0 | 0 | 0 |
-| **Total** | **162** | **115** | **3** | **22** | **10** | **12** |
+| mechanical checks over docs/ | 9 | 9 | 0 | 0 | 0 | 0 |
+| **Total** | **164** | **116** | **3** | **23** | **10** | **12** |
 
-Defects: 24 (HIGH 0, MEDIUM 9, LOW 15); FIXED 1, REPORTED 23.
+Defects: 25 (HIGH 0, MEDIUM 9, LOW 16); FIXED 2, REPORTED 23.
 
 ## Defects
 
@@ -80,6 +80,7 @@ UNVERIFIABLE or NOT RUN, not as confirmed.
 | DT-22 | MEDIUM | `docs/migration/M9R_FINDING_STATUS.md:22-23, 28-30, 230`; `docs/migration/LINE_INTEGRATION_PLAN.md:5-6, 103`; `docs/migration/AGENT_HANDOFFS.md:203-233` | The follow-up covers IR-01 to IR-05; row 230: "its final report and any new finding are pending"; the plan: M14/merge review NOT RUN | The final reports on `origin/review/integration-final` add IR-06 (MEDIUM, `rollback_release` writes no `release_fences` row) and M14R-01 to M14R-08 (M14R-04 = IR-06; M14R-01..03 MEDIUM, M14R-05..08 LOW), all open, none in the three documents. This audit confirmed IR-06 statically: `00088_m13_review_fixes.sql:51` (reject) and `:70` (activate) write the fence, `:99-128` (rollback) reads `release_rejections` at `:115` and writes none; the migration is unchanged since `552fa9e`. The race itself is NOT RUN here (needs a database) | REPORTED |
 | DT-23 | LOW | `docs/adr/103-m13-approval-and-promotion.md:305` (amendment 12); `docs/migration/M13_IMPLEMENTATION_REPORT.md:84` | "M13R-01, a veto is not overtaken" / "FIXED: per-hash fence row written by both ports" | The text names two ports (true) but the heading and the FIXED mark read as covering every writer of the pointer; `rollback_release` is a third writer without the fence (IR-06 / M14R-04, DT-22) | REPORTED |
 | DT-24 | MEDIUM | `README.md:14, 645, 652, 757` (outside the audit scope list, found by the stale-number scan) | "Follow the remediation plan before M10"; "M10 stays paused"; "no ... AI execution capabilities"; "Only `local.noop` is registered; external tools are M10" | Same family as DT-06/DT-07: M10-M14 are merged preview code (tool wiring `app.go:59-77`, AI routes behind `PreviewEnabled`, `app.go:270`). README is not under `docs/`, so not edited | REPORTED |
+| DT-25 | LOW | `docs/migration/M13_IMPLEMENTATION_REPORT.md:99` | Re-run recipe: the reset "applies migrations 1-53" | Old milestone numbering in a report whose banner says the numbers below are the renumbered ones; the same set is 1-44 and 80-88 in the integrated tree (`git show -M 8366090`). The M12 report words the same range correctly ("1-44 and 80-83 (then numbered 1-48)") | FIXED (`789b87a`) |
 
 ## Agreement with the final reviews
 
@@ -111,7 +112,7 @@ Re-derived by this audit, not copied:
 
 - Number map: `git show -M 8366090` lists the ten migration and five ADR renames (45-53,60 to 80-89; 036-040 to 100-104). No unmapped old number is left in ADR100-104, the M10-M14 reports or the READMEs.
 - Version tokens match the code: `internal/metadata/models.go:9-19`, `internal/compiler/compiler.go:18-32`, `internal/runtime/workflow/plan.go:22-30`, `internal/runtime/rules/types.go:10`. `contracts/jsonschema/application-v1.3/1.4.schema.json` are byte-identical to `b00da36`; only 1.5 names `tool_ref`; migrations 1-57 are unchanged against `b00da36`.
-- Counts: 443 integration tests listed (`go test -list`, `-tags=integration`); 27 Go packages with tests in `GO_PACKAGES`; 11 script tests (11 pass); 126 frontend tests in 19 files (126 pass); 9 fuzz functions, 5 fuzz make targets; 11 + 7 Playwright cases (static count); 68 migration files.
+- Counts: 443 integration tests listed (`go test -list`, `-tags=integration`); 27 Go packages with tests in `GO_PACKAGES`; 11 script tests (11 pass); 126 frontend tests in 19 files (126 pass); 9 fuzz functions, 5 fuzz make targets; 11 + 7 Playwright cases (static count); 68 migration files; the 443 listed integration tests are the 439 of the pinned review plus exactly the four tests added by the follow-up (`git diff 552fa9e be6ec7c`).
 - Merge record: 23 conflicting files and 37 hunks (`git merge-tree`), 33 non-document files changed by both lines, nine duplicated migration versions `00045-00053`, 116/264 and 189/253 commit/file counts, `integ/prep-m14` = `60da6f2` plus one commit.
 - `00090` is `00052`'s function byte for byte except the predicate, with an owner/ACL/other-literal post-check; `00087` is the last definition of `control.worker_grants_safe`.
 - Fixes with executed negative controls: B-02 (regression test fails with the pre-fix `restore.go` through `go test -overlay`); B-05 scan (`TestSQLFunctionsNameWholeSchemaVersionFamilies` fails with `00090` hidden); B-01 (both new script tests fail on the pre-fix `runtime-env.mjs`). IR-02 replay unit tests pass.
@@ -124,11 +125,12 @@ Re-derived by this audit, not copied:
 
 ## Edits made
 
-One factual correction; one commit for the one document; no frozen source document, code, test, migration, `AGENTS.md` or `CLAUDE.md` was touched.
+Two factual corrections, one commit per document. No frozen source document, code, test, migration, `AGENTS.md` or `CLAUDE.md` was touched.
 
 | File and line | Before | After | Evidence | Commit |
 |---|---|---|---|---|
 | `docs/migration/LINE_INTEGRATION_PLAN.md:129` | "... renumbers the milestone line, 189 commits and 253 files since the base" | "... 192 commits and 253 files since the base" | `git rev-list --count e6305df..8366090` = 192 (189 is the count at `7f2b29b`); the file list of `git diff --name-only e6305df 8366090` has 253 entries | `4e2a028` |
+| `docs/migration/M13_IMPLEMENTATION_REPORT.md:99` | "... applies migrations 1-53" | "... applies migrations 1-44 and 80-88 (then numbered 1-53)" | `git show -M 8366090`: 45-53 became 80-88; the M12 report uses the same wording pattern at line 72 | `789b87a` |
 
 Everything else is REPORTED: the remaining defects are status calls (DT-01..03, 11, 12, 22), rewordings of someone's conclusion (DT-05, 09, 13-16, 19-21, 23), dated or
 retained historical text (DT-10, 17, 18) or files this audit may not edit (DT-04, 06, 07, 24).
@@ -152,6 +154,7 @@ git show --no-patch e219b31; git merge-base b00da36 8366090; git rev-list --coun
 git merge-tree $(git merge-base b00da36 8366090) b00da36 8366090   (conflict files and hunks counted by script; legacy mode, no objects written)
 git show --stat -M 8366090; git show --name-status -M 8366090
 git diff --stat {552fa9e,6a1da17,f6398bf,e0fb83d,b00da36} {be6ec7c,f6398bf,HEAD} [-- paths]; git rev-list --count 552fa9e..be6ec7c
+git merge-base --is-ancestor <a1d8b00|552fa9e|e0fb83d|46d8a2a> <origin/remediation/m9r-foundation|be6ec7c>; git diff 552fa9e be6ec7c -- tests/integration | grep '^+func Test'
 git show 552fa9e:<path> | sed -n ...   (ledger lines, access.go, ai.go, datasets.go, promote.go, preview.go, metadata.go)
 git ls-tree --name-only {b00da36,7f2b29b} db/migrations/; git hash-object AGENTS.md CLAUDE.md; sha256sum AGENTS.md CLAUDE.md
 git show origin/review/integration-final:docs/verification/{INTEGRATION_INDEPENDENT_REVIEW,M14_INDEPENDENT_REVIEW}.md > scratch
@@ -164,10 +167,11 @@ cd apps/web && nice -n 15 npx vitest run --maxWorkers=1 --reporter=dot
 ./scripts/go.sh test -count=1 -run 'TestSQLFunctionsNameWholeSchemaVersionFamilies|TestFamilyGapsSeesTheOriginalDefect|TestMetadataVersionsCheckListsEveryKnownVersion' ./internal/metadata   (plain, and with -overlay hiding 00090)
 ./scripts/go.sh test -count=1 -run TestIRRestoreKeepsTheExactCompilerIdentityOfEveryIntegrityCapableContract ./internal/compiler   (plain, and with -overlay restoring the pre-fix restore.go)
 ./scripts/go.sh test -count=1 -run TestReplayedBody -v ./internal/platform/access
+date -u; uptime; ls /home/user/briefs/54-rev-integration.md (host-local path named in the plan: exists, not in the repository)
 grep / sed / ls / wc / diff over the tree (versions, line references, make targets, build tags, migrations, ADR numbers)
 python3 -I helper scripts in the session scratchpad: relative links, repository paths, test names, decimal metrics against other docs, backticked make targets,
   intersection of objects of 00045-00057 and 00080-00089, SECURITY DEFINER inventory (type-normalised), allowlist row count, ledger rows changed by slice C, statement ledger and counts
-make check   (once, at the end): NOT RUN (reserved for the very end)
+make check   (once, at the end): PASS, exit 0, 39.8 s, run once on the branch at 30287ca (84 + 43 checksums, gofmt, go vet of the packages and of ./tests/integration with the integration and performance tags, go mod verify, eslint, tsc); after the later one-line edit of the M13 report only node scripts/verify-docs.mjs was repeated (PASS, 84 + 43)
 ```
 
 ## Statement ledger
@@ -336,3 +340,5 @@ make check   (once, at the end): NOT RUN (reserved for the very end)
 | ME-06 | tables | Version tokens match code | TRUE | models.go, compiler.go, plan.go, rules/types.go, contracts/jsonschema |
 | ME-07 | docs | Counts 443 / 27 / 11 / 126 / 19 / 9 / 5 / 68 | TRUE | go test -list, go list, node --test, vitest, grep, ls |
 | ME-08 | ADR100-104, reports, READMEs | No unmapped old migration or ADR number remains | TRUE | grep over docs and code; every residue is a banner, Amendment I1 or a remediation-line ADR |
+| RB-09 | M13_REPORT:99 | Re-run recipe: the reset applies migrations 1-53 | STALE | Old numbering; 1-44 and 80-88 in the integrated tree (FIXED, DT-25) |
+| ME-09 | tests/integration | 443 tests listed = 439 at the pin plus four added by the follow-up | TRUE | git diff 552fa9e be6ec7c adds exactly TestM14SlowRequestBodies..., TestM9RUniqueLifecycle..., TestMigrationLineage..., TestIntegrationTenantRoleApprover...; none removed |
