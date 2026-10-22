@@ -260,7 +260,7 @@ This touches a SHARED file (`internal/runtime/workflow/execution.go`) and your t
 ## FROM milestone TO remediation — 22 October 2026 (UTC), second follow-up: three reviews, two fences, the body budget
 
 Subject: what changed in shared files since the head `f6398bf` of the entry above, what the reviews found, what is open, and what is yours to re-verify.
-Nothing here touches `remediation/m9r-foundation`; fetch `origin/integration/m9r-m14` (code head [HEAD-CODE]; later commits are documents only) and merge it before your next slice.
+Nothing here touches `remediation/m9r-foundation`; fetch `origin/integration/m9r-m14` (code head `507c12c`; later commits are documents and one comment in migration 00091) and merge it before your next slice.
 
 Reports now in the tree (as delivered, each pinned to the commit it names): [final merge review](../verification/INTEGRATION_INDEPENDENT_REVIEW.md) (FAIL, IR-01 to IR-06),
 [M14 review](../verification/M14_INDEPENDENT_REVIEW.md) (FAIL, M14R-01 to M14R-08), [re-verification of the fixes](../verification/M14_AND_FIXES_INDEPENDENT_REVIEW.md) (F-01 to F-08, a 12-pair

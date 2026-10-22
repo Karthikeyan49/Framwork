@@ -18,6 +18,7 @@ and one more LOW (F-05: approvals recorded on rejected or superseded candidates)
 fixes (last section): F-01, F-02 and IR-06 PASS; the body budget opens a new MEDIUM (F-06, a cross-tenant write lock held by eight
 unprovisioned identities with header-only requests); F-05 is still open. Round 2 (`a2c5c52`, `8528fde`, `9d2928d`, `b05494a`): M14R-01, -02,
 -07, the concurrent-result part of M14R-03, D1 and D2 fixed; M14R-06 partly (F-08 LOW); label reduction loses evidence (F-07 LOW).
+Round 3 (`507c12c`): F-05, F-06, F-07 and F-08 fixed; no new defect; the stated bandwidth-bound residual of the body budget reproduced.
 
 ## Progress
 
@@ -33,6 +34,7 @@ unprovisioned identities with header-only requests); F-05 is still open. Round 2
 | 11:40 | `TestM12APIDetailReadsOfALargeCandidateConverge` once (A6 item) | PASS, 10.8 s, load 2.5 |
 | 11:42-11:50 | re-verification of `c76968f` (F-01/F-02) and `bfa47c4` (IR-06) in a scratch copy of `bfa47c4`; mutation and negative controls of the builder's new tests | F-01 PASS, F-02 PASS, IR-06 PASS; new F-06 MEDIUM; F-05 still open |
 | 12:07-12:16 | round 2: `9d2928d`, `b05494a`, `a2c5c52`, `8528fde` on a scratch copy of `2ca08d8` with my own probes | M14R-01/-02/-07, M14R-03 results, D1, D2 fixed; M14R-06 partly (F-08); F-07 new LOW |
+| 17:14-17:18 | round 3: `b427e8b`, `37d9b14`, `dae9a1b` (head `507c12c`) on the `fix` stack | F-05, F-06, F-07, F-08 fixed; F-06 bandwidth residual confirmed as stated; no new defect |
 
 ## Findings
 
@@ -369,9 +371,29 @@ answer costs 29% of the default daily budget (four lock the tenant out for the U
 reserved, `used_tokens` can pass the daily budget the admission checked. The commit says "a figure above twice what the request could cost ...
 is capped".
 
+## Re-verification round 3 (2026-10-22, `b427e8b`, `37d9b14`, `dae9a1b`, head `507c12c`)
+
+Tree: a scratch copy of `507c12c` on the idle `fix` stack (`dbrunfix`, reset once from the tree: migrations through `00092`), every run
+`nice -n 19`, one at a time, without `-race` (the coordinator's gate ran on the M14 stack; load average 3.6-7.1). Own probes only.
+
+| item | verdict | executed evidence |
+|---|---|---|
+| F-06 (`b427e8b`, bytes booked as they arrive; 2 MiB per identity, 32 MiB total) | **fixed** | header-only attack, 1 MiB announced, nothing sent: 8 identities x 4 and 20 identities x 4 hold 0 bytes (heap +0.4 / +1.0 MiB), the owner's POST is served (400 `invalid_metadata`, the validator) during and after; the same with `Expect: 100-continue` (the server sends `100 Continue` to all 80, nothing arrives, nothing is booked) |
+| F-06 residual (stated in the commit) | confirmed, not a new defect | 20 signed identities x 2 connections that really send 1 MiB - 1 and stall: 36 held, 4 refused 503; heap +36.8 MiB; the owner's 64 KiB POST gets 503 `service_busy` until they leave, then 400 again. With 16 x 2 the leftover 32 bytes of the total still admit a 2-byte POST. Bandwidth-bound (about 32 MiB per read timeout) and needs at least 16 accounts |
+| booking under abuse | **holds** | one identity, 300 connections x 400 KiB sent (one byte short): 6 held, 294 x 429, heap +3.2 MiB, another identity served; chunked 1 MiB bodies from 20 identities: 33 held, 7 x 503, heap +36.8 MiB; a 20 KiB body written one byte per write: answered normally in 0.07 s |
+| release on abnormal endings | **holds** | 5 x client gone after 700 KiB, 5 x malformed chunk after data, 5 x cap hit at 1 MiB, 2 x server read timeout after half a body; afterwards two full 1 MiB bodies of the same identity are both read (413 from the AI cap) and a third tiny POST still fits: nothing leaked |
+| refusal in the middle of a body | **safe** | the identity's share full, then bodies of 2, 100 and 300 KiB that contain a complete request line, followed by a pipelined GET on the same connection: one answer (429) and the connection is closed; the embedded request line is never parsed and the pipelined request is not served (no reuse, no smuggling) |
+| F-05 (`37d9b14`, migration `00092`) | **fixed** | S3 approve vs committed reject: 40001, no approval recorded; S4 approve vs committed activation and S5 approve vs committed rollback: 40001, no approval; S1, S2, S6-S10, S12, S13 unchanged (40001) |
+| a veto aborted by an approval | **no** | S14: a rejection whose snapshot predates a committed approval of the same hash succeeds (approvals 1, rejections 1): approvals leave an existing fence row unchanged |
+| approvers that conflict | **no** | S15: two approvers of one hash with overlapping transactions: both recorded (2 approvals) |
+| lock-order deadlock | **none found** | 25 rounds of 4 concurrent random port calls (approve, reject, activate, rollback) on 4 candidates and the pointer: no 40P01; outcomes approve 1 ok / 7 x 40001 / 13 refused, reject 19 ok / 2 x 40001 (a concurrent activation of the same hash, the S10 class), activate 7 x 40001 / 20 refused, rollback 22 ok / 9 x 40001. Read: no path takes a fence row before the pointer, so no cycle |
+| trigger and backfill hygiene | **holds** | `control.release_candidate_fence()`: owner `framework_schema_owner`, `SECURITY DEFINER`, `search_path=pg_catalog, pg_temp`, ACL owner only; app, worker, dispatcher and PUBLIC can neither insert into `release_candidates` nor write `release_fences`; a direct call as `framework_app` is refused 42501; the worker guard evaluated as `framework_worker` is true. Backfill: a database at 91 with two candidates has 0 fences, after `00092` 2 and none missing; a candidate staged afterwards gets its fence from the trigger |
+| F-07 (`dae9a1b`, labels) | **fixed** (residual noted) | `alpha_4_turbo`, `Beta-3.1_70B`, `model_fast`, `a_b_c`, `ok-model:1`, 128 x `x`, all 201 READY with the same label stored and audited. Residual: a leading run of non-ASCII letters is still dropped (`модель-1` -> `-1`, `модель` -> empty), so two non-Latin labels with the same ASCII tail still collapse; no raw-label hash is kept |
+| F-08 (`dae9a1b`, usage cap) | **fixed** | the answer reporting 100,000,000 + 100,000,000 tokens is now charged 29,780 (input 2 x 5,674 + 1,024 = 12,372; output 2 x 8,192 + 1,024 = 17,408), below the proposal's reservation of 41,598; the next request is admitted (201) |
+
 ## Probe sources
 
 The probes were temporary files (`tests/integration/zz_review_a1_test.go`, `zz_review_a2_test.go`, `zz_review_a5_test.go`,
-`internal/metadata/zz_review_scan_test.go`, `internal/compiler/zz_review_restore_test.go`, `tests/integration/zz_review_release_race_test.go`, `zz_review_fix01_test.go`, `zz_review_m14fix_test.go`, `zz_review_d2_test.go`), deleted before every commit; the
+`internal/metadata/zz_review_scan_test.go`, `internal/compiler/zz_review_restore_test.go`, `tests/integration/zz_review_release_race_test.go`, `zz_review_fix01_test.go`, `zz_review_m14fix_test.go`, `zz_review_d2_test.go`, `zz_review_r3_budget_test.go`, `zz_review_r3_fence_test.go`), deleted before every commit; the
 snippets above are their essential parts. Scratch mutants: a copy of `be6ec7c` with `preRead := false && ...` (A1) and one with
 `|| (false && !slices.Contains(permitted, roles[0]))` in `internal/policy/approval.go` (A6), never on the branch.
