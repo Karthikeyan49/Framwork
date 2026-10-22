@@ -10,21 +10,24 @@ STATUS at `552fa9e` (the pinned commit): COMPLETE for the attacks listed (what w
 did not keep is one meaning of a version token in one SQL literal (IR-01), the availability of the admission slots (IR-02, inherited), one M13
 fence (IR-06), a gate that reproduces (IR-03) and truthful ledgers (IR-04).
 
-STATUS at `be6ec7cae1849bf535bad1811b21bf93067598b5` (re-verified 2026-10-22, the head of `origin/integration/m9r-m14` after the builders' fixes): the gate **PASS**es on every step I ran (`make check`, `make build`, `make test-unit`, the full integration suite as one run with 437 PASS / 5 SKIP / 0 FAIL, e2e 11, sign-in e2e 7, the five fuzz targets, the ten-minute outage); IR-01, IR-02 and IR-05 are verified **FIXED** by attacks that the builders' tests do not make; IR-04 is fixed for the statements cited (two sentences that still name `552fa9e` as the tip remain); IR-03 is **partly fixed** (two of three timing-bound causes repaired in the tests); **IR-06 (MEDIUM) is open and reproduces unchanged**. Overall: **FAIL** - one MEDIUM open in this report (IR-06) and, in the M14 report, three more (M14R-01 to M14R-03) and four LOW, none fixed by any commit after the pinned one; no HIGH.
+STATUS at `be6ec7cae1849bf535bad1811b21bf93067598b5` (re-verified 2026-10-22, the head of `origin/integration/m9r-m14` after the builders' fixes): the gate **PASS**es on every step I ran (`make check`, `make build`, `make test-unit`, the full integration suite as one run with 437 PASS / 5 SKIP / 0 FAIL, e2e 11, sign-in e2e 7, the five fuzz targets, the ten-minute outage); IR-01 and IR-05 are verified **FIXED** by attacks that the builders' tests do not make, and IR-02 is fixed for the database slots (the third pass corrects this: the fix opened a memory lever that I had not measured); IR-04 is fixed for the statements cited (two sentences that still name `552fa9e` as the tip remain); IR-03 is **partly fixed** (two of three timing-bound causes repaired in the tests); **IR-06 (MEDIUM) is open and reproduces unchanged**. Overall: **FAIL** - one MEDIUM open in this report (IR-06) and, in the M14 report, three more (M14R-01 to M14R-03) and four LOW, none fixed by any commit after the pinned one; no HIGH.
+
+STATUS at `0e13abe` (third pass, 2026-10-22, the tip of `origin/integration/m9r-m14` after 37 more commits): the gate **PASS**es on every step I ran (`make check` 96.2 s, `make build` 22.4 s, `make test-unit` 256.7 s, the full integration suite as one run with 453 PASS / 5 SKIP / 0 FAIL in 1845.922 s, e2e 11, sign-in e2e 7, the five fuzz targets, the ten-minute outage); IR-01, IR-03, IR-04, IR-05 and IR-06 are verified **FIXED**, and IR-02 is **FIXED** with the body budget - the verdict "IR-02 FIXED" of the previous pass is corrected in the section below (the first fix opened a memory lever that I had read and not measured; the second review found it); the code the builders added since (the body budget, the approval and rollback fences, the repeated AI exchanges, the compensation scan, the launcher and the version-gate scan) was attacked with probes of my own (A.13 to A.18) and held, except for two guards that fail open (IR-07, IR-08, LOW). Overall: **PASS** - no HIGH and no MEDIUM open in this report; open LOW: IR-07 and IR-08 here, the documented bandwidth-bound residual of the body budget (A.14), and M14R-03 (the expiring-token residual), M14R-05 and M14R-08 in the M14 report. A PASS here does not certify production readiness: what I did not cover is the last section.
+
 Everything from "Verdict by decision" down to the heading "Re-verification at `be6ec7c`" is the review of the pinned commit and is kept as written; the
-re-verification is the section of that name, before "Not covered".
+later passes are the sections "Re-verification at `be6ec7c`" and "Third pass at `0e13abe`", before "Not covered". The third pass corrects one verdict of the second (IR-02).
 
-## Verdict by decision of the plan (at the pinned commit; the last column is the re-verification)
+## Verdict by decision of the plan (at the pinned commit; the last columns are the two later passes)
 
-| # | Decision | Verdict at `552fa9e` | Deciding attack | Verdict at `be6ec7c` |
-|---|---|---|---|---|
-| 1 | One meaning per version token (authoring schema, IR and compiler 1.3.0 / 1.4.0 / 1.5.0; workflow DSL 2.0.0 / 2.1.0 / 2.2.0) | **FAIL** (IR-01) | `TestReviewUniqueFieldUnderEachSchemaVersion`; nine re-shaped IR artifacts restored (`TestReviewVersionTokenReadings`, held) | **PASS** (IR-01 fixed) |
-| 2 | Migration order and the shared `metadata_versions_schema_version_check` | PASS (IR-05 LOW) | mechanical object intersection of both migration sets; `TestReviewMigrateOverMilestoneNumbering` | PASS (IR-05 fixed for a real milestone database) |
-| 3 | Derived worker guard `control.worker_grants_safe()` | PASS | evaluated in a real `framework_worker` session; privilege inventory of the four guarded schemas | PASS (no file of the guard differs from the pinned commit) |
-| 4 | R7b event authority against the M10 ledger and the M11 freeze | PASS | `TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts`; isolation-level read of `RuntimeSnapshot`, `jobs.go`, `freezePattern` | PASS (`TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts` run again: the live reader still stops the migrator at 57 (55P03) and the database stays at 56; after the reader ends the same call applies 57 and 80-90 and the version is 90) |
-| 5 | HTTP front door (`internal/platform/access/access.go`) | PASS for authority, **FAIL** for availability (IR-02) | `TestReviewRouteMatrix` (45 POST routes); `TestReviewSlowBodyHoldsAdmissionSlots` | **PASS** (IR-02 fixed; route matrix PASS again) |
-| 6 | Honesty of the documents | **FAIL** (IR-04) | reading against the tree | **PASS** for the statements cited in IR-04; two sentences that name `552fa9e` as the tip remain (LOW, see the re-verification) |
-| - | M13 fixes carried by the merge (migration `00088`) | **FAIL** (IR-06) | `TestReviewRollbackOvertakesConcurrentRejection` | **FAIL** (IR-06 open, unchanged) |
+| # | Decision | Verdict at `552fa9e` | Deciding attack | Verdict at `be6ec7c` | Verdict at `0e13abe` |
+|---|---|---|---|---|---|
+| 1 | One meaning per version token (authoring schema, IR and compiler 1.3.0 / 1.4.0 / 1.5.0; workflow DSL 2.0.0 / 2.1.0 / 2.2.0) | **FAIL** (IR-01) | `TestReviewUniqueFieldUnderEachSchemaVersion`; nine re-shaped IR artifacts restored (`TestReviewVersionTokenReadings`, held) | **PASS** (IR-01 fixed) | **PASS** |
+| 2 | Migration order and the shared `metadata_versions_schema_version_check` | PASS (IR-05 LOW) | mechanical object intersection of both migration sets; `TestReviewMigrateOverMilestoneNumbering` | PASS (IR-05 fixed for a real milestone database) | PASS (the migrations are now 00001-00057 and 00080-00092; the milestone-database refusal and the numbering probe ran again; `00091` replaces `rollback_release` of `00088` and differs from it by four lines (three of comment and one `INSERT` into `control.release_fences`), `00092` replaces `approve_release` of `00084` and adds one trigger function and one trigger; no object of the milestone line's numbers is touched) |
+| 3 | Derived worker guard `control.worker_grants_safe()` | PASS | evaluated in a real `framework_worker` session; privilege inventory of the four guarded schemas | PASS (no file of the guard differs from the pinned commit) | PASS (the privilege inventory of the four guarded schemas was repeated on a database migrated to the tip (A.18): 104 SECURITY DEFINER functions (one more: `release_candidate_fence`, executable by nobody), 4 that pin `pg_catalog` alone (the R7b ones, as before), 0 not owned by the schema owner, 0 executable by PUBLIC, 72 tables (71 with forced row-level security), the worker holds 16 relations and 26 functions, the dispatcher 5, the 60 rows of the worker allowlist are all held, 833 internal references and none unresolved) |
+| 4 | R7b event authority against the M10 ledger and the M11 freeze | PASS | `TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts`; isolation-level read of `RuntimeSnapshot`, `jobs.go`, `freezePattern` | PASS (`TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts` run again: the live reader still stops the migrator at 57 (55P03) and the database stays at 56; after the reader ends the same call applies 57 and 80-90 and the version is 90) | PASS (`TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts` ran again: the live reader still stops the migrator at 57 (55P03) and the database stays at 56; after it ends the same call applies 57 and 80-92) |
+| 5 | HTTP front door (`internal/platform/access/access.go`) | PASS for authority, **FAIL** for availability (IR-02) | `TestReviewRouteMatrix` (45 POST routes); `TestReviewSlowBodyHoldsAdmissionSlots` | **PASS** for authority and for the database slots (corrected in the third pass: the fix opened a memory lever, F-01) | **PASS** (authority: the route matrix again, 45 POST routes, 74 denied calls and 90 denial rows; availability: the slow-body probes and the body budget (A.13, A.14), see the third pass; an anonymous caller is now never read on any route (F-02, A.14)) |
+| 6 | Honesty of the documents | **FAIL** (IR-04) | reading against the tree | **PASS** for the statements cited in IR-04; two sentences that name `552fa9e` as the tip remain (LOW, see the re-verification) | **PASS** (the two sentences that named `552fa9e` as the tip are rewritten and the "review is NOT RUN" sentence is gone; the builders' own documentation audit lists further defects that I did not re-verify) |
+| - | M13 fixes carried by the merge (migration `00088`) | **FAIL** (IR-06) | `TestReviewRollbackOvertakesConcurrentRejection` | **FAIL** (IR-06 open, unchanged) | **PASS** (IR-06 fixed by `00091`, the approval fence `00092` added; `TestReviewRollbackOvertakesConcurrentRejection` passes, and the randomized stress of the four release ports found no violation in 168 rounds) |
 
 ## Progress (UTC)
 
@@ -48,6 +51,10 @@ re-verification is the section of that name, before "Not covered".
 | 17:03-17:34 | full integration suite at `be6ec7c`, `-race -v`, clean tree | **PASS** as one run, 1854.972 s: 437 PASS, 5 SKIP (the opt-in retained legacy artifact tests), 0 FAIL; 442 tests run; no data race, no panic |
 | 17:34-17:53 | e2e, sign-in e2e, fuzz, the probe batch, the negative control of the builders' SQL scan, the test count, the ten-minute outage, all at `be6ec7c` | all PASS; the probes confirm the three fixes and still reproduce IR-06 and M14R-01 to M14R-08 |
 | 17:53-18:01 | the IR-03 test fixes under CPU load (A.12), pinned tree against `be6ec7c` | (a) `TestM12APIDetailReadsOfALargeCandidateConverge`: pinned tree 0 of 3 failed (11/11/12 s), `be6ec7c` 0 of 3 failed (11/10/10 s); (b) `TestTimeoutWhileServerSleepsIsUnknownAndBounded` x300: pinned tree 33 failing executions, `be6ec7c` 0; (c) `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` (unchanged by the builders) at `be6ec7c`: 0 of 3 failed (8/8/8 s) |
+| 2026-10-22 20:36-20:43 | third pass: worktree at `0e13abe` (37 commits further), product diff read, `make check`, `make build`, `make test-unit` | `make check` 96.2 s, `make build` 22.4 s, `make test-unit` 256.7 s (29 Go packages, 13 script tests, 126 frontend tests in 19 files): all PASS |
+| 20:47-20:53 | third pass: the earlier probes against the tip and my new ones (A.13 to A.15); the Docker daemon had died in an environment pause and was restarted first (a first batch that ran against the dead stack was discarded) | every earlier probe and the new ones ran against the tip: the probes of IR-06 and of M14R-01, -02, -06, -07 now PASS, M14R-05 and M14R-08 still reproduce, the held attacks hold; two probes fail for reasons that are not findings (below) |
+| 20:55-21:26 | third pass: full integration suite at the tip, `-race -v`, clean tree | **PASS** as one run, 1845.922 s: 453 PASS, 5 SKIP (the opt-in retained legacy artifact tests), 0 FAIL; 458 of 459 tests run (the excluded one is the 459th); no data race, no panic |
+| 21:26-22:17 | third pass: e2e, sign-in e2e, fuzz, test count, the ten-minute outage, then the extras (compensation scan timing, R7a burst against the binary of the tip, the fence stress of 168 rounds, the body budget probes - accounting, a full budget and its release, declared-and-unsent bodies, anonymous callers, isolation - the abandoned-call counter, stored model labels, the launcher spellings, the version-gate scan and the catalog inventory; the last final run of the probes of A.13 and A.14 is the one quoted) | all PASS (details in the gate table and in the attacks below) |
 
 ## Findings
 
@@ -56,7 +63,7 @@ documented contract; LOW hardening, documentation or test gap.
 
 ### IR-01 MEDIUM - `field.unique` cannot be enabled under authoring schema/IR 1.5.0, and every write to such an entity is refused
 
-Status at `be6ec7c`: **FIXED** by migration `00090` (see "Re-verification at `be6ec7c`"). The finding below is as made at `552fa9e`.
+Status at `be6ec7c`: **FIXED** by migration `00090`. At `0e13abe`: **FIXED**, unchanged (the probes pass; the builders widened their SQL scan). The finding below is as made at `552fa9e`.
 
 Contract: ADR100 Amendment I1: "`1.5.0` is a superset of `1.4.0`: it carries both and adds the tool activity";
 `metadata.IntegritySchema(v)` is true for 1.4.0 and 1.5.0; the compiler, `validateIntegrity` and the renderer accept `unique` under 1.5.0.
@@ -86,7 +93,7 @@ version literals.
 
 ### IR-02 MEDIUM - request bodies are read inside the database admission slot and transaction (inherited from the remediation line, extended by every M12-M14 POST route)
 
-Status at `be6ec7c`: **FIXED** for the database slots by the body pre-read in `serve` (`access.go:293-316`); residuals are listed in the re-verification. The finding below is as made at `552fa9e`.
+Status at `be6ec7c`: **FIXED for the database slots** by the body pre-read in `serve`; the third pass corrects this: the change opened a memory lever (the second review's F-01, MEDIUM). At `0e13abe`: **FIXED** with the body budget (`bodybudget.go`), see "Third pass at `0e13abe`". The finding below is as made at `552fa9e`.
 
 Contract: R7a (ADR061) "bounded process-local admission before protected API work"; `API_DB_CONCURRENCY` (default 4) bounds database work; the
 commands route reads its body *before* the transaction (`access.go`, `localCommand`) precisely to avoid this.
@@ -113,7 +120,7 @@ with `http.NewResponseController(w).SetReadDeadline` before taking the slot.
 
 ### IR-03 LOW - the gate is host-bound: three timing-bound assertions failed on a slower host session, and the plan's "green" was a composite (the pinned head passes as one run on a faster one)
 
-Status at `be6ec7c`: **PARTLY FIXED**: the test-side causes of two of the three timing-bound failures were repaired (a retrying set-up, a test server that aborts a departed client's handler), the worker-policy budget is unchanged by design; the gate passed as one run at `be6ec7c` on this host. The finding below is as made at `552fa9e`.
+Status at `be6ec7c`: **PARTLY FIXED**: the test-side causes of two of the three timing-bound failures were repaired (a retrying set-up, a test server that aborts a departed client's handler), the worker-policy budget is unchanged by design; the gate passed as one run at `be6ec7c` on this host. At `0e13abe`: **FIXED** for the three assertions: the compensation statement reads the receipts once (`internal/runtime/workflow/execution.go:273-281`, an uncorrelated `NOT IN`), 1.22-1.35 s -> 32-36 ms for the same 96 receipts (A.15) with identical rows on 4,000 random receipt sets (A.13); in the full run `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` took 3.24 s (6.10 s at `be6ec7c`) and `TestM12APIDetailReadsOfALargeCandidateConverge` 8.32 s. The slower-database variant is **NOT RUN**. The finding below is as made at `552fa9e`.
 
 Executed on this host (4 vCPU, `nice -n 10`, one process at a time) in two sessions: 2026-10-20 (session 1) and 2026-10-22 (session 2, after an environment
 pause; the host was visibly faster, the whole integration suite took 1880.1 s instead of 2716.8 s). The step-by-step table is under "Gate reproduction".
@@ -141,7 +148,7 @@ that the large-candidate test runs inside, the 750 ms slack of the unit test) or
 
 ### IR-04 LOW - documents of the merged tree contradict the tree
 
-Status at `be6ec7c`: **FIXED** for the statements cited (the live ledger, the script-test count, `make check`); the old wording remains only under headings that call it historical, and two new sentences that name `552fa9e` as the tip are listed in the re-verification. The finding below is as made at `552fa9e`.
+Status at `be6ec7c`: **FIXED** for the statements cited, two new stale sentences listed. At `0e13abe`: **FIXED**: those sentences are gone and the ledger agrees with the tree on the points I checked. The finding below is as made at `552fa9e`.
 
 * `docs/migration/M9R_FINDING_STATUS.md` is declared the live ledger (plan lines 59-60; the appendix header, lines 212-217: "it is not the live ledger. The
   live ledger is the table above"). In the tree that contains M10 to M14 the table above says: "no M10/main merge" (lines 17 and 30), "M10 remains paused
@@ -155,7 +162,7 @@ Status at `be6ec7c`: **FIXED** for the statements cited (the live ledger, the sc
 
 ### IR-05 LOW - nothing refuses a database that holds the milestone line's migration numbers
 
-Status at `be6ec7c`: **FIXED** for a real milestone database by `postgres.CheckMigrationLineage` (see the re-verification). The finding below is as made at `552fa9e`.
+Status at `be6ec7c`: **FIXED** for a real milestone database by `postgres.CheckMigrationLineage`. At `0e13abe`: **FIXED**, unchanged. The finding below is as made at `552fa9e`.
 
 The plan says `MAIN` "has to be rebuilt, not migrated". Executed (`TestReviewMigrateOverMilestoneNumbering`, Appendix A): a database at 44 with
 `goose_db_version` rows for the milestone numbers, then `migrate up`: with 45-53 the run stops at 54 with `column "aggregate_valid_v1" does not exist` and
@@ -166,7 +173,7 @@ silently.
 
 ### IR-06 MEDIUM - `rollback_release` does not write the M13R-01 fence: a rollback that began before a committed rejection moves the pointer onto the rejected hash
 
-Status at `be6ec7c`: **OPEN**, reproduces unchanged. The finding below is as made at `552fa9e`.
+Status at `be6ec7c`: **OPEN**, reproduced. At `0e13abe`: **FIXED** by migration `00091` (and its neighbour, the approval fence, by `00092`). The finding below is as made at `552fa9e`.
 
 Full write-up, evidence and repro: `docs/verification/M14_INDEPENDENT_REVIEW.md`, finding M14R-04 (the item belongs to the review of migration `00088`).
 In short: `db/migrations/00088_m13_review_fixes.sql:51,70` make `reject_release` and `activate_release` write the same `control.release_fences` row so that the
@@ -265,7 +272,7 @@ run, deleted; no product file was changed). The change set is small and was enum
 | Finding | At `552fa9e` | At `be6ec7c` | Deciding attack, executed at `be6ec7c` |
 |---|---|---|---|
 | IR-01 MEDIUM | open | **FIXED** | `TestReviewUniqueIsEnforcedUnderSchema15` (A.11): schemas 1.4.0 and 1.5.0 both register, build to `READY`, then accept the first value (200), refuse the duplicate (409) and accept an absent field (200) |
-| IR-02 MEDIUM | open | **FIXED** (residuals below) | `TestReviewSlowBodyHoldsAdmissionSlots` (A.2, the probe of the pinned commit, unchanged): with four trickling bodies the honest `GET` takes 10 ms (8.02 s at `552fa9e`) and the honest AI proposal answers 201 `READY` in 1.53 s (baseline 1.55 s; at `552fa9e` 503 after 9.54 s and `PENDING`); `TestReviewSlowBodiesAfterTheFix` (A.11): six kinds of attacker, six connections each, 14 s each: honest `GET` 10-41 ms and honest AI proposal 201 in 530-563 ms every time |
+| IR-02 MEDIUM | open | **FIXED for the database slots** (corrected in the third pass: the change opened F-01, a memory lever) | `TestReviewSlowBodyHoldsAdmissionSlots` (A.2, the probe of the pinned commit, unchanged): with four trickling bodies the honest `GET` takes 10 ms (8.02 s at `552fa9e`) and the honest AI proposal answers 201 `READY` in 1.53 s (baseline 1.55 s; at `552fa9e` 503 after 9.54 s and `PENDING`); `TestReviewSlowBodiesAfterTheFix` (A.11): six kinds of attacker, six connections each, 14 s each: honest `GET` 10-41 ms and honest AI proposal 201 in 530-563 ms every time |
 | IR-03 LOW | open | **PARTLY FIXED**: two of the three timing-bound assertions were repaired in the tests, the third is unchanged by design | the full run (`TestM12APIDetailReadsOfALargeCandidateConverge` 9.59 s, `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` 6.10 s, `internal/tools` ok in the unit run) and a load experiment (A.12; a busy loop on one of the two CPUs the test may use): (a) `TestM12APIDetailReadsOfALargeCandidateConverge`: pinned tree 0 of 3 failed (11/11/12 s), `be6ec7c` 0 of 3 failed (11/10/10 s); (b) `TestTimeoutWhileServerSleepsIsUnknownAndBounded` x300: pinned tree 33 failing executions, `be6ec7c` 0; (c) `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` (unchanged by the builders) at `be6ec7c`: 0 of 3 failed (8/8/8 s). (a): no failure at the pinned tree either (0 of 3), so this load does not reproduce the defect and shows only that `be6ec7c` does not fail under it; (b): the load reproduced the failure at the pinned tree (33 of 300) and not at `be6ec7c` (0 of 300), so the repair works under it |
 | IR-04 LOW | open | **FIXED** for the statements cited (live ledger, script-test count, `make check`); two sentences that name `552fa9e` as the tip remain | reading against the tree; `make check` (below) |
 | IR-05 LOW | open | **FIXED** for a real milestone database; the guard is a heuristic | `TestReviewRealMilestoneDatabaseIsRefusedByTheMigrator` (A.11), `TestReviewMigrateOverMilestoneNumbering` (A.4) |
@@ -283,7 +290,7 @@ run, deleted; no product file was changed). The change set is small and was enum
 * **IR-02, the body pre-read.** Read: `access.go:293` (`preRead` only for a POST with a verified bearer, a body announced, and not one of the two routes that already buffer),
   `:296` (`io.ReadAll(io.LimitReader(r.Body, 1<<20+1))` on a body that `httpserver.go:180` has already wrapped in a 1 MiB `MaxBytesReader`, so the 1 MiB error arrives as a
   `*http.MaxBytesError`), `:297-301` (any other read error is 400 `invalid_request` before the slot), `:314-315` (the handler reads a replay that ends with the same error). There is no PUT, PATCH or DELETE
-  route in the non-test code (`grep` over `internal` and `cmd`), and the R7a gate is a rate (token-bucket) limiter, not a concurrency limit (`traffic/gate.go:45-67`), so a slow body holds a connection and at most 1 MiB, but no database slot
+  route in the non-test code (`grep` over `internal` and `cmd`), and the R7a gate is a rate (token-bucket) limiter, not a concurrency limit (`traffic/gate.go:45-67`), so a slow body holds a connection and up to 1 MiB per connection (the number of connections is not bounded: see the correction in the third pass), but no database slot
   and no gate slot. Executed (A.11): six kinds of slow attacker, six connections each for 14 s against a real `httpserver.New` server with the production timeouts and four slots: an owner
   trickling a `Content-Length` body to the AI route; the same to the metadata route; a viewer (whose request is denied only after the read); an owner trickling a chunked body;
   an invalid token; an owner who declares 2 MiB, sends 1.2 MiB at once and stops. Results: honest `GET` 10, 14, 41, 13, 24, 17 ms and honest AI proposal 201 after 545, 530, 551, 550, 561, 563 ms (the scripted provider takes 500 ms), in the order of the kinds above; the sixth kind was answered 413 by the server 3,863 times; the six proposals made during the test are all `READY`. The probe of the pinned commit (A.2) on the same head: 10 ms, and 201 in 1.53 s with both proposals `READY` and 0 idle-in-transaction backends at +2 s.
@@ -310,7 +317,7 @@ run, deleted; no product file was changed). The change set is small and was enum
 ### What the fixes do not do (so that nobody reads them as more)
 
 * IR-02 moves the wait, it does not remove it: a slow body still occupies a connection and up to 1 MiB until the 10 s read timeout, bounded by the rate limits and not by a connection limit
-  (the plan says so, `LINE_INTEGRATION_PLAN.md:41-46`). An unreadable body is answered 400 before the transaction and writes no audit row.
+  (the plan says so, `LINE_INTEGRATION_PLAN.md:41-46`). **I did not measure that residual; the second review did, and it is a MEDIUM (F-01): see the correction in the third pass.** An unreadable body is answered 400 before the transaction and writes no audit row.
 * IR-03: the worker-policy assertion (`TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry`, a 2 s statement budget against a compensation scan that took 2.2 s on the slower host of session 1) is unchanged on purpose (the plan gives it to D1); it passed here in 6.10 s as part of the full run and in 3 of 3 runs under the load of A.12. That load slows the Go test process only, not the PostgreSQL container in which the scan and most of the set-up run, so it is a weak model of the slower host of session 1; it does not show that the assertion became robust, and a variant with a CPU-limited database container was **NOT RUN**. No minimum runner speed is stated beside the 90-minute deadline (`Makefile:41`; the plan says the deadlines "leave room for a slower runner", `LINE_INTEGRATION_PLAN.md:211`). The host of this re-verification was about as fast as the builders' (1855.0 s against their 1956.5 s), so the full run says nothing new about a slower one.
 * IR-04: the live ledger section (`M9R_FINDING_STATUS.md:185`, "Live findings - merged preview") now says that M10 and M14 are implemented preview and that the M12/M13 control plane exists; the
   checkpoint (`:3-34`) names the tree as the combination of remediation and M10-M14. The statements of the old state (`no M10/main merge`, `Not implemented`, `AI is not implemented`) remain at
@@ -320,6 +327,134 @@ run, deleted; no product file was changed). The change set is small and was enum
   points to `552fa9e`"); `LINE_INTEGRATION_PLAN.md:103` ("M14/merge independent review is NOT RUN") is superseded by these reports.
 * IR-05: the check protects `cmd/migrate`; a person who runs goose directly against a milestone database is not stopped.
 * IR-06 and the findings of the M14 report are not fixed by any commit after the pinned one (the IR-02 fix removes one of the five triggers of M14R-03, nothing else).
+
+## Third pass at `0e13abe` (2026-10-22)
+
+While the previous section was being written the integration branch moved again: 37 commits after `be6ec7c` (`git log be6ec7c..0e13abe`). They contain the builders' fixes of IR-06 and of the M14
+findings (migration `00091`, changes in `internal/ai` and in the AI routes), a second migration (`00092`, the approval fence), a body budget on the request path (`bodybudget.go`), a rewrite of the
+compensation scan and many documents. A second independent review (`docs/verification/M14_AND_FIXES_INDEPENDENT_REVIEW.md`, branch `review/m14-and-fixes`) had re-verified part of this work and found F-01 to
+F-08. The builders gated `507c12c`; the tip differs from it by documents and by one comment line of `00091` (`git diff 507c12c 0e13abe -- . ':!docs'` prints that line only). I repeated the gate on the tip, in
+a new worktree, and attacked the new code with probes of my own (A.13 to A.18).
+
+### Correction of the IR-02 verdict of the previous section
+
+"IR-02 FIXED" was right for the database slots and wrong as a verdict on the fix. The pre-read buffers every verified-bearer POST body, up to the front door's 1 MiB, before identity resolution, membership and
+the route's own cap (`access.go:293-302` at `be6ec7c`). The second review measured what that costs: 1.14 MiB per connection held until the 10 s read timeout, 1,000 connections 1.15 GiB, for any signed token and
+without a membership (F-01, MEDIUM), where the AI routes cap their bodies at 4 to 128 KiB. I had read the same lines and wrote the cost down as a residual ("bounded by the rate limits"); I did not measure it,
+and the rate limits do not bound it (the default gate admits about 3,600 requests per peer within one read timeout, by the second review's count). It also found that the sentence the fix rests on, "only a verified bearer is read, so
+an anonymous caller cannot make the server buffer anything", was false on four routes: the two commands routes and the two content-idempotent release POSTs read their body before authentication (F-02, LOW; the same on the
+code before the fix, bounded by the invalid-bearer budget). I had listed those routes as "the routes that already buffer" and did not ask whether they read before authentication. The status of IR-02 at `be6ec7c` is
+therefore: fixed for the database slots, with a MEDIUM memory lever (F-01) opened by the change and a LOW read of anonymous callers (F-02) that the change did not touch; both were found by the second review, not by me.
+
+### Status of the findings at `0e13abe`
+
+| Finding | At `552fa9e` | At `be6ec7c` | At `0e13abe` | Deciding attack, executed at `0e13abe` |
+|---|---|---|---|---|
+| IR-01 MEDIUM | open | FIXED | **FIXED** | `TestReviewUniqueFieldUnderEachSchemaVersion` (A.1) and `TestReviewUniqueIsEnforcedUnderSchema15` (A.11): under 1.4.0 and under 1.5.0 a write to the unique field is refused before the registration (409), the registration answers 200 `BUILDING`, the build reaches `READY`, then the first value is accepted (200), the same value refused (409) and a record without the field accepted (200) |
+| IR-02 MEDIUM | open | FIXED for the database slots (corrected above) | **FIXED** with the body budget | the unchanged probe of the pinned commit (A.2): four trickling bodies, honest GET 10 ms, honest AI proposal 201 in 1.53 s (baseline 1.55 s), both proposals `READY`; A.11: five of six kinds hold, the sixth is explained below; the budget: A.13, A.14 |
+| IR-03 LOW | open | partly fixed | **FIXED** (slow-database variant NOT RUN) | the compensation statement 1.22-1.35 s -> 32-36 ms (A.15), the same rows on 4,000 random receipt sets (A.13); the worker-policy test took 3.24 s in the full run |
+| IR-04 LOW | open | FIXED for the statements cited | **FIXED** | reading against the tree: the two sentences that named `552fa9e` as the tip now read "has carried the fixes ... since" (`M9R_FINDING_STATUS.md:235`, `LINE_INTEGRATION_PLAN.md:112-114`); `LINE_INTEGRATION_PLAN.md` no longer says that the review "is NOT RUN"; `make check` passes |
+| IR-05 LOW | open | FIXED | **FIXED** | `TestReviewRealMilestoneDatabaseIsRefusedByTheMigrator` (A.11): with the milestone line's own `00045`-`00053` and `00060` applied (version 60) `migrate up` and `migrate status` exit 1 with the lineage message and the database is untouched; `TestReviewMigrateOverMilestoneNumbering` (A.4) |
+| IR-06 MEDIUM | open | OPEN | **FIXED** | `TestReviewRollbackOvertakesConcurrentRejection` (A.2 of the M14 report) passes: the rollback after a committed rejection of its target fails with 40001 and the pointer stays; the randomized stress of the four release ports (A.13): 168 rounds, 0 violations, no hang |
+| IR-07 LOW (new) | - | - | **OPEN** | the launcher hands the whole environment to a command it does not recognise: 12 of 16 fringe spellings (A.16) |
+| IR-08 LOW (new) | - | - | **OPEN** | the static scan for single-version gates does not see 10 of 21 further spellings (A.17) |
+
+The table is about the findings of this report. The residuals of the fixes and the findings of the M14 report are in the sections below and in the M14 report.
+
+### The new code, attacked
+
+* **Body budget, accounting (IR-02, F-01).** `TestReviewBodyBudgetAccountingReturnsToZero` (A.13): 700 requests in nine kinds of ending - the whole body and the answer read; half of the body and the client leaves; the whole body and the client leaves
+  without reading; `Expect: 100-continue`; a chunked body with the client leaving in the middle of a chunk; a declared body and nothing sent; a third of the body and silence; a body above the front door's 1 MiB; a valid-looking JSON body - from six kinds of caller
+  (the owner, a viewer, two signed identities without a membership, no bearer, an invalid bearer) on six routes, against a budget of 8 MiB in all and 3 MiB per identity. The peak of the booked bytes was 7.91 MiB (never above the total) and
+  after the last request every booking was back (`InFlight()` 0 bytes, 0 identities, polled for up to 25 s). Answers: 100:56 400:51 401:61 403:24 413:8 429:102 503:6 (100 is the interim `100 Continue` of the `Expect` kind). The code: `bodybudget.go` books the bytes read (`bookedBody.Read`), `access.go:294-295` takes the hold and
+  releases it with a `defer`, so no ending can leak a booking.
+* **Body budget, a full budget (F-01, F-06, and the residual).** `TestReviewBodyBudgetRefusesWhenFull` (A.14): 16 signed identities with two connections each send 1 MiB minus one byte of a declared 1 MiB (32.0 MiB in 1.59 s, one peer address) and stop. The budget holds
+  33,554,400 of 33,554,432 bytes for 16 identities and the heap of the API grew by 36.4 MiB (the memory in flight is bounded by the total whatever the number of connections). While it is held, a POST of the tenant owner, of an admin of the same tenant and of an admin of
+  another tenant is refused at once (503 `service_busy`, 0-1 ms, `access.go:305`) and a GET is served (200). The first honest POST is admitted again 10.2 s after the attack began: the server's 10 s read timeout ends the 32 connections and the bookings go back
+  (`TestReviewBudgetIsReleasedAtTheReadTimeout`: 10.06 s: 0 bytes, 0 identities; all 32 connections ended at 10.06 s, 8 answered 400 and 24 closed without a response; the next honest POST, which that probe sends once a second, was admitted at 11.00 s). To keep the denial the attacker
+  has to transmit 32.0 MiB per read timeout, 26.8 Mbit/s, from at least 16 identities. That is the bandwidth-bound residual that the builders state (`LINE_INTEGRATION_PLAN.md:44`); I reproduced it from one peer address with signed identities that have no membership.
+  What it costs while it lasts: every body-carrying request of every tenant is refused with a `Retry-After`; reads are not affected. Memory is no longer the lever; availability of POSTs is, for as long as the attacker keeps sending (LOW, documented). The grade assumes that the API is not the first thing a slow client meets: a buffering reverse proxy in front of it holds the slow bodies itself and delivers only complete ones, and I did not run one; exposed directly, this is a platform-wide outage of writes that costs the attacker one home connection.
+* **Declared and unsent bodies book nothing (F-06 of the second review).** `TestReviewDeclaredButUnsentBodiesBookNothing` (A.14): 64 connections of 16 signed identities declare 1 MiB each and send nothing; after 1.5 s the budget holds 0 bytes for 0 identities, and
+  an honest owner's proposal is served (201 after 350 ms) while they stay open. The first version of the budget booked the declared length; the second review showed that eight identities without a membership could fill it that way.
+* **An anonymous caller is never read (F-02 of the second review).** `TestReviewAnonymousCallersAreNotReadOnAnyRoute` (A.14): the four routes that read their body before the bearer was looked at on `be6ec7c` (the two commands routes, `POST .../candidates`,
+  `POST .../acceptance-specs`) and the AI route as a control, each with no bearer and with an invalid bearer, declaring 900,000 bytes and sending one: 10 of 10 answered 401 `unauthenticated` in 4-7 ms (the second review measured 10.03 s on `be6ec7c` for candidates, acceptance-specs and commands). `access.go:289`
+  reads only when `preError == nil`, that is for a bearer that verified.
+* **Isolation between peers and identities, and the limits that refuse.** `TestReviewBudgetIsolationAcrossPeersAndIdentities` (A.14), run eight times (the code of each refusal is logged in the last four): six connections of the tenant owner flood the AI route for 14 s from 127.0.0.1 with 1.2 MiB bodies that declare 2 MiB. They are answered 413 `body_too_large`,
+  429 `too_many_uploads` (his own share of the body budget is full) and, when the flood outruns the bucket of R7a, 429 `rate_limited` (in the run quoted from the final batch: 1,208, 3,589 and 15,499 times); the booked bytes were back to zero afterwards in every run. Honest callers from a second peer address (127.0.0.2): the viewer's GET and the admin's proposal were served in 8 of 8 runs
+  (GET 200 in 19-55 ms; proposal 201 in 385-1,711 ms). The attacked owner's own proposal, from the second address, was served in 3 of 8 runs, and every one of the 3 refusals whose code was logged is 429 `too_many_uploads`: the owner's share (`DefaultBodyBudgetPerUser`, 2 MiB) is held by his own six connections,
+  wherever the honest request comes from. Callers behind the attackers' address were served in 9 of 16 requests; every one of the 3 refusals whose code was logged is 429 `rate_limited`, the per-peer bucket of R7a (`traffic/gate.go:25-27`: 300 per second, burst 600), which empties when a flood outruns it and then refuses everybody behind the address. Both limits work as designed
+  - the identity is the unit of fairness of the budget and the address the unit of the rate gate - and neither touched an honest identity on another address. What it means for a deployment: a reverse proxy that puts every client behind one address makes the per-peer bucket global (not run, below).
+* **Slow bodies (IR-02) at the tip.** The unchanged probe of the pinned commit (A.2) and the six kinds of A.11 (six connections each, 14 s each, the real `httpserver.New` with its 10 s timeouts, four database slots). The first five kinds hold: honest GET 9-13 ms and
+  honest proposal 201 in 530-544 ms (the scripted provider takes 500 ms). The sixth kind (the owner declares 2 MiB, sends 1.2 MiB at once and reconnects) **fails** at the tip, in both runs I made, because the attacker is the identity whose honest proposal is measured: that proposal is refused 429 (`too_many_uploads` in the run that logged the code: the owner's share of
+  the body budget is held by his own six connections). In the first run the honest GET of a viewer was refused 429 too; a GET carries no body and the viewer is not the flooding identity, so it was the per-peer bucket of R7a (`serve` checks it first, `access.go:243`): the attackers were answered 972 times 413 and 13,398 times 429 in 14 s, about 1,026 per second against a bucket that refills 300 per second; in the second run they were answered 5,172 times, 369 per second, and the GET was served (200 after 80 ms).
+  At `be6ec7c` (previous pass, not run again on this host) the same attack ended with both honest requests served, and was answered 3,863 times in 14 s, all 413; there was no per-identity share then, which is the lever that F-01 found. I did not establish why the attackers' raw rate varies between 369 and 1,026 per second. The failure of this kind is the budget and the gate working as designed against the identity that floods; I do not count it as a defect, and the probe stays as written.
+* **Release fences (IR-06, F-05).** `00091` differs from the latest definition of `rollback_release` (`00088`) by four lines: three of comment and `INSERT INTO control.release_fences ... ON CONFLICT ... DO UPDATE SET writes=f.writes+1` before the rejection is read, as `activate_release` does. `00092` replaces `approve_release` of `00084`:
+  the pointer row is read `FOR SHARE` first (the lock order of activation and rollback) and the fence row is written `ON CONFLICT DO NOTHING`; every candidate gets its fence row when it is staged (trigger `release_candidate_fence`, `00092:25-34`) and the existing ones in the migration, and the closing block refuses a drifted owner or ACL (`00092:77-96`).
+  Executed: `TestReviewRollbackOvertakesConcurrentRejection` now fails the rollback with 40001 and the pointer stays; `TestReviewReleaseFenceStress` (A.13) per round stages a candidate and its neighbour, pre-approves one at random, and calls approve (two approvers), reject (the candidate and the rollback target), activate and rollback at random offsets of 0-25 ms,
+  half of them on a transaction that took its snapshot 0-25 ms before it calls the port. A violation is an undocumented SQLSTATE (anything but 40001, 40P01, 55000, 55P03, 42501), a call above 10 s, a round above 30 s (a hang or an undetected deadlock), an approval, activation or rollback of a hash that succeeded after a rejection of that hash had been acknowledged
+  before the call began, a pointer resting on such a hash, or an inconsistent history. 168 rounds in two runs (18 rounds with seed 20261022, 150 rounds with seed 424242): 0 violations, no 40P01, no hang. Outcomes of the 150 rounds: activate 27 x 40001,
+  55 x 55000, 35 ok; approve 46 x 40001, 55 x 55000, 118 ok; reject 16 x 40001, 183 ok;
+  rollback 11 x 40001, 44 x 55000, 17 ok. The builders' own tests pass in the full run (`TestF05ApprovalOvertakenByACommittedRejection`, `...ByAnActivationOfAnotherCandidate`, `...ByARollback`, `TestF05ApprovalsStillRunTogether`,
+  `TestF05EveryCandidateHasItsFenceRow`, `TestM13R01RollbackOvertakenByACommittedRejection`, `TestM13AdversarialRaceRejectVersusApprove`). The stress starts after two activations, so a first activation racing an approval of another first candidate (the residual that the builders name for F-05) is **NOT RUN**.
+* **The compensation scan (IR-03, D1).** `CompensationScanSQL` (`execution.go:273-281`) replaces the correlated `NOT EXISTS` by an uncorrelated `NOT IN` over the instance's receipts. `step_key` is `NOT NULL` (`00020_m9_workflow_runtime.sql:52`, so `NOT IN` has no NULL trap, as the code comment says) and both statements filter the same tenant and instance.
+  `TestReviewCompensationScanEquivalence` (A.13) runs the old and the new statement on 4,000 random receipt sets in a temporary table that has the constraints of `runtime.workflow_receipts` that matter (`step_key text NOT NULL`, primary key tenant/instance/step key): up to 10 receipts per set, step keys from an adversarial list (`a`, `a:compensate`,
+  `a:compensate:compensate`, `A`, `é`, `a `, ` a`, generated keys, a third of them with `:compensate` appended), sequences 0-5, compensation references empty, `local.noop` or `x`; 3,191 of the sets have a pending compensation. The two statements return the same row, or none, on all 4,000 (the logic only: the temporary table has no row-level policy). `TestReviewWorkerPolicyScanTimingOldVsNew` (A.15), the same 96 receipts in the worker session: the old statement
+  1.347, 1.216, 1.215 s; the new 31.7, 32.0, 35.6 ms.
+* **Repeated AI exchanges store and charge once; abandoned provider calls are bounded (M14R-03, M14R-07).** `TestReviewAIRetryIsExactlyOnce` (A.13): one sequential proposal first (the charge of one finished proposal: 5,794 tokens), then eight concurrent creations of one tenant whose provider phases end together, three rounds: 23 of 24 answered 201 and
+  1 answered 409 `ai_conflict` at admission (nothing stored, nothing charged; in the three earlier runs of this probe all 24 of 24 answered 201); no proposal stayed `PENDING`, no provider call was repeated, and the tokens charged were exactly the number of finished proposals times 5,794. `TestReviewAbandonedCallsAreBoundedAndReleased` (A.14):
+  an adapter that never returns, wall clock 1 s, 20 requests: 16 reached the adapter, 4 were refused without reaching it, all 20 answered 503 `ai_unavailable` (the 20 took 16.602 s); after the adapters were released the next request reached the adapter again (call 17), so the count falls back.
+* **R7a on the binary of the tip.** `TestM9RTrafficReviewPinnedBinaryInvalidBurst` against `bin/api` built from the tip (sha256 `a16aa077d0d4...`): 40 actual HTTP requests: 401=20 429=20 matching denied audits=20 rejected audits=0 elapsed=87ms.
+* **Migration 00091 and 00092 against the guard (decision 3).** The inventory of A.18 on a database migrated to the tip: 104 SECURITY DEFINER functions in the four schemas (103 at the pinned commit, plus `release_candidate_fence`), 4 that pin `pg_catalog` alone (`worker_authority`, `event_delivery_policy`, `claim_event`, `finish_event`; as before, no runtime role holds TEMP),
+  0 not owned by `framework_schema_owner`, 0 executable by PUBLIC; `approve_release` and `rollback_release` are executable by the application role only, `release_candidate_fence` by nobody; the worker holds table-level privileges on 16 relations and may execute 26 functions, the dispatcher 5; the 60 rows of `worker_guard_granted()` are all held (0 stale); 833 internal references, 117 distinct names, 0 unresolved.
+* **The migrator's output (D2).** `bin/migrate up` and `status` against an unreachable database with a made-up user, password and host: both print only "migration database unavailable" (0 occurrences of the user, password, host or database name); the refusal of a milestone database prints the lineage message (above). `cmd/migrate/main.go:47-52` prints the provider's text only for a failure that cannot involve the database.
+* **Attacks of the earlier passes, run again against the tip and still held:** the route matrix (45 POST routes, 74 denied calls, 90 denial rows); `TestReviewStrictCandidateJSONDifferential` (200,000 generated texts, 86,716 accepted by the function and by the reference, 0 holes, 0 over-strict); `TestReviewFrozenSandboxRecordsStayEvidence`; `TestReviewHoldsVsDecideExtended` (7 role shapes);
+  `TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts`; `TestReviewVersionTokenReadings` and `TestReviewToolActivityUnderOlderSchemas`; the SSRF and dial-path unit probes; the two fuzz probes (259,626 and 661,147 executions in 60 s each, no input found); `TestReviewMigrateOverMilestoneNumbering`; the 58 address forms.
+
+### New findings of the third pass
+
+#### IR-07 LOW - the launcher hands the whole environment to any command it does not recognise
+
+`scripts/with-env.mjs:15-16` starts the child with `runtimeKind ? runtimeEnv(env, runtimeKind) : env`: a command that `runtimeKindOf` (`scripts/runtime-env.mjs:7-15`) does not name as a backend gets the whole environment, `.env` included, and that environment holds `MIGRATION_DATABASE_URL`,
+`POSTGRES_PASSWORD` and `MIGRATOR_PASSWORD` (the second review's F-04 showed it for `go run ./cmd/worker/`; the builders widened the recognised spellings in `953be65` and the code comment says that an unrecognised spelling "is handed the whole environment"). Executed (A.16, `node launcher-spellings.mjs scripts/runtime-env.mjs`):
+all 18 spellings that start a backend directly are named (`go run` with and without `./`, a trailing slash, `main.go`, the module path, flags; `./scripts/go.sh run`; `bin/worker`, `./bin/worker`, an absolute path, a backslash path; `env A=1 bin/worker`; `nice -n 5 bin/dispatcher`; `bash -c bin/worker`), which is the builders' table. Of 16 fringe spellings 4 are named and **12 are not**: `sh -c './bin/worker --flag'`
+(one argument that is a whole command line with a flag), `bash -lc 'exec bin/api'`, `go run -C cmd worker`, `./w` (a link), `node -e "...spawn('bin/worker')"`, `make run-worker`, `npm run worker` and the glob, case and trailing-space variants. Some of those cannot start a worker at all and some are wrappers that no spelling table can know; `sh -c './bin/worker --flag'`, `bash -lc 'exec bin/api'` and `go run -C cmd worker` are real ways to start a backend that the launcher misses.
+The fault is the default, not the table: an unknown command is trusted with every credential. A launcher that fails closed (an unknown command gets the shared variables only, or must name its kind) would not depend on the list being complete. LOW because it needs a person who starts a process through the launcher with an unusual spelling, on a host that holds the operator credentials.
+
+#### IR-08 LOW - the static scan for single-version gates is blind to spellings that an honest author could write
+
+The scan that the builders added for F-03 (`internal/metadata/version_family.go:14-18`: `sqlVersionToken` = a quote, `$` or `^` immediately followed by `1.N`) catches every spelling in the second review's list and in `sql_version_gate_test.go`, and it reads the live catalog (`m9r_catalog_version_gate_test.go`: 1,022 definitions of functions, CHECKs, policies, triggers, defaults, views and indexes).
+Executed (A.17, unit test, no database): 10 of 21 further spellings of a gate on 1.4.0 alone are **not** reported: array literal, one member; array literal, 1.3.0 and 1.4.0; array literal through unnest; concatenation with a number; format; split_part on the minor; split_part cast to int; substring of the minor; regex with a character class; LIKE with an underscore. The plausible one is the PostgreSQL array literal (`= ANY('{1.4.0}'::text[])`, the opening brace stands in front of the digits); the others are contrived. A.18 asks whether the present catalog hides such a gate: of the 1,022 definitions 5 are named by the scan (`runtime.freeze_event` and two defaults name 1.0.0, `runtime.register_unique_constraint` names 1.4.0 and 1.5.0,
+the CHECK of `metadata_versions` names all six) and 13 more mention `schema_version` without any version-shaped token; I read each of them: they copy the envelope field or compare the version of another document kind (`tenant-capabilities-v1`, `requirements-v2`, `acceptance-v2`, `sandbox-evidence-v1`), so **there is no hidden gate today**. The scan is a net for the next honest omission and not a proof; the behavioural test (`TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema`)
+covers the one feature that failed once, and no other feature has one. LOW: a guard with blind spots, no defect in the present tree.
+
+### Gate at `0e13abe`
+
+| Step | Builders' claim on `507c12c` (`LINE_INTEGRATION_PLAN.md:51-57`) | Result at `0e13abe` |
+|---|---|---|
+| `make check` | PASS, 32 s (11 s on the final head) | **PASS**, 96.2 s: docs checksums 84 + 43, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc (cold build cache in the new worktree) |
+| `make test-unit` | PASS, 221 s: 29 Go packages, 13 script tests, 126 frontend tests in 19 files | **PASS**, 256.7 s: 29 Go packages `ok`, 13 script tests, 126 frontend tests in 19 files |
+| `make build` | PASS, 33 s | **PASS**, 22.4 s: 8 Go binaries and `vite build` (45 modules) |
+| Full integration suite, `-race -v`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` | PASS, 1976.7 s; 459 listed, 458 run | **PASS** as one run, 1845.922 s: 453 PASS, 5 SKIP (the opt-in retained legacy artifact tests), 0 FAIL; 458 of 459 tests run (the excluded one is the 459th); no data race, no panic. The tests the builders added for the fixes pass: `TestM14PreReadBufferingIsBounded` 19.87 s, `TestM14R01ProviderLabelsOutsideTheAuditCharsetKeepTheResult` 7.94 s, `TestM14R02CanceledProviderCallsAreChargedToTheDailyBudget` 5.51 s, `TestM14R03ResultsThatFinishTogetherAreNotLost` 10.70 s, `TestM14R03CreationsRacingForTheUsageRowLoseNoPaidAnswer` 11.58 s, `TestM14R06AnEnormousReportedUsageDoesNotLockTheTenantOut` 2.04 s, `TestM14R07AnAdapterThatIgnoresItsContextCannotHoldTheRequest` 5.92 s, `TestF05ApprovalOvertakenByACommittedRejection` 3.01 s, `TestM13R01RollbackOvertakenByACommittedRejection` 2.71 s, `TestM9RNoCatalogObjectGatesOnPartOfTheAuthoringFamily` 2.00 s, and the two timing-bound ones (`TestM12APIDetailReadsOfALargeCandidateConverge` 8.32 s, `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` 3.24 s) |
+| `make test-e2e`, `make test-signin-e2e` | 11 passed (36.3 s), 7 passed (8.9 s) | **PASS**, 11 passed (25.3 s), 7 passed (9.6 s) |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS (5 targets of 10 s), 80 s | **PASS**: `FuzzPointer` 120,016, `FuzzRuleCompile` 251,075, `FuzzRuleRestoreAndInputs` 44,975, `FuzzFixedDecimalMoney` 9,286, `FuzzWorkflowRestore` 138,474 executions |
+| `make test-event-outage` (ten-minute consumer absence) | PASS, 609.5 s | **PASS**, 608.96 s: real_absence_s=600.000 total_elapsed_s=606.693 completed=3 inbox=3 effects=3 audits=3 immutable_intents=3 attempts_retained=19 unconfirmed_redeliveries=2 |
+| R7a invalid-bearer burst against `bin/api` built from the tip | - | **PASS**: 40 actual HTTP requests: 401=20 429=20 matching denied audits=20 rejected audits=0 elapsed=87ms |
+
+The builders gated `507c12c`; the tip differs from it by documents and one comment line of `00091`, so the comparison is of the same code. My host was about as fast as theirs (suite 1845.922 s against their 1976.7 s). One run of each step; the numbers say nothing about flake rates.
+
+### What the third pass does not settle
+
+* **Residuals of the fixes, as I measured them** (the first three are stated by the builders, ADR104 Amendment C and `LINE_INTEGRATION_PLAN.md:38-44`; the fourth is my observation): the body budget can be kept full by at least 16 identities that transmit 32.0 MiB per 10 s (26.8 Mbit/s), which refuses every body-carrying request of every tenant while it lasts (A.14); a bearer token that expires during the provider phase loses the answer
+  (M14 report, M14R-03); the single `control.ai_usage` row still contends (1 of the 24 creations of the last run of A.13 answered 409 at admission, nothing stored or charged); a flood is refused by the per-peer bucket of R7a together with the honest callers behind the same address, and by the per-identity share of the body budget together with the other requests of the same identity.
+* **Cost of cancellation and of an oversized answer** (observations, not findings): a cancelled provider call is charged its input estimate plus the whole output reservation (about 6.7k tokens each in the probe of M14R-02), and a 3 MiB answer from the provider is charged by its byte estimate (792,106 tokens, `FAILED`/`BUDGET`, M14 report). Both are conservative by design; the tenant's daily token budget is the only ceiling above them, and the API has no global limit on provider phases (ADR104:566-568).
+* **NOT RUN - the performance gates** of the remediation line (build tag `performance`, reference scale): the request path changed after they were last run (`f997efe`, `c76968f`, `b427e8b`, `a2c5c52`, `8528fde`); the builders say the same. A body pre-read, a budget lock and an extra rate-gate pass on every request are not free and nobody has measured what they cost at the reference load.
+* **NOT RUN - the slower-database variant of IR-03.** I tried to throttle the CPU of the PostgreSQL container (the environment refused the `docker update --cpus` call); its allowance is 4 CPUs, the whole host, so the 2 s statement budget has not been tried on a database slower than the builders'. The statement is 38 times faster than before, which is the only evidence.
+* **NOT RUN - a multi-peer body-budget attack**: one peer address was used (loopback; 127.0.0.2 as the honest one). A real network path, HTTP/2, TLS termination, a reverse proxy or load balancer in front of the API (every client then shares one address for the per-peer buckets) and more than one API replica (the budget, the traffic gate and the AI in-flight cap are process-local) were not tried.
+* **NOT RUN - how many identities an attacker can obtain.** The strength of the budget depends on the cost of a verified identity at the real identity provider (self sign-up, MFA, rate limits); the probes sign their own tokens.
+* **NOT RUN - the residuals the builders name that I did not construct:** a first activation racing an approval of another first candidate (F-05), a retry budget that ends in the middle of a try (503 without the audited 409), `migrate status` listing a below-maximum migration file as plain `pending` (exit 0) while `migrate up` refuses it.
+* **NOT RUN - the builders' documentation audit** (`docs/verification/DOCS_TRUTH_AUDIT.md`, 26 defects by its own count): IR-04 is verified for the statements I cited and the two I found, not for the rest.
+* **Still excluded, as in the earlier passes:** `TestM8RedisACLStreamLossAndPendingRecovery` (by instruction), the `driverpanic` diagnostic, the opt-in checks of retained legacy API artifacts (5 skips), a real identity provider with MFA, a real model provider, backup and restore, an upgrade from a database older than migration 44, a manual review of the web UI beyond `make test-e2e` and `make test-signin-e2e`.
+* **What a PASS means here.** The project's implementation contract says that a milestone PASS does not certify production readiness. This PASS says that, for the attacks listed, at `0e13abe`, I found no HIGH or MEDIUM defect open; it says nothing about attacks I did not think of.
 
 ## Not covered
 
@@ -1479,7 +1614,7 @@ func TestReviewStrictCandidateJSONDifferential(t *testing.T) {
 
 ### A.11 Re-verification at `be6ec7c` - slow bodies after the fix, unique constraints under schema 1.5.0, a real milestone database
 
-File: `tests/integration/zz_review_reverify_test.go`
+File: `tests/integration/zz_review_reverify_test.go` - in the third pass the only change is the logging of the `code` of a refused honest request
 
 ```go
 //go:build integration
@@ -1541,6 +1676,17 @@ func TestReviewSlowBodiesAfterTheFix(t *testing.T) {
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	addr := ln.Addr().String()
+	// the "code" of the last error answer of an honest request (third pass: the 429s of the sixth kind come from two different limits)
+	var honestCode string
+	codeOf := func(raw []byte) string {
+		text := string(raw)
+		if i := strings.Index(text, `"code":"`); i >= 0 {
+			if j := strings.Index(text[i+8:], `"`); j >= 0 {
+				return text[i+8 : i+8+j]
+			}
+		}
+		return "-"
+	}
 	honestGET := func() (int, time.Duration) {
 		started := time.Now()
 		req, _ := http.NewRequest("GET", "http://"+addr+"/v1/tenants/"+e.f.tenantA+"/access", nil)
@@ -1549,7 +1695,10 @@ func TestReviewSlowBodiesAfterTheFix(t *testing.T) {
 		if err != nil {
 			return 0, time.Since(started)
 		}
-		io.Copy(io.Discard, resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode >= 400 {
+			honestCode = codeOf(raw)
+		}
 		resp.Body.Close()
 		return resp.StatusCode, time.Since(started)
 	}
@@ -1563,7 +1712,10 @@ func TestReviewSlowBodiesAfterTheFix(t *testing.T) {
 		if err != nil {
 			return 0, time.Since(started)
 		}
-		io.Copy(io.Discard, resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode >= 400 {
+			honestCode = codeOf(raw)
+		}
 		resp.Body.Close()
 		return resp.StatusCode, time.Since(started)
 	}
@@ -1648,11 +1800,17 @@ func TestReviewSlowBodiesAfterTheFix(t *testing.T) {
 			time.Sleep(2 * time.Second)
 			code, took := honestGET()
 			t.Logf("honest GET under 6 attackers -> HTTP %d after %v", code, took.Round(time.Millisecond))
+			if code >= 400 {
+				t.Logf("  the answer to the honest GET carried the code %q", honestCode)
+			}
 			if code != 200 || took > 1500*time.Millisecond {
 				t.Errorf("an honest GET was delayed or refused: HTTP %d after %v", code, took)
 			}
 			pcode, ptook := honestPropose()
 			t.Logf("honest AI proposal under 6 attackers -> HTTP %d after %v", pcode, ptook.Round(time.Millisecond))
+			if pcode >= 400 {
+				t.Logf("  the answer to the honest proposal carried the code %q", honestCode)
+			}
 			if pcode != 201 || ptook > 6*time.Second {
 				t.Errorf("an honest AI proposal was delayed or lost: HTTP %d after %v", pcode, ptook)
 			}
@@ -1810,4 +1968,1199 @@ for pair in "$OUT/tools-old.test $MAIN" "$OUT/tools-new.test $NEW"; do
   set -- $pair
   ( cd $2/internal/tools && taskset -c 0,1 $1 -test.run '^TestTimeoutWhileServerSleepsIsUnknownAndBounded$' -test.count=300 -test.timeout=30m )
 done
+```
+
+### A.13 Third pass at `0e13abe` - body budget accounting, a randomized stress of the release ports, an exactly-once check of the AI retries, the compensation scan against its predecessor
+
+File: `tests/integration/zz_review_third_test.go` - needs the repository at `0e13abe`; `REVIEW_FENCE_ROUNDS` and `REVIEW_FENCE_SEED` set the length and the seed of the stress (18 rounds and seed 20261022 by default; the long run used 150 and 424242)
+
+```go
+//go:build integration
+
+package integration
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"math/rand"
+	"net"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/ai"
+	"github.com/Karthikeyan49/Framwork/internal/platform/access"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// Review probes for the third pass (head 0e13abe). Not product code. The starvation probe of the budget is in the second file (A.14).
+
+func reviewUsage(e *m14Env) (requests, used int64) {
+	e.t.Helper()
+	_ = e.f.operator.QueryRow(`SELECT coalesce(sum(requests),0),coalesce(sum(used_tokens),0) FROM control.ai_usage WHERE tenant_id=$1`, e.f.tenantA).Scan(&requests, &used)
+	return
+}
+
+// ------------------------------------------------------------------------------------------------ body budget: accounting
+
+// A booking is given back whatever happened to the request: every kind of ending is thrown at a small budget by several identities, and
+// the budget must be empty afterwards and never above its total in between.
+func TestReviewBodyBudgetAccountingReturnsToZero(t *testing.T) {
+	const total, share = 8 << 20, 3 << 20
+	budget := access.NewBodyBudget(total, share)
+	e := m14Setup(t, m14Options{bodies: budget})
+	e.draft("500")
+	addr := m14Serve(t, e)
+	tokens := []string{e.alice, e.viewer, e.f.token(t, uuid(t), nil), e.f.token(t, uuid(t), nil), "", "not-a-token"}
+	paths := []string{
+		e.root + "/ai/patch-proposals", e.root + "/candidates", e.root + "/acceptance-specs",
+		e.root + "/versions/1/entities/entity.order/commands", "/v1/tenants/" + e.f.tenantA + "/metadata/" + e.app + "/versions", e.root + "/datasets",
+	}
+	var peak atomic.Int64
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if used, _ := budget.InFlight(); used > peak.Load() {
+				peak.Store(used)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	r := rand.New(rand.NewSource(20261022))
+	var rmu sync.Mutex
+	pick := func(n int) int { rmu.Lock(); defer rmu.Unlock(); return r.Intn(n) }
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 48)
+	var statuses sync.Map
+	count := func(code int) {
+		v, _ := statuses.LoadOrStore(code, new(atomic.Int64))
+		v.(*atomic.Int64).Add(1)
+	}
+	const requests = 700
+	for i := 0; i < requests; i++ {
+		kind, token, path, size := pick(9), tokens[pick(len(tokens))], paths[pick(len(paths))], 1+pick(1<<20)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			body := bytes.Repeat([]byte("a"), size)
+			head := m14Head(addr, path, token, size)
+			switch kind {
+			case 0: // the whole body, read the answer
+				_, _ = conn.Write(append([]byte(head), body...))
+				s, _, _ := m14Answer(conn, 6*time.Second)
+				count(s)
+			case 1: // half of the body, then the client leaves
+				_, _ = conn.Write(append([]byte(head), body[:size/2]...))
+			case 2: // the whole body, the client leaves without reading
+				_, _ = conn.Write(append([]byte(head), body...))
+			case 3: // Expect: 100-continue, then the body
+				h := strings.Replace(head, "\r\n\r\n", "\r\nExpect: 100-continue\r\n\r\n", 1)
+				_, _ = conn.Write([]byte(h))
+				time.Sleep(20 * time.Millisecond)
+				_, _ = conn.Write(body)
+				s, _, _ := m14Answer(conn, 6*time.Second)
+				count(s)
+			case 4: // chunked, one chunk and the client leaves in the middle of the next
+				h := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n", path, addr, token)
+				_, _ = conn.Write([]byte(h))
+				_, _ = conn.Write([]byte(fmt.Sprintf("%x\r\n", size/2+1)))
+				_, _ = conn.Write(body[:size/2+1])
+				_, _ = conn.Write([]byte("\r\n10\r\nabc"))
+			case 5: // announces and sends nothing
+				_, _ = conn.Write([]byte(head))
+			case 6: // part of the body, then silence until the server's read deadline is near, then the client leaves
+				_, _ = conn.Write(append([]byte(head), body[:size/3]...))
+				time.Sleep(300 * time.Millisecond)
+			case 7: // a body that is larger than the front door admits
+				big := bytes.Repeat([]byte("a"), 1<<20+4096)
+				_, _ = conn.Write(append([]byte(m14Head(addr, path, token, len(big))), big...))
+				s, _, _ := m14Answer(conn, 6*time.Second)
+				count(s)
+			case 8: // valid-looking JSON of a size the route may accept
+				doc := []byte(`{"request":"` + strings.Repeat("b", size%20000) + `"}`)
+				_, _ = conn.Write(append([]byte(m14Head(addr, path, token, len(doc))), doc...))
+				s, _, _ := m14Answer(conn, 6*time.Second)
+				count(s)
+			}
+		}()
+	}
+	wg.Wait()
+	deadline := time.Now().Add(25 * time.Second)
+	for {
+		used, subjects := budget.InFlight()
+		if used == 0 && subjects == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(stop)
+			t.Fatalf("the booked bytes were not returned: %d bytes of %d identities, %v after the last request ended", used, subjects, 25*time.Second)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	close(stop)
+	var summary []string
+	statuses.Range(func(k, v any) bool {
+		summary = append(summary, fmt.Sprintf("%d:%d", k.(int), v.(*atomic.Int64).Load()))
+		return true
+	})
+	sort.Strings(summary)
+	t.Logf("%d mixed requests; answers %v; the peak of booked bytes was %.2f MiB of a total of %d MiB; all returned", requests, summary, float64(peak.Load())/(1<<20), total>>20)
+	if peak.Load() > total {
+		t.Errorf("the booked bytes (%d) exceeded the total (%d)", peak.Load(), total)
+	}
+}
+
+// ------------------------------------------------------------------------------------------------ release fences: randomized stress
+
+func sqlstateOf(err error) string {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code
+	}
+	return "-"
+}
+
+type fenceOp struct {
+	kind, hash string
+	held       bool
+	call, ack  time.Time
+	err        error
+}
+
+// Approve, reject, activate and roll back one candidate and its neighbours at random offsets, half of them on a transaction whose
+// snapshot is older than the moment they call the port. The veto must never be overtaken, every outcome must be a documented one, and
+// nothing may hang.
+func TestReviewReleaseFenceStress(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	first, second := e.twoActivations(t)
+	_ = first
+	_ = second
+	rounds, seed := 18, int64(20261022)
+	if v, err := strconv.Atoi(os.Getenv("REVIEW_FENCE_ROUNDS")); err == nil && v > 0 {
+		rounds = v
+	}
+	if v, err := strconv.ParseInt(os.Getenv("REVIEW_FENCE_SEED"), 10, 64); err == nil {
+		seed = v
+	}
+	r := rand.New(rand.NewSource(seed))
+	allowed := map[string]bool{"40001": true, "40P01": true, "55000": true, "55P03": true, "42501": true}
+	outcomes := map[string]int{}
+	violations := 0
+	for round := 0; round < rounds; round++ {
+		h, _ := e.build("500", m13Relabel(fmt.Sprintf("Stress %d", round)), e.carol)
+		if r.Intn(2) == 0 {
+			if _, err := e.approvePort(e.dave.subject, h); err != nil {
+				t.Fatal("pre-approval", err)
+			}
+		}
+		pointer, generation, _ := e.activePointer()
+		rows := e.historyRows()
+		prev := ""
+		if len(rows) > 0 {
+			prev = rows[len(rows)-1].previous
+		}
+		var ops []*fenceOp
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		add := func(kind, hash, subject, query string, args ...any) {
+			op := &fenceOp{kind: kind, hash: hash, held: r.Intn(2) == 0}
+			delay := time.Duration(r.Intn(25)) * time.Millisecond
+			hold := time.Duration(r.Intn(25)) * time.Millisecond
+			ops = append(ops, op)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				time.Sleep(delay)
+				if op.held {
+					ready, proceed, done := make(chan struct{}, 1), make(chan struct{}), make(chan error, 1)
+					go func() { done <- e.m13rHold(subject, ready, proceed, query, args...) }()
+					select {
+					case <-ready:
+					case err := <-done:
+						mu.Lock()
+						op.call, op.ack, op.err = time.Now(), time.Now(), err
+						mu.Unlock()
+						return
+					}
+					time.Sleep(hold)
+					mu.Lock()
+					op.call = time.Now()
+					mu.Unlock()
+					close(proceed)
+					err := <-done
+					mu.Lock()
+					op.ack, op.err = time.Now(), err
+					mu.Unlock()
+					return
+				}
+				mu.Lock()
+				op.call = time.Now()
+				mu.Unlock()
+				var dst any
+				err := e.portIn(subject, e.f.tenantA, &dst, query, args...)
+				mu.Lock()
+				op.ack, op.err = time.Now(), err
+				mu.Unlock()
+			}()
+		}
+		if r.Intn(10) < 8 {
+			add("approve", h, e.dave.subject, `SELECT control.approve_release($1,$2)`, e.app, h)
+		}
+		if r.Intn(10) < 6 {
+			add("approve", h, e.erin.subject, `SELECT control.approve_release($1,$2)`, e.app, h)
+		}
+		if r.Intn(10) < 8 {
+			add("reject", h, e.f.bobSubject, `SELECT control.reject_release($1,$2,$3,$4)`, e.app, h, "RISK_UNACCEPTABLE", "stress veto")
+		}
+		if prev != "" && r.Intn(10) < 5 {
+			add("reject", prev, e.f.bobSubject, `SELECT control.reject_release($1,$2,$3,$4)`, e.app, prev, "RISK_UNACCEPTABLE", "stress veto of the rollback target")
+		}
+		if r.Intn(10) < 8 {
+			add("activate", h, e.erin.subject, `SELECT control.activate_release($1,$2,$3,$4)`, e.app, h, pointer, generation)
+		}
+		if prev != "" && r.Intn(10) < 5 {
+			add("rollback", prev, e.erin.subject, `SELECT control.rollback_release($1,$2,$3,$4,$5,$6)`, e.app, prev, pointer, generation, "", false)
+		}
+		if len(ops) < 2 {
+			add("approve", h, e.dave.subject, `SELECT control.approve_release($1,$2)`, e.app, h)
+			add("reject", h, e.f.bobSubject, `SELECT control.reject_release($1,$2,$3,$4)`, e.app, h, "RISK_UNACCEPTABLE", "stress veto")
+		}
+		close(start)
+		finished := make(chan struct{})
+		go func() { wg.Wait(); close(finished) }()
+		select {
+		case <-finished:
+		case <-time.After(30 * time.Second):
+			t.Fatalf("round %d: a release port call did not return within 30 s (a hang or an undetected deadlock)", round)
+		}
+		for _, op := range ops {
+			code := "ok"
+			if op.err != nil {
+				code = sqlstateOf(op.err)
+				if !allowed[code] {
+					violations++
+					t.Errorf("round %d: %s %s ended with an undocumented outcome %s: %v", round, op.kind, op.hash[:8], code, op.err)
+				}
+			}
+			outcomes[op.kind+"/"+code]++
+			if d := op.ack.Sub(op.call); d > 10*time.Second {
+				violations++
+				t.Errorf("round %d: %s took %v", round, op.kind, d)
+			}
+		}
+		for _, v := range ops {
+			if v.kind != "reject" || v.err != nil {
+				continue
+			}
+			for _, x := range ops {
+				if x.err == nil && x.hash == v.hash && x.kind != "reject" && x.call.After(v.ack) {
+					violations++
+					t.Errorf("round %d: a %s of %s succeeded although the veto had been acknowledged before the call began (veto acked %v before it)", round, x.kind, v.hash[:8], x.call.Sub(v.ack))
+				}
+			}
+		}
+		e.checkHistory()
+		if hash, _, _ := e.activePointer(); len(e.rejectionsOf(hash)) > 0 {
+			// A release may be rejected after it ran; it is a violation only when the rejection was acknowledged before the pointer moved onto it.
+			for _, v := range ops {
+				if v.kind == "reject" && v.err == nil && v.hash == hash {
+					for _, x := range ops {
+						if x.err == nil && (x.kind == "activate" || x.kind == "rollback") && x.hash == hash && x.call.After(v.ack) {
+							violations++
+							t.Errorf("round %d: the pointer is on a rejected hash that was vetoed before the move", round)
+						}
+					}
+				}
+			}
+		}
+	}
+	keys := make([]string, 0, len(outcomes))
+	for k := range outcomes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf("%s=%d", k, outcomes[k]))
+	}
+	t.Logf("%d rounds (seed %d); outcomes: %s; violations: %d", rounds, seed, strings.Join(out, " "), violations)
+}
+
+// ------------------------------------------------------------------------------------------------ AI: exactly once under contention
+
+// Eight proposals of one tenant that finish together, on the repeated exchanges: how many answers are lost, and is anything stored or
+// charged twice? The scripted provider reports the same usage for every call, so a double charge shows as used_tokens above
+// (proposals that finished) x (the charge of one).
+func TestReviewAIRetryIsExactlyOnce(t *testing.T) {
+	for round := 1; round <= 3; round++ {
+		round := round
+		t.Run(fmt.Sprintf("round_%d", round), func(t *testing.T) {
+			const n = 8
+			e := m14Setup(t, m14Options{limits: ai.ServiceLimits{InFlightPerTenant: n, DailyTokens: 50_000_000}})
+			doc := e.draft("500")
+			// one sequential request: the charge of one finished proposal
+			e.provider.Push(ai.ScriptStep{Payload: labelPatch(t, doc, "entity.order", "Label 0"), Delay: 100 * time.Millisecond, Usage: ai.Usage{InputTokens: 100, OutputTokens: 100}, Model: "m"})
+			if w := e.propose(e.alice, "Rename the order entity."); w.Code != 201 {
+				t.Fatalf("baseline proposal: %d %s", w.Code, w.Body.String())
+			}
+			_, base := reviewUsage(e)
+			calls0 := e.provider.Calls()
+			for i := 0; i < n; i++ {
+				e.provider.Push(ai.ScriptStep{Payload: labelPatch(t, doc, "entity.order", fmt.Sprintf("Label %d", i+1)), Delay: 1500 * time.Millisecond, Usage: ai.Usage{InputTokens: 100, OutputTokens: 100}, Model: "m"})
+			}
+			var wg sync.WaitGroup
+			codes := make([]string, n)
+			start := make(chan struct{})
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					<-start
+					w := e.propose(e.alice, "Rename the order entity.")
+					codes[i] = fmt.Sprintf("%d %s", w.Code, m14Code(w))
+				}(i)
+			}
+			close(start)
+			wg.Wait()
+			// let the leases of orphans lapse is not needed: count what exists
+			requests, used := reviewUsage(e)
+			var ready, pending, failed, rows int
+			_ = e.f.operator.QueryRow(`SELECT count(*), count(*) FILTER (WHERE status='READY'), count(*) FILTER (WHERE status='PENDING'), count(*) FILTER (WHERE status='FAILED') FROM control.ai_proposals WHERE tenant_id=$1 AND app_id=$2`, e.f.tenantA, e.app).Scan(&rows, &ready, &pending, &failed)
+			created := 0
+			refusedAtAdmission := 0
+			for _, c := range codes {
+				switch {
+				case strings.HasPrefix(c, "201"):
+					created++
+				default:
+					refusedAtAdmission++
+				}
+			}
+			calls := e.provider.Calls() - calls0
+			t.Logf("round %d: answers=%v; proposals: %d rows, %d READY, %d PENDING, %d FAILED; provider calls %d; usage: requests=%d used=%d (one finished proposal costs %d)", round, codes, rows, ready, pending, failed, calls, requests, used, base)
+			if base == 0 {
+				t.Fatal("no baseline charge")
+			}
+			if ready != created+1 {
+				t.Errorf("%d answers were 201 but %d proposals are READY (the baseline is the +1)", created, ready)
+			}
+			if pending != 0 {
+				t.Errorf("%d proposals are PENDING: a paid answer was discarded", pending)
+			}
+			if int64(calls) > int64(rows-1) {
+				t.Errorf("%d provider calls for %d proposals (a call was repeated)", calls, rows-1)
+			}
+			if want := base * int64(ready); used != want {
+				t.Errorf("used_tokens=%d, want %d (= %d finished x %d): charged twice or not at all", used, want, ready, base)
+			}
+		})
+	}
+}
+
+// ------------------------------------------------------------------------------------------------ D1: the compensation scan
+
+const oldCompensationScan = "SELECT r.step_key,r.compensation_ref,r.output FROM runtime.workflow_receipts r WHERE r.tenant_id=$1 AND r.instance_id=$2 AND r.compensation_ref<>'' AND NOT EXISTS(SELECT 1 FROM runtime.workflow_receipts c WHERE c.tenant_id=r.tenant_id AND c.instance_id=r.instance_id AND c.step_key=r.step_key||':compensate') ORDER BY r.sequence DESC,r.step_key DESC LIMIT 1"
+
+// The rewritten statement (an uncorrelated NOT IN) against the one it replaced (a correlated NOT EXISTS), on the same random receipts.
+func TestReviewCompensationScanEquivalence(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	ctx := context.Background()
+	conn, err := f.operator.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err = conn.ExecContext(ctx, `CREATE TEMP TABLE r(tenant_id uuid NOT NULL,instance_id uuid NOT NULL,step_key text NOT NULL CHECK(length(step_key)<=200),output bytea NOT NULL DEFAULT '\x',sequence bigint NOT NULL,compensation_ref text NOT NULL DEFAULT '',PRIMARY KEY(tenant_id,instance_id,step_key))`); err != nil {
+		t.Fatal(err)
+	}
+	oldSQL := strings.ReplaceAll(oldCompensationScan, "runtime.workflow_receipts", "r")
+	newSQL := strings.ReplaceAll(workflow.CompensationScanSQL, "runtime.workflow_receipts", "r")
+	if strings.Count(newSQL, "NOT IN") != 1 || strings.Contains(newSQL, "runtime.") {
+		t.Fatalf("the statement under test is not what this probe expects: %s", newSQL)
+	}
+	r := rand.New(rand.NewSource(7))
+	names := []string{"a", "b", "c", "d", "a:compensate", "b:compensate", "a:compensate:compensate", "x:compensate", "A", "é", "a ", " a", "", "s:compensate:compensate:compensate"}
+	refs := []string{"", "", "local.noop", "x"}
+	tenant := "00000000-0000-0000-0000-000000000001"
+	differences, nonEmpty := 0, 0
+	const datasets = 4000
+	for i := 0; i < datasets; i++ {
+		instance := fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1)
+		n := r.Intn(11)
+		used := map[string]bool{}
+		for j := 0; j < n; j++ {
+			key := names[r.Intn(len(names))]
+			if key == "" {
+				key = fmt.Sprintf("k%d", r.Intn(4))
+			}
+			if r.Intn(3) == 0 {
+				key += ":compensate"
+			}
+			if used[key] {
+				continue
+			}
+			used[key] = true
+			if _, err = conn.ExecContext(ctx, `INSERT INTO r(tenant_id,instance_id,step_key,output,sequence,compensation_ref) VALUES($1,$2,$3,convert_to($3,'UTF8'),$4,$5)`, tenant, instance, key, r.Intn(6), refs[r.Intn(len(refs))]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		scan := func(q string) string {
+			var k, ref string
+			var out []byte
+			e := conn.QueryRowContext(ctx, q, tenant, instance).Scan(&k, &ref, &out)
+			if errors.Is(e, sql.ErrNoRows) {
+				return "<none>"
+			}
+			if e != nil {
+				t.Fatal(e)
+			}
+			return k + "|" + ref + "|" + string(out)
+		}
+		a, b := scan(oldSQL), scan(newSQL)
+		if a != "<none>" {
+			nonEmpty++
+		}
+		if a != b {
+			differences++
+			if differences <= 5 {
+				t.Errorf("dataset %d differs: old %q new %q", i, a, b)
+			}
+		}
+	}
+	t.Logf("%d random receipt sets (%d with a pending compensation): the two statements differ on %d", datasets, nonEmpty, differences)
+}
+```
+
+### A.14 Third pass at `0e13abe` - the budget when it is full and when it comes back, bodies declared and never sent, anonymous callers on the routes that used to be read, isolation between peers and identities, the counter of abandoned provider calls, the stored model labels
+
+File: `tests/integration/zz_review_fourth_test.go` - needs the repository at `0e13abe` (and `127.0.0.2` as a second loopback peer address); the isolation test is random in which honest request wins a token of the rate gate, so its served/429 split differs from run to run
+
+```go
+//go:build integration
+
+package integration
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/ai"
+	"github.com/Karthikeyan49/Framwork/internal/platform/access"
+)
+
+// Review probes for the third pass (head 0e13abe), second batch. Not product code.
+
+// holdBudget opens connections that fill the budget: identities x perIdentity connections, each sending a body one byte short of the cap.
+func holdBudget(t *testing.T, e *m14Env, addr, path string, identities, perIdentity int) (conns []net.Conn, sent int64) {
+	t.Helper()
+	almost := bytes.Repeat([]byte("a"), 1<<20-1)
+	for i := 0; i < identities; i++ {
+		token := e.f.token(t, uuid(t), nil)
+		for j := 0; j < perIdentity; j++ {
+			c, err := net.Dial("tcp", addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conns = append(conns, c)
+			if _, err = c.Write(append([]byte(m14Head(addr, path, token, 1<<20)), almost...)); err != nil {
+				t.Fatal(err)
+			}
+			sent += int64(len(almost))
+		}
+	}
+	t.Cleanup(func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	return conns, sent
+}
+
+// The starvation probe of the first batch declared 40 bytes and sent 38, which made the honest request wait for two bytes; the same
+// attack with exact lengths, and the moment the denial ends without further transmission.
+func TestReviewBodyBudgetRefusesWhenFull(t *testing.T) {
+	budget := access.NewBodyBudget(access.DefaultBodyBudgetBytes, access.DefaultBodyBudgetPerUser)
+	e := m14Setup(t, m14Options{bodies: budget})
+	e.draft("500")
+	addr := m14Serve(t, e)
+	path := e.root + "/ai/patch-proposals"
+	started := time.Now()
+	heapBefore := heapInUse()
+	_, sent := holdBudget(t, e, addr, path, 16, 2)
+	time.Sleep(1500 * time.Millisecond)
+	used, subjects := budget.InFlight()
+	t.Logf("%d identities hold %d of %d bytes (%d identities) after %v; the heap grew by %.1f MiB while the budget is full", 16, used, access.DefaultBodyBudgetBytes, subjects, time.Since(started).Round(time.Millisecond), float64(int64(heapInUse())-int64(heapBefore))/(1<<20))
+	body := []byte(`{"request":"Rename the order entity."}`)
+	for _, who := range []struct{ name, token string }{{"tenant owner", e.alice}, {"admin of the same tenant", e.carol.token}, {"admin of ANOTHER tenant", e.f.token(t, e.f.bobSubject, nil)}} {
+		s, code, took := m14RawPost(t, addr, path, who.token, len(body), body, 5*time.Second)
+		t.Logf("honest %-26s POST during the attack -> %d %s after %v", who.name, s, code, took.Round(time.Millisecond))
+	}
+	// A request with no body (nothing to book) and a GET are not affected.
+	req, _ := http.NewRequest("GET", "http://"+addr+"/v1/tenants/"+e.f.tenantA+"/access", nil)
+	req.Header.Set("Authorization", "Bearer "+e.viewer)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	t.Logf("honest GET during the attack -> %d", resp.StatusCode)
+	// When does the denial end if the attacker transmits nothing more? The server's read timeout ends the held connections.
+	began := time.Now()
+	var relief time.Duration
+	for relief = 0; relief < 15*time.Second; relief = time.Since(began) {
+		s, code, _ := m14RawPost(t, addr, path, e.alice, len(body), body, 2*time.Second)
+		if !(s == 503 && code == "service_busy") { // the scripted provider has no step, so an admitted request ends in another 503
+			t.Logf("first honest POST admitted again (status %d %s) %v after the poll began, %v after the attack began", s, code, relief.Round(100*time.Millisecond), time.Since(started).Round(100*time.Millisecond))
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Logf("RESULT: to hold the denial the attacker transmits %.1f MiB per read timeout (10 s): %.1f Mbit/s from 16 identities", float64(sent)/(1<<20), float64(sent)*8/1e6/10)
+}
+
+// Attackers flood with bodies that exceed the front door's cap from one identity and one peer address; honest users come from another peer
+// address (127.0.0.2 is loopback too) with other identities. The per-identity share and the per-peer rate limit must keep them apart; the same
+// honest users on the attackers' peer are measured as well, to show what the shared peer costs.
+func TestReviewBudgetIsolationAcrossPeersAndIdentities(t *testing.T) {
+	budget := access.NewBodyBudget(access.DefaultBodyBudgetBytes, access.DefaultBodyBudgetPerUser)
+	e := m14Setup(t, m14Options{bodies: budget, limits: ai.ServiceLimits{InFlightPerTenant: 4, DailyTokens: 50_000_000}})
+	doc := e.draft("500")
+	addr := m14Serve(t, e)
+	path := e.root + "/ai/patch-proposals"
+	from := func(ip string) *http.Client {
+		return &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip)}}).DialContext}}
+	}
+	honestGET := func(ip string) string {
+		req, _ := http.NewRequest("GET", "http://"+addr+"/v1/tenants/"+e.f.tenantA+"/access", nil)
+		req.Header.Set("Authorization", "Bearer "+e.viewer)
+		s := time.Now()
+		resp, err := from(ip).Do(req)
+		if err != nil {
+			return "error " + err.Error()
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		return fmt.Sprintf("%d%s in %v", resp.StatusCode, codeNote(resp.StatusCode, raw), time.Since(s).Round(time.Millisecond))
+	}
+	honestPropose := func(ip, token string, n int) string {
+		e.provider.Push(ai.ScriptStep{Payload: labelPatch(t, doc, "entity.order", fmt.Sprintf("Honest %d", n)), Delay: 300 * time.Millisecond, Usage: ai.Usage{InputTokens: 100, OutputTokens: 100}, Model: "m"})
+		req, _ := http.NewRequest("POST", "http://"+addr+path, strings.NewReader(`{"request":"Rename the order entity."}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		s := time.Now()
+		resp, err := from(ip).Do(req)
+		if err != nil {
+			return "error " + err.Error()
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		return fmt.Sprintf("%d%s in %v", resp.StatusCode, codeNote(resp.StatusCode, raw), time.Since(s).Round(time.Millisecond))
+	}
+	// attackers: six connections of the tenant owner, each sending 1.2 MiB (declared 2 MiB) again and again, from 127.0.0.1
+	stop := time.Now().Add(14 * time.Second)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	answers := map[string]int{}
+	big := bytes.Repeat([]byte("a"), 1_200_000)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(stop) {
+				c, err := (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1")}}).Dial("tcp", addr)
+				if err != nil {
+					return
+				}
+				_, _ = c.Write(append([]byte(m14Head(addr, path, e.alice, 2<<20)), big...))
+				s, code, _ := m14Answer(c, 5*time.Second)
+				c.Close()
+				mu.Lock()
+				answers[fmt.Sprintf("%d %s", s, code)]++
+				mu.Unlock()
+			}
+		}()
+	}
+	time.Sleep(3 * time.Second)
+	t.Logf("honest viewer GET from ANOTHER peer (127.0.0.2): %s", honestGET("127.0.0.2"))
+	t.Logf("honest admin (carol) proposal from ANOTHER peer, another identity: %s", honestPropose("127.0.0.2", e.carol.token, 1))
+	t.Logf("honest tenant owner (the attacked identity) proposal from another peer: %s", honestPropose("127.0.0.2", e.alice, 2))
+	t.Logf("honest viewer GET from the ATTACKERS' peer (127.0.0.1): %s", honestGET("127.0.0.1"))
+	t.Logf("honest admin (carol) proposal from the ATTACKERS' peer: %s", honestPropose("127.0.0.1", e.carol.token, 3))
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	t.Logf("what the attackers were answered in 14 s: %v", answers)
+	deadline := time.Now().Add(12 * time.Second)
+	for {
+		if used, subjects := budget.InFlight(); used == 0 && subjects == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			used, subjects := budget.InFlight()
+			t.Errorf("the booked bytes were not returned: %d bytes, %d identities", used, subjects)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// codeNote names the "code" of an error answer, so that a 429 of the rate gate and a 429 of the body budget can be told apart.
+func codeNote(status int, raw []byte) string {
+	if status < 400 {
+		return ""
+	}
+	text := string(raw)
+	if i := strings.Index(text, `"code":"`); i >= 0 {
+		if j := strings.Index(text[i+8:], `"`); j >= 0 {
+			return " " + text[i+8:i+8+j]
+		}
+	}
+	return " -"
+}
+
+// An adapter that ignores its context: the gateway abandons the call at the wall clock and counts it, refuses new calls once 16 are still
+// running (ai/repair.go, maxAbandonedCalls), and must count them down when the adapters return.
+type hangForever struct {
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func (h *hangForever) Complete(ctx context.Context, req ai.ProviderRequest) (ai.ProviderResponse, error) {
+	h.calls.Add(1)
+	<-h.release
+	return ai.ProviderResponse{}, errors.New("released")
+}
+
+func TestReviewAbandonedCallsAreBoundedAndReleased(t *testing.T) {
+	hang := &hangForever{release: make(chan struct{})}
+	e := m14Setup(t, m14Options{gateway: ai.NewGateway(hang, ai.Options{}), limits: ai.ServiceLimits{WallClock: time.Second, InFlightPerTenant: 8, DailyTokens: 50_000_000}})
+	e.draft("500")
+	var codes []string
+	started := time.Now()
+	for i := 0; i < 20; i++ {
+		w := e.propose(e.alice, "Rename the order entity.")
+		codes = append(codes, fmt.Sprintf("%d %s", w.Code, m14Code(w)))
+	}
+	reached := hang.calls.Load()
+	t.Logf("20 requests in %v: %d reached the adapter; answers %v", time.Since(started).Round(time.Millisecond), reached, codes)
+	if reached != 16 {
+		t.Errorf("%d calls reached an adapter that never returns, want exactly the 16 that are tolerated", reached)
+	}
+	// let the adapters return: the abandoned count must fall back to zero, so that the next request reaches the adapter again
+	close(hang.release)
+	time.Sleep(500 * time.Millisecond)
+	w := e.propose(e.alice, "Rename the order entity.")
+	t.Logf("after the adapters returned: HTTP %d %s; calls that reached the adapter %d", w.Code, m14Code(w), hang.calls.Load())
+	if hang.calls.Load() != reached+1 {
+		t.Errorf("the abandoned count did not fall back: the next request did not reach the adapter (%d calls)", hang.calls.Load())
+	}
+}
+
+// When is the budget given back? The probe above polls with honest requests; this one watches the budget itself (InFlight) and what the server does
+// to the connections of the attackers, every 100 ms for 30 s, with one honest POST per second.
+func TestReviewBudgetIsReleasedAtTheReadTimeout(t *testing.T) {
+	budget := access.NewBodyBudget(access.DefaultBodyBudgetBytes, access.DefaultBodyBudgetPerUser)
+	e := m14Setup(t, m14Options{bodies: budget})
+	e.draft("500")
+	addr := m14Serve(t, e)
+	path := e.root + "/ai/patch-proposals"
+	started := time.Now()
+	conns, _ := holdBudget(t, e, addr, path, 16, 2)
+	body := []byte(`{"request":"Rename the order entity."}`)
+	lastUsed, lastSubjects := int64(-1), -1
+	lastHonest := ""
+	var lastPost time.Time
+	closedAt := map[int]time.Duration{}
+	answers := map[int]string{}
+	for time.Since(started) < 30*time.Second {
+		used, subjects := budget.InFlight()
+		if used != lastUsed || subjects != lastSubjects {
+			t.Logf("t=%6.2fs budget in flight: %d bytes, %d identities", time.Since(started).Seconds(), used, subjects)
+			lastUsed, lastSubjects = used, subjects
+		}
+		// what happened to the connections of the attackers: a response, a close, or nothing yet
+		for i, c := range conns {
+			if _, done := closedAt[i]; done {
+				continue
+			}
+			_ = c.SetReadDeadline(time.Now().Add(time.Millisecond))
+			resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+			if err == nil {
+				closedAt[i] = time.Since(started)
+				answers[i] = resp.Status
+				resp.Body.Close()
+			} else if ne, ok := err.(interface{ Timeout() bool }); !ok || !ne.Timeout() {
+				closedAt[i] = time.Since(started)
+				answers[i] = "closed: " + err.Error()
+			}
+		}
+		if time.Since(lastPost) >= time.Second {
+			lastPost = time.Now()
+			s, code, took := m14RawPost(t, addr, path, e.alice, len(body), body, 2*time.Second)
+			now := ""
+			if s != 0 {
+				now = http.StatusText(s)
+			}
+			honest := now + " " + code
+			if honest != lastHonest {
+				t.Logf("t=%6.2fs honest POST -> %d %s (%v)", time.Since(started).Seconds(), s, code, took.Round(time.Millisecond))
+				lastHonest = honest
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	byAnswer := map[string]int{}
+	var first, last time.Duration
+	for i, d := range closedAt {
+		byAnswer[answers[i]]++
+		if first == 0 || d < first {
+			first = d
+		}
+		if d > last {
+			last = d
+		}
+	}
+	t.Logf("of %d attacker connections, %d were answered or closed by the server between %.2fs and %.2fs: %v", len(conns), len(closedAt), first.Seconds(), last.Seconds(), byAnswer)
+}
+
+// F-06 of the second review: booking the declared length let identities without a membership fill the budget with connections that
+// declared a body and sent none. Sixty-four such connections of sixteen identities must book nothing, and an honest request must be served.
+func TestReviewDeclaredButUnsentBodiesBookNothing(t *testing.T) {
+	budget := access.NewBodyBudget(access.DefaultBodyBudgetBytes, access.DefaultBodyBudgetPerUser)
+	e := m14Setup(t, m14Options{bodies: budget, limits: ai.ServiceLimits{InFlightPerTenant: 4, DailyTokens: 50_000_000}})
+	doc := e.draft("500")
+	addr := m14Serve(t, e)
+	path := e.root + "/ai/patch-proposals"
+	var conns []net.Conn
+	t.Cleanup(func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	for i := 0; i < 16; i++ {
+		token := e.f.token(t, uuid(t), nil)
+		for j := 0; j < 4; j++ {
+			c, err := net.Dial("tcp", addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conns = append(conns, c)
+			if _, err = c.Write([]byte(m14Head(addr, path, token, 1<<20))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	time.Sleep(1500 * time.Millisecond)
+	used, subjects := budget.InFlight()
+	t.Logf("%d connections of 16 identities declared 1 MiB each and sent nothing: the budget holds %d bytes for %d identities", len(conns), used, subjects)
+	if used != 0 || subjects != 0 {
+		t.Errorf("declared but unsent bodies booked %d bytes for %d identities", used, subjects)
+	}
+	e.provider.Push(ai.ScriptStep{Payload: labelPatch(t, doc, "entity.order", "Honest"), Delay: 300 * time.Millisecond, Usage: ai.Usage{InputTokens: 100, OutputTokens: 100}, Model: "m"})
+	body := []byte(`{"request":"Rename the order entity."}`)
+	s, code, took := m14RawPost(t, addr, path, e.alice, len(body), body, 5*time.Second)
+	t.Logf("honest owner POST during the attack -> %d %s after %v", s, code, took.Round(time.Millisecond))
+	if s != 201 {
+		t.Errorf("an honest proposal was not served while 64 connections declared bodies and sent nothing: %d %s", s, code)
+	}
+}
+
+// F-02 of the second review: "an anonymous caller is never read" was false on the two commands routes and the two content-idempotent release POSTs, which
+// read their body before authentication. Each of the four, and one route that always pre-read, with no bearer and with an invalid bearer, declares
+// 900,000 bytes and sends one: the answer must be the 401, not a wait for the read timeout.
+func TestReviewAnonymousCallersAreNotReadOnAnyRoute(t *testing.T) {
+	e := m14Setup(t, m14Options{})
+	e.draft("500")
+	addr := m14Serve(t, e)
+	id := uuid(t)
+	routes := []struct{ name, path string }{
+		{"commands (version)", e.root + "/versions/1/entities/entity.order/commands"},
+		{"commands (binding)", e.root + "/datasets/" + id + "/bindings/1/entities/entity.order/commands"},
+		{"candidates (release POST)", e.root + "/candidates"},
+		{"acceptance-specs (release POST)", e.root + "/acceptance-specs"},
+		{"ai patch-proposals (control)", e.root + "/ai/patch-proposals"},
+	}
+	var slowest time.Duration
+	for _, r := range routes {
+		for _, token := range []string{"", "not-a-token"} {
+			c, err := net.Dial("tcp", addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			started := time.Now()
+			_, _ = c.Write([]byte(m14Head(addr, r.path, token, 900_000) + "x"))
+			status, code, _ := m14Answer(c, 15*time.Second)
+			took := time.Since(started)
+			c.Close()
+			kind := "no bearer"
+			if token != "" {
+				kind = "invalid bearer"
+			}
+			t.Logf("%-32s %-14s -> %d %s after %v", r.name, kind, status, code, took.Round(time.Millisecond))
+			if status != 401 || took > 2*time.Second {
+				t.Errorf("%s with %s: %d %s after %v (want 401 at once)", r.name, kind, status, code, took)
+			}
+			if took > slowest {
+				slowest = took
+			}
+		}
+	}
+	t.Logf("slowest answer %v", slowest.Round(time.Millisecond))
+}
+
+// What the audit trail keeps of a provider-chosen label after the reduction (F-07 of the second review). The builders state a residual: a leading run
+// of non-ASCII letters is dropped and no hash of the raw label is kept, so two labels with the same ASCII tail collapse. This reads what is stored.
+func TestReviewAIStoredModelLabels(t *testing.T) {
+	for _, label := range []string{"alpha 4 turbo", "Beta-3.1 (70B)", "модель-1", "модель-2", "model=fast", strings.Repeat("x", 200), "a\x00b\nc", "ok‮evil", "../../x"} {
+		label := label
+		t.Run(fmt.Sprintf("%.12q", label), func(t *testing.T) {
+			e := m14Setup(t, m14Options{limits: ai.ServiceLimits{InFlightPerTenant: 1}})
+			doc := e.draft("500")
+			e.provider.Push(ai.ScriptStep{Payload: labelPatch(t, doc, "entity.order", "Renamed"), Usage: ai.Usage{InputTokens: 1200, OutputTokens: 300}, Model: label})
+			w := e.propose(e.alice, "Rename the order entity.")
+			var stored string
+			_ = e.f.operator.QueryRow(`SELECT model FROM control.ai_invocations WHERE tenant_id=$1 LIMIT 1`, e.f.tenantA).Scan(&stored)
+			t.Logf("provider label %q -> HTTP %d, stored %q (%d bytes)", label, w.Code, stored, len(stored))
+			if w.Code != 201 {
+				t.Errorf("label %q: HTTP %d", label, w.Code)
+			}
+		})
+	}
+}
+```
+
+### A.15 Third pass at `0e13abe` - the compensation statement before and after the rewrite, timed in the worker session
+
+File: `tests/integration/zz_review_workerpolicy2_test.go`
+
+```go
+//go:build integration
+
+package integration
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/audit"
+	"github.com/Karthikeyan49/Framwork/internal/policy"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
+)
+
+// Review probe (not product code), third pass: the set-up of TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry with a 60 s statement
+// timeout, and the statement it replaced against the statement that replaced it (workflow.CompensationScanSQL), on the same 96 receipts,
+// in the same worker session. Each is timed three times.
+func TestReviewWorkerPolicyScanTimingOldVsNew(t *testing.T) {
+	m := m9Setup(t, nil)
+	x := m.start(t, "sql-statement-policy")
+	h := r5Handler(t, m.f, audit.Postgres{})
+	root := "/v1/tenants/" + m.f.tenantA
+	d := r5Definition("finance_manager", m.app, policy.DataScope{Kind: "ALL"})
+	condition := policy.DataScope{Kind: "CONDITION", Condition: &policy.ScopeCondition{Field: "field.contact.status", Op: "eq", Value: json.RawMessage(`"active"`)}}
+	children := make([]policy.DataScope, 8)
+	for i := range children {
+		children[i] = condition
+	}
+	scope := policy.DataScope{Kind: "OR", Children: children}
+	grant := d.Grants[1]
+	grant.Scope = &scope
+	d.Grants = append(d.Grants[:1], d.Grants[2:]...)
+	for i := 0; i < 7; i++ {
+		d.Grants = append(d.Grants, grant)
+	}
+	d.Grants = append(d.Grants, policy.Grant{Effect: "ALLOW", Actions: []string{"workflows.execute", "workflows.activity"}, Resource: policy.Selector{AppID: m.app, EntityID: "entity.contact", FieldID: "*"}})
+	r5Publish(t, h, root+"/roles", m.token, 0, d, true, uuid(t))
+	r5Assign(t, h, root, m.token, m.f.bob, "owner", 200)
+	r5Assign(t, h, root, m.approver, m.f.alice, d.Name, 200)
+	// Bounded synthetic scan, not evidence of a full 96-step business lifecycle.
+	if _, e := m.f.operator.Exec(`INSERT INTO runtime.workflow_receipts(tenant_id,instance_id,step_key,activity_ref,request_hash,output,output_hash,sequence,compensation_ref) SELECT $1,$2,'scan-'||g,'local.noop',repeat('a',64),convert_to('{}','UTF8'),encode(sha256(convert_to('{}','UTF8')),'hex'),g,'local.noop' FROM generate_series(1,96) g`, m.f.tenantA, x.ID); e != nil {
+		t.Fatal(e)
+	}
+	lease, found, e := m.worker.Claim(context.Background())
+	if e != nil || !found {
+		t.Fatal(e)
+	}
+	bind := func() *sql.Tx {
+		t.Helper()
+		tx, e := m.db.Begin()
+		if e != nil {
+			t.Fatal(e)
+		}
+		if ok, e := bindM9R(tx, lease); e != nil || !ok {
+			tx.Rollback()
+			t.Fatal("scan lease", e)
+		}
+		if _, e = tx.Exec(`SELECT set_config('app.actor_id',$1,true),set_config('app.auth_issuer','https://test-issuer.example',true),set_config('app.auth_subject',$2,true),set_config('statement_timeout','60000',true)`, m.f.alice, m.f.aliceSubject); e != nil {
+			tx.Rollback()
+			t.Fatal(e)
+		}
+		return tx
+	}
+	const query = `SELECT r.step_key FROM runtime.workflow_receipts r WHERE r.tenant_id=$1 AND r.instance_id=$2 AND r.compensation_ref<>'' AND NOT EXISTS(SELECT 1 FROM runtime.workflow_receipts c WHERE c.tenant_id=r.tenant_id AND c.instance_id=r.instance_id AND c.step_key=r.step_key||':compensate') ORDER BY r.sequence DESC,r.step_key DESC LIMIT 1`
+	tx := bind()
+	defer tx.Rollback()
+	timeOne := func(label, q string, cols int) {
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			var step, ref string
+			var out []byte
+			var e error
+			if cols == 1 {
+				e = tx.QueryRow(q, m.f.tenantA, x.ID).Scan(&step)
+			} else {
+				e = tx.QueryRow(q, m.f.tenantA, x.ID).Scan(&step, &ref, &out)
+			}
+			if e != nil || step != "scan-96" {
+				t.Fatal(label, e, step)
+			}
+			t.Logf("REVIEW %s run %d: %s (step %s)", label, i+1, time.Since(start), step)
+		}
+	}
+	timeOne("old statement (correlated NOT EXISTS)", query, 1)
+	timeOne("new statement (uncorrelated NOT IN)  ", workflow.CompensationScanSQL, 3)
+}
+```
+
+### A.16 Third pass at `0e13abe` - which launcher spellings are recognised (Node, no database)
+
+File: `a scratch script` - run as `node launcher-spellings.mjs <path to scripts/runtime-env.mjs>`
+
+```js
+// Review probe (not product code): which spellings of "start a backend process" does runtimeKindOf recognise, and which are handed the whole environment?
+// Usage: node launcher-spellings.mjs <path to scripts/runtime-env.mjs>
+import { pathToFileURL } from 'node:url'
+const { runtimeKindOf } = await import(pathToFileURL(process.argv[2]).href)
+const startsWorker = [
+  ['go', ['run', './cmd/worker']], ['go', ['run', 'cmd/worker']], ['go', ['run', './cmd/worker/']], ['go', ['run', './cmd/./worker']], ['go', ['run', 'cmd/../cmd/worker']],
+  ['go', ['run', 'github.com/Karthikeyan49/Framwork/cmd/worker']], ['go', ['run', './cmd/worker/main.go']], ['go', ['run', '-tags', 'x', './cmd/worker']],
+  ['./scripts/go.sh', ['run', './cmd/worker']], ['bin/worker', []], ['./bin/worker', []], ['/abs/path/bin/worker', []], ['bin\\worker', []],
+  ['./bin/api', ['-flag']], ['env', ['A=1', 'bin/worker']], ['nice', ['-n', '5', 'bin/dispatcher']], ['bash', ['-c', 'bin/worker']], ['sh', ['-c', './bin/worker']],
+]
+const shellWrapped = [
+  ['sh', ['-c', './bin/worker --flag']], ['bash', ['-c', 'cd . && ./bin/worker']], ['bash', ['-lc', 'exec bin/api']], ['sh', ['-c', 'go run ./cmd/worker']], ['sh', ['-c', 'GOFLAGS=-v go run ./cmd/api']],
+  ['go', ['run', './cmd/worker@latest']], ['go', ['run', './cmd/worker/...']], ['go', ['run', './cmd/wor*']], ['go', ['run', '-C', '.', 'cmd/worker']], ['go', ['run', '-C', 'cmd', 'worker']],
+  ['go', ['run', 'cmd/WORKER']], ['go', ['run', './cmd/worker ']], ['./w', []], ['node', ['-e', "require('child_process').spawn('bin/worker')"]], ['make', ['run-worker']], ['npm', ['run', 'worker']],
+]
+const show = (rows, label) => {
+  console.log(label)
+  for (const [cmd, args] of rows) console.log(String(runtimeKindOf(cmd, args) ?? 'NONE (whole environment)').padEnd(26), [cmd, ...args].join(' '))
+}
+show(startsWorker, '== spellings that start a backend directly (the kind should be named)')
+show(shellWrapped, '== fringe spellings (a kind here is a bonus; NONE is a spelling that is not recognised)')
+```
+
+### A.17 Third pass at `0e13abe` - spellings of a single-version gate that the scan of `version_family.go` does not see (unit test, no database)
+
+File: `internal/metadata/zz_review_gate_test.go` - needs the repository at `0e13abe`
+
+```go
+package metadata
+
+import (
+	"strings"
+	"testing"
+)
+
+// Review probe (not product code), third pass. F-03 of the second review was re-verified only by the builders' own tests; this asks the scan
+// of version_family.go about spellings of a gate on 1.4.0 alone that the builders' list does not contain. A spelling is MISSED when the
+// scan names no later member of the family as left out (it names no version at all, or it names the whole family).
+func TestReviewVersionGateSpellingsBeyondTheBuildersList(t *testing.T) {
+	// the control: the builders' own spellings must be reported (they are tested in sql_version_gate_test.go; repeated here with the same helper)
+	control := map[string]string{
+		"literal":       `WHERE m.schema_version='1.4.0'`,
+		"concatenation": `WHERE m.schema_version='1.4.'||'0'`,
+		"dollar":        `WHERE m.schema_version=$v$1.4.0$v$`,
+		"jsonb":         `WHERE m.document @> '{"schema_version":"1.4.0"}'`,
+		"LIKE prefix":   `WHERE m.schema_version LIKE '1.4%'`,
+		"regex":         `WHERE m.schema_version ~ '^1\.4\.'`,
+	}
+	for name, body := range control {
+		if len(AuthoringFamilyGaps(AuthoringVersionsNamed(body))) == 0 {
+			t.Errorf("control %q is not reported: the probe is not comparable with the builders' test", name)
+		}
+	}
+	more := []struct{ name, body string }{
+		{"array literal, one member", `WHERE m.schema_version = ANY('{1.4.0}'::text[])`},
+		{"array literal, 1.3.0 and 1.4.0", `WHERE m.schema_version = ANY('{1.3.0,1.4.0}'::text[])`},
+		{"array literal through unnest", `WHERE m.schema_version IN (SELECT unnest('{1.4.0}'::text[]))`},
+		{"comma list in one literal", `WHERE m.schema_version = ANY(string_to_array('1.4.0,1.3.0',','))`},
+		{"concatenation with a number", `WHERE m.schema_version = '1.'||4||'.0'`},
+		{"format", `WHERE m.schema_version = format('1.%s.0', 4)`},
+		{"split_part on the minor", `WHERE split_part(m.schema_version,'.',2) = '4'`},
+		{"split_part cast to int", `WHERE split_part(m.schema_version,'.',2)::int = 4`},
+		{"substring of the minor", `WHERE substr(m.schema_version,3,1) = '4'`},
+		{"regex with a character class", `WHERE m.schema_version ~ '^1[.]4[.]'`},
+		{"LIKE with an underscore", `WHERE m.schema_version LIKE '1_4%'`},
+		{"SIMILAR TO", `WHERE m.schema_version SIMILAR TO '1.4.%'`},
+		{"left()", `WHERE left(m.schema_version,3) = '1.4'`},
+		{"starts_with", `WHERE starts_with(m.schema_version,'1.4')`},
+		{"typed literal", `WHERE m.schema_version = text '1.4.0'`},
+		{"cast of a literal", `WHERE m.schema_version = CAST('1.4.0' AS text)`},
+		{"a variable assigned from a literal", `v:='1.4.0'; WHERE m.schema_version = v`},
+		{"a jsonpath with single quotes", `WHERE jsonb_path_exists(m.document, '$.schema_version ? (@ == "1.4.0")')`},
+		{"a jsonb array literal", `WHERE m.document->'versions' @> '["1.4.0"]'`},
+		{"a comparison", `WHERE m.schema_version = '1.4.0'::text`},
+		{"two-digit minor in the family", `WHERE m.schema_version = '1.4.0' OR m.schema_version = '1.10.0'`},
+	}
+	var missed []string
+	for _, c := range more {
+		named := AuthoringVersionsNamed(c.body)
+		gaps := AuthoringFamilyGaps(named)
+		verdict := "reported"
+		if len(gaps) == 0 {
+			verdict = "MISSED"
+			missed = append(missed, c.name)
+		}
+		t.Logf("%-40s names %-14v -> %s", c.name, named, verdict)
+	}
+	t.Logf("%d of %d spellings of a gate on 1.4.0 alone that are not in the builders' list are not reported: %s", len(missed), len(more), strings.Join(missed, "; "))
+}
+```
+
+### A.18 Third pass at `0e13abe` - the live catalog read with a looser net than the builders' scan, and the privilege inventory of the four guarded schemas on the tip (read-only queries on a disposable database)
+
+File: `tests/integration/zz_review_catalog_test.go` - needs the repository at `0e13abe`
+
+```go
+//go:build integration
+
+package integration
+
+import (
+	"database/sql"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
+)
+
+// Review probe (not product code), third pass. The scan of the live catalog (m9r_catalog_version_gate_test.go) recognises a version only in the
+// spellings of version_family.go. This reads the same 1,000-odd definitions with a looser net: every definition that mentions schema_version, or
+// anything shaped like an authoring version, where the builders' scan names no version at all. What it prints is what the scan is blind to
+// today; each line is read by hand in the report.
+func TestReviewCatalogLooseVersionReferences(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	const userSchemas = `n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg\_%'`
+	rows, err := f.operator.Query(`
+	SELECT 'function', n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')', pg_get_functiondef(p.oid)
+	  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ` + userSchemas + ` AND p.prokind IN ('f','p')
+	UNION ALL
+	SELECT 'constraint', coalesce(NULLIF(c.conrelid::regclass::text,'-'),'domain '||c.contypid::regtype::text)||'.'||c.conname, pg_get_constraintdef(c.oid)
+	  FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE ` + userSchemas + ` AND c.contype IN ('c','x')
+	UNION ALL
+	SELECT 'policy', pol.polrelid::regclass::text||'.'||pol.polname, coalesce(pg_get_expr(pol.polqual,pol.polrelid),'')||' '||coalesce(pg_get_expr(pol.polwithcheck,pol.polrelid),'')
+	  FROM pg_policy pol JOIN pg_class c ON c.oid=pol.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ` + userSchemas + `
+	UNION ALL
+	SELECT 'trigger', t.tgrelid::regclass::text||'.'||t.tgname, pg_get_triggerdef(t.oid)
+	  FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE NOT t.tgisinternal AND ` + userSchemas + `
+	UNION ALL
+	SELECT 'default', d.adrelid::regclass::text||'.'||a.attname, pg_get_expr(d.adbin,d.adrelid)
+	  FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid=d.adrelid AND a.attnum=d.adnum JOIN pg_class c ON c.oid=d.adrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ` + userSchemas + `
+	UNION ALL
+	SELECT 'view', c.oid::regclass::text, pg_get_viewdef(c.oid)
+	  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('v','m') AND ` + userSchemas + `
+	UNION ALL
+	SELECT 'index', i.indexrelid::regclass::text, pg_get_indexdef(i.indexrelid)
+	  FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ` + userSchemas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	loose := regexp.MustCompile(`(?is)schema_version|[^0-9.a-z_]1\.[0-9]+\.[0-9]+|\{1\.[0-9]`)
+	versionShaped := regexp.MustCompile(`[^0-9.a-z_]1\.[0-9]+(\.[0-9]+)?|\{1\.[0-9]`)
+	seen, namedByScan, blind := 0, 0, 0
+	for rows.Next() {
+		var kind, name, definition string
+		if err = rows.Scan(&kind, &name, &definition); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if len(metadata.AuthoringVersionsNamed(definition)) > 0 {
+			namedByScan++
+			continue
+		}
+		loc := loose.FindStringIndex(definition)
+		if loc == nil {
+			continue
+		}
+		blind++
+		from, to := max(0, loc[0]-70), min(len(definition), loc[1]+90)
+		shaped := versionShaped.FindAllString(definition, -1)
+		t.Logf("BLIND %-10s %s: version-shaped tokens %q; first mention: ...%s...", kind, name, shaped, strings.Join(strings.Fields(definition[from:to]), " "))
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%d definitions read, %d are named by the scan, %d mention schema_version or a version-shaped token that the scan does not see", seen, namedByScan, blind)
+}
+
+// The privilege inventory of the four guarded schemas (control, runtime, iam, audit) on a database migrated to the tip: the same questions that were asked
+// of the merge at the pinned commit (read-only catalog queries), now that 00091 and 00092 exist.
+func TestReviewCatalogInventoryAtTheTip(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	for _, q := range []struct{ label, sql string }{
+		{"secdef functions", `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('control','runtime','iam','audit') and p.prosecdef`},
+		{"secdef without the pg_catalog,pg_temp search_path", `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('control','runtime','iam','audit') and p.prosecdef and not coalesce(p.proconfig::text[] @> array['search_path=pg_catalog, pg_temp'], false)`},
+		{"  ... which", `select coalesce(string_agg(p.oid::regprocedure::text||' ['||array_to_string(p.proconfig,';')||']', ', ' order by 1),'-') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('control','runtime','iam','audit') and p.prosecdef and not coalesce(p.proconfig::text[] @> array['search_path=pg_catalog, pg_temp'], false)`},
+		{"secdef not owned by framework_schema_owner", `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('control','runtime','iam','audit') and p.prosecdef and pg_get_userbyid(p.proowner) <> 'framework_schema_owner'`},
+		{"functions executable by PUBLIC in the four schemas", `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('control','runtime','iam','audit') and exists(select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.grantee=0 and a.privilege_type='EXECUTE')`},
+		{"tables: all / RLS enabled / RLS forced", `select count(*)||' / '||count(*) filter (where c.relrowsecurity)||' / '||count(*) filter (where c.relforcerowsecurity) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('control','runtime','iam','audit') and c.relkind in ('r','p')`},
+		{"relations with a table-level privilege of framework_worker", `select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('control','runtime','iam','audit') and c.relkind in ('r','p','v','m','f') and (has_table_privilege('framework_worker', c.oid, 'SELECT') or has_table_privilege('framework_worker', c.oid, 'INSERT') or has_table_privilege('framework_worker', c.oid, 'UPDATE') or has_table_privilege('framework_worker', c.oid, 'DELETE'))`},
+		{"functions the worker may execute (not through PUBLIC)", `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('control','runtime','iam','audit') and has_function_privilege('framework_worker', p.oid, 'EXECUTE') and not exists(select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.grantee=0 and a.privilege_type='EXECUTE')`},
+		{"functions the dispatcher may execute (not through PUBLIC)", `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('control','runtime','iam','audit') and has_function_privilege('framework_dispatcher', p.oid, 'EXECUTE') and not exists(select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.grantee=0 and a.privilege_type='EXECUTE')`},
+		{"new ports executable by app / worker / dispatcher (release_candidate_fence, approve_release, rollback_release)", `select string_agg(p.proname||':'||has_function_privilege('framework_app', p.oid,'EXECUTE')||'/'||has_function_privilege('framework_worker', p.oid,'EXECUTE')||'/'||has_function_privilege('framework_dispatcher', p.oid,'EXECUTE'), ', ' order by p.proname) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='control' and p.proname in ('release_candidate_fence','approve_release','rollback_release')`},
+		{"worker guard allowlist rows / held / stale", `select count(*)||' / '||count(*) filter (where (g.col is null and has_table_privilege('framework_worker', g.rel, g.priv)) or (g.col is not null and has_column_privilege('framework_worker', g.rel, g.col, g.priv)))||' / '||count(*) filter (where not ((g.col is null and has_table_privilege('framework_worker', g.rel, g.priv)) or (g.col is not null and has_column_privilege('framework_worker', g.rel, g.col, g.priv)))) from control.worker_guard_granted() g`},
+		{"references to control|runtime|iam|audit objects / distinct names / unresolved", `with refs as (select m[1] as sch, m[2] as nm from pg_proc p join pg_namespace n on n.oid=p.pronamespace, lateral regexp_matches(p.prosrc, '\m(control|runtime|iam|audit)\.([a-z_][a-z0-9_]*)', 'g') m where n.nspname in ('control','runtime','iam','audit')), unresolved as (select distinct sch, nm from refs r where not exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname=r.sch and c.relname=r.nm) and not exists(select 1 from pg_proc q join pg_namespace n on n.oid=q.pronamespace where n.nspname=r.sch and q.proname=r.nm) and not exists(select 1 from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname=r.sch and t.typname=r.nm)) select (select count(*) from refs)||' / '||(select count(distinct sch||'.'||nm) from refs)||' / '||(select count(*) from unresolved)`},
+		{"TEMP / CREATE on the database for app, worker, dispatcher", `select string_agg(r||':'||has_database_privilege(r, current_database(), 'TEMP')||'/'||has_database_privilege(r, current_database(), 'CREATE'), ', ' order by r) from unnest(array['framework_app','framework_worker','framework_dispatcher']) r`},
+	} {
+		var out sql.NullString
+		if err := f.operator.QueryRow(q.sql).Scan(&out); err != nil {
+			t.Errorf("%s: %v", q.label, err)
+			continue
+		}
+		t.Logf("%-86s %s", q.label, out.String)
+	}
+}
 ```

@@ -13,8 +13,11 @@ STATUS at `552fa9e` (the pinned commit): COMPLETE for the attacks listed (what w
 No model has authority in this build and every decision stayed with a human in every attack; the defects are in the money,
 the audit hygiene and the concurrency of the AI route and in one M13 fence that the M13R-01 fix left open.
 
-STATUS at `be6ec7cae1849bf535bad1811b21bf93067598b5` (re-verified 2026-10-22, the head after the builders' fixes): all eight findings are **OPEN** and reproduce (M14R-01 to M14R-04 MEDIUM, M14R-05 to M14R-08 LOW); no file of `internal/ai`, `internal/verification`, `internal/intent`, `internal/promotion`, `internal/audit` or the migrations `00081` to `00089` differs from the pinned commit, and the IR-02 fix removes one of the five triggers of M14R-03. Overall: **FAIL** - 4 MEDIUM, 4 LOW, no HIGH, as at the pinned commit.
-The review of the pinned commit is kept as written; the re-verification is the section "Re-verification at `be6ec7c`" before "Not covered".
+STATUS at `be6ec7cae1849bf535bad1811b21bf93067598b5` (re-verified 2026-10-22, the head after the builders' first fixes): all eight findings are **OPEN** and reproduce (M14R-01 to M14R-04 MEDIUM, M14R-05 to M14R-08 LOW); no file of `internal/ai`, `internal/verification`, `internal/intent`, `internal/promotion`, `internal/audit` or the migrations `00081` to `00089` differs from the pinned commit, and the IR-02 fix removes one of the five triggers of M14R-03. Overall: **FAIL** - 4 MEDIUM, 4 LOW, no HIGH, as at the pinned commit.
+
+STATUS at `0e13abe` (third pass, 2026-10-22, the tip after 37 more commits): M14R-01, M14R-02, M14R-04 (= IR-06), M14R-06 and M14R-07 are **FIXED**; M14R-03 is **PARTLY FIXED** (results that finish together are no longer lost and a repeated exchange stores and charges once; a bearer token that expires during the provider phase still loses the answer - the builders document this, and I grade what is left LOW); M14R-05 and M14R-08 are **OPEN** and reproduce unchanged. Overall: **PASS** at `0e13abe` for the AI builder as reviewed - no HIGH and no MEDIUM open; open LOW: the M14R-03 residual, M14R-05, M14R-08.
+
+The review of the pinned commit is kept as written; the later passes are the sections "Re-verification at `be6ec7c`" and "Third pass at `0e13abe`" before "Not covered".
 
 ## Verdict by claim (at the pinned commit)
 
@@ -46,6 +49,7 @@ The review of the pinned commit is kept as written; the re-verification is the s
 | 08:26-08:31 | every probe of the appendix re-run in one batch against the unchanged tree, with the sources printed in the appendix | every probe vets clean; the probes that show a defect fail as listed under Reproduction, the others pass; the working tree was clean afterwards |
 | 2026-10-22 11:44-12:00 | follow-up on the items first marked NOT RUN, after another environment pause (Docker daemon restarted again): requirement-proposal parser fuzz, HTTP provider dial path, R7a burst, frozen-sandbox records, candidate-body differential | H15, H16 below; the other results are in the integration review |
 | 16:40-17:03 and later | re-verification at `be6ec7c`: the probes of the open findings and of the held claims against the new head; the gate steps are in the integration review | see "Re-verification at `be6ec7c`" |
+| 2026-10-22 20:36-22:17 | third pass at `0e13abe`: the probes of this report against the tip and my own new checks (A.13 to A.18 of the integration review), the gate in the integration review | see "Third pass at `0e13abe`" |
 
 Method. Probes are untracked `zz_review_*_test.go` files that were never committed (only the two reports are); the sources are in the appendix.
 Each ran against a disposable database that the fixture creates from this tree's migrations on my own Docker stack (project `framework-m0`,
@@ -72,7 +76,7 @@ Reproduction (the probe sources are in the appendix; a probe fails when the defe
 
 ### M14R-01 MEDIUM - a provider-reported model label outside `[A-Za-z0-9._:/@+-]` turns a finished provider call into HTTP 503 and an orphaned PENDING proposal
 
-Status at `be6ec7c`: **OPEN**, reproduces (4 of 4 labels).
+Status at `be6ec7c`: **OPEN**, reproduced (4 of 4 labels). At `0e13abe`: **FIXED** (the 4 labels give a READY proposal).
 
 Contract: ADR104 A10 ("State fields ... validated in `internal/audit`"), A8 (the result transaction records the outcome), and the premise that
 provider output is untrusted data that must not be able to break the platform.
@@ -99,7 +103,7 @@ test.
 
 ### M14R-02 MEDIUM - a provider call that the client cancels is never charged: the daily token budget can be bypassed at the operator's expense
 
-Status at `be6ec7c`: **OPEN**, reproduces (20 provider calls, 0 tokens charged).
+Status at `be6ec7c`: **OPEN**, reproduced (20 provider calls, 0 tokens charged). At `0e13abe`: **FIXED** (5 provider calls, 33,370 tokens charged, as the completed control).
 
 Contract: ADR104 A5 "Daily budget is per tenant per UTC day over reserved + used tokens ... the gateway substitutes the pessimistic estimate when none is
 given, the port never lowers it"; a crashed request is "charged pessimistically when swept" (A12); a call that times out is charged its input estimate
@@ -122,7 +126,7 @@ before returning; add a test that N cancelled cycles consume the budget.
 
 ### M14R-03 MEDIUM - the result exchange is one un-retried transaction: any failure in it discards a paid provider answer, leaves the proposal PENDING, and the sweep then charges the whole reservation
 
-Status at `be6ec7c`: **OPEN**; of the five triggers, the admission queue emptied by slow bodies is gone with the IR-02 fix, the other four reproduce.
+Status at `be6ec7c`: **OPEN**; of the five triggers the admission queue emptied by slow bodies was gone with the IR-02 fix. At `0e13abe`: **PARTLY FIXED**: results that finish together are no longer lost; a bearer token that expires during the provider phase still loses the result, and the sweep still charges its whole reservation.
 
 Contract: ADR104 A8 (three exchanges), A12 (residuals: "a crashed request keeps its in-flight slot until the lease lapses"). The ADR maps serialization
 failures to "409 `ai_conflict` (no automatic retry)" (line 470) without saying that in the result exchange this discards a paid answer.
@@ -165,7 +169,7 @@ beside the crash in A12.
 
 ### M14R-04 MEDIUM - `rollback_release` does not write the M13R-01 fence: a rollback whose transaction began before a committed rejection moves the pointer onto the rejected hash
 
-Status at `be6ec7c`: **OPEN**, reproduces (the same item as IR-06 of the integration review).
+Status at `be6ec7c`: **OPEN**, reproduced (the same item as IR-06 of the integration review). At `0e13abe`: **FIXED** by migration `00091`.
 
 Contract: migration `00088` header: "M13R-01 an acknowledged rejection did not stop an activation whose REPEATABLE READ transaction began earlier:
 `reject_release` and `activate_release` now both write one `control.release_fences` row per hash". `rollback_release` checks `release_rejections` for its
@@ -188,7 +192,7 @@ for `(t, p_app, p_target)` exactly as `activate_release` does; extend `TestM13R0
 
 ### M14R-05 LOW - `verifier-v2`: an exemption band that avoids the fixed probe amounts passes (documented as a "mechanical floor", reproduced)
 
-Status at `be6ec7c`: **OPEN**, reproduces.
+Status at `be6ec7c`: **OPEN**. At `0e13abe`: **OPEN**, reproduced.
 
 Contract: `internal/intent/oracle.go:169-172` ("Probes are a mechanical floor, not a proof: human cases must cover special regions"), ADR102 line 289,
 `internal/verification/README.md:37`. The FR-02 fix (`verifier-v2`) added nine ratios of the threshold.
@@ -205,7 +209,7 @@ verifier already does for string, enum, boolean and integer literals (`verifier.
 
 ### M14R-06 LOW - provider-reported usage is charged as reported, up to 100,000,000 tokens: one answer can lock a tenant out for the UTC day
 
-Status at `be6ec7c`: **OPEN**, reproduces.
+Status at `be6ec7c`: **OPEN**. At `0e13abe`: **FIXED** for the reported figure (a lying figure is capped); an oversized answer is still charged by its byte estimate.
 
 Executed (`TestReviewAIProviderBehaviours`, case "reports negative and enormous usage"): a provider reporting input `-2^62` and output `2^62`: HTTP 429
 (`FAILED/BUDGET`) and the tenant's `used_tokens` is **100,005,674** after one request. A 3 MiB answer is charged 792,106 (the pessimistic estimate) and
@@ -216,7 +220,7 @@ Fix direction: cap the per-attempt reported usage at the attempt's reservation s
 
 ### M14R-07 LOW - a provider adapter that ignores its context holds the request, its goroutine and (until the lease) its slot beyond the wall clock
 
-Status at `be6ec7c`: **OPEN**, reproduces.
+Status at `be6ec7c`: **OPEN**. At `0e13abe`: **FIXED** (the call is abandoned at the wall clock; at most 16 abandoned calls are tolerated).
 
 Evidence: `internal/ai/repair.go:102-109` (`call` is synchronous, no watchdog). Executed (`TestReviewAIProviderBehaviours`, case "hangs without honouring
 the context"): wall clock 2 s, no HTTP answer 12 s later. The built-in HTTP adapter honours the context (net/http), so only a custom `ai.Provider` can.
@@ -225,7 +229,7 @@ Fix direction: run `Complete` in a goroutine and `select` on `ctx.Done()`; aband
 
 ### M14R-08 LOW - redaction is a mechanical filter: 10 of 28 secret shapes survive (ADR104 Amendment B.4 says so)
 
-Status at `be6ec7c`: **OPEN**, reproduces.
+Status at `be6ec7c`: **OPEN**. At `0e13abe`: **OPEN**, reproduced (10 of 28 shapes).
 
 Executed (`internal/ai` unit probe, source not reproduced here because it consists of secret-shaped literals): the redacted shapes include PEM blocks, URL
 credentials, JWTs, DSNs, most vendor key prefixes, AWS secrets, `authorization:` headers, `password=`/`password:` assignments, one-line private keys and
@@ -340,6 +344,38 @@ What the IR-02 fix changes for this half: of the five triggers listed under M14R
 9.54 s and stayed `PENDING`), is gone: `TestReviewSlowBodyHoldsAdmissionSlots` (the unchanged probe) now ends with both proposals `READY`: the honest proposal behind four trickling bodies answers 201 in 1.53 s (baseline 1.55 s), where it ended `PENDING` after a 503 at 9.54 s. The other four (concurrent results, simultaneous admissions, a token that expires during the provider phase, a model label) are unchanged.
 The first two do not need a slow body at all: they come from the single `control.ai_usage` row that concurrent `ai_begin` and `ai_finish` update under REPEATABLE READ (40001, answered 409
 `ai_conflict`) and from a result exchange that is not retried (`access/ai.go:504-555`).
+
+## Third pass at `0e13abe` (2026-10-22)
+
+Same tip, worktree and method as the section of that name in the integration review (`docs/verification/INTEGRATION_INDEPENDENT_REVIEW.md`), which also lists what changed. The builders addressed the findings of this
+report in `a2c5c52` (M14R-01, -02, -06, -07), `8528fde` (M14R-03), `dae9a1b` (the label reduction and the usage cap, the second review's F-07 and F-08), `bfa47c4` (M14R-04 = IR-06, migration `00091`) and
+`37d9b14` (the approval fence, migration `00092`, F-05). I ran the probes of this report again without changing them, and added four checks of my own: that a repeated exchange stores and charges once
+(`TestReviewAIRetryIsExactlyOnce`), a randomized stress of the four release ports (`TestReviewReleaseFenceStress`), the counter of abandoned provider calls
+(`TestReviewAbandonedCallsAreBoundedAndReleased`) and what the audit trail keeps of a provider-chosen label (`TestReviewAIStoredModelLabels`). Their sources are A.13 and A.14 of the integration review.
+
+| Finding | At `552fa9e` | At `be6ec7c` | At `0e13abe` | Probe executed at `0e13abe`, result |
+|---|---|---|---|---|
+| M14R-01 MEDIUM | open | OPEN | **FIXED** | `TestReviewAIModelLabelOutsideTheAuditCharset` PASS for 4 of 4 labels (`alpha 4 turbo`, `Beta-3.1 (70B)`, `модель-1`, `model=fast`): HTTP 201, `READY`, 1 provider call, 1 invocation row, 5,974 tokens charged, and the next honest request is served (201). The stored labels are `alpha_4_turbo`, `Beta-3.1_70B`, `-1`, `model_fast` (below) |
+| M14R-02 MEDIUM | open | OPEN | **FIXED** | `TestReviewAICancelledCallsAreNotCharged` PASS: 20 cancelled cycles reach the provider 5 times and charge 33,370 tokens, the daily budget stops the loop; the control with completed requests (same budget) accepts 5, refuses 15 and charges 32,370 |
+| M14R-03 MEDIUM | open | OPEN | **PARTLY FIXED** | results that finish together: `TestReviewAIStaggeredAdmissionsFinishTogether` PASS in 3 of 3 rounds (6 of 6 `READY`, 34,764 tokens); `TestReviewAIRetryIsExactlyOnce` (A.13, integration review): 23 of 24 concurrent creations answered 201, 1 answered 409 at admission (nothing stored or charged), 0 `PENDING`, tokens charged exactly once per finished proposal; `TestReviewAIConcurrentResultsAreNotLost` still FAILS in round 3 only, because it counts that admission-time 409 (7 requests recorded, 7 `READY`, 40,558 tokens) as a lost answer - that is the documented residual and the probe's criterion is out of date. A token that expires during the provider phase: `TestReviewAITokenExpiresDuringProviderPhase` HTTP 401 after the provider answered, proposal `PENDING`, the tenant's next request 429 `ai_busy`; `TestReviewAIOrphanIsSweptAndChargedByTheReservation`: after the lease the sweep charges the orphan's reservation, 67,244 tokens (a finished proposal costs 5,794) |
+| M14R-04 MEDIUM (= IR-06) | open | OPEN | **FIXED** | `TestReviewRollbackOvertakesConcurrentRejection` PASS (rollback fails with 40001, pointer unchanged); 168 rounds of the randomized stress of the four release ports, 0 violations |
+| M14R-05 LOW | open | OPEN | **OPEN** | `TestReviewNarrowExemptionBandBetweenProbes` FAIL as before: the bands 626..749, 501..502 and 1500..1999 skip approval and the verifier answers PASS with 0 findings; the control bands 600..900 (3 findings) and 3001..4999 (1 finding) are caught |
+| M14R-06 LOW | open | OPEN | **FIXED** (the reported figure) | the case "reports negative and enormous usage": HTTP 201, `FAILED`/`SCHEMA_ERROR`, 69,622 tokens charged (100,005,674 and 429 `BUDGET` at `be6ec7c`); an oversized answer is still charged by its byte estimate: the 3 MiB case 792,106 tokens, `FAILED`/`BUDGET` |
+| M14R-07 LOW | open | OPEN | **FIXED** | the case "hangs without honouring the context" (wall clock 2 s): answered 503 after 2.041 s (no answer 12 s after at `be6ec7c`); `TestReviewAbandonedCallsAreBoundedAndReleased` (A.14): 16 of 20 requests reach an adapter that never returns, the rest are refused, and after it returns the next request reaches it again |
+| M14R-08 LOW | open | OPEN | **OPEN** | `TestReviewRedactionSurvivors`: 10 of 28 secret shapes survive (unchanged list) |
+
+**M14R-03, what is left and how I grade it.** The five triggers of the original finding were an admission queue emptied by slow bodies, results that finish together, simultaneous admissions, a model label that broke the audit write and a bearer token that expires during the provider phase. The first was removed
+by the IR-02 fix, the second and third by repeating the admission (5 tries in 4 s, `ai.go:63-64`) and the result exchange (6 tries in 6 s, `ai.go:542`) after a known abort, the fourth by the label reduction (M14R-01). The last remains: the result exchange re-verifies the bearer, so a token that expires during the provider phase answers 401 after the provider has been paid, the proposal stays `PENDING` until its lease is swept and the sweep
+charges the whole reservation (67,244 tokens against 5,794 for a finished proposal). Nothing is applied and the user asks again. ADR104 Amendment C states it ("A bearer token that expires during the provider phase still loses the result ... about 6.7% of the full-length requests with a 15-minute token and a 60 s phase (60/900)", `docs/adr/104-m14-ai-builder-and-intent-capture.md:655-658`).
+I grade the remainder LOW, not MEDIUM: nothing is stored wrongly, no other tenant is touched, the cost is bounded by the tenant's own daily budget and the request can be repeated. The grade depends on the deployment: with tokens of a few minutes the share of affected requests grows in proportion, and the budget cost (about 11.6 times a finished proposal) with it.
+
+**The rest of the AI path, attacked again with probes the builders do not have** (all PASS at `0e13abe`): `TestReviewAIPromptCarriesNoIdentity`, `TestReviewAIFiftyEightSecondProviderPhase` (HTTP 201 after 58.2 s through `httpserver.New`), `TestReviewAIConcurrentProviderPhasesFreeTheDatabase` (17 concurrent proposals, limit 16: 8 created, 9 refused 429 `ai_busy`, 0 active application backends and an honest GET in 10 ms during the provider phases),
+`TestReviewAIDecisionHappensOnce` (6 rounds: reject versus two applies, one decision), `TestReviewAIApplyVersusHumanEdit` (5 rounds, the human edit wins, the apply answers 409), `TestReviewAIConfirmIgnoresWhatTheModelSaysAboutItsOwnStatus`, `TestReviewAICrossTenantProposalAccess` (404 for another tenant's id, 403 for a user of another tenant), `TestReviewHoldsVsDecideExtended` (7 role shapes), and the unit and fuzz probes of the parsers and the dial path.
+
+**What the label reduction keeps** (`TestReviewAIStoredModelLabels`, A.14, nine labels, all HTTP 201): `alpha 4 turbo` is stored as `alpha_4_turbo`, `Beta-3.1 (70B)` as `Beta-3.1_70B`, `model=fast` as `model_fast`, a label with a NUL and a newline as `a_b_c`, one with a right-to-left override as `ok_evil`, a 200-character label at 128 bytes, `../../x` unchanged (inside the allowed set), but `модель-1` and `модель-2`
+as `-1` and `-2`: a leading run of non-ASCII letters is dropped and no hash of the raw label is kept, so two different non-Latin labels with the same ASCII tail are stored alike. The builders state this residual (`LINE_INTEGRATION_PLAN.md:30`). It costs audit fidelity for providers whose model names are not ASCII, not safety; LOW, not counted as a new finding.
+
+**Not covered in this pass** (the list of the earlier passes stands): a real model provider; the reference-scale performance gates; a slower-database run of the timing-bound tests; the residual of F-05 (a first activation racing an approval) and the 503-without-audited-409 residual of the retry budget; the production size cap of the HTTP adapter's response body (the 3 MiB answer above was injected through the scripted provider).
 
 ## Not covered
 
