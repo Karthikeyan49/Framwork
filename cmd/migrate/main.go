@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,12 +46,14 @@ func run(ctx context.Context, args []string) error {
 	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.Files, goose.WithDisableGlobalRegistry(true), goose.WithSessionLocker(locker))
 	if err != nil {
-		return fmt.Errorf("migration provider initialization failed")
+		// The provider reads only the embedded files, never the database, so its text names files and versions, not connection details
+		// (a duplicate number, for example); the operator needs it to see which two migrations collide.
+		return fmt.Errorf("migration provider initialization failed: %s", strings.Join(strings.Fields(err.Error()), " "))
 	}
 	if args[0] == "up" {
 		results, err := provider.Up(ctx)
 		if err != nil {
-			return fmt.Errorf("migration failed (no connection details logged); review migration and database state")
+			return upFailure(err)
 		}
 		fmt.Printf("applied %d migration(s)\n", len(results))
 		return nil
@@ -63,6 +67,23 @@ func run(ctx context.Context, args []string) error {
 	}
 	return nil
 }
+
+// outOfOrder is goose's refusal of a migration numbered below the database's highest applied version; it carries version numbers only.
+var outOfOrder = regexp.MustCompile(`detected [0-9]+ missing \(out-of-order\) migrations? lower than database version \([0-9]+\): versions? [0-9, ]+`)
+
+// upFailure explains a failed "up" without echoing driver text, which may name the host and user. It says which migration failed,
+// or that a numbering rule was broken, because those are what the operator has to act on.
+func upFailure(err error) error {
+	var partial *goose.PartialError
+	switch {
+	case errors.As(err, &partial) && partial.Failed != nil:
+		return fmt.Errorf("migration %d failed (no connection details logged); review migration and database state", partial.Failed.Source.Version)
+	case outOfOrder.MatchString(err.Error()):
+		return fmt.Errorf("migration refused: %s; a migration numbered below the highest applied version is never applied (docs/migration/LINE_INTEGRATION_PLAN.md, migration numbers)", outOfOrder.FindString(err.Error()))
+	}
+	return fmt.Errorf("migration failed (no connection details logged); review migration and database state")
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
