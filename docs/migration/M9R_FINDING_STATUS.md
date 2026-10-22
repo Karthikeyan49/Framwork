@@ -20,7 +20,8 @@ checkpoint `a1d8b00` is pushed on `remediation/m9r-foundation`; main stays
   production data plane and separate verifier credential remain architectural
   deliverables, alongside residuals, integration fixes and acceptance evidence.
   No real model/provider deployment is verified. Independent M14/merge review
-  is NOT RUN under the user's deferral until 22 October, 21:00 UTC.
+  was NOT RUN at this checkpoint (the user's deferral until 22 October, 21:00 UTC);
+  both have run since and both ended FAIL, see the milestone-agent bullet below.
 - R7a/R7b and local R5 retain their bounded historical evidence. Remaining R7
   D1–D7 are proposed, not started; the user's order confirmation is required.
   External IdP/MFA/HTTPS verification and wider R2/R3/R5 product features remain
