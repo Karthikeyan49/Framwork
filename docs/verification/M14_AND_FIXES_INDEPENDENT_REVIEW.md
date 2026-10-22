@@ -13,7 +13,8 @@ STATUS: Part A (the integration fixes) COMPLETE: 2 FAIL-grade findings of the fi
 (F-03, F-04); every other attack listed below held. Part B (first independent review of M14) was NOT RUN by this reviewer: the
 coordinator reassigned it after a host restart and it was completed by another reviewer
 (`origin/review/integration-final:docs/verification/M14_INDEPENDENT_REVIEW.md`, M14R-01..04). Section "M13 release-pointer
-concurrency" below is the follow-up assignment that replaced Part B.
+concurrency" below is the follow-up assignment that replaced Part B: 12 pairs executed, the rollback race of IR-06 reproduced (FAIL)
+and one more LOW (F-05: approvals recorded on rejected or superseded candidates); 8 pairs PASS.
 
 ## Progress
 
@@ -24,7 +25,9 @@ concurrency" below is the follow-up assignment that replaced Part B.
 | 20:03-20:10 | A1 body pre-read: raw-socket probes against `httpserver.New` on the pinned tree and on a scratch copy with the pre-read disabled; memory measurement; mutation check of the slow-body test | done, F-01, F-02 |
 | 20:10-20:18 | A2 live catalog scan, 89 -> 90 attribute diff, unique duplicate/abort lifecycle under 1.4.0 and 1.5.0, scanner spellings, negative control; A3 restore matrix; A4 real launcher with fake binaries; A5 real `migrate` binary against seven database shapes and a fresh database; A6 tools harness under `-race`, mutation of the tenant-approver test | done, F-03, F-04 |
 | 20:20-20:40 | Part B reading started (ports `00089`, `internal/ai` service/gateway/store, `access/ai*.go`); no Part B attack executed before the stop | stopped (API rate limit, host restart) |
-| 2026-10-22 11:31 | resumed with a changed scope: Part B dropped (done by another reviewer), report finished for A1-A6, then M13 release-pointer concurrency | in progress |
+| 2026-10-22 11:31 | resumed with a changed scope: Part B dropped (done by another reviewer), report finished for A1-A6, then M13 release-pointer concurrency | done |
+| 11:33-11:38 | release-pointer races: 12 pairs executed with held REPEATABLE READ transactions | S2 FAIL (= IR-06), S3/S4/S5 FAIL (F-05 LOW), 8 PASS |
+| next | re-verification of the coordinator's fix commits (F-01/F-02 first) when their hash arrives | pending |
 
 ## Findings
 
@@ -204,9 +207,64 @@ No false positive and no false negative among these shapes (migrations 1-44 are 
   declares tool activities together with a unique field was not authored.
 * A6: `TestM12APIDetailReadsOfALargeCandidateConverge` (the `m12apiRetrying` change) was not run.
 
+## M13 release-pointer concurrency (follow-up assignment, 2026-10-22, pinned tree `be6ec7c`)
+
+Question: does any pair among `approve_release`, `reject_release`, `activate_release` and `rollback_release` (latest definitions:
+`approve_release` from `00084`, the other three from `00088`) let a REPEATABLE READ transaction whose snapshot predates a committed
+conflicting change still move the pointer, or record an approval onto a rejected or superseded hash?
+
+Method (template: Appendix A.2 of `M14_INDEPENDENT_REVIEW.md`): each "T1" is a real runtime transaction (`postgres.WithRuntime`, REPEATABLE
+READ) bound as the acting member (`bindDirect`), which takes its snapshot (`SELECT pg_current_snapshot()`), waits, and only then calls its
+port and commits; "T2" is the conflicting port call, committed in between. Setup per test: c1 activated (generation 1), c2 activated over
+it (generation 2), candidates c3/c4/c5 built on base c2@2 (`TestZZReviewRaceAgainstRejection`, `...AgainstActivation`,
+`...AgainstRollback`, `...RejectVsRollbackAndFirstActivation`; reset stack, `-race`, 14.7 s + 8.0 s, load average 1.0-2.6).
+
+| # | T1 (older snapshot) | T2 (committed in between) | T1 result | pointer / evidence after | verdict |
+|---|---|---|---|---|---|
+| S1 | `activate(c4, c2@2)` | `reject(c4)` | 40001 | c2@2 unchanged | PASS (M13R-01 fence) |
+| S2 | `rollback(target c1, c2@2)` | `reject(c1)` | **ok, generation 3** | **pointer on the rejected c1** | **FAIL** (= M14R-04 / IR-06, reproduced) |
+| S3 | `approve(c3)` | `reject(c3)` | **ok, count 1** | **approval of dave recorded on the rejected c3** (1 approval, 1 rejection) | **FAIL** (F-05, LOW) |
+| S4 | `approve(c5, base c2@2)` | `activate(c4)` moves the pointer to c4@3 | **ok, count 1** | **approval recorded on the superseded c5** | **FAIL** (F-05, LOW) |
+| S5 | `approve(c5, base c2@2)` | `rollback(c1)` moves the pointer to c1@3 | **ok, count 1** | **approval recorded on the superseded c5** | **FAIL** (F-05, LOW) |
+| S6 | `activate(c3, c2@2)` | `activate(c4, c2@2)` | 40001 | c4@3 | PASS |
+| S7 | `activate(c3, c2@2)` | `rollback(c1)` | 40001 | c1@3 | PASS |
+| S8 | `rollback(target c1, c2@2)` | `activate(c4)` | 40001 | c4@3 | PASS |
+| S9 | `rollback(target c1, c2@2)` | `rollback(c1)` by another operator | 40001 | c1@3 | PASS |
+| S10 | `reject(c4)` | `activate(c4)` | 40001 (the veto aborts and can be repeated) | c4@3, no rejection | PASS (no pointer onto a rejected hash) |
+| S12 | `reject(c1)` | `rollback(c1)` | ok | c1@3, rejected after it became active | PASS (equals the serial order rollback -> reject; a veto after a release ran is allowed) |
+| S13 | first `activate(a, '', 0)` | first `activate(b, '', 0)` | 40001 | b@1 | PASS |
+| - | `approve(c?)` vs a committed `approve` / `reject` vs `reject` | - | not raced: no shared invariant (both rows are per actor) | | NOT RUN |
+
+The generation / expected-base compare-and-set holds in every executed pair: `active_releases ... FOR UPDATE` under REPEATABLE READ raises
+40001 when the row changed after the snapshot (S6-S9, S13). A stale approval is inert at the pointer: after S4 the activation of c5
+(`expected c2@2`) is refused with 409 through the API, and S1 shows the fence refusing an activation of a hash rejected concurrently.
+
+### F-05 LOW - `approve_release` has neither the fence nor a pointer lock: an approval whose transaction began earlier is recorded on a rejected or superseded candidate
+
+`approve_release` (still the `00084:120-143` definition; `00088` did not replace it) reads `release_rejections` and the active pointer from its
+snapshot and inserts the approval without touching `control.release_fences` or locking `active_releases`. S3: a rejection acknowledged to its
+author (bob) is followed by dave's approval of the same hash; S4/S5: an approval is recorded for a candidate whose base the pointer had already
+left. The approvals cannot move the pointer (activation is fenced and compare-and-set; stale candidates never become fresh again because
+generations only grow), but the port's own refusals ("release candidate was rejected", "candidate is stale") are overtaken, and the
+evidence that `promote.go` shows and counts (`Store.Approvals`, `ApproverRoles`) then contains an approval made after a veto. Same class as
+M13R-01 and IR-06, without a pointer consequence.
+
+Repro (essential part; helper `zzHold` = the A.2 template with a second statement `SELECT pg_current_snapshot()` before the wait):
+
+```go
+e, c1, c2 := zzTwoReleases(t)                          // c1@1 -> c2@2
+c3, _ := e.build("500", m13Relabel("Third release"), e.carol)
+approve := e.zzHold("approve(c3)", e.dave.subject, `SELECT control.approve_release($1,$2)`, e.app, c3) // snapshot taken
+e.rejectPort(e.f.bobSubject, c3, "RISK_UNACCEPTABLE", "veto")                                       // commits
+t.Log(approve.finish(), len(e.approvalsOf(c3)), len(e.rejectionsOf(c3)))                            // "ok 1", 1, 1
+```
+
+Fix direction: write the same `control.release_fences` row in `approve_release` before the rejection check (as `activate_release` does), and
+read the pointer with `FOR SHARE` (REPEATABLE READ then raises 40001 when it moved); extend `TestM13R01*` to approvals.
+
 ## Probe sources
 
 The probes were temporary files (`tests/integration/zz_review_a1_test.go`, `zz_review_a2_test.go`, `zz_review_a5_test.go`,
-`internal/metadata/zz_review_scan_test.go`, `internal/compiler/zz_review_restore_test.go`), deleted before every commit; the
+`internal/metadata/zz_review_scan_test.go`, `internal/compiler/zz_review_restore_test.go`, `tests/integration/zz_review_release_race_test.go`), deleted before every commit; the
 snippets above are their essential parts. Scratch mutants: a copy of `be6ec7c` with `preRead := false && ...` (A1) and one with
 `|| (false && !slices.Contains(permitted, roles[0]))` in `internal/policy/approval.go` (A6), never on the branch.
