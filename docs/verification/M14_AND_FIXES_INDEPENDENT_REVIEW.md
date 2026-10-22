@@ -16,7 +16,8 @@ coordinator reassigned it after a host restart and it was completed by another r
 concurrency" below is the follow-up assignment that replaced Part B: 12 pairs executed, the rollback race of IR-06 reproduced (FAIL)
 and one more LOW (F-05: approvals recorded on rejected or superseded candidates); 8 pairs PASS. Re-verification of the coordinator's
 fixes (last section): F-01, F-02 and IR-06 PASS; the body budget opens a new MEDIUM (F-06, a cross-tenant write lock held by eight
-unprovisioned identities with header-only requests); F-05 is still open.
+unprovisioned identities with header-only requests); F-05 is still open. Round 2 (`a2c5c52`, `8528fde`, `9d2928d`, `b05494a`): M14R-01, -02,
+-07, the concurrent-result part of M14R-03, D1 and D2 fixed; M14R-06 partly (F-08 LOW); label reduction loses evidence (F-07 LOW).
 
 ## Progress
 
@@ -31,6 +32,7 @@ unprovisioned identities with header-only requests); F-05 is still open.
 | 11:33-11:38 | release-pointer races: 12 pairs executed with held REPEATABLE READ transactions | S2 FAIL (= IR-06), S3/S4/S5 FAIL (F-05 LOW), 8 PASS |
 | 11:40 | `TestM12APIDetailReadsOfALargeCandidateConverge` once (A6 item) | PASS, 10.8 s, load 2.5 |
 | 11:42-11:50 | re-verification of `c76968f` (F-01/F-02) and `bfa47c4` (IR-06) in a scratch copy of `bfa47c4`; mutation and negative controls of the builder's new tests | F-01 PASS, F-02 PASS, IR-06 PASS; new F-06 MEDIUM; F-05 still open |
+| 12:07-12:16 | round 2: `9d2928d`, `b05494a`, `a2c5c52`, `8528fde` on a scratch copy of `2ca08d8` with my own probes | M14R-01/-02/-07, M14R-03 results, D1, D2 fixed; M14R-06 partly (F-08); F-07 new LOW |
 
 ## Findings
 
@@ -328,9 +330,43 @@ memory actually held counts; and/or keep part of the total for identities that r
 * Read: `00091` replaces the `00088` body with one added `INSERT ... release_fences ... (p_target)` before the rejection check; the post-check
   keeps owner and ACL and requires the fence statement in the definition.
 
+## Re-verification round 2 (2026-10-22, `9d2928d`, `b05494a`, `a2c5c52`, `8528fde`, `2ca08d8`)
+
+Tree: a scratch copy of `2ca08d8` (the local head); my own probes (`zz_review_m14fix_test.go`, `zz_review_d2_test.go`), not the
+coordinator's regression tests; `-race`; disposable databases; load average 0.6-4.2 (other agents active).
+
+| item | verdict | executed evidence |
+|---|---|---|
+| M14R-01 provider labels (`a2c5c52`) | **fixed** | 8 answers with model labels `alpha 4 turbo`, `Beta-3.1 (70B)`, `модель-1`, `model=fast`, `модель`, 300 x `x`, `a<U+202E>b<NUL>c`, `ok-model:1`: all 201 READY, one attempt row and audit rows `admitted, created` each; stored and audited labels `alpha4turbo`, `Beta-3.170B`, `-1`, `modelfast`, empty, 128 x `x`, `abc`, `ok-model:1` |
+| M14R-02 canceled calls (`a2c5c52`) | **fixed** | client cancels 600 ms into a 2 s provider call, five cycles: each proposal `FAILED/INTERNAL` with one `TIMEOUT` attempt row and 13,866 tokens charged (input estimate + whole reserved output); `used_tokens` 69,330 = the sum; the sixth admission is refused 429 `ai_budget_exhausted` (daily budget 120,000). A wall-clock timeout is charged the input estimate only (5,674) |
+| M14R-06 reported usage (`a2c5c52`) | **partly fixed** (F-08 LOW) | an answer reporting 100,000,000 + 100,000,000 tokens is charged 57,512 and the next request is admitted (201) |
+| M14R-07 adapter ignoring its context (`a2c5c52`) | **fixed**, bound refuses everyone while tripped | adapter that never returns, wall clock 1 s: each request ends after 1.3-1.5 s (`503 ai_unavailable`); after 19 abandoned calls (soft bound, 3 batches of 8 started below 16) an honest request is refused at once (503, adapter not reached); after the stuck calls return, the next request is 201 READY. The gateway is per process, so the refusal applies to every tenant; the production HTTP adapter honours its context (`NewRequestWithContext`, `DialContext`), so only a misbehaving adapter trips it |
+| M14R-03 concurrent results (`8528fde`) | **fixed** | 3 rounds of 6 staggered admissions whose answers arrive together: 18 of 18 READY (the other review measured 3 of 6 lost per round before); 16 rolled-back transactions in the disposable database during the rounds versus 0 for six sequential proposals (so tries were repeated); `used_tokens` 140,940 = the sum of the 24 proposals' tokens; every proposal has exactly one `ai.proposal.admitted` and one `ai.proposal.created` audit row and as many invocation rows as attempts: **no double charge, no double store, no missing or duplicate audit** |
+| M14R-03 simultaneous creations (`8528fde`) | residual (as the commit says) | 3 rounds of 8 at the same instant: 6, 7 and 7 READY, the rest 409 `ai_conflict` after 0.3 s (all five tries spent within about 100 ms of jittered pauses); each refusal has one `ai.propose.rejected` audit row and no `admitted` row; nothing stored or charged for them |
+| M14R-03 token expiring during the provider phase | not fixed (the commit's residual) | NOT RUN by me |
+| other status codes under the 5x admission retry | **unchanged** | 409 `draft_changed` 0.028 s, 400 `invalid_ai_request` 0.014 s, 429 `ai_busy` 0.026 s, 404 `not_found` 0.018 s, 403 `forbidden` (viewer) 0.013 s, 429 `ai_budget_exhausted` 0.063 s: same codes, no retry delay. Read, not executed: a known abort raised outside `Admit` (policy loading, audit append) was 503 before and is now 409 `ai_conflict` after the tries |
+| D1 compensation scan (`9d2928d`) | **fixed** | `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` 3.56 s PASS and the three `TestM9*Compensat*` tests PASS on the head; `NOT IN` over `step_key` (NOT NULL, `00020`) is equivalent to the replaced `NOT EXISTS` |
+| D2 migrate messages (`b05494a`) | **fixed**, no secret | real binaries with probe migrations against a database at 91: an extra `00058` -> rc 1 "migration refused: detected 1 missing (out-of-order) migration lower than database version (91): version 58; ..."; a duplicate `00091` -> rc 1 naming both files (status and up); a failing `00092` -> rc 1 "migration 92 failed (no connection details logged)"; no output matched a DSN/password/host pattern; `cmd/migrate` and `db/migrations` unit tests PASS |
+| F-01 / F-02 / IR-06 | fixed (round 1) | see above; F-06 (new) and F-05 still open |
+
+### F-07 LOW - label reduction merges and drops characters, so the trace can name a different model
+
+`apiLabel` deletes every character outside `[A-Za-z0-9._:/@+-]` instead of replacing it: `Beta-3.1 (70B)` is stored and audited as
+`Beta-3.170B` (reads as version 3.170B), `модель-1` as `-1`, `модель` as an empty label. The label is the trace's evidence of which model
+produced a proposal; distinct labels can collapse into one. Fix direction: replace each run of refused characters with one `_` and keep a
+hash of the raw label.
+
+### F-08 LOW - the usage cap is four times, not twice, what a request could cost, and it can exceed the proposal's reservation
+
+`chargeUsage` caps the input and the output separately at `2*(in+outTokens)+1024`, so one attempt can be charged about `4*(in+out)+2048`:
+measured 57,512 tokens for an answer whose cancel-equivalent charge is 13,866 and whose whole three-attempt reservation is 41,598. One hostile
+answer costs 29% of the default daily budget (four lock the tenant out for the UTC day), and because `ai_finish` charges more than was
+reserved, `used_tokens` can pass the daily budget the admission checked. The commit says "a figure above twice what the request could cost ...
+is capped".
+
 ## Probe sources
 
 The probes were temporary files (`tests/integration/zz_review_a1_test.go`, `zz_review_a2_test.go`, `zz_review_a5_test.go`,
-`internal/metadata/zz_review_scan_test.go`, `internal/compiler/zz_review_restore_test.go`, `tests/integration/zz_review_release_race_test.go`), deleted before every commit; the
+`internal/metadata/zz_review_scan_test.go`, `internal/compiler/zz_review_restore_test.go`, `tests/integration/zz_review_release_race_test.go`, `zz_review_fix01_test.go`, `zz_review_m14fix_test.go`, `zz_review_d2_test.go`), deleted before every commit; the
 snippets above are their essential parts. Scratch mutants: a copy of `be6ec7c` with `preRead := false && ...` (A1) and one with
 `|| (false && !slices.Contains(permitted, roles[0]))` in `internal/policy/approval.go` (A6), never on the branch.
