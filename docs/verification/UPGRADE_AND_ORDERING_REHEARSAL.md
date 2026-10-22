@@ -14,16 +14,27 @@ not committed; their text is summarised here.
 | T1 (a)-(d) populated 57 -> 90 (data written by the remediation line's own code) | done | **PASS** |
 | T1 (a)-(d) populated 89 -> 90 (00090 over live unique claims) | done | **PASS** |
 | T1 schema: fresh 1..90 vs populated 57 -> 90 vs populated 89 -> 90 | done | **PASS** (byte-identical dumps) |
-| T2 (i) 00091 replaces a function | in progress | NOT RUN yet |
-| T2 (ii) duplicate 00091 | pending | NOT RUN yet |
-| T2 (iii) file below the applied maximum | pending | NOT RUN yet |
-| T2 (iv) holes 58-79 | pending | NOT RUN yet |
-| T2 (v) lineage guard | partial | 57, 89 and 90 checked in T1 (no misfire); rest NOT RUN yet |
-| T2 (vi) number/count assumptions | pending | NOT RUN yet |
-| Verdict on the numbering rule | pending | |
+| T2 (i) 00091 replaces a function: fresh vs upgraded | done | **PASS** (identical schema) |
+| T2 (ii) two 00091 files; renumbering the later one | done | **PASS** as stated; rule gap found: **D1 (MEDIUM)** |
+| T2 (iii) file below the applied maximum | done | **PASS** (refused, nothing applied); out-of-order shown to diverge |
+| T2 (iv) holes 58-79 | done | **PASS** |
+| T2 (v) lineage guard | done | **PASS** (no misfire at empty/57/89/90/91; fires on a real old-numbered database) |
+| T2 (vi) number/count assumptions | done | **PASS** (nothing breaks with 00091; list below) |
+| Verdict on the numbering rule | done | rules 1, 3 confirmed with corrections; rule 2 incomplete (D1); rule 4 NOT RUN |
+| Proposed static test | done | `db/migrations/numbering_test.go`, separate commit "proposed test" |
 
 Environment: `ensure-docker` (all three stacks ready), `reset.sh` of the M13 stack from this worktree (68 migrations, head 90). Every
-database command ran under `/home/user/bin/dbrun13 nice -n 15`.
+database command ran under `/home/user/bin/dbrun13 nice -n 15`. The host restarted once during Task 2 (after item vi had run); the stack
+was rebuilt with `reset.sh` and the scratch evidence survived.
+
+Defects found (details and repros in the sections below):
+
+| ID | Severity | Summary |
+|---|---|---|
+| D1 | MEDIUM | Rule 2 ("the later line renumbers its own unmerged migration") says nothing about databases that already applied that migration under its old number. Such a database is then either blocked (`migrate up` exit 1) or, if the migration is idempotent, silently skips the earlier line's migration while `migrate status` reports everything applied; nothing detects it |
+| D2 | LOW | `cmd/migrate` replaces goose's reason with a generic text: a duplicate number gives `migration provider initialization failed`, a file below the applied maximum gives `migration failed (no connection details logged); review migration and database state`. The plan's quoted goose message is never shown to the operator |
+| D3 | LOW | The plan says 58-79 stay unused "as in every database built so far"; the old milestone database `MAIN` holds version 60 (the milestone line's old number for today's 00089) |
+| D4 | LOW | The plan cites `tests/integration/m_migration_lineage_test.go` as "executed against the real `migrate` command"; the test calls `postgres.CheckMigrationLineage` in process on a database whose row 80 it deletes. This rehearsal ran the real binary on a real old-numbered database (PASS, item v) |
 
 ## Task 1 - populated upgrade rehearsal
 
@@ -141,3 +152,197 @@ are part of the comparison. The fixture schemas were excluded from all three bec
   purpose); production databases never hold that table. The integrated tree already moved the table to `m8_fixture`. Not exercised.
 * Starting the integrated binary on a schema older than its own fails closed on the affected routes (503) instead of refusing to start;
   the deployment order is "migrate, then start". Recorded as context, not graded.
+
+## Task 2 - numbering rule rehearsal
+
+### Method
+
+* Scratch migration sets (session scratch directory, never committed), each a copy of today's 68 files plus hypothetical files:
+  `91a` (+ `00091_zz_line_a_unique_target_guard.sql`: `runtime.register_unique_constraint` replaced from its latest definition,
+  `00090`, with one added guard `unique target required`; every older RAISE message kept), `dup` (+ line A's `00091` and a line-B
+  `00091_zz_line_b_marker.sql` that creates `control.zz_line_b_marker()`), `renum` (line A `00091`, line B renumbered `00092`), `75`
+  (+ `00075_zz_remediation_from_00052.sql`: the same function as the remediation line would write it from the definition it knows,
+  `00052`, i.e. the single gate `m.schema_version='1.4.0'`, with one reworded message), and `old` (the milestone line's original files,
+  `git archive 60da6f2 db/migrations`: 00001-00053 and 00060).
+* Real `migrate` binaries: `go build ./cmd/migrate` in a scratch copy of `be6ec7c` (`git archive`), once per set (the embedded files
+  differ). They ran against disposable databases with only `MIGRATION_DATABASE_URL` overridden, exactly like the operator command.
+* In-process goose (the same v3.28.0 the binary uses) over `os.DirFS(<set>)` for the exact goose messages and for out-of-order runs.
+* Schema comparison: `pg_dump --schema-only` through `docker exec framework-m13-postgres-1`, only the `\restrict` lines removed.
+* Probe: `tests/integration/zz_review_ordering_test.go` (temporary), run with
+  `dbrun13 nice -n 15 node scripts/with-env.mjs ./scripts/go.sh test -tags=integration -count=1 -v -run '^TestZZReviewT2' ./tests/integration`.
+
+### (i) a new 00091 that replaces a function from its latest definition - PASS
+
+| Database | How | Result |
+|---|---|---|
+| fresh | goose `Up` over set `91a` | applied `1..57, 80..91` |
+| upgraded | goose `UpTo(90)` over today's files, then the real `migrate up` of the `91a` tree | `applied 1 migration(s)`; `migrate status`: 69 applied, 0 pending |
+
+The two schema dumps are **identical** (626173 bytes); the live function carries the new guard in both. Replacing a function from
+its latest definition with the next number behaves exactly like `00090` did in Task 1.
+
+### (ii) two migrations that both claim 00091 - PASS, with a rule gap (D1)
+
+* goose refuses the set when the provider is opened, before touching the database:
+  `found duplicate migration version 91: existing:00091_zz_line_a_unique_target_guard.sql current:00091_zz_line_b_marker.sql`
+  (goose prints the two names on separate lines).
+* The real `migrate` built from that tree: `up` and `status` both exit 1 with only `migration provider initialization failed`
+  (D2); the database stays at 90.
+* Line B renumbered to `00092`: a fresh install applies `..., 90, 91, 92`; a database at 90 gets `applied 2 migration(s)`; a database
+  at 91 that already had line A gets `applied 1 migration(s)` in the order `[91 92]`. All three schema dumps are **identical**.
+
+**D1 (MEDIUM, a documented contract that does not hold as written).** The rule renumbers the later line's migration but says nothing
+about databases that already applied it under its old number (that line's development, CI or rehearsal databases - `MAIN` is the
+same situation at a larger scale). Executed with the real binaries (`TestZZReviewT2iiRenumberedAfterApply`):
+
+| Database built with line B as `00091`, then the merged tree (A=`00091`, B=`00092`) | `migrate up` | `migrate status` | Line A's change | Schema vs fresh install of the merged tree |
+|---|---|---|---|---|
+| B not idempotent (`CREATE FUNCTION`) | exit 1, generic message | 69 applied (counts B's 91 as A's), 1 pending (`00092`) | never applied | differs |
+| B idempotent (`CREATE OR REPLACE FUNCTION`) | exit 0, `applied 1 migration(s)` | 70 applied, 0 pending | **silently skipped** | differs |
+
+goose compares version numbers only, and `postgres.CheckMigrationLineage` recognises only the 2026 milestone renumbering (the tool
+ledger without version 80). Repro (scratch, a few minutes): copy `db/migrations` into `A/` and `B/`; add line B's file as
+`B/00091_x.sql` and both lines' files to `A/` as `00091_a.sql` and `00092_x.sql`; build `migrate` once with `A/` embedded; migrate a
+disposable database with `B/` (goose `Up`); run the `A/` binary's `up` and `status`; compare `pg_get_functiondef` of line A's object.
+Remedy (wording below): such databases are rebuilt, never migrated; a renumbering that may meet a persistent database adds a lineage
+check keyed to an object only that migration creates, as `CheckMigrationLineage` does for 00080.
+
+### (iii) a file numbered below the applied maximum - PASS (refused); out-of-order shown to diverge
+
+On a database at 90 with set `75`:
+
+| Call | Result |
+|---|---|
+| goose `Up`, `UpTo(75)`, `UpByOne` | each: `detected 1 missing (out-of-order) migration lower than database version (90): version 75` |
+| goose `Status` | `00075_zz_remediation_from_00052.sql pending`, `00090_integration_unique_schema_1_5.sql applied` |
+| real `migrate up` | exit 1, `migration failed (no connection details logged); review migration and database state` (D2) |
+| real `migrate status` | exit 0, 68 applied, 1 pending: `00075_zz_remediation_from_00052.sql pending` |
+| afterwards | version rows unchanged (last 90, no 75); `runtime.register_unique_constraint` unchanged (gate `IN('1.4.0','1.5.0')`) |
+
+The same tree elsewhere:
+
+| Database | Order | Live gate of `register_unique_constraint` |
+|---|---|---|
+| fresh install | 69 files, `00075` applied at position 57 (after 57, before 80); `00090` replaces it later | `IN('1.4.0','1.5.0')` (00090) |
+| upgraded from 90 with `goose.WithAllowOutofOrder(true)` | `00075` applied after 90: `[89 90 75]` | **`='1.4.0'` only (00075): the B-05 defect is back** |
+
+The two schemas differ in exactly two lines of that function (the version predicate and the reworded message). `00090`'s own
+post-check query, run on the out-of-order database, now finds `runtime.register_unique_constraint`, but `00090` never runs again, so
+nothing refuses that state. The static scans in `internal/metadata/sql_version_gate_test.go` (`TestSQLFunctionsNameWholeSchemaVersionFamilies`,
+`TestMetadataVersionsCheckListsEveryKnownVersion`) **pass** on the tree with `00075`, because they take "the latest definition" in file
+order: they certify the fresh-install state only, which is one more reason to keep out-of-order off.
+
+### (iv) holes 58-79 - PASS
+
+| Database | Real `migrate status` | Real `migrate up` |
+|---|---|---|
+| empty | exit 0: 0 applied, 68 pending (no entry for 58-79) | `applied 68 migration(s)`; then status 68 applied, 0 pending |
+| at 57 (goose `UpTo(57)`) | 57 applied, 11 pending (`00080`-`00090`) | `applied 11 migration(s)`; version rows `[57 80 81 ... 90]` |
+
+Task 1 also applied 80-90 over the hole with data present (goose `UpTo(90)` from 57).
+
+### (v) the lineage guard - PASS
+
+No misfire with the real binary (the check runs before `up` and `status`): empty database (`status` and `up`), 57 (`status`, `up`),
+89 (`status` 1 pending, `up` applied 1), 90 (`status`), 91 (`status` of the `91a` tree: 69 applied; `status` and `up` of today's tree:
+68 applied, `applied 0 migration(s)`), plus `CheckMigrationLineage` in process at 57, 89 and 90 in Task 1.
+
+It fires on a real old-numbered database (goose `Up` over set `old`: 54 migrations, last `[52 53 60]`): `migrate status` and
+`migrate up` both exit 1 with `database was built with the milestone line's pre-integration migration numbers (00045-00053, 00060);
+rebuild it from the current migrations, do not migrate it`; the version rows are unchanged; `CheckMigrationLineage` returns
+`ErrForeignMigrationNumbering`. Without the guard, goose `Status` (read only) would take 53 of today's files as applied by number and
+leave 15 pending (`00054`-`00057`, `00080`-`00090`): the remediation migrations 45-53 would be skipped.
+
+Observation: today's binary on a database at 91 reports `68 applied, 0 pending` and `applied 0 migration(s)`; goose does not report
+database versions that have no file, so an older binary cannot tell that the database is ahead of it.
+
+### (vi) what assumes the last number or counts migrations - PASS (nothing breaks with 00091)
+
+| Location | Assumption | With 00091 |
+|---|---|---|
+| `tests/integration/m9r_event_policy_test.go:236` | `const r7bLastMigration int64 = 57` (end of R7b, not the trunk head) | unaffected |
+| `tests/integration/m9r_event_policy_test.go:281,284`; `m9r_event_outage_review_test.go:356-357, 380, 406-407, 493-494` | `UpTo(56/57)` with exact counts 3/0, 1, 1, 2 | bounded, unaffected |
+| `tests/integration/identity_policy_test.go:612-624` (`TestM1FreshDatabaseMigrations`) | counted `Up` equals the number of embedded files | derived, PASS |
+| `tests/integration/m13_integrity_test.go:131-135, 167-168` | starts at 83 (`max(version_id)=83`); `Up` applies >= 2, first 84 | PASS |
+| `tests/integration/m13_ports_test.go:1048, 1074-1077` | `portsDatabaseAt(t, 83)`; `Up`, then a repeat applies 0 | PASS |
+| `tests/integration/m8_delivery_test.go:130, 139-146`; `foundation_test.go:90-95`; `m6r_migration_test.go:78, 140, 165-168` | `UpTo(17/8/9)` or `Up` + repeat applies 0 | PASS |
+| `internal/platform/postgres/lineage.go:28` | version 80 marks the renumbered line | correct for 91 |
+| `internal/metadata/sql_version_gate_test.go:66-80, 163`; `tests/integration/m13_integrity_test.go:205-217, 301-361` | "latest definition" = highest file name | valid only while databases apply files in file order (rule 3) |
+| `tests/integration/m13_integrity_test.go:281-296` (`m13DroppedMessages`) | a replacement keeps every older RAISE message or lists it | applies to the real 00091 (`control.rollback_release`, latest definition `00088`) |
+| `cmd/migrate/main.go:54` | prints the applied count | informational |
+| docs | `LINE_INTEGRATION_PLAN.md:198` "67 migrations apply" and similar are historical records | no check reads them; `Makefile`, `.github`, `scripts`, `infra` count nothing (grep) |
+
+Executed in a scratch copy of `be6ec7c` with the `91a` files (69 embedded), through `with-env.mjs` and `go -C`:
+`TestM1FreshDatabaseMigrations`, `TestFoundationDependenciesAndMigration`, `TestM13IntegrationUpgradeFrom83KeepsM12DataAndStillPromotes`,
+`TestM13IntegrationReplacedFunctionsKeepTheirGuards`, `TestM13PortsCloseTheM6RWriteGap`,
+`TestM6RLegacyLateCommitMigrationReadEquivalenceAndWriteSeal`, `TestR7bForwardMigrationPreservesIssuedStateAndEvidence`,
+`TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema` (1.4.0 and 1.5.0) and
+`TestMigrationLineageRefusesTheMilestoneLinesOldNumbering`: **all PASS** (13.7 s); unit tests `TestSQLFunctionsNameWholeSchemaVersionFamilies`,
+`TestMetadataVersionsCheckListsEveryKnownVersion`, `TestFamilyGapsSeesTheOriginalDefect`: PASS. (`TestFoundationDependenciesAndMigration`
+migrates the stack's own `framework` database, which therefore briefly held the hypothetical 00091; the stack was rebuilt with
+`reset.sh` afterwards.)
+
+## Verdict on the proposed numbering rule
+
+Sentence by sentence ("Migration numbers from here on" in `docs/migration/LINE_INTEGRATION_PLAN.md`):
+
+| Sentence | Verdict | Evidence |
+|---|---|---|
+| `cmd/migrate` opens goose without out-of-order support | **confirmed** | `cmd/migrate/main.go:45`; (iii) |
+| goose refuses any file numbered below the highest applied version ("missing (out-of-order) migrations lower than database version") | **confirmed, incomplete** | exact text `detected 1 missing (out-of-order) migration lower than database version (90): version 75`. Through `migrate up` the operator sees only the generic failure (D2); `migrate status` lists the file as pending with exit 0; a fresh install applies the same file |
+| a database built from this branch is at 90 | **confirmed** | 68 migrations, max 90 |
+| a migration numbered 58-79 would be refused on every upgrade | **confirmed** for every database at 80 or above (all built from this branch) | (iii); a database still at 57 was not tested |
+| out-of-order on: fresh (58 before 80) and upgraded (58 after 90) differ wherever two migrations touch one function | **confirmed** | (iii): the B-05 gate returns on the upgraded database only |
+| 1. one increasing sequence; next is 00091; highest plus one at merge time; 58-79 stay unused | **confirmed**, two corrections | (i), (iv), proposed test. "as in every database built so far" is false for `MAIN` (version 60, D3). Missing: a replacement must start from the latest definition **on the integration branch**; a remediation fix written from `00052` reverts `00090` whatever its number, because the last definition applied wins ((iii) shows the mechanism) |
+| 2. final when pushed; the later line renumbers its own unmerged migration; nobody renumbers a merged one | **confirmed for the trees, incomplete for databases** | (ii) PASS; D1 |
+| 3. out-of-order stays off; forward rehearsals use `UpTo(n)`, never a counted `Up` | **first half confirmed and necessary; second half too strict and not what the tree does** | (iii); (vi): counted `Up` with a derived count (`TestM1FreshDatabaseMigrations`) or a lower bound (`TestM13IntegrationUpgradeFrom83...`) is robust; the hazard is a hard-coded count of "all remaining" migrations |
+| 4. ADR reservations; documents have no order constraint | **NOT RUN** | no ADR tooling was exercised |
+
+### Recommended wording
+
+> ### Migration numbers from here on
+>
+> 1. **One increasing sequence.** Migration files are `00001`-`00057` and then `00080` upward without gaps; `00058`-`00079` are
+>    never used (no database built from the remediation or integrated trees holds them; the old milestone database `MAIN` holds
+>    version 60 under its pre-integration numbering and `migrate` refuses it). A new migration takes the highest number on
+>    `integration/m9r-m14` plus one at the moment its line merges: after the release-fence migration `00091`
+>    (`control.rollback_release`) the next is `00092`.
+> 2. **A pushed number is final.** Nobody renumbers a migration that is on `integration/m9r-m14`. If two lines add the same number,
+>    the line that merges later renumbers its own migration, with the tests and documents that name it, before merging. Every database
+>    that applied that migration under its old number (that line's development, CI and rehearsal databases) is rebuilt from the merged
+>    tree, never migrated: goose compares numbers only and would either stop or silently skip the other line's migration. If such a
+>    database must be kept, the renumbering adds a lineage check keyed to an object only that migration creates, as
+>    `postgres.CheckMigrationLineage` does for `00080`.
+> 3. **Replace from the trunk.** A migration that replaces a function, policy, CHECK or grant starts from its latest definition on
+>    `integration/m9r-m14` (not on its own line's branch) and keeps every guard of it, or lists the dropped message in
+>    `m13DroppedMessages` with the reason.
+> 4. **Out-of-order stays off.** A file numbered below a database's highest applied version is refused on that database (`migrate up`
+>    fails, `migrate status` lists it as pending) while a fresh install would apply it earlier, and the two would end in different
+>    schemas. Tests bound forward rehearsals with `UpTo(n)` or derive expected counts from the embedded files; none hard-codes how many
+>    migrations `Up` applies.
+> 5. ADR numbers keep their reservations (064-099 remediation, 100-119 milestone); documents have no order constraint.
+>
+> `db/migrations/numbering_test.go` checks rule 1 without a database.
+
+### Proposed test (separate commit "proposed test")
+
+`db/migrations/numbering_test.go` (package `migrations`, run by `make test-unit` through `./db/...`) reads the embedded files and fails
+on a name that is not `NNNNN_lower_snake_case.sql`, on a number used twice, and on any sequence other than `00001`-`00057` followed by
+`00080` upward without gaps. It is deterministic (no database, no clock). Results: PASS on today's tree, on the `91a` set and on the
+renumbered `91a + 92` set; FAIL with a precise message on the duplicate `00091` pair, on `00075`, on a gap (`00093` after `00090`) and
+on a file named `00091_ZZ-Bad.sql`. It cannot see D1 (a database-side problem) and does not stop a replacement written from a stale
+definition (rule 3 above stays a review duty, helped by `TestM13IntegrationReplacedFunctionsKeepTheirGuards` and the version-gate scan).
+
+## Not covered
+
+* Milestone-line data at 80-89 (tool ledger rows, sandboxes, candidates, approvals, release history, AI proposals): the 89 rehearsal
+  populated remediation data and one 1.5.0 document only.
+* Remediation data paths not populated at 57: teams, record shares and links, field-patch receipts, aggregate witnesses, OIDC sign-in
+  state, choice and datetime indexes (one text, one numeric and one search index were built).
+* The development database `MAIN` (not touched); the old-numbered database of item (v) was empty.
+* The milestone line's original `00045` as a whole migration (only its CHECK statement ran, inside a rolled-back transaction).
+* Upgrades with live workers, open transactions or load during 80-90 (all pools were idle), volume (745 rows), and timing of the
+  CHECK validations at production size.
+* A database still at 57 receiving a file numbered 58-79 (expected to apply in file order; not run).
+* Rule 4 (ADR reservations); the real migration `00091` (not available on this head); `-race`; repeated runs (each probe ran once;
+  the first 57 attempt with the integrated binary stopped at the 503 described in Task 1 and is not counted): no flake statistics.
