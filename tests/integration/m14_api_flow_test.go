@@ -149,7 +149,12 @@ func TestM14APIAdmissionBudgetsAndLimits(t *testing.T) {
 	t.Run("a run that spends its reservation ends BUDGET and answers 429", func(t *testing.T) {
 		e := m14Setup(t, m14Options{})
 		doc := e.draft("500")
-		e.provider.Push(ai.ScriptStep{Payload: brokenPatch(t, doc, "Ghost"), Usage: ai.Usage{InputTokens: 50_000_000, OutputTokens: 50_000_000}})
+		// An answer that reports far more than a call can cost is charged at its cap (about twice the reservation of one attempt: the
+		// input at twice its estimate, the output at twice the 8192 tokens asked for), not at the figure it reports (review M14R-06,
+		// F-08). One such answer therefore does not spend the reservation of a run, which allows three attempts; two of them do.
+		for i := 0; i < 3; i++ {
+			e.provider.Push(ai.ScriptStep{Payload: brokenPatch(t, doc, "Ghost"), Usage: ai.Usage{InputTokens: 50_000_000, OutputTokens: 50_000_000}})
+		}
 		w := e.propose(e.alice, "Add a page.")
 		var body struct {
 			Code       string `json:"code"`
@@ -159,12 +164,24 @@ func TestM14APIAdmissionBudgetsAndLimits(t *testing.T) {
 			t.Fatalf("%d %s", w.Code, w.Body.String())
 		}
 		p := e.proposal(e.ai("GET", "/proposals/"+body.ProposalID, e.alice, nil), 200)
-		if p.Status != ai.ProposalFailed || p.FailureCode != "BUDGET" || p.Attempts != 1 || e.provider.Calls() != 1 {
-			t.Fatalf("%+v calls %d", p, e.provider.Calls())
+		if p.Status != ai.ProposalFailed || p.FailureCode != "BUDGET" || p.Attempts < 1 || p.Attempts >= ai.MaxAttempts || e.provider.Calls() != p.Attempts {
+			t.Fatalf("%+v calls %d: the run must end BUDGET before its last attempt, every attempt a provider call", p, e.provider.Calls())
 		}
-		// The charge is recorded: the next admission sees a spent day.
-		if w = e.propose(e.alice, "Again."); w.Code != 429 {
-			t.Fatalf("the spent budget must refuse the next request: %d", w.Code)
+		// The charge is recorded, at the cap of each attempt, and it is what the tenant's day shows.
+		var sum, outputs, used int64
+		if err := e.f.operator.QueryRow(`SELECT coalesce(sum(input_tokens+output_tokens),0),coalesce(min(output_tokens),0) FROM control.ai_invocations WHERE tenant_id=$1 AND proposal_id=$2`, e.f.tenantA, body.ProposalID).Scan(&sum, &outputs); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.f.operator.QueryRow(`SELECT used_tokens FROM control.ai_usage WHERE tenant_id=$1 AND usage_day=(clock_timestamp() AT TIME ZONE 'UTC')::date`, e.f.tenantA).Scan(&used); err != nil {
+			t.Fatal(err)
+		}
+		if want := int64(2*ai.DefaultMaxOutputTokens + 1024); outputs != want || used != sum || used > 100_000 {
+			t.Fatalf("each attempt is charged %d output tokens (want the cap %d); the day shows %d tokens for attempts worth %d", outputs, want, used, sum)
+		}
+		// One answer that reported 100 million tokens no longer locks the tenant out of the day: the next request is admitted (the
+		// script is spent, so the provider fails it, which is not a budget refusal).
+		if w = e.propose(e.alice, "Again."); w.Code == 429 {
+			t.Fatalf("a reported figure locked the day: %d %s", w.Code, w.Body.String())
 		}
 	})
 	t.Run("in-flight limit under real concurrency", func(t *testing.T) {
