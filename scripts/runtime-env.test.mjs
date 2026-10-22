@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { runtimeEnv } from './runtime-env.mjs'
+import { runtimeEnv, runtimeKindOf } from './runtime-env.mjs'
 const source={PATH:'/synthetic/bin',DATABASE_URL:'api-credential',WORKER_DATABASE_URL:'worker-credential',DISPATCHER_DATABASE_URL:'dispatcher-credential',MIGRATION_DATABASE_URL:'migration-credential',POSTGRES_PASSWORD:'operator-secret',REDIS_URL:'cache-credential',EVENT_SENDER_REDIS_URL:'sender-credential',EVENT_RECEIVER_REDIS_URL:'receiver-credential',EVENTS_ENABLED:'true',VITE_API_BASE_URL:'/api'}
 test('all backend children preserve explicit workflow enablement',()=>{
  for(const value of ['false','true'])for(const kind of ['api','worker','dispatcher'])assert.equal(runtimeEnv({...source,WORKFLOWS_ENABLED:value},kind).WORKFLOWS_ENABLED,value)
@@ -81,5 +81,53 @@ test('the documented launcher hands the configured AI and tool settings to its A
   const seen=JSON.parse(result.stdout)
   assert.equal(seen.AI_PROVIDER_FILE,'/synthetic/ai.json');assert.equal(seen.TOOL_CATALOG_FILE,'/synthetic/tools.json')
   assert.equal(seen.TOOL_SECRETS_DIR,undefined,'tool secrets directory must not reach the API process');assert.equal(seen.MIGRATION_DATABASE_URL,undefined)
+ }finally{fs.rmSync(temp,{recursive:true,force:true})}
+})
+
+test('every spelling of a backend command is recognised, and nothing else is',()=>{
+ // The launcher hands the whole environment (operator credentials included) to a command it does not recognise, so the forms
+ // that name a backend process are listed here (independent review F-04: a trailing slash and a module path were missed).
+ const backend=[
+  ['go',['run','./cmd/api'],'api'],['go',['run','./cmd/worker'],'worker'],['go',['run','./cmd/dispatcher'],'dispatcher'],
+  ['go',['run','./cmd/worker/'],'worker'],['go',['run','cmd/worker'],'worker'],['go',['run','cmd/worker/'],'worker'],
+  ['go',['run','github.com/Karthikeyan49/Framwork/cmd/worker'],'worker'],['go',['run','github.com/Karthikeyan49/Framwork/cmd/api/'],'api'],
+  ['go',['run','./cmd/worker/main.go'],'worker'],['go',['run','./cmd/../cmd/dispatcher'],'dispatcher'],['go',['run','.//cmd//api'],'api'],
+  ['./scripts/go.sh',['run','./cmd/worker'],'worker'],
+  ['bin/api',[],'api'],['./bin/worker',[],'worker'],['/srv/framework/bin/dispatcher',[],'dispatcher'],['bin/api/',[],'api'],['./bin/../bin/api',[],'api'],
+  ['node',['wrapper.mjs','bin/worker'],'worker'],
+ ]
+ for(const [command,args,kind] of backend)assert.equal(runtimeKindOf(command,args),kind,`${command} ${args.join(' ')}`)
+ const other=[
+  ['go',['run','./cmd/migrate','up']],['go',['run','./cmd/release-check']],['go',['test','-tags=integration','./tests/integration']],
+  ['node',['scripts/dev-identity.mjs']],['./scripts/go.sh',['vet','./...']],
+  ['go',['run','./cmd/workers']],['go',['run','./cmd/worker-extra']],['go',['run','./cmd/apix']],['go',['run','./pkg/cmd/api/internal']],
+  ['bin/apix',[]],['obin/api',[]],['api',[]],['worker',['api']],['go',['run','--tags=cmd/worker']],
+ ]
+ for(const [command,args] of other)assert.equal(runtimeKindOf(command,args),undefined,`${command} ${args.join(' ')}`)
+})
+
+test('the launcher gives every spelling of a backend command only that backend\'s environment',()=>{
+ // The real launcher with a fake go and fake binaries that print the credentials they were handed.
+ const script=fileURLToPath(new URL('./with-env.mjs',import.meta.url))
+ const probe="process.stdout.write(JSON.stringify(Object.fromEntries(['DATABASE_URL','WORKER_DATABASE_URL','MIGRATION_DATABASE_URL','POSTGRES_PASSWORD','MIGRATOR_PASSWORD','TOOL_SECRETS_DIR','AI_PROVIDER_FILE'].map(k=>[k,process.env[k]]))))"
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'launcher-forms-'));try{
+  const bin=path.join(temp,'bin');fs.mkdirSync(bin)
+  for(const name of ['api','worker','dispatcher','go','tool'])fs.writeFileSync(path.join(bin,name),'#!'+process.execPath+'\n'+probe+'\n',{mode:0o755})
+  const source={PATH:bin+path.delimiter+process.env.PATH,DATABASE_URL:'api-credential',WORKER_DATABASE_URL:'worker-credential',DISPATCHER_DATABASE_URL:'dispatcher-credential',MIGRATION_DATABASE_URL:'operator-credential',POSTGRES_PASSWORD:'operator-password',MIGRATOR_PASSWORD:'migrator-password',TOOL_SECRETS_DIR:'/synthetic/secrets',AI_PROVIDER_FILE:'/synthetic/ai.json'}
+  const run=(...argv)=>{const result=spawnSync(process.execPath,[script,...argv],{cwd:temp,env:source,encoding:'utf8'});assert.equal(result.status,0,result.stderr);return JSON.parse(result.stdout)}
+  const operatorKeys=['MIGRATION_DATABASE_URL','POSTGRES_PASSWORD','MIGRATOR_PASSWORD']
+  const forms=[
+   [['go','run','./cmd/worker'],'worker'],[['go','run','./cmd/worker/'],'worker'],[['go','run','github.com/Karthikeyan49/Framwork/cmd/worker'],'worker'],
+   [['go','run','./cmd/api/'],'api'],[['go','run','github.com/Karthikeyan49/Framwork/cmd/dispatcher'],'dispatcher'],
+   [[path.join(bin,'worker')],'worker'],[[path.join(bin,'api')],'api'],[[path.join(bin,'dispatcher')],'dispatcher'],
+  ]
+  for(const [argv,kind] of forms){
+   const seen=run(...argv)
+   for(const key of operatorKeys)assert.equal(seen[key],undefined,`${argv.join(' ')}: ${key} reached a ${kind}`)
+   assert.equal(seen.DATABASE_URL,{api:'api-credential',worker:'worker-credential',dispatcher:'dispatcher-credential'}[kind],argv.join(' '))
+  }
+  // A command that is not a backend process keeps the whole environment: migrations and tests need the operator credentials.
+  const migrate=run('go','run','./cmd/migrate','up')
+  assert.equal(migrate.MIGRATION_DATABASE_URL,'operator-credential')
  }finally{fs.rmSync(temp,{recursive:true,force:true})}
 })
