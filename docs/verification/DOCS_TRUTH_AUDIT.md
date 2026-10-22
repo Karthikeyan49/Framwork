@@ -10,7 +10,7 @@ Later input (after the pin, read only with `git show`): the FINAL reports of the
 (`1d7867f` phase 1, `899bf68` phase 2). They are compared with the three scope documents in the section "Agreement with the final reviews";
 the pin did not move and those files were not edited.
 
-Status: COMPLETE for the scope below. `make check`: PASS, exit 0, 39.8 s, run once on the branch at 30287ca (84 + 43 checksums, gofmt, go vet of the packages and of ./tests/integration with the integration and performance tags, go mod verify, eslint, tsc); after the later one-line edit of the M13 report only node scripts/verify-docs.mjs was repeated (PASS, 84 + 43).
+Status: first resume COMPLETE; second resume (22 October) phase 1 DONE, phase 2 (re-audit of the four files and this report against the coordinator's final commit) WAITING for its hash. `make check`: PASS, exit 0, 39.8 s, run once on the branch at 30287ca (84 + 43 checksums, gofmt, go vet of the packages and of ./tests/integration with the integration and performance tags, go mod verify, eslint, tsc); after the later one-line edit of the M13 report only node scripts/verify-docs.mjs was repeated (PASS, 84 + 43).
 
 ## Progress
 
@@ -23,11 +23,13 @@ Status: COMPLETE for the scope below. `make check`: PASS, exit 0, 39.8 s, run on
 | 4+ | Final reviews on `origin/review/integration-final`: statements about the tree, agreement of ids, statuses, numbers | DONE (static); executed probes NOT RUN |
 | 5 | `AGENTS.md` / `CLAUDE.md` stale list (report only) | DONE |
 | 6 | Mechanical checks: links, paths, hashes, make targets, migration names, test names, version tokens, counts | DONE |
+| 2nd resume 1 | Merge of trunk `43d417e`; corrections to other files; proposed text for AGENTS.md, CLAUDE.md, README.md | merge NOT DONE (refused by the permission layer); corrections DONE (`35d8068`, `24ab7e0`, `cef0677`, `eb16cc0`); proposed text DONE |
+| 2nd resume 2 | Re-audit of the four files and this report against the final tree | WAITING for the coordinator's hash |
 | end | `make check` once | PASS, exit 0, 39.8 s, run once on the branch at 30287ca (84 + 43 checksums, gofmt, go vet of the packages and of ./tests/integration with the integration and performance tags, go mod verify, eslint, tsc); after the later one-line edit of the M13 report only node scripts/verify-docs.mjs was repeated (PASS, 84 + 43) |
 
 ## Result in numbers
 
-164 statements were classified (full ledger at the end of this file).
+178 statements were classified (full ledger at the end of this file; classification as found, the STALE and FALSE statements fixed since are listed under Corrections applied).
 
 | Area | Statements | TRUE | FALSE | STALE | OVERCLAIM | UNVERIFIABLE |
 |---|---:|---:|---:|---:|---:|---:|
@@ -41,9 +43,10 @@ Status: COMPLETE for the scope below. `make check`: PASS, exit 0, 39.8 s, run on
 | independent reviews (interim, final phase 1, M14) | 10 | 7 | 0 | 0 | 0 | 3 |
 | AGENTS.md, CLAUDE.md, README.md | 8 | 2 | 1 | 5 | 0 | 0 |
 | mechanical checks over docs/ | 9 | 9 | 0 | 0 | 0 | 0 |
-| **Total** | **164** | **116** | **3** | **23** | **10** | **12** |
+| trunk commits up to 43d417e (second resume) | 14 | 12 | 1 | 0 | 0 | 1 |
+| **Total** | **178** | **128** | **4** | **23** | **10** | **13** |
 
-Defects: 25 (HIGH 0, MEDIUM 9, LOW 16); FIXED 2, REPORTED 23.
+Defects: 26 (HIGH 0, MEDIUM 9, LOW 17); FIXED 5, PARTLY FIXED 2, REPORTED 19.
 
 ## Defects
 
@@ -58,15 +61,15 @@ UNVERIFIABLE or NOT RUN, not as confirmed.
 |---|---|---|---|---|---|
 | DT-01 | MEDIUM | `docs/migration/M9R_FINDING_STATUS.md:224`; `docs/migration/LINE_INTEGRATION_PLAN.md:84-85` | "integration/m9r-m14 remains `552fa9e`" / "Integration still points to `552fa9e`" | `git rev-parse origin/integration/m9r-m14` = `be6ec7c` (code head `f6398bf`); `552fa9e` is an ancestor, 17 commits behind (15 on the first-parent line). True when written on 20 October, STALE now; both sentences sit under or beside text that says the fixes are on the integration branch | REPORTED (status text, dated checkpoint) |
 | DT-02 | MEDIUM | `docs/migration/M9R_FINDING_STATUS.md:242-244` (section "Execution order and stop gate") | "Current combined gate is FAIL: ... as do B-01/B-02/B-05" | Contradicts the same file: lines 28-30 and rows B-01, B-02, B-05 (lines 225, 226, 229) say fixed on `integration/m9r-m14` (`dfec052`, `46d8a2a`). The follow-up edit changed 9 rows and one bullet and left this paragraph | REPORTED |
-| DT-03 | MEDIUM | `docs/migration/M9R_REMEDIATION_PLAN.md:27-32, 43, 316, 466, 468, 509-512` | B-01, B-02, B-05 "confirmed open integration gaps" / "remain open"; B-04 "stale version wording" | Fixed in `dfec052` and `46d8a2a` (negative controls executed by this audit, see "Verified TRUE"). The plan is the remediation lane's document and was not touched by the milestone follow-up (`git diff e0fb83d HEAD --stat -- docs` lists only the ledger, the integration plan, the handoffs and the review) | REPORTED |
-| DT-04 | MEDIUM | `docs/migration/M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md:68-69, 103-104, 126` (lines of the embedded patch) | The "exact" patch for `AGENTS.md`/`CLAUDE.md` | Mechanically valid: baseline SHA-256 of both files match, `git apply --check` exits 0 on scratch copies, and applying to the scratch copies yields the blob ids named in the patch header (`90bb183`, `1ed343d`). But it would write now-false statements into the contract: "B-02 ... and B-05 ... remain open", "B-01 launcher settings remain dropped", "The applied maximum is 89" (a database built from this branch is at 90) | REPORTED |
+| DT-03 | MEDIUM | `docs/migration/M9R_REMEDIATION_PLAN.md:27-32, 43, 316, 466, 468, 509-512` | B-01, B-02, B-05 "confirmed open integration gaps" / "remain open"; B-04 "stale version wording" | Fixed in `dfec052` and `46d8a2a` (negative controls executed by this audit, see "Verified TRUE"). The plan is the remediation lane's document and was not touched by the milestone follow-up (`git diff e0fb83d HEAD --stat -- docs` lists only the ledger, the integration plan, the handoffs and the review) | FIXED (`35d8068`) |
+| DT-04 | MEDIUM | `docs/migration/M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md:68-69, 103-104, 126` (lines of the embedded patch) | The "exact" patch for `AGENTS.md`/`CLAUDE.md` | Mechanically valid: baseline SHA-256 of both files match, `git apply --check` exits 0 on scratch copies, and applying to the scratch copies yields the blob ids named in the patch header (`90bb183`, `1ed343d`). But it would write now-false statements into the contract: "B-02 ... and B-05 ... remain open", "B-01 launcher settings remain dropped", "The applied maximum is 89" (a database built from this branch is at 90) | FIXED (`24ab7e0`, `aab5c16`) |
 | DT-05 | MEDIUM | `docs/migration/M9R_FINDING_STATUS.md:225`; `docs/migration/LINE_INTEGRATION_PLAN.md:16` | The real launcher is exercised "starting a fake `bin/api`/`bin/worker`" | `scripts/runtime-env.test.mjs:72-85` creates only `bin/api`; no worker child is launched, although the test title says "API and worker children". Worker propagation is pinned only by the pure allowlist test. Both new tests do fail against the pre-fix `runtime-env.mjs` (executed in a scratch copy: 9 pass, 2 fail) | REPORTED |
 | DT-06 | MEDIUM | `AGENTS.md:122-123` | "Only `local.noop` is registered. ... external tools and production activation remain later milestones" | FALSE on this branch: `internal/platform/app/app.go:59-77, 156-160, 260-270` load the operator tool catalog and gateway; ADR100; `internal/runtime/workflow/tool_step.go`. (M13 activation is a preview pointer, so "production activation" stays true.) | REPORTED (file not editable) |
 | DT-07 | MEDIUM | `AGENTS.md:3-6`; `CLAUDE.md:13` | "Do not begin M10 automatically" / "Do not continue M10 without the remediation gate and a new user task" | STALE for this branch: M10-M14 are merged preview code (ADR100-104, migrations 00080-00090). `AGENTS.md` also has no mention of ADR100-104 at all | REPORTED (file not editable) |
 | DT-08 | LOW | `docs/migration/LINE_INTEGRATION_PLAN.md:129` | Second parent `integ/prep-m14`: "189 commits and 253 files since the base" | `git rev-list --count e6305df..8366090` = 192 (189 is the count at `7f2b29b`, the analysis-time head used in the table at line 237); files 253 is right | FIXED (`4e2a028`) |
 | DT-09 | LOW | `docs/migration/LINE_INTEGRATION_PLAN.md:157-160` | The `metadata_versions` CHECK "was the only object that both lines' migrations changed" | Mechanical extraction of function/table/constraint/policy/index/trigger names from `00045-00057` and `00080-00089`: the intersection is the CHECK, `control.metadata_versions` and `control.worker_grants_safe` (remediation `00047/00051/00052`, milestone `00081/00083/00084/00087`). The next bullet of the same list says so | REPORTED |
-| DT-10 | LOW | `docs/migration/M9R_FINDING_STATUS.md:220`; `docs/migration/LINE_INTEGRATION_PLAN.md:108` | "Merged migrations 1-57/80-89 apply fresh"; "A database already at 89" | `ls db/migrations`: 68 files, `00001-00057` and `00080-00090`; the plan's own follow-up says a database built from this branch is at 90. True of slice A's run, stale as live status | REPORTED |
-| DT-11 | LOW | `docs/migration/M9R_FINDING_STATUS.md:22-23`; `docs/migration/M9R_REMEDIATION_PLAN.md:33-36, 609-611`; `docs/migration/LINE_INTEGRATION_PLAN.md:103`; `docs/migration/M14_IMPLEMENTATION_REPORT.md:10-11` | "Independent M14/merge review is NOT RUN" | `docs/verification/INTEGRATION_INDEPENDENT_REVIEW.md` is in the tree as an interim independent review of the merge (IN PROGRESS, five findings). Since the pin, `origin/review/integration-final` carries the FINAL merge review (`1d7867f`, six findings) and the M14 review (`899bf68`, eight findings), both verdict FAIL. Not yet in the tree, so the sentences are stale only once those reports are merged; the interim one already makes them understate | REPORTED |
+| DT-10 | LOW | `docs/migration/M9R_FINDING_STATUS.md:220`; `docs/migration/LINE_INTEGRATION_PLAN.md:108` | "Merged migrations 1-57/80-89 apply fresh"; "A database already at 89" | `ls db/migrations`: 68 files, `00001-00057` and `00080-00090`; the plan's own follow-up says a database built from this branch is at 90. True of slice A's run, stale as live status | PARTLY FIXED (`35d8068`: remediation plan line; ledger and plan lines are in the coordinator rewrite) |
+| DT-11 | LOW | `docs/migration/M9R_FINDING_STATUS.md:22-23`; `docs/migration/M9R_REMEDIATION_PLAN.md:33-36, 609-611`; `docs/migration/LINE_INTEGRATION_PLAN.md:103`; `docs/migration/M14_IMPLEMENTATION_REPORT.md:10-11` | "Independent M14/merge review is NOT RUN" | `docs/verification/INTEGRATION_INDEPENDENT_REVIEW.md` is in the tree as an interim independent review of the merge (IN PROGRESS, five findings). Since the pin, `origin/review/integration-final` carries the FINAL merge review (`1d7867f`, six findings) and the M14 review (`899bf68`, eight findings), both verdict FAIL. Not yet in the tree, so the sentences are stale only once those reports are merged; the interim one already makes them understate | PARTLY FIXED (`35d8068`, `eb16cc0`; ledger, integration plan and M14 report banner left) |
 | DT-12 | LOW | `docs/migration/M9R_FINDING_STATUS.md:28-30` | "B-01, B-02, B-04, B-05 and IR-01 to IR-05 are fixed" | Row 230 and the plan say one of the three timing tests of IR-03 (`TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry`) is not changed (D1), and IR-04's ledger refresh is incomplete (DT-01, DT-02). The bullet is stronger than its rows | REPORTED |
 | DT-13 | LOW | `docs/migration/LINE_INTEGRATION_PLAN.md:14`; `docs/migration/AGENT_HANDOFFS.md:219-220` | The version-gate test means "the next superset cannot repeat it" / "will tell you which SQL bodies still name the older versions" | `internal/metadata/sql_version_gate_test.go:25-27` hard-codes `knownSchemaVersions()`; a future 1.6.0 is invisible until someone adds it there. It reads only quoted `'1.x.0'` literals in function bodies and one CHECK. The scan does fail without `00090` (executed with `-overlay`) | REPORTED |
 | DT-14 | LOW | `docs/migration/LINE_INTEGRATION_PLAN.md:18` | IR-05 evidence: "`tests/integration/m_migration_lineage_test.go`, executed against the real `migrate` command" | The test calls `postgres.CheckMigrationLineage` directly; nothing in the tree executes `cmd/migrate`, so the three-line wiring in `cmd/migrate/main.go:35-40` is unpinned. The commit message of `dfec052` records a manual run; no log is in the tree (UNVERIFIABLE) | REPORTED |
@@ -74,13 +77,14 @@ UNVERIFIABLE or NOT RUN, not as confirmed.
 | DT-16 | LOW | `docs/migration/LINE_INTEGRATION_PLAN.md:9-10` | The recorded FAILs "(aggregate capacity, injected driver panic, worker-policy statement timeout) ... are its lane (D1)" | `M9R_REMEDIATION_PLAN.md:501,505`: D1 is worker-policy, driver panic and the connection failure; the aggregate capacity miss belongs to D5 (the ledger row 200 says D5) | REPORTED |
 | DT-17 | LOW | `docs/migration/AGENT_HANDOFFS.md:32` | `cmd/migrate/main.go:38` creates a Goose provider without `WithAllowOutofOrder(true)` | True at `552fa9e`; after `dfec052` the call is at `cmd/migrate/main.go:45`. `WithAllowOutofOrder` appears nowhere in the tree | REPORTED |
 | DT-18 | LOW | `docs/adr/104-m14-ai-builder-and-intent-capture.md:290-293` (A1) | Migration 00089 replaces `control.worker_grants_safe()` from the migration-84 definition with three tables added | `db/migrations/00089_m14_ai_proposals.sql:289` only mentions the guard in a comment; the last definition is `00087`. Amendment B.7 (lines 596-599) of the same ADR corrects it but A1 is not struck | REPORTED |
-| DT-19 | LOW | `docs/migration/M10_M11_IMPLEMENTATION_REPORT.md:20` | Tool plans "(DSL 2.1.0)" | The banner (line 6) says "Tool plans keep workflow DSL 2.2.0" and line 51 says "DSL 2.2.0 tool plans"; 2.1.0 is the pre-review shape (ADR100 A1). Old and new token in one report without a mapping for this one | REPORTED |
+| DT-19 | LOW | `docs/migration/M10_M11_IMPLEMENTATION_REPORT.md:20` | Tool plans "(DSL 2.1.0)" | The banner (line 6) says "Tool plans keep workflow DSL 2.2.0" and line 51 says "DSL 2.2.0 tool plans"; 2.1.0 is the pre-review shape (ADR100 A1). Old and new token in one report without a mapping for this one | FIXED (`cef0677`) |
 | DT-20 | LOW | `docs/migration/M9R_FINDING_STATUS.md:227`; `docs/migration/LINE_INTEGRATION_PLAN.md:71-72` | "Only the development database MAIN holds such data"; "No production database exists (the configuration rejects workflows and events in production)" | UNVERIFIABLE deployment facts. The plan hedges ("Known holders"), the ledger does not. `internal/config/config.go:77-89, 113, 125` and `app.go:270` (`PreviewEnabled` only in development/test) show that production cannot create tool IR through the preview routes; they do not show that no other database holds milestone-numbered data | REPORTED |
 | DT-21 | LOW | `docs/migration/M9R_FINDING_STATUS.md:194, 195, 199` | Slice A's reference results (numeric 124.505 ms, writes 7,968 / 301.897 ms, unique 331.310/479.989/350.588 ms) stand in the "Live findings" table without the tree they were measured on | Measured at `552fa9e`; `serve` in `internal/platform/access/access.go` and `runtime.register_unique_constraint` changed afterwards and the reference gates were NOT RUN again (the plan says so at line 37; row 199 says it for unique only) | REPORTED |
 | DT-22 | MEDIUM | `docs/migration/M9R_FINDING_STATUS.md:22-23, 28-30, 230`; `docs/migration/LINE_INTEGRATION_PLAN.md:5-6, 103`; `docs/migration/AGENT_HANDOFFS.md:203-233` | The follow-up covers IR-01 to IR-05; row 230: "its final report and any new finding are pending"; the plan: M14/merge review NOT RUN | The final reports on `origin/review/integration-final` add IR-06 (MEDIUM, `rollback_release` writes no `release_fences` row) and M14R-01 to M14R-08 (M14R-04 = IR-06; M14R-01..03 MEDIUM, M14R-05..08 LOW), all open, none in the three documents. This audit confirmed IR-06 statically: `00088_m13_review_fixes.sql:51` (reject) and `:70` (activate) write the fence, `:99-128` (rollback) reads `release_rejections` at `:115` and writes none; the migration is unchanged since `552fa9e`. The race itself is NOT RUN here (needs a database) | REPORTED |
 | DT-23 | LOW | `docs/adr/103-m13-approval-and-promotion.md:305` (amendment 12); `docs/migration/M13_IMPLEMENTATION_REPORT.md:84` | "M13R-01, a veto is not overtaken" / "FIXED: per-hash fence row written by both ports" | The text names two ports (true) but the heading and the FIXED mark read as covering every writer of the pointer; `rollback_release` is a third writer without the fence (IR-06 / M14R-04, DT-22) | REPORTED |
 | DT-24 | MEDIUM | `README.md:14, 645, 652, 757` (outside the audit scope list, found by the stale-number scan) | "Follow the remediation plan before M10"; "M10 stays paused"; "no ... AI execution capabilities"; "Only `local.noop` is registered; external tools are M10" | Same family as DT-06/DT-07: M10-M14 are merged preview code (tool wiring `app.go:59-77`, AI routes behind `PreviewEnabled`, `app.go:270`). README is not under `docs/`, so not edited | REPORTED |
 | DT-25 | LOW | `docs/migration/M13_IMPLEMENTATION_REPORT.md:99` | Re-run recipe: the reset "applies migrations 1-53" | Old milestone numbering in a report whose banner says the numbers below are the renumbered ones; the same set is 1-44 and 80-88 in the integrated tree (`git show -M 8366090`). The M12 report words the same range correctly ("1-44 and 80-83 (then numbered 1-48)") | FIXED (`789b87a`) |
+| DT-26 | LOW | `db/migrations/numbering_test.go:10-14` (trunk `43d417e`, code comment) | "Proposed by the upgrade and ordering rehearsal (docs/verification/UPGRADE_AND_ORDERING_REHEARSAL.md)" | The path does not exist in the trunk tree; the report exists only on branch `audit/upgrade-rehearsal` (`git ls-tree -r --name-only 43d417e docs/verification` has no such file). The comment also calls the numbering rule "the owner's decision" while the ledger and plan still say the owner has not decided | REPORTED |
 
 ## Agreement with the final reviews
 
@@ -142,6 +146,8 @@ retained historical text (DT-10, 17, 18) or files this audit may not edit (DT-04
 - `review/m14-and-fixes` (the second reviewer's in-progress report on the integration fixes) and anything on branches other than the pin and `origin/review/integration-final`.
 - Whether any database other than `MAIN` holds milestone-numbered data (DT-20); whether a pull request exists on the remote.
 
+- Second resume: the trunk merge was not made (refused); the 11 new integration tests, the live-catalog scan of `43d417e`, the uncommitted F-06 rework in `/home/user/integ` and the announced `00092` are NOT RUN / not read. The four files being rewritten were not re-audited yet (phase 2).
+
 ## Commands run
 
 Environment: `export PATH=/tmp/node24/node-v24.22.0-linux-x64/bin:$PATH GOPATH=/home/user/m14-int/.local/gopath GOCACHE=/home/user/m14-int/.local/cache/go`; Go through `./scripts/go.sh`, everything that compiles under `nice -n 15`.
@@ -171,8 +177,129 @@ date -u; uptime; ls /home/user/briefs/54-rev-integration.md (host-local path nam
 grep / sed / ls / wc / diff over the tree (versions, line references, make targets, build tags, migrations, ADR numbers)
 python3 -I helper scripts in the session scratchpad: relative links, repository paths, test names, decimal metrics against other docs, backticked make targets,
   intersection of objects of 00045-00057 and 00080-00089, SECURITY DEFINER inventory (type-normalised), allowlist row count, ledger rows changed by slice C, statement ledger and counts
+git -C /home/user/integ log --oneline -15; git -C /home/user/integ status --short   (read only)
+git merge --no-ff 43d417e   (REFUSED by the permission layer; not retried)
+git merge-tree $(git merge-base HEAD 43d417e) HEAD 43d417e   (in memory, nothing written: 0 conflict markers)
+git diff --stat be6ec7c 43d417e; git show --stat <dd4daba 9d2928d adc1898 c76968f b05494a bfa47c4 a2c5c52 8528fde 2ca08d8 953be65 43d417e>
+git show 07b51b1:docs/verification/M14_AND_FIXES_INDEPENDENT_REVIEW.md > scratch   (other reviewer's round 2, read only)
+git archive 43d417e | tar -x -C <scratchpad>/trunk43   (read-only extraction outside the repository)
+(in the extraction, nice -n 10) node --test scripts/*.test.mjs; ./scripts/go.sh test -count=1 ./db/migrations ./cmd/migrate ./internal/metadata ./internal/platform/postgres ./internal/platform/access;
+  ./scripts/go.sh test -count=1 -run 'TestChargeUsage|TestProviderLabels|TestACanceledCall|TestAnAdapterThatIgnores|TestAbandonedProviderCalls' ./internal/ai;
+  ./scripts/go.sh test -tags=integration -list '.*' ./tests/integration; ./scripts/go.sh list ... ; ls db/migrations/*.sql
+python3 -I: diff of the rollback_release bodies of 00088 and 00091
+git apply --check / git apply on scratch copies of AGENTS.md and CLAUDE.md after editing the proposal; git hash-object; git diff --check; node scripts/verify-docs.mjs; links.py
 make check   (once, at the end): PASS, exit 0, 39.8 s, run once on the branch at 30287ca (84 + 43 checksums, gofmt, go vet of the packages and of ./tests/integration with the integration and performance tags, go mod verify, eslint, tsc); after the later one-line edit of the M13 report only node scripts/verify-docs.mjs was repeated (PASS, 84 + 43)
 ```
+
+## Second resume (22 October 2026)
+
+New instruction: merge the newest trunk commit into this branch, apply the REPORTED corrections that touch files outside the four files the
+coordinator is rewriting (`LINE_INTEGRATION_PLAN.md`, `M9R_FINDING_STATUS.md`, `AGENT_HANDOFFS.md`, `docs/adr/104-...`), list the proposed text
+for `AGENTS.md`, `CLAUDE.md` and `README.md`, then wait for the hash of the coordinator's documentation commit and re-audit.
+
+### Trunk merge: NOT DONE
+
+Asked: merge `43d417e` (head of `integration/m9r-m14` in `/home/user/integ`, not pushed; 11 commits after the pin `be6ec7c`) into `audit/docs-truth`.
+Result: `git merge --no-ff 43d417e` was refused by the permission layer of this session (reason given: "Modify Shared Resources"). I did not retry it and did
+not reproduce it with plumbing or a cherry-pick. The trunk was read instead: `git show` / `git diff` by hash and a read-only `git archive 43d417e`
+extraction into the session scratchpad (outside the repository), in which the DB-free tests were run.
+Consequences: this branch still holds the pin plus audit commits; every correction below touches a file that the trunk has not changed
+(`git diff --stat be6ec7c 43d417e` lists, among documents, only `AGENT_HANDOFFS.md`, `LINE_INTEGRATION_PLAN.md`, `M9R_FINDING_STATUS.md`), so the branch
+merges into the trunk without conflicts. Evidence: a three-way merge of `43d417e` into this branch computed in memory with the legacy `git merge-tree <base> <ours> <theirs>`
+(nothing written) has 0 conflict markers; the only file changed on both sides is `LINE_INTEGRATION_PLAN.md` (my one-line edit at line 129 against the trunk's inserted table row), which merges cleanly.
+To proceed the owner can run `git -C /home/user/audit-docs merge --no-ff 43d417e`, ask me to, or merge `audit/docs-truth` into the trunk.
+
+### Corrections applied to other files
+
+| File | Change | Evidence | Commit |
+|---|---|---|---|
+| `docs/migration/M9R_REMEDIATION_PLAN.md` | B-01, B-02, B-04, B-05 are fixed on the integration branch (not "confirmed open"), with the hardening commits; review status says what exists; "already at 89" becomes the highest applied number; worker-policy scan and D1 notes follow `9d2928d`; stop-gate sentence lists what is still a recorded FAIL | DT-03, DT-10, DT-11; `dfec052`, `46d8a2a`, `953be65`, `43d417e`, `9d2928d` | `35d8068` |
+| `docs/migration/M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md` | Four passages of the patch rewritten (ADR044 bullet, ADR100-104 bullet, number reservations, worker-policy sentence) with the same line counts; header blob id of `AGENTS.md` updated; a note records the correction | `git apply --check` of the corrected patch on scratch copies of the unchanged `AGENTS.md`/`CLAUDE.md`: exit 0; resulting blob ids `6866689`, `1ed343d` | `24ab7e0`, `aab5c16` |
+| `docs/migration/M10_M11_IMPLEMENTATION_REPORT.md:20` | "(DSL 2.1.0)" for tool plans now says it is the shape as first built and restore-only since ADR100 A1 | DT-19; ADR100 A1; `plan.go:30` | `cef0677` |
+| `docs/migration/V2_V3_SUPERSESSION_MAP.md:42` | "independent review NOT RUN" for M14 replaced by the existence and verdict of the review on `review/integration-final` | `M14_INDEPENDENT_REVIEW.md` on that branch: FAIL, 4 MEDIUM, 4 LOW | `eb16cc0` |
+
+Not edited, by instruction: `AGENTS.md`, `CLAUDE.md`, `README.md` (owner decisions; text below) and the four files being rewritten. Left alone on purpose: dated
+reports (A, B, C, M14 report banner "independent review has not been run" of 19 October), the other reviewer's reports, `ADR103` (needs an amendment, see below).
+
+### Counts at trunk commit `43d417e` (re-derived from the read-only extraction)
+
+| Quantity | At the pin `be6ec7c` | At `43d417e` | How |
+|---|---:|---:|---|
+| Integration tests listed (`-tags=integration`) | 443 | **454** | `go test -list`; +3 `TestM13R01Rollback...`, +1 `TestM14PreReadBufferingIsBounded`, +6 `TestM14R0*`, +1 `TestM9RNoCatalogObjectGatesOnPartOfTheAuthoringFamily` |
+| Go packages in `GO_PACKAGES` / with tests | 40 / 27 | 40 / **29** | `go list`; `db/migrations` and `cmd/migrate` gained tests (`b05494a`) |
+| Script tests (`node --test scripts/*.test.mjs`) | 11 | **13** | 13 pass; `953be65` adds two |
+| Frontend tests / files | 126 / 19 | 126 / 19 | `apps/web` unchanged (`git diff --stat`); files counted, tests not re-run |
+| Migration files | 68 (`00001-00057`, `00080-00090`) | **69** (`00080-00091`) | `ls db/migrations/*.sql`; `00092` is announced, not in the trunk |
+| Fuzz functions | 9 | 9 | grep |
+
+DB-free tests that I ran on the extraction and that PASS: `./db/migrations`, `./cmd/migrate`, `./internal/metadata`, `./internal/platform/postgres`,
+`./internal/platform/access`, the five new `internal/ai` gateway tests (`-run`), all 13 script tests. Everything that needs a database (the 11 new
+integration tests, the live-catalog scan of `43d417e`, the figures in the commit messages) is NOT RUN.
+
+### Review findings against the code at `43d417e`
+
+| Id (severity) | Code status at `43d417e` | Evidence |
+|---|---|---|
+| IR-01 / B-05 (MEDIUM) | fixed `46d8a2a` (`00090`); scan widened `43d417e` | `00090` differs from `00052` only in the predicate |
+| IR-02 (MEDIUM) | slot fix `f997efe`; memory bound `c76968f` (4 MiB per verified identity, 32 MiB in all: `bodybudget.go:23-26`) | F-06 (MEDIUM) open: the budget books the declared length; the rework is uncommitted in `/home/user/integ` (`access.go`, `bodybudget.go` modified) and is not in `43d417e` |
+| IR-03 (LOW) | tests `6c4cee6`, `1fb0110`, `dd4daba`; statement `9d2928d` (`execution.go:273-281`, uncorrelated `NOT IN`) | per-row worker-policy cost untouched (commit message) |
+| IR-04 (LOW) | counts and vet tags fixed (`6a1da17`, `6c4cee6`) | ledger refresh is the coordinator's rewrite |
+| IR-05 (LOW) | guard `dfec052`; messages and numbering rule test `b05494a` | no test runs `cmd/migrate` main wiring (`main.go:37`) |
+| IR-06 = M14R-04 (MEDIUM) | fixed `bfa47c4`, `00091` | body equals the `00088` body plus the four fence lines; post-check requires the fence statement (`00091:60`) |
+| M14R-01 (MEDIUM), -02 (MEDIUM), -06 (LOW), -07 (LOW) | fixed `a2c5c52`; regression tests `2ca08d8` | `repair.go`, `maxAbandonedCalls = 16`; F-07 and F-08 (LOW) are residuals of this fix per round 2 |
+| M14R-03 (MEDIUM) | concurrent results fixed `8528fde` (`aiResultAttempts = 6`, `aiResultBudget = 6 s`) | residuals named in the commit: token expiring during the provider phase, creations racing for the usage row, single usage row |
+| M14R-05 (LOW), M14R-08 (LOW) | open | no commit touches `internal/verification`, `internal/intent` or the redaction table |
+| F-01 (MEDIUM), F-02 (LOW) | fixed `c76968f`, which opens F-06 | round 2 re-verification |
+| F-03 (LOW), F-04 (LOW) | fixed `43d417e`, `953be65` | scan reads more spellings, "a guard, not a proof" (commit message); launcher detection `runtimeKindOf` |
+| F-05 (LOW) | open: `approve_release` is defined only in `00084`; fix announced as `00092` | `grep -l 'FUNCTION control.approve_release' db/migrations/*.sql` |
+| F-07, F-08 (LOW) | open (fix announced) | round 2 report |
+
+### Status of my defects against `43d417e`
+
+| Defect | Status |
+|---|---|
+| DT-01, DT-02 | unchanged in the trunk commit; in the four files, being rewritten |
+| DT-03, DT-04, DT-19 | FIXED (above) |
+| DT-05 | launcher test now covers api, worker and dispatcher through the real launcher (`953be65`, two new script tests); the documents must cite that test, not the `bin/api`-only one |
+| DT-06, DT-07, DT-24 | open; text proposed below |
+| DT-09 | unchanged (plan, being rewritten) |
+| DT-10, DT-11 | remediation plan and supersession map fixed; ledger, plan and M14 report banner remain |
+| DT-12 | IR-03's third test is now addressed by `9d2928d`; IR-04 ledger refresh depends on the rewrite |
+| DT-13 | scan widened by `43d417e` but "not a proof" (character classes unread); wording "cannot repeat it" still stronger than the evidence |
+| DT-14 | still true: the new `cmd/migrate` tests cover `upFailure` and the numbering, not the lineage wiring |
+| DT-15, DT-16 | unchanged (Makefile and plan text) |
+| DT-17 | `goose.NewProvider` is now at `cmd/migrate/main.go:47` (38 at `552fa9e`, 45 at `be6ec7c`) |
+| DT-18 | ADR104 is among the files being rewritten |
+| DT-20, DT-21 | unchanged; DT-21 grows: `c76968f`, `a2c5c52`, `8528fde` changed the request path after A's measurements |
+| DT-22 | IR-06 and M14R-01/-02/-03/-06/-07 fixed in code; open items listed in the table above |
+| DT-23 | after `00091` rollback writes the fence; ADR103 amendment 12 still says only reject and activate do, and calls an approval beside a rejection "harmless" (F-05 shows it is recorded) |
+| DT-26 (new) | below |
+
+### Proposed text for the files that stay untouched
+
+`AGENTS.md`, `CLAUDE.md`: the corrected patch in `M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md` (applies with `git apply`) is the proposed text; the lines it replaces are:
+
+| File:line | Current text | Proposed text |
+|---|---|---|
+| `AGENTS.md:3-6` | "Current authorized work is M9R foundation remediation after the published M0-M9 review. ... Do not begin M10 automatically." | "Current authorized work is M9R foundation remediation on the merged preview. M10-M14 preview code exists; remediation remains this agent's lane. Follow the current plan, live ledger and handoffs, with the original validated review as baseline. M9R remains PARTIAL and combined acceptance FAIL. Preserve working code/data; R6 and new M10+ feature work belong to the milestone agent, not this lane." |
+| `AGENTS.md:76-78` | "ADR044 adds opt-in schema/IR/compiler1.4 unique fields. A declaration is not enforcement: ..." | "ADR044 adds opt-in schema/IR/compiler1.4 unique fields; schema 1.5 is its tool superset: Restore pins the exact 1.5 pairing and every SQL gate names 1.4 and 1.5 alike. A declaration is not enforcement: ..." |
+| `AGENTS.md:115` | "Event jobs require RC with no shared-snapshot certificate; API/workflow stay RR." | "Event jobs require RC with no shared-snapshot certificate; API/workflow default to RR. Only the exact sandbox-freeze route uses RC through the common withRuntime port. RuntimeSnapshot certifies only its own RR executor." |
+| `AGENTS.md:122-123` | "Only `local.noop` is registered. M9R corrects the historic worker boundary; external tools and production activation remain later milestones." | "local.noop and governed operator-catalog tools exist in preview; R7 still owns general revise/resubmit, renewal and approval semantics. M9R corrects the historic worker boundary; M13 activation is a preview control-plane pointer, without a production data plane." |
+| `AGENTS.md` (after the ADR023 bullet) | no ADR100-104 contract | the "ADR100-104" bullet of the patch: M10 operator catalog and per-tool idempotency; M11 synthetic sandboxes/frozen evidence; M12 server-derived candidates/risk and executable acceptance; M13 SQL approval/activation authority; M14 typed AI proposals with human apply/confirm; never duplicate R6; the verifier runs in the API trust domain; the launcher gives AI/tool settings only to API and worker |
+| `CLAUDE.md:6-7` and `13` | "Current work is M9R foundation remediation, following the validated review." / "Do not continue M10 without the remediation gate and a new user task." | "Current work is M9R foundation remediation on the merged M10-M14 development/test preview, following the validated review, live ledger and handoffs." / "M9R remains PARTIAL and combined acceptance FAIL. This agent builds remediation only; the milestone agent owns R6 and new M10+ work, including the production data plane and separate verifier credential. Do not duplicate them. ..." |
+
+`README.md` (outside `docs/`):
+
+| Line | Current text | Proposed text |
+|---|---|---|
+| 14 | "Follow the remediation plan before M10." | "M10-M14 exist as development/test preview (see the finding ledger); follow the remediation plan for the remaining foundation work." |
+| 645 | "Workflow foundations now exist. Production promotion, external tools, AI and full scale/security certification remain later work. M10 stays paused." | "Workflow foundations exist. M10-M14 (tools, sandbox, candidate builder, approval/promotion control plane, AI proposals) are development/test preview; the production data plane, production activation, a real model provider and full scale/security certification remain later work." |
+| 652 | "There are no public production activation endpoints or AI execution capabilities." | "Release approval/activation routes (M13) and AI proposal routes (M14) exist only in development/test (`PreviewEnabled`; `AI_PROVIDER_FILE` is refused in production); there is no production activation endpoint and no production AI execution." |
+| 757 | "`local.noop` is registered; external tools are M10." | "`local.noop` and, when `TOOL_CATALOG_FILE` is set, operator-catalog tools (ADR100) are registered." |
+
+Proposed ADR103 amendment (owner's file, not edited): "15. After the second review round, `rollback_release` also writes the per-hash fence row (migration 00091), so reject, activate and rollback
+are fenced against each other; `approve_release` does not and may record an approval beside a committed rejection or on a superseded candidate (F-05); the approval cannot move the pointer."
+Adjust the last clause when `00092` lands.
 
 ## Statement ledger
 
@@ -342,3 +469,17 @@ make check   (once, at the end): PASS, exit 0, 39.8 s, run once on the branch at
 | ME-08 | ADR100-104, reports, READMEs | No unmapped old migration or ADR number remains | TRUE | grep over docs and code; every residue is a banner, Amendment I1 or a remediation-line ADR |
 | RB-09 | M13_REPORT:99 | Re-run recipe: the reset applies migrations 1-53 | STALE | Old numbering; 1-44 and 80-88 in the integrated tree (FIXED, DT-25) |
 | ME-09 | tests/integration | 443 tests listed = 439 at the pin plus four added by the follow-up | TRUE | git diff 552fa9e be6ec7c adds exactly TestM14SlowRequestBodies..., TestM9RUniqueLifecycle..., TestMigrationLineage..., TestIntegrationTenantRoleApprover...; none removed |
+| TR-01 | trunk 43d417e | Eleven trunk commits since be6ec7c changed documents only in AGENT_HANDOFFS.md, LINE_INTEGRATION_PLAN.md and M9R_FINDING_STATUS.md | TRUE | git diff --stat be6ec7c 43d417e |
+| TR-02 | 953be65 message | 18 spellings recognised, 14 near-misses refused, 8 forms through the real launcher, migrate keeps the whole environment | TRUE | runtime-env.test.mjs lists 18 and 14 entries and 8 forms; 13 script tests pass on the extraction |
+| TR-03 | c76968f message | Body budget of 4 MiB per verified identity and 32 MiB in all, booked from the declared length | TRUE | bodybudget.go:23-26; the declared-length booking is review finding F-06 (rework uncommitted in /home/user/integ) |
+| TR-04 | 8528fde message | The AI result exchange is tried up to 6 times within 6 s | TRUE | ai.go aiResultAttempts = 6, aiResultBudget = 6 s |
+| TR-05 | a2c5c52 message | At most 16 abandoned provider calls are tolerated | TRUE | repair.go maxAbandonedCalls = 16 |
+| TR-06 | 9d2928d message | The compensation scan is an uncorrelated NOT IN exported as workflow.CompensationScanSQL | TRUE | execution.go:273-281 |
+| TR-07 | bfa47c4 message | 00091 replaces rollback_release byte for byte except the fence write; the post-check requires the fence statement | TRUE | Function bodies of 00088 and 00091 differ in four added lines (three comments and the INSERT into control.release_fences); 00091:60 |
+| TR-08 | b05494a message | The numbering rule and the migrate failure messages are tested without a database | TRUE | go test ./db/migrations ./cmd/migrate PASS on the extraction |
+| TR-09 | 43d417e message | The version scan reads every listed spelling (unit part) | TRUE | go test ./internal/metadata PASS on the extraction |
+| TR-10 | 43d417e message | Live catalog of a migrated database: 1,020 definitions (150 functions, 260 constraints, 225 policies, 102 triggers, 165 defaults, 3 views, 115 indexes), five naming a version | UNVERIFIABLE | Needs a migrated database (NOT RUN) |
+| TR-11 | trunk 43d417e | Counts at the trunk head: 454 integration tests, 29 of 40 packages with tests, 13 script tests, 69 migration files, 9 fuzz functions | TRUE | go test -list, go list, node --test, ls, grep on the extraction |
+| TR-12 | db/migrations/numbering_test.go:10-14 | Comment cites docs/verification/UPGRADE_AND_ORDERING_REHEARSAL.md | FALSE | No such file in the trunk tree; it exists on branch audit/upgrade-rehearsal only (DT-26) |
+| TR-13 | round-2 review F-05 | approve_release has only its 00084 definition; neither 00088 nor 00091 replaces it | TRUE | grep -l 'FUNCTION control.approve_release' db/migrations/*.sql |
+| TR-14 | proposal patch (corrected) | The patch applies to the unchanged AGENTS.md and CLAUDE.md; result blob ids 6866689 and 1ed343d | TRUE | git apply --check exit 0 on scratch copies; git hash-object after apply |
