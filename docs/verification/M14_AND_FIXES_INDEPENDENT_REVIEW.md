@@ -14,7 +14,9 @@ STATUS: Part A (the integration fixes) COMPLETE: 2 FAIL-grade findings of the fi
 coordinator reassigned it after a host restart and it was completed by another reviewer
 (`origin/review/integration-final:docs/verification/M14_INDEPENDENT_REVIEW.md`, M14R-01..04). Section "M13 release-pointer
 concurrency" below is the follow-up assignment that replaced Part B: 12 pairs executed, the rollback race of IR-06 reproduced (FAIL)
-and one more LOW (F-05: approvals recorded on rejected or superseded candidates); 8 pairs PASS.
+and one more LOW (F-05: approvals recorded on rejected or superseded candidates); 8 pairs PASS. Re-verification of the coordinator's
+fixes (last section): F-01, F-02 and IR-06 PASS; the body budget opens a new MEDIUM (F-06, a cross-tenant write lock held by eight
+unprovisioned identities with header-only requests); F-05 is still open.
 
 ## Progress
 
@@ -27,7 +29,8 @@ and one more LOW (F-05: approvals recorded on rejected or superseded candidates)
 | 20:20-20:40 | Part B reading started (ports `00089`, `internal/ai` service/gateway/store, `access/ai*.go`); no Part B attack executed before the stop | stopped (API rate limit, host restart) |
 | 2026-10-22 11:31 | resumed with a changed scope: Part B dropped (done by another reviewer), report finished for A1-A6, then M13 release-pointer concurrency | done |
 | 11:33-11:38 | release-pointer races: 12 pairs executed with held REPEATABLE READ transactions | S2 FAIL (= IR-06), S3/S4/S5 FAIL (F-05 LOW), 8 PASS |
-| next | re-verification of the coordinator's fix commits (F-01/F-02 first) when their hash arrives | pending |
+| 11:40 | `TestM12APIDetailReadsOfALargeCandidateConverge` once (A6 item) | PASS, 10.8 s, load 2.5 |
+| 11:42-11:52 | re-verification of `c76968f` (F-01/F-02) and `bfa47c4` (IR-06) in a scratch copy of `bfa47c4`; mutation and negative controls of the builder's new tests | F-01 PASS, F-02 PASS, IR-06 PASS; new F-06 MEDIUM; F-05 still open |
 
 ## Findings
 
@@ -205,7 +208,7 @@ No false positive and no false negative among these shapes (migrations 1-44 are 
 * HTTP/2 (not served on the plain listener) and a real proxy in front of the API were not exercised.
 * A2: the 1.5.0 unique lifecycle was run on the dataset-binding route of the suite's fixture; a 1.5.0 document that also
   declares tool activities together with a unique field was not authored.
-* A6: `TestM12APIDetailReadsOfALargeCandidateConverge` (the `m12apiRetrying` change) was not run.
+* A6: `TestM12APIDetailReadsOfALargeCandidateConverge` ran once on `be6ec7c` (PASS, 10.8 s); no repetition under load.
 
 ## M13 release-pointer concurrency (follow-up assignment, 2026-10-22, pinned tree `be6ec7c`)
 
@@ -261,6 +264,68 @@ t.Log(approve.finish(), len(e.approvalsOf(c3)), len(e.rejectionsOf(c3)))        
 
 Fix direction: write the same `control.release_fences` row in `approve_release` before the rejection check (as `activate_release` does), and
 read the pointer with `FOR SHARE` (REPEATABLE READ then raises 40001 when it moved); extend `TestM13R01*` to approvals.
+
+## Re-verification of the coordinator's fixes (2026-10-22, local commits on `integration/m9r-m14`)
+
+Tree: a scratch copy of `bfa47c4` (contains `c76968f` for F-01/F-02, `b05494a` and `bfa47c4` for IR-06/M14R-04; read from the shared
+object store, nothing checked out); disposable databases of the M14 stack; no `-race` for the memory probes, `-race` for the races.
+
+### F-01 / F-02 (`c76968f`, body budget: 4 MiB per verified identity, 32 MiB total, booked before the first byte)
+
+| probe | result | verdict |
+|---|---|---|
+| anonymous and invalid bearer, `Content-Length: 900000`, one byte sent, 9 POST route families (candidates, acceptance-specs, commands, query, AI, metadata, datasets, approve, roles) | 401 `unauthenticated` in 0.19-0.41 s on all 18 combinations (on `be6ec7c`: 10.03 s for candidates, acceptance-specs and commands) | F-02 **PASS** |
+| mutation: the read condition without `preError == nil`, the builder's `TestM14PreReadBufferingIsBounded` | its sub-test "an anonymous or invalid caller is never read" FAILS on all ten combinations (8.0 s each) | the regression test is not vacuous |
+| one identity, 1000 connections, 1 MiB - 1 sent each | 4 held, 904 x 429 `too_many_uploads`, 92 x 429 `rate_limited`; heap +5.5 MiB (`be6ec7c`: +1141.1 MiB); another identity is served | F-01 **PASS** |
+| 40 signed identities, 1000 connections | 32 held, 778 x 503 `service_busy`, 190 x 429; heap +38.0 MiB | bounded |
+| 40 identities, 400 chunked connections | 31 held (chunked books the 1 MiB cap), 362 x 503, 7 x 429; heap +35.2 MiB | bounded |
+| 200 abnormal endings (client closes mid-body, malformed chunk, 2 MiB cap hit, `Expect: 100-continue` then abort), then 8 concurrent full 1 MiB posts of the same identity | 4 admitted (the AI route answers 413 after reading), 4 x 429: the share is whole again, no leaked booking | **PASS** |
+| unprovisioned identity and `viewer`, 9 routes, `Content-Length: 900000` each | four bookings fit the 4 MiB share (held until the read timeout), the fifth and later are 429 at once | as designed |
+
+### F-06 MEDIUM - the total body budget is a lock that eight identities without membership hold with header-only requests
+
+The budget books the **declared** `Content-Length` before any byte arrives (`reservation`, `bodybudget.go`), and refuses every booking that
+does not fit the 32 MiB total with 503 `service_busy`. Eight signed identities that were never provisioned (any account of the issuer, no
+tenant membership) each open four connections that declare a 1 MiB body and send no body byte at all: 32 x 1 MiB fills the total exactly.
+Executed (`TestZZReviewFixTotalBudgetHeaderOnly`, real `httpserver.New` server, process-default budget):
+
+| moment | tenant owner's 2-byte `POST .../metadata/{app}/versions` |
+|---|---|
+| before | 400 `invalid_metadata` (the validator: served) |
+| 0.3 s into the attack (32 header-only connections, heap +0.7 MiB) | **503 `service_busy`** |
+| 9.3 s (first wave about to hit the read timeout) | **503 `service_busy`** |
+| 9.7 s (the attacker reconnects; 64 connections) | **503 `service_busy`** |
+| after the attacker left | 400 `invalid_metadata` |
+
+Every body-carrying request of every tenant (record commands, metadata, AI, approvals, activation, rollback, role and team changes) is
+refused while the lock is held; the attacker needs about 3.2 connections per second and almost no bandwidth to keep it. Before the fix the
+same callers could exhaust memory (F-01); before `f997efe` one tenant owner could hold the four database slots (IR-02). The fix's own test
+"the total bounds identities that stay within their own share" asserts this refusal as intended behaviour; the commit's claim "one identity
+cannot starve the others beyond its share" is true, but eight identities starve everyone. GET requests are unaffected.
+
+Repro (inside the M14 fixture; process-default budget):
+
+```go
+for i := 0; i < 8; i++ { tok := e.f.token(t, uuid(t), nil)                       // signed, never provisioned
+  for j := 0; j < 4; j++ { c, _ := net.Dial("tcp", addr)
+    c.Write([]byte("POST " + e.root + "/ai/patch-proposals HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " + tok +
+      "\r\nContent-Type: application/json\r\nContent-Length: 1048576\r\n\r\n")) } }  // no body byte follows
+// any identity's POST with a body now gets 503 service_busy until the attackers' read timeouts (10 s); they reconnect
+```
+
+Fix direction: book bytes as they are read (for example in 64 KiB steps inside the replay reader), not the declared length, so that only
+memory actually held counts; and/or keep part of the total for identities that resolve to an active membership, or size the total far above
+`perSubject` times a plausible number of hostile identities.
+
+### IR-06 / M14R-04 (`bfa47c4`, migration `00091`: `rollback_release` writes the fence)
+
+* The race table above re-run on `bfa47c4`: **S2 now 40001**, pointer stays c2@2 (PASS); S12 (a rejection older than a committed rollback onto
+  the same hash) now also aborts with 40001, which is consistent with S10; S1, S6-S10, S13 unchanged (40001); **S3, S4, S5 unchanged (F-05
+  still open: `approve_release` was not part of the fix)**.
+* Negative control: the builder's new `TestM13R01RollbackOvertakenByACommittedRejection` copied into a tree without `00091` FAILS ("the pointer
+  moved onto a hash whose rejection had committed"); on `bfa47c4` all 18 `TestM13R*` PASS (63.2 s, `-race`).
+* Read: `00091` replaces the `00088` body with one added `INSERT ... release_fences ... (p_target)` before the rejection check; the post-check
+  keeps owner and ACL and requires the fence statement in the definition.
 
 ## Probe sources
 
