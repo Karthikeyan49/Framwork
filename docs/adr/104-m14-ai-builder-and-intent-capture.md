@@ -467,8 +467,9 @@ list); metadata head moved during apply 409 `draft_changed`; requirement ids alr
 set head moved 409 `requirements_changed`; patched draft no longer compiles 422
 `proposal_invalid` (with `diagnostics`); RESOLVE of a draft in a category the verifier does not
 understand 422 `category_not_resolvable`; finish after expiry 409 `proposal_expired`;
-serialization/deadlock/lock timeout 409 `ai_conflict` (no automatic retry); every unexpected
-failure fails closed (503 `service_unavailable`, transaction rolled back).
+serialization/deadlock/lock timeout 409 `ai_conflict` (after the tries of Amendment C.4; it was "no automatic
+retry" before the independent review); every unexpected failure fails closed (503 `service_unavailable`,
+transaction rolled back).
 
 **Unconfigured provider:** with no `ai.Provider` injected and `AI_PROVIDER_FILE` unset, the
 routes still exist (in preview) and every one answers 503 `ai_unavailable` to an
@@ -566,7 +567,8 @@ a provider or a gateway directly.
   has no global limit on such requests, and a proxy in front of it may cut them earlier (A5).
 - No real model was called: this slice proves the seam, the durability and the authority model, not
   model quality, cost or latency (§15).
-- The independent review of M14 has not run: everything here is builder-side evidence.
+- The first independent review of M14 ran after this was written (2026-10-20 to 22, `docs/verification/M14_INDEPENDENT_REVIEW.md` and
+  `M14_AND_FIXES_INDEPENDENT_REVIEW.md`); what it found and what changed is Amendment C. Everything above Amendment C is builder-side evidence.
 
 ## Amendment B — pipeline decisions and corrections (2026-10-19)
 
@@ -610,3 +612,53 @@ code is the source of truth for each of them.
    mid-phase leaves a `FAILED`/`INTERNAL` proposal, one provider call and a free slot
    (`TestM14APIClientGoneDuringProviderPhaseStillRecordsTheOutcome`). Not executed: a 60 s phase, a real
    proxy in front of the API, a real provider.
+
+## Amendment C — independent review corrections (2026-10-22)
+
+The independent review of M14 (findings M14R-01 to M14R-08, `docs/verification/M14_INDEPENDENT_REVIEW.md`) and the re-verification of
+the fixes (F-05 to F-08, `docs/verification/M14_AND_FIXES_INDEPENDENT_REVIEW.md`) changed the following. Each item names the test that fails
+without the change; the reviewers' own probes were run against the fixed code by the reviewer.
+
+1. **Provider labels are reduced in the gateway (M14R-01, F-07; corrects §3 and A10).** The provider and model labels of an answer are
+   provider-chosen text. `gateway.loop` reduces both once, with `apiLabel`, to `[A-Za-z0-9._:/@+-]`: each run of other characters becomes one
+   underscore between two kept characters (`Beta-3.1 (70B)` is `Beta-3.1_70B`, `alpha 4 turbo` is `alpha_4_turbo`), a provider with nothing left is
+   `unknown`, a model is empty. The trace, the audit entry and the API see the same text. Before, a label with a space, a parenthesis or a non-ASCII
+   letter reached the audit entry raw, the audit refused it and a paid answer became a 503 with a PENDING proposal that held its slot until the
+   lease (`TestM14R01ProviderLabelsOutsideTheAuditCharsetKeepTheResult`).
+2. **A canceled provider call is charged (M14R-02; corrects the A12 statement that a client that gives up leaves no usage).** When the request
+   context is canceled while the provider works, the attempt is recorded as `TIMEOUT` with the input estimate and the whole output that was
+   reserved (`MaxOutputTokens`), the run is `FAILED`/`INTERNAL`, and the result exchange stores the trace and the usage. The closed outcome
+   vocabulary has no `CANCELED`; `TIMEOUT` means "the effect on the provider is unknown", which is what the daily budget needs. Twenty canceled cycles
+   used to make twenty provider calls and charge nothing; with the daily budget of the test the sixth is refused 429 `ai_budget_exhausted`, and the
+   control that spends the same budget on completed requests is refused at the same point
+   (`TestM14R02CanceledProviderCallsAreChargedToTheDailyBudget`).
+3. **A reported usage is capped per half (M14R-06, F-08; extends A5).** The charge of an attempt is the provider's report, never less than
+   the estimate of the bytes sent and returned, and never more than `2 x estimate + 1024` for the input and `2 x MaxOutputTokens + 1024` for the
+   output (a larger answer is still charged its byte estimate). One answer that reported 100 million tokens used to charge them all and lock the
+   tenant out of the UTC day; now an attempt costs about twice its reservation at most
+   (`TestM14R06AnEnormousReportedUsageDoesNotLockTheTenantOut`, `TestChargeUsageIsCappedNearTheSizeOfTheRequest`).
+4. **Admission and the result exchange are repeated after a known abort (M14R-03; corrects A7 and A8).** Serialization failures (`40001`), deadlocks
+   (`40P01`) and the other aborts of `postgres.KnownAbort` leave nothing behind, so they are tried again: the first exchange of the two creation routes
+   up to 5 times within 4 s (in `serve`, the body is replayed), the result exchange up to 6 times within 6 s of its detached 8 s context
+   (`aiResultExchange`). Every try authenticates, decides and audits again; an aborted try stored and charged nothing and a finished proposal answers
+   `not_pending`, so a repetition cannot store or charge twice (the re-verification: 18 of 18 results stored, one admitted and one created audit row each,
+   tokens charged equal `used_tokens`). When the last try still aborts the request is refused `409 ai_conflict`, audited, as before. Without it, results that
+   finished together lost 3 of 6 paid answers per round (`TestM14R03ResultsThatFinishTogetherAreNotLost`) and the proposal stayed PENDING until the lease
+   (`TestM14R03CreationsRacingForTheUsageRowLoseNoPaidAnswer`).
+5. **The wall clock binds an adapter that ignores its context (M14R-07; corrects the contract of `ai.Provider`).** `gateway.call` runs the adapter in its
+   own goroutine and abandons it when the context ends (`TIMEOUT`, charged the input estimate). About 16 abandoned calls are tolerated per gateway (the bound is soft: calls already
+   started when the count is reached are not stopped); beyond that new calls are refused as unavailable, for every tenant, because the provider is one per process and is stuck, and the refusal ends when the
+   stuck calls return. An abandoned call keeps its goroutine and memory until the adapter returns. The production HTTP adapter honours its context
+   (`TestM14R07AnAdapterThatIgnoresItsContextCannotHoldTheRequest`, `TestAbandonedProviderCallsAreBounded`).
+
+**Residuals after Amendment C, stated plainly.**
+
+- A bearer token that expires during the provider phase still loses the result: the result exchange re-verifies it (A8). About 6.7% of the full-length requests with a
+  15-minute token and a 60 s phase (60/900). Nothing is applied; the user asks again; the sweep charges the reservation.
+- `control.ai_usage` is still one row per tenant and day that every admission and every result updates under REPEATABLE READ. The retries make the
+  contention survivable, not absent: a burst of 24 simultaneous creations still saw 4 `409 ai_conflict` at admission after 0.3 s (nothing stored,
+  nothing charged). An insert-only ledger summed by the budget check would remove the row; it is not done.
+- A retry budget that ends in the middle of a try answers 503 `service_unavailable` without the audited 409; an abort outside `Admit` in the first exchange
+  is now a 409 after the tries (it was a 503).
+- M14R-05 (a narrow exemption band between the probe amounts passes `verifier-v2`, documented there as a mechanical floor) and M14R-08 (redaction is a
+  mechanical filter: 10 of 28 secret shapes survived, B.4) are LOW, stay open and are not changed here.
