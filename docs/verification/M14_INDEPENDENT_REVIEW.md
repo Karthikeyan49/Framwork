@@ -26,7 +26,7 @@ the audit hygiene and the concurrency of the AI route and in one M13 fence that 
 | Tenant isolation of the AI routes | PASS | H14: tenant-A proposal addressed through tenant B's path and by a user who is not a member of tenant A |
 | Policy `m14-native-v11` | PASS | 45-route POST matrix (five AI routes), `Holds` vs route decision for 7 role shapes (H3) |
 | Audit carries hashes and closed codes only | PASS for content, FAIL for robustness (MEDIUM, M14R-01) | 0 hits of the request text in `audit.entries` and `ai_proposals.body`; but the closed-code check turns a provider label into a 503 |
-| HTTP provider SSRF guard | PASS for the address predicate; dialer wiring NOT RUN | 58 address forms through `tools.DeniedAddress`; `provider_http.go` read |
+| HTTP provider SSRF guard | PASS (the dial path against a canary server and a stub resolver; no real network) | 58 address forms through `tools.DeniedAddress`; follow-up H16: 15 resolver answer shapes and 32 endpoint-spelling/answer combinations refused with 0 requests to the canary; `provider_http.go` read |
 | New: 60-second provider phase (`reply.nextWithin`, `extendWriteDeadline`, `ai.APIWallClockCeiling`) | PASS | H2, H8: 58 s phase through `httpserver.New`, no leak to the next request, only proposal creation sets it |
 | New: M13R-03 `holdingApprovers` / `RoleStore.Holds` / `NativeHolds` | PASS | H3 |
 | New: fixes 00086 / 00087 / 00088 / `verifier-v2` | 00088 FAIL (MEDIUM, M14R-04); 00087 guard PASS; 00086 builders' regression tests only (own variants NOT RUN); `verifier-v2` FAIL (LOW, M14R-05) | rollback race; worker guard evaluated as a worker session and its 60-row allowlist checked for stale entries; narrow exemption band |
@@ -41,6 +41,7 @@ the audit hygiene and the concurrency of the AI route and in one M13 fence that 
 | 07:20-07:55 | probes: prompt content, 58-second phase, orphan sweep, concurrency of results, decision races, verifier band, patch fuzz, AI catalog | done |
 | 07:41-08:12 | the full integration suite was run a second time on the resumed host, clean tree (see the integration review, gate table) | PASS (433 PASS, 5 SKIP, 0 FAIL) |
 | 08:26-08:31 | every probe of the appendix re-run in one batch against the unchanged tree, with the sources printed in the appendix | every probe vets clean; the probes that show a defect fail as listed under Reproduction, the others pass; the working tree was clean afterwards |
+| 2026-10-22 11:44-12:00 | follow-up on the items first marked NOT RUN, after another environment pause (Docker daemon restarted again): requirement-proposal parser fuzz, HTTP provider dial path, R7a burst, frozen-sandbox records, candidate-body differential | H15, H16 below; the other results are in the integration review |
 
 Method. Probes are untracked `zz_review_*_test.go` files that were never committed (only the two reports are); the sources are in the appendix.
 Each ran against a disposable database that the fixture creates from this tree's migrations on my own Docker stack (project `framework-m0`,
@@ -271,13 +272,31 @@ Fix direction: extend the table; apply NFKC/confusable normalisation before matc
   in no answer). A user who is a member of tenant B only, on tenant A's path: read 403, apply 403, propose 403. Afterwards the tenant-A proposal is still READY, the
   draft head still 1, one proposal row.
 
+* **H15 - the requirement-proposal parser under fuzzing** (follow-up, `FuzzReviewRequirementProposal`, 120 s, 2,019,114 executions, seeded with a valid
+  proposal of each of the four known categories, an unknown category and an open-question-only proposal): never a panic; every accepted proposal has a canonical
+  form that is a fixed point of parse and canonicalise (same bytes, same hash); every draft names a category the verifier understands and has a unique id; and
+  `Confirm`'s own construction - requiredness and basis from `RequirementPolicy`, provenance `AI_PROPOSED_HUMAN_CONFIRMED`, each of the three statuses a human can
+  give - yields a requirement set that validates and re-parses strictly with the draft's semantics unchanged. A READY proposal is therefore never unconfirmable for a
+  reason the parser could have seen (the id and category patterns of the proposal and of the set are identical, `schema.go:40-41` against `requirements.go:97-98`).
+* **H16 - the HTTP provider's dial path** (follow-up, `TestReviewProviderEndpointForms`, `TestReviewProviderResolverAnswerShapes`,
+  `TestReviewProviderFilterBypassSpellingsAreRefusedAtDialTime`, `TestReviewProviderHostSpelling`; a loopback TLS canary server and the builders' stub resolver, no real
+  network): of 41 endpoint forms built through `NewProvider`, 28 are refused at construction (private, loopback, metadata and mapped literals, `localhost`, `.local`,
+  `.internal`, userinfo, non-https, bad ports, whitespace and backslash tricks, query, fragment, full-width digits); 9 pass the construction filter (non-canonical numbers
+  such as `0x7f.0.0.1`, `2130706433`, `0177.0.0.1`, `127.1`; trailing-dot names such as `localhost.`; a punycode name; upper-case and trailing-dot spellings), and
+  each of those ends in a resolution failure in 0 to 4 ms here (no DNS in this environment). With a resolver that answers them with loopback, `::1`, the metadata
+  address or a private address (8 spellings x 4 answers = 32 combinations, including `.local.` and `.localhost.`) every call is refused by the network policy and the
+  canary receives no request. Fifteen further resolver answers (scope identifiers, IPv4-mapped metadata addresses, NAT64 and 6to4 forms, reserved and documentation
+  ranges, multicast) are refused likewise. Upper-case and trailing-dot host spellings of a legitimate endpoint work (a first guess that the dial guard's host comparison
+  would break them was wrong). Observation (INFO): `validateEndpoint` (`config.go:231-243`) does not strip a trailing dot, so `.local.`, `.localhost.` and `.internal.` names
+  pass the construction filter; the dial-time check is the real guard and it held. The builders' redirect, same-origin redirect, proxy-environment and rebinding tests
+  (`provider_http_test.go`) passed in the `internal/ai` unit run of session 2.
+
 ## Not covered
 
 * A real provider, a real vendor, billing of aborted calls, model quality and latency (no model exists in this environment).
-* The HTTP provider's dialer was read (`provider_http.go`: guarded dialer, no redirects, HTTPS only) and its address predicate attacked (H11); a live dial
-  to a name that resolves to a private address, DNS rebinding between resolve and dial, and a redirect were **NOT RUN** here (the builders' unit tests exist).
-* A new prompt-injection corpus: only the builders' 412-item corpus (part of the `internal/ai` unit run) and my patch fuzz. The requirement-proposal parser was
-  not fuzzed.
+* The HTTP provider was exercised with a loopback canary server and a stub resolver (H16); a dial over a real network, real DNS rebinding and a redirect from a real
+  server were **NOT RUN** (the builders' redirect and rebinding tests passed in the unit run).
+* A new prompt-injection corpus: only the builders' 412-item corpus (part of the `internal/ai` unit run) and my patch and requirement-proposal fuzz.
 * More than one API process (the Go in-flight cap is per process; the database cap is per tenant), HTTP/2, a proxy that cuts the connection before 70 s.
 * Per-member fairness: one member can occupy every in-flight slot of the tenant (by design per tenant); not executed.
 * `00086` variants beyond the builders' regression tests (index or unique mutation of a frozen sandbox dataset) and `strict_candidate_json` variants of `00087`:
@@ -1303,5 +1322,232 @@ func FuzzReviewPatchProposal(f *testing.F) {
 			}
 		}
 	})
+}
+```
+
+### A.6 H15 - requirement proposal parser and confirm-time invariants (fuzz)
+
+File: `internal/ai/zz_review_reqfuzz_test.go`
+
+```go
+package ai
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"testing"
+
+	"github.com/Karthikeyan49/Framwork/internal/intent"
+)
+
+// Review probe (not product code). Invariants for ANY byte string a model could send as a requirement proposal:
+//   - parsing never panics;
+//   - an accepted proposal has a canonical form, and parsing the canonical bytes reproduces it exactly, with the same hash;
+//   - every draft names a category the verifier understands, ids are unique;
+//   - Confirm's own construction (requiredness and basis from RequirementPolicy, provenance AI_PROPOSED_HUMAN_CONFIRMED, the status of
+//     any decision a human can give) yields a requirement set that validates and strictly re-parses, so a READY proposal is never
+//     unconfirmable for a reason the parser could have seen;
+//   - the semantics of a draft are not changed again by the set's own canonicalisation.
+func FuzzReviewRequirementProposal(f *testing.F) {
+	body := func(requirements string) []byte {
+		return []byte(fmt.Sprintf(`{"version":%q,"requirements":%s,"open_questions":[],"proposed_tests":[],"assumptions":[]}`, RequirementProposalVersion, requirements))
+	}
+	draft := func(id, category, semantics string) string {
+		return fmt.Sprintf(`{"id":%q,"category":%q,"statement":"statement","semantics":%s}`, id, category, semantics)
+	}
+	f.Add(body(`[` + draft("r1", "approval_threshold", `{"workflow_id":"workflow.order.approve","entity_id":"entity.order","field_id":"field.order.amount","currency":"USD","op":"GT","amount":"500","approver_roles":["admin"]}`) + `]`))
+	f.Add(body(`[` + draft("r2", "approval_gate", `{"workflow_id":"workflow.order.approve","approver_roles":["admin","owner"]}`) + `]`))
+	f.Add(body(`[` + draft("r3", "tool_effect", `{"tool_ref":"tool.vendor.create","max_side_effect":"WRITE","requires_approval":true,"max_sandbox_mode":"BLOCK"}`) + `]`))
+	f.Add(body(`[` + draft("r4", "data_migration", `{"max_class":"COMPATIBLE"}`) + `]`))
+	f.Add(body(`[` + draft("r5", "approval_threshold", `{"workflow_id":"workflow.order.approve","entity_id":"entity.order","field_id":"field.order.amount","currency":"JPY","op":"GTE","amount":"1000","approver_roles":["admin"],"context":{"field.order.note":"regular"}}`) + `,` +
+		draft("r6", "approval_gate", `{"workflow_id":"workflow.order.approve","approver_roles":["admin"]}`) + `]`))
+	f.Add([]byte(fmt.Sprintf(`{"version":%q,"requirements":[],"open_questions":[{"id":"q1","question":"Which currencies?","category":"approval_threshold"}],"proposed_tests":[],"assumptions":["a"]}`, RequirementProposalVersion)))
+	f.Add(body(`[` + draft("r7", "custom_category", `{"x":1}`) + `]`))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		p, err := ParseRequirementProposal(raw)
+		if err != nil {
+			return
+		}
+		canon, hash, err := CanonicalRequirementProposal(p)
+		if err != nil {
+			t.Fatalf("an accepted proposal has no canonical form: %v", err)
+		}
+		again, err := ParseRequirementProposal(canon)
+		if err != nil {
+			t.Fatalf("the canonical form of an accepted proposal does not re-parse: %v", err)
+		}
+		canon2, hash2, err := CanonicalRequirementProposal(again)
+		if err != nil || !bytes.Equal(canon, canon2) || hash != hash2 {
+			t.Fatalf("canonical form is not a fixed point:\n%s\n%s", canon, canon2)
+		}
+		seen := map[string]bool{}
+		for _, d := range p.Requirements {
+			if seen[d.ID] {
+				t.Fatalf("duplicate id %q accepted", d.ID)
+			}
+			seen[d.ID] = true
+			if !(intent.RequirementV2{Category: d.Category}).Known() {
+				t.Fatalf("a draft of the category %q the verifier does not understand was accepted", d.Category)
+			}
+		}
+		for _, status := range []string{intent.StatusResolved, intent.StatusOpenQuestion, intent.StatusRejected} {
+			set := intent.RequirementSet{SchemaVersion: intent.RequirementSetVersion, AppID: "app.orders", Requirements: []intent.RequirementV2{}}
+			for _, d := range p.Requirements {
+				requiredness, basis := RequirementPolicy(d.Category)
+				set.Requirements = append(set.Requirements, intent.RequirementV2{ID: d.ID, Category: d.Category, Requiredness: requiredness, RequirednessBasis: basis,
+					Status: status, Provenance: intent.ProvenanceAIConfirmed, Semantics: d.Semantics})
+			}
+			c, err := set.Canonical()
+			if err != nil {
+				t.Fatalf("an accepted proposal cannot be confirmed with every draft %s: %v\n%s", status, err, canon)
+			}
+			parsed, _, _, err := intent.ParseRequirementSet(c)
+			if err != nil {
+				t.Fatalf("the set Confirm would store does not re-parse strictly (%s): %v\n%s", status, err, c)
+			}
+			if len(parsed.Requirements) != len(p.Requirements) {
+				t.Fatalf("requirement count changed: %d -> %d", len(p.Requirements), len(parsed.Requirements))
+			}
+			for i, r := range parsed.Requirements {
+				if !bytes.Equal(r.Semantics, p.Requirements[i].Semantics) {
+					t.Fatalf("semantics of %s changed between proposal and set:\n%s\n%s", r.ID, p.Requirements[i].Semantics, r.Semantics)
+				}
+			}
+		}
+		_ = json.RawMessage(nil)
+	})
+}
+```
+
+### A.7 H16 - the HTTP provider dial path (endpoint forms, resolver answers, host spellings)
+
+File: `internal/ai/zz_review_dial_test.go`
+
+```go
+package ai
+
+import (
+	"context"
+	"errors"
+	"net/netip"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Review probe (not product code): the HTTP provider's endpoint forms and resolver answers beyond the builders' list. Every form is
+// built through NewProvider, the only entry configuration reaches, and called once with a short deadline. A form that is accepted at
+// construction and then fails with a transport error (not a policy refusal or a resolution failure) would mean that a connection to
+// the named address was attempted.
+func TestReviewProviderEndpointForms(t *testing.T) {
+	forms := []string{
+		"https://127.0.0.1/v1", "https://[::1]/v1", "https://0x7f.0.0.1/v1", "https://2130706433/v1", "https://0177.0.0.1/v1", "https://127.1/v1",
+		"https://[::ffff:127.0.0.1]/v1", "https://[::ffff:7f00:1]/v1", "https://169.254.169.254/latest/meta-data", "https://[fd00:ec2::254]/v1",
+		"https://10.0.0.1/v1", "https://192.168.0.1:8443/v1", "https://100.100.100.200/v1", "https://[fe80::1%25eth0]/v1", "https://0.0.0.0/v1",
+		"https://localhost/v1", "https://LOCALHOST/v1", "https://localhost./v1", "https://metadata.google.internal/v1", "https://metadata.google.internal./v1",
+		"https://printer.local/v1", "https://a.localhost/v1",
+		"https://user@example.com/v1", "https://user:pw@example.com/v1", "http://example.com/v1", "ftp://example.com/v1", "https://example.com:0/v1",
+		"https://example.com:70000/v1", "https://example.com:-1/v1", "https:///v1", "https://", "https://exa mple.com/v1", "https://example.com/v1\n",
+		"https://example.com@127.0.0.1/v1", "https://127.0.0.1#@example.com/v1", "https://127.0.0.1\\@example.com/v1", "https://example.com/v1?x=1", "https://example.com/v1#f",
+		"https://１２７.0.0.1/v1", "https://xn--127-0-0-1.example/v1",
+		"https://API.Example.com/v1", "https://api.example.com./v1",
+	}
+	for _, endpoint := range forms {
+		cfg := ProviderConfig{Version: ProviderConfigVersion, Kind: KindHTTPSJSON, Endpoint: endpoint, Model: "m"}
+		p, err := NewProvider(cfg)
+		if err != nil {
+			t.Logf("%-52q refused at construction", endpoint)
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		started := time.Now()
+		_, err = p.Complete(ctx, sampleRequest())
+		cancel()
+		verdict := "other"
+		switch {
+		case err == nil:
+			verdict = "SUCCEEDED"
+		case errors.Is(err, ErrProviderRefused):
+			verdict = "refused by the network policy"
+		case errors.Is(err, ErrProviderUnavailable) && strings.Contains(err.Error(), "transport"):
+			verdict = "transport failure (name did not resolve, or a connection was attempted)"
+		case errors.Is(err, ErrProviderTimeout):
+			verdict = "timeout (a connection may have been attempted)"
+		}
+		t.Logf("%-52q accepted at construction; call -> %s (%v, %v)", endpoint, verdict, err, time.Since(started).Round(time.Millisecond))
+	}
+}
+
+// Resolver answers with scope identifiers and odd shapes for a public-looking name.
+func TestReviewProviderResolverAnswerShapes(t *testing.T) {
+	canary := newTestServer(t, reply(answer("{}", "m", Usage{})))
+	port := strings.TrimPrefix(canary.URL, "https://127.0.0.1")
+	for _, answers := range [][]string{
+		{"fe80::1%eth0"}, {"::1%lo"}, {"2001:db8::1%eth0"}, {"::ffff:169.254.169.254"}, {"::ffff:a9fe:a9fe"}, {"198.18.0.1"}, {"192.0.0.1"}, {"203.0.113.9"},
+		{"240.0.0.1"}, {"2001::1"}, {"2002:7f00:1::1"}, {"64:ff9b::7f00:1"}, {"64:ff9b:1::1"}, {"100::1"}, {"ff02::1"},
+	} {
+		resolver := &stubResolver{next: func(int) []netip.Addr { return addrs(answers...) }}
+		cfg := ProviderConfig{Version: ProviderConfigVersion, Kind: KindHTTPSJSON, Endpoint: "https://api.example.com" + port + "/v1", Model: "m"}
+		p, err := newHTTPJSONProvider(cfg, httpOptions{rootCAs: canary.pool, resolver: resolver})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = p.Complete(context.Background(), sampleRequest())
+		t.Logf("%-28v -> %v", answers, err)
+		if err == nil || !errors.Is(err, ErrProviderRefused) {
+			t.Errorf("%v: expected a policy refusal, got %v", answers, err)
+		}
+		if canary.hits.Load() != 0 {
+			t.Fatalf("%v: the canary server received a request", answers)
+		}
+	}
+}
+
+// Host spelling: the dial guard compares the address http.Transport hands over with the configured host:port. A host written with
+// upper-case letters or a trailing dot is still a valid endpoint for the operator; it must either work or be refused at construction.
+func TestReviewProviderHostSpelling(t *testing.T) {
+	canary := newTestServer(t, reply(answer("{}", "m", Usage{})))
+	port := strings.TrimPrefix(canary.URL, "https://127.0.0.1")
+	for _, host := range []string{"api.example.com", "API.Example.com", "api.example.com.", "Api.Example.Com."} {
+		resolver := &stubResolver{next: func(int) []netip.Addr { return addrs("127.0.0.1") }}
+		cfg := ProviderConfig{Version: ProviderConfigVersion, Kind: KindHTTPSJSON, Endpoint: "https://" + host + port + "/v1", Model: "m"}
+		p, err := newHTTPJSONProvider(cfg, httpOptions{rootCAs: canary.pool, resolver: resolver, allowLoopback: true})
+		if err != nil {
+			t.Logf("%-22s refused at construction: %v", host, err)
+			continue
+		}
+		before := canary.hits.Load()
+		_, err = p.Complete(context.Background(), sampleRequest())
+		t.Logf("%-22s call -> err=%v, server hits +%d, resolver calls %d", host, err, canary.hits.Load()-before, resolver.calls)
+		if err != nil {
+			t.Errorf("%s: a valid endpoint spelling cannot be called: %v", host, err)
+		}
+	}
+}
+
+// The endpoint spellings that pass the construction filter (non-canonical numbers, trailing dots) when a resolver answers them with
+// loopback, link-local or metadata addresses, as the system resolver would for "2130706433" or "localhost.".
+func TestReviewProviderFilterBypassSpellingsAreRefusedAtDialTime(t *testing.T) {
+	canary := newTestServer(t, reply(answer("{}", "m", Usage{})))
+	port := strings.TrimPrefix(canary.URL, "https://127.0.0.1")
+	for _, host := range []string{"0x7f.0.0.1", "2130706433", "0177.0.0.1", "127.1", "localhost.", "metadata.google.internal.", "printer.local.", "a.localhost."} {
+		for _, answer := range []string{"127.0.0.1", "::1", "169.254.169.254", "10.0.0.7"} {
+			resolver := &stubResolver{next: func(int) []netip.Addr { return addrs(answer) }}
+			cfg := ProviderConfig{Version: ProviderConfigVersion, Kind: KindHTTPSJSON, Endpoint: "https://" + host + port + "/v1", Model: "m"}
+			p, err := newHTTPJSONProvider(cfg, httpOptions{rootCAs: canary.pool, resolver: resolver})
+			if err != nil {
+				t.Logf("%-28s refused at construction", host)
+				break
+			}
+			_, err = p.Complete(context.Background(), sampleRequest())
+			if err == nil || !errors.Is(err, ErrProviderRefused) {
+				t.Errorf("%s answered %s: %v", host, answer, err)
+			}
+			if canary.hits.Load() != 0 {
+				t.Fatalf("%s answered %s: the canary server received a request", host, answer)
+			}
+		}
+	}
 }
 ```

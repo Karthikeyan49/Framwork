@@ -39,6 +39,7 @@ fence (IR-06), a gate that reproduces (IR-03) and truthful ledgers (IR-04).
 | 08:13-08:16 | `make test-unit` again | **PASS**, 194.6 s |
 | 08:16-08:25 | the flaky unit test 12 times while `internal/ai`, `internal/compiler`, `internal/promotion` ran under `-race` in parallel | 12 of 12 PASS |
 | 08:26-08:31 | every probe of the appendices re-run in one batch against the unchanged tree | every probe vets clean; the probes that show a defect fail as listed under Reproduction, the others pass; the working tree was clean afterwards |
+| 2026-10-22 11:44-12:00 | follow-up on items first marked NOT RUN, after another environment pause (Docker daemon restarted again): R7a burst against `bin/api`, frozen-sandbox records, `strict_candidate_json` differential, HTTP provider dial path and requirement-proposal fuzz (the last two are in the M14 report) | all PASS, see "Follow-up" |
 
 ## Findings
 
@@ -168,7 +169,7 @@ the rollback to c1 then **succeeds** (`err=<nil> pointer=2ffe0ddc61f1@3 rejectio
 | `make test-rules-fuzz` | PASS | **PASS**: `FuzzRuleCompile` 109,424; `FuzzRuleRestoreAndInputs` 1,275; `FuzzFixedDecimalMoney` 28,065 executions | not repeated |
 | `make test-workflows-fuzz` | PASS | **PASS**: `FuzzWorkflowRestore` 1,064 executions | not repeated |
 | `make test-event-outage` | PASS, 610 s | **PASS**, 611.3 s: real 600.003 s absence; recovery completed=3 inbox=3 effects=3 audits=3 immutable_intents=3 attempts_retained=19 unconfirmed_redeliveries=2 | not repeated |
-| R7a invalid-bearer burst against `bin/api` (`-tags integration,trafficreview`) | PASS | **NOT RUN** (not on my list; the in-process variant tripped as designed, decision 5) | NOT RUN |
+| R7a invalid-bearer burst against `bin/api` (`-tags integration,trafficreview`) | PASS | not on my first list | **PASS** (follow-up): 40 requests, 20 x 401, 20 x 429, 20 denial audits, 129 ms |
 
 ## Attacks that held (each executed)
 
@@ -214,19 +215,31 @@ the rollback to c1 then **succeeds** (`err=<nil> pointer=2ffe0ddc61f1@3 rejectio
   fd00:ec2::254, CGNAT, documentation ranges) are all denied by `tools.DeniedAddress`, which the AI provider dials through; public controls are allowed
   (`TestReviewDeniedAddressForms`).
 
+## Follow-up: items first marked NOT RUN, now run (2026-10-22; the tree is unchanged: no file differs from the pinned head except the two reports)
+
+* **R7a invalid-bearer burst against the built API** (`TestM9RTrafficReviewPinnedBinaryInvalidBurst`, `-tags 'integration trafficreview'`, `bin/api` built from the pinned
+  source on 2026-10-20, sha256 `976230584ce208179cd1344fbade024e25704d8e537eaa157259af50d330e19a`): **PASS** - 40 actual HTTP requests, 20 x 401 and 20 x 429, 20 matching
+  denial audits, 0 rejected-request audits, 129 ms. This is the plan's own number reproduced.
+* **Frozen sandbox records stay evidence** (`TestReviewFrozenSandboxRecordsStayEvidence`, Appendix A.9): after the freeze, the stored evidence (2 records, hash `9573a4a98e37...`)
+  equals a recomputation from the live rows; API create, update and delete on the frozen binding answer 409; a SQL `DELETE` and a SQL `UPDATE` of a record as the
+  application credential are refused with 55000 `dataset binding is stale or sealed` (`dataset_record_fence`); after all five attempts the recomputed hash is unchanged. **PASS.**
+* **`control.strict_candidate_json` differential** (`TestReviewStrictCandidateJSONDifferential`, Appendix A.10, `00087:50-54`): 200,000 generated bodies (nested objects and
+  arrays, keys spelled with escapes, surrogate pairs, empty and slash keys, 20 number spellings with exponents, strings that contain objects, six whitespace variants,
+  leading and trailing whitespace) were checked by the function and by a reference built on a real tokenizer (no duplicate member by decoded name at any depth, no exponent,
+  no surrounding whitespace). They agree on every body: 86,716 accepted by both, 0 accepted by the function only (holes), 0 refused by the function only (over-strict). **PASS.**
+
 ## Not covered
 
 * The reference-scale performance gates of the remediation line (build tag `performance`, seven files; the R7a/R7b reference profile: ten-client read p95,
   32-client writes): **NOT RUN**. The ledger's headline numbers (read p95 158.903 ms; 6,527 writes at p95 349.656 ms) are the builders' and unverified here.
-* `TestM8RedisACLStreamLossAndPendingRecovery` (excluded by instruction), the `driverpanic` diagnostic, the opt-in checks of retained legacy API artifacts (5 skips in the
-  session 2 run) and the R7a invalid-bearer burst against the built `bin/api` (`-tags integration,trafficreview`): **NOT RUN**.
+* `TestM8RedisACLStreamLossAndPendingRecovery` (excluded by instruction), the `driverpanic` diagnostic and the opt-in checks of retained legacy API artifacts (5 skips in
+  the session 2 run): **NOT RUN**.
 * Session 1 did not count runtime `t.Skip` sites (its output was filtered); session 2 did (5, all opt-in retained artifacts).
 * HTTP/2, a real reverse proxy or load balancer in front of the API, TLS termination; more than one API replica (the admission queue, the traffic gate and the AI
   in-flight cap are process-local).
 * Worker behaviour for a workflow job whose instance lives in a sandbox that is frozen while the job is RUNNABLE: read only (the fence raises 55000 `frozen sandbox is
   read-only`, `00086:44`; a job whose lease fails 20 times ends `DEAD`, `00022`), **NOT RUN**.
-* Frozen-sandbox index or unique-claim mutation (those tables are outside the fence list of `00086`) and `strict_candidate_json` variants (`00087`) beyond the builders'
-  regression tests: **NOT RUN**.
+* Frozen-sandbox index or unique-claim mutation (those tables are outside the fence list of `00086`; they are not part of the evidence hash): **NOT RUN**.
 * A real IdP, MFA and a production HTTPS gateway (the ledger itself lists them as deferred), backup and restore, an upgrade from a database older than migration 44.
 * A manual review of the web UI beyond `make test-e2e` and `make test-signin-e2e`.
 * The AI half of the merge is in the M14 report, including its own list of what was not covered.
@@ -1081,6 +1094,285 @@ func TestReviewDeniedAddressForms(t *testing.T) {
 		if tools.DeniedAddress(netip.MustParseAddr(s), false) {
 			t.Errorf("public address %s is denied", s)
 		}
+	}
+}
+```
+
+### A.9 Follow-up - the records of a frozen sandbox stay evidence
+
+File: `tests/integration/zz_review_frozen_test.go`
+
+```go
+//go:build integration
+
+package integration
+
+import (
+	"context"
+	"database/sql"
+	"strings"
+	"testing"
+
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/data"
+)
+
+// Review probe (not product code). The records of a frozen sandbox are evidence (the freeze hashes them). Everything the app credential
+// and the API can do to them afterwards, then a recomputation of the freeze hash from the live rows.
+func TestReviewFrozenSandboxRecordsStayEvidence(t *testing.T) {
+	m8Database(t)
+	f, h, _, alice, app := m5Fixture(t)
+	root := "/v1/tenants/" + f.tenantA + "/preview/" + app
+	witness := m9rDatasetWitness(t, h, root+"/versions/1", alice)
+	box := m11Create(t, h, root, alice, witness, "REROUTE", 200)
+	path := root + "/datasets/" + box.ID + "/bindings/1/entities/entity.contact"
+	first := m5Create(t, h, path, alice, "Alpha")
+	second := m5Create(t, h, path, alice, "Beta")
+	if w := m5Call(h, root+"/sandboxes/"+box.ID+"/freeze", alice, struct{}{}); w.Code != 200 {
+		t.Fatal("freeze", w.Code, w.Body.String())
+	}
+	evidence, _ := m11rReadEvidence(t, f, box.ID)
+	live := func() (int, string) {
+		var n int
+		var hash string
+		err := f.operator.QueryRow(`SELECT count(*),coalesce(encode(sha256(convert_to(string_agg(r.entity_id||':'||r.id::text||':'||r.row_version::text||':'||encode(sha256(convert_to(r.custom_data::text,'UTF8')),'hex'),E'\n' ORDER BY r.entity_id,r.id),'UTF8')),'hex'),repeat('0',64))
+ FROM runtime.records r JOIN runtime.datasets d ON d.tenant_id=r.tenant_id AND d.app_id=r.app_id AND r.metadata_revision=d.anchor_revision AND r.ir_hash=d.anchor_hash WHERE d.tenant_id=$1 AND d.id=$2`, f.tenantA, box.ID).Scan(&n, &hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n, hash
+	}
+	n0, h0 := live()
+	t.Logf("stored evidence: %d records, hash %s...; recomputed from the live rows: %d records, hash %s...", evidence.Records.Count, evidence.Records.Hash[:12], n0, h0[:12])
+	if n0 != evidence.Records.Count || h0 != evidence.Records.Hash {
+		t.Fatalf("the recomputation does not reproduce the freeze (probe error)")
+	}
+	var revision int64
+	var irHash string
+	if err := f.operator.QueryRow(`SELECT anchor_revision,anchor_hash FROM runtime.datasets WHERE tenant_id=$1 AND id=$2`, f.tenantA, box.ID).Scan(&revision, &irHash); err != nil {
+		t.Fatal(err)
+	}
+	for name, cmd := range map[string]data.Command{
+		"api create": {Operation: "create", Values: m5Values("Gamma")},
+		"api update": {Operation: "update", ID: first.ID, ExpectedVersion: first.Version, Values: map[string]any{"field.contact.name": "Tampered"}},
+		"api delete": {Operation: "delete", ID: second.ID, ExpectedVersion: second.Version},
+	} {
+		w := m5Call(h, path+"/commands", alice, cmd)
+		t.Logf("%-12s on the frozen sandbox -> HTTP %d %s", name, w.Code, strings.TrimSpace(w.Body.String())[:min(120, len(strings.TrimSpace(w.Body.String())))])
+		if w.Code/100 == 2 {
+			t.Errorf("%s was accepted on a frozen sandbox", name)
+		}
+	}
+	for name, stmt := range map[string]string{
+		"sql delete": `DELETE FROM runtime.records WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4 AND id=$5`,
+		"sql update": `UPDATE runtime.records SET custom_data=custom_data||'{"field.contact.name":"Tampered"}'::jsonb WHERE tenant_id=$1 AND app_id=$2 AND metadata_revision=$3 AND ir_hash=$4 AND id=$5`,
+	} {
+		err := m11rAsApp(t, f, f.aliceSubject, sql.LevelRepeatableRead, func(ctx context.Context, q postgres.Executor) error {
+			if _, e := q.ExecContext(ctx, `SET CONSTRAINTS ALL IMMEDIATE`); e != nil {
+				return e
+			}
+			_, e := q.ExecContext(ctx, stmt, f.tenantA, app, revision, irHash, first.ID)
+			return e
+		})
+		t.Logf("%-12s as the app credential -> SQLSTATE %s (%v)", name, m11rCode(err), err)
+		if err == nil {
+			t.Errorf("%s was accepted on a frozen sandbox", name)
+		}
+	}
+	n1, h1 := live()
+	t.Logf("after every attempt: %d records, hash %s...", n1, h1[:12])
+	if n1 != evidence.Records.Count || h1 != evidence.Records.Hash {
+		t.Errorf("the live records no longer match the frozen evidence")
+	}
+}
+```
+
+### A.10 Follow-up - differential test of `control.strict_candidate_json`
+
+File: `tests/integration/zz_review_strictjson_test.go`
+
+```go
+//go:build integration
+
+package integration
+
+import (
+	"encoding/json"
+	"io"
+	"math/rand"
+	"strings"
+	"testing"
+)
+
+// Review probe (not product code): differential test of control.strict_candidate_json(txt, doc) (migration 00087) against a reference that
+// implements its documented contract with a real tokenizer: the text is one object without surrounding whitespace, no object has two members
+// whose DECODED names are equal (at any depth), and no number is spelled with an exponent. A text the function accepts but the
+// reference refuses is a body whose bytes Go and the jsonb view could read differently; a text the reference accepts but the function
+// refuses is only over-strict.
+func refStrictCandidateJSON(txt string) bool {
+	if len(txt) == 0 || txt[0] != '{' || txt[len(txt)-1] != '}' {
+		return false
+	}
+	dec := json.NewDecoder(strings.NewReader(txt))
+	dec.UseNumber()
+	var walk func() bool
+	walk = func() bool {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		switch v := tok.(type) {
+		case json.Delim:
+			switch v {
+			case '{':
+				seen := map[string]bool{}
+				for dec.More() {
+					kt, err := dec.Token()
+					key, ok := kt.(string)
+					if err != nil || !ok || seen[key] {
+						return false
+					}
+					seen[key] = true
+					if !walk() {
+						return false
+					}
+				}
+				_, err := dec.Token()
+				return err == nil
+			case '[':
+				for dec.More() {
+					if !walk() {
+						return false
+					}
+				}
+				_, err := dec.Token()
+				return err == nil
+			}
+		case json.Number:
+			if strings.ContainsAny(string(v), "eE") {
+				return false
+			}
+		}
+		return true
+	}
+	if !walk() {
+		return false
+	}
+	_, err := dec.Token()
+	return err == io.EOF
+}
+
+var (
+	strictKeys = []string{`"a"`, `"b"`, `"A"`, `"a"`, `"b"`, `"k1"`, `"k1"`, `"é"`, `"é"`, `"😀"`, `"😀"`, `"a\\"`, `"a\""`, `""`, `"\/"`, `"/"`, `"a b"`, `"a b"`}
+	strictNums = []string{"0", "-0", "1", "10", "123", "1.5", "-1", "0.5", "1e1", "1E1", "1e+1", "1e-1", "0e0", "1.0", "100", "-0.0", "0.1e2", "12345678901234567890", "1.5E3", "9e9"}
+	strictStrs = []string{`""`, `"x"`, `"1e5"`, `"01"`, `"a\"b"`, `"\\"`, `"é"`, `"é"`, `"\n"`, `"{\"a\":1,\"a\":2}"`, `"\"\""`, `"\\\""`}
+	strictWS   = []string{"", "", "", " ", "\n", "\t", "\r\n"}
+)
+
+func genStrict(r *rand.Rand, depth int) string {
+	ws := func() string { return strictWS[r.Intn(len(strictWS))] }
+	if depth > 3 {
+		return strictNums[r.Intn(len(strictNums))]
+	}
+	switch r.Intn(8) {
+	case 0, 1, 2:
+		n := r.Intn(5)
+		parts := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			parts = append(parts, ws()+strictKeys[r.Intn(len(strictKeys))]+ws()+":"+ws()+genStrict(r, depth+1)+ws())
+		}
+		return "{" + strings.Join(parts, ",") + "}"
+	case 3:
+		n := r.Intn(4)
+		parts := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			parts = append(parts, ws()+genStrict(r, depth+1)+ws())
+		}
+		return "[" + strings.Join(parts, ",") + "]"
+	case 4:
+		return strictStrs[r.Intn(len(strictStrs))]
+	case 5:
+		return strictNums[r.Intn(len(strictNums))]
+	case 6:
+		return []string{"true", "false", "null"}[r.Intn(3)]
+	}
+	return strictStrs[r.Intn(len(strictStrs))]
+}
+
+func TestReviewStrictCandidateJSONDifferential(t *testing.T) {
+	m8Database(t)
+	f := newIAM(t)
+	r := rand.New(rand.NewSource(87))
+	const total = 200000
+	const batch = 2000
+	var valid, sqlTrue, refTrue, holes, over int
+	var holeExamples, overExamples []string
+	for done := 0; done < total; done += batch {
+		texts := make([]string, 0, batch)
+		for len(texts) < batch {
+			members := r.Intn(5)
+			parts := make([]string, 0, members)
+			for i := 0; i < members; i++ {
+				parts = append(parts, strictKeys[r.Intn(len(strictKeys))]+":"+genStrict(r, 1))
+			}
+			text := "{" + strings.Join(parts, ",") + "}"
+			switch r.Intn(12) {
+			case 0:
+				text = " " + text
+			case 1:
+				text += "\n"
+			}
+			texts = append(texts, text)
+		}
+		rows, err := f.operator.Query(`SELECT t, pg_input_is_valid(t,'jsonb') AS ok, CASE WHEN pg_input_is_valid(t,'jsonb') THEN control.strict_candidate_json(t, t::jsonb) END AS strict FROM unnest($1::text[]) t`, texts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var text string
+			var ok bool
+			var strict *bool
+			if err = rows.Scan(&text, &ok, &strict); err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				continue
+			}
+			valid++
+			s := strict != nil && *strict
+			ref := refStrictCandidateJSON(text)
+			if s {
+				sqlTrue++
+			}
+			if ref {
+				refTrue++
+			}
+			switch {
+			case s && !ref:
+				holes++
+				if len(holeExamples) < 12 {
+					holeExamples = append(holeExamples, text)
+				}
+			case !s && ref:
+				over++
+				if len(overExamples) < 12 {
+					overExamples = append(overExamples, text)
+				}
+			}
+		}
+		rows.Close()
+	}
+	t.Logf("%d texts generated, %d valid for jsonb; accepted by the function: %d; accepted by the reference: %d", total, valid, sqlTrue, refTrue)
+	t.Logf("accepted by the function but refused by the reference (holes): %d", holes)
+	for _, e := range holeExamples {
+		t.Logf("   HOLE %q", e)
+	}
+	t.Logf("refused by the function but accepted by the reference (over-strict): %d", over)
+	for _, e := range overExamples {
+		t.Logf("   OVER %q", e)
+	}
+	if holes > 0 {
+		t.Errorf("%d texts pass strict_candidate_json although they hold a duplicate member or an exponent number", holes)
 	}
 }
 ```
