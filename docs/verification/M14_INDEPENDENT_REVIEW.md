@@ -9,11 +9,14 @@ migrations `00086`/`00087`/`00088` and `verifier-v2`.
 Rules of truth: PASS / FAIL / NOT RUN. Every "held" names the attack that was executed. A scripted provider stands in for every
 model: nothing here is evidence about a real model, a real vendor or real latency.
 
-STATUS: COMPLETE for the attacks listed (what was not covered: last section). Overall: **FAIL** - 4 MEDIUM, 4 LOW, no HIGH.
+STATUS at `552fa9e` (the pinned commit): COMPLETE for the attacks listed (what was not covered: last section). Overall: **FAIL** - 4 MEDIUM, 4 LOW, no HIGH.
 No model has authority in this build and every decision stayed with a human in every attack; the defects are in the money,
 the audit hygiene and the concurrency of the AI route and in one M13 fence that the M13R-01 fix left open.
 
-## Verdict by claim
+STATUS at `be6ec7cae1849bf535bad1811b21bf93067598b5` (re-verified 2026-10-22, the head after the builders' fixes): all eight findings are **OPEN** and reproduce (M14R-01 to M14R-04 MEDIUM, M14R-05 to M14R-08 LOW); no file of `internal/ai`, `internal/verification`, `internal/intent`, `internal/promotion`, `internal/audit` or the migrations `00081` to `00089` differs from the pinned commit, and the IR-02 fix removes one of the five triggers of M14R-03. Overall: **FAIL** - 4 MEDIUM, 4 LOW, no HIGH, as at the pinned commit.
+The review of the pinned commit is kept as written; the re-verification is the section "Re-verification at `be6ec7c`" before "Not covered".
+
+## Verdict by claim (at the pinned commit)
 
 | Claim (task list, ADR104) | Verdict | Attack that decided it |
 |---|---|---|
@@ -42,6 +45,7 @@ the audit hygiene and the concurrency of the AI route and in one M13 fence that 
 | 07:41-08:12 | the full integration suite was run a second time on the resumed host, clean tree (see the integration review, gate table) | PASS (433 PASS, 5 SKIP, 0 FAIL) |
 | 08:26-08:31 | every probe of the appendix re-run in one batch against the unchanged tree, with the sources printed in the appendix | every probe vets clean; the probes that show a defect fail as listed under Reproduction, the others pass; the working tree was clean afterwards |
 | 2026-10-22 11:44-12:00 | follow-up on the items first marked NOT RUN, after another environment pause (Docker daemon restarted again): requirement-proposal parser fuzz, HTTP provider dial path, R7a burst, frozen-sandbox records, candidate-body differential | H15, H16 below; the other results are in the integration review |
+| 16:40-17:03 and later | re-verification at `be6ec7c`: the probes of the open findings and of the held claims against the new head; the gate steps are in the integration review | see "Re-verification at `be6ec7c`" |
 
 Method. Probes are untracked `zz_review_*_test.go` files that were never committed (only the two reports are); the sources are in the appendix.
 Each ran against a disposable database that the fixture creates from this tree's migrations on my own Docker stack (project `framework-m0`,
@@ -68,6 +72,8 @@ Reproduction (the probe sources are in the appendix; a probe fails when the defe
 
 ### M14R-01 MEDIUM - a provider-reported model label outside `[A-Za-z0-9._:/@+-]` turns a finished provider call into HTTP 503 and an orphaned PENDING proposal
 
+Status at `be6ec7c`: **OPEN**, reproduces (4 of 4 labels).
+
 Contract: ADR104 A10 ("State fields ... validated in `internal/audit`"), A8 (the result transaction records the outcome), and the premise that
 provider output is untrusted data that must not be able to break the platform.
 
@@ -93,6 +99,8 @@ test.
 
 ### M14R-02 MEDIUM - a provider call that the client cancels is never charged: the daily token budget can be bypassed at the operator's expense
 
+Status at `be6ec7c`: **OPEN**, reproduces (20 provider calls, 0 tokens charged).
+
 Contract: ADR104 A5 "Daily budget is per tenant per UTC day over reserved + used tokens ... the gateway substitutes the pessimistic estimate when none is
 given, the port never lowers it"; a crashed request is "charged pessimistically when swept" (A12); a call that times out is charged its input estimate
 (`internal/ai/repair.go:177-181`: "The provider may have processed the request before it ran out of time").
@@ -113,6 +121,8 @@ Fix direction: treat cancellation like a timeout in `loop` - append the attempt 
 before returning; add a test that N cancelled cycles consume the budget.
 
 ### M14R-03 MEDIUM - the result exchange is one un-retried transaction: any failure in it discards a paid provider answer, leaves the proposal PENDING, and the sweep then charges the whole reservation
+
+Status at `be6ec7c`: **OPEN**; of the five triggers, the admission queue emptied by slow bodies is gone with the IR-02 fix, the other four reproduce.
 
 Contract: ADR104 A8 (three exchanges), A12 (residuals: "a crashed request keeps its in-flight slot until the lease lapses"). The ADR maps serialization
 failures to "409 `ai_conflict` (no automatic retry)" (line 470) without saying that in the result exchange this discards a paid answer.
@@ -155,6 +165,8 @@ beside the crash in A12.
 
 ### M14R-04 MEDIUM - `rollback_release` does not write the M13R-01 fence: a rollback whose transaction began before a committed rejection moves the pointer onto the rejected hash
 
+Status at `be6ec7c`: **OPEN**, reproduces (the same item as IR-06 of the integration review).
+
 Contract: migration `00088` header: "M13R-01 an acknowledged rejection did not stop an activation whose REPEATABLE READ transaction began earlier:
 `reject_release` and `activate_release` now both write one `control.release_fences` row per hash". `rollback_release` checks `release_rejections` for its
 target ("a rejected release is no longer a valid place to return to") but does not write the fence.
@@ -176,6 +188,8 @@ for `(t, p_app, p_target)` exactly as `activate_release` does; extend `TestM13R0
 
 ### M14R-05 LOW - `verifier-v2`: an exemption band that avoids the fixed probe amounts passes (documented as a "mechanical floor", reproduced)
 
+Status at `be6ec7c`: **OPEN**, reproduces.
+
 Contract: `internal/intent/oracle.go:169-172` ("Probes are a mechanical floor, not a proof: human cases must cover special regions"), ADR102 line 289,
 `internal/verification/README.md:37`. The FR-02 fix (`verifier-v2`) added nine ratios of the threshold.
 
@@ -191,6 +205,8 @@ verifier already does for string, enum, boolean and integer literals (`verifier.
 
 ### M14R-06 LOW - provider-reported usage is charged as reported, up to 100,000,000 tokens: one answer can lock a tenant out for the UTC day
 
+Status at `be6ec7c`: **OPEN**, reproduces.
+
 Executed (`TestReviewAIProviderBehaviours`, case "reports negative and enormous usage"): a provider reporting input `-2^62` and output `2^62`: HTTP 429
 (`FAILED/BUDGET`) and the tenant's `used_tokens` is **100,005,674** after one request. A 3 MiB answer is charged 792,106 (the pessimistic estimate) and
 also ends `FAILED/BUDGET`. ADR104 A5: "Usage is taken from the provider's report".
@@ -200,12 +216,16 @@ Fix direction: cap the per-attempt reported usage at the attempt's reservation s
 
 ### M14R-07 LOW - a provider adapter that ignores its context holds the request, its goroutine and (until the lease) its slot beyond the wall clock
 
+Status at `be6ec7c`: **OPEN**, reproduces.
+
 Evidence: `internal/ai/repair.go:102-109` (`call` is synchronous, no watchdog). Executed (`TestReviewAIProviderBehaviours`, case "hangs without honouring
 the context"): wall clock 2 s, no HTTP answer 12 s later. The built-in HTTP adapter honours the context (net/http), so only a custom `ai.Provider` can.
 
 Fix direction: run `Complete` in a goroutine and `select` on `ctx.Done()`; abandon and count a straggler.
 
 ### M14R-08 LOW - redaction is a mechanical filter: 10 of 28 secret shapes survive (ADR104 Amendment B.4 says so)
+
+Status at `be6ec7c`: **OPEN**, reproduces.
 
 Executed (`internal/ai` unit probe, source not reproduced here because it consists of secret-shaped literals): the redacted shapes include PEM blocks, URL
 credentials, JWTs, DSNs, most vendor key prefixes, AWS secrets, `authorization:` headers, `password=`/`password:` assignments, one-line private keys and
@@ -291,6 +311,36 @@ Fix direction: extend the table; apply NFKC/confusable normalisation before matc
   pass the construction filter; the dial-time check is the real guard and it held. The builders' redirect, same-origin redirect, proxy-environment and rebinding tests
   (`provider_http_test.go`) passed in the `internal/ai` unit run of session 2.
 
+## Re-verification at `be6ec7c` (2026-10-22)
+
+Same commit, worktree and method as the section "Re-verification at `be6ec7c`" of the integration review (`docs/verification/INTEGRATION_INDEPENDENT_REVIEW.md`), which also lists
+what changed after the pinned commit. For this half: `internal/ai`, `internal/verification`, `internal/intent`, `internal/promotion`, `internal/audit` and the migrations
+`00081` to `00089` do not differ from `552fa9e` at all (`git diff --name-only 552fa9e be6ec7c -- <path>` prints nothing for each). The one change on the path of an AI request is the
+front door, `internal/platform/access/access.go` (the body pre-read of IR-02, `:293-316`), which is the fix for the slow-body stall that cost an honest proposal its result. No commit after the pinned
+one changes the code that any of the eight findings below is about (the IR-02 fix removes one trigger of M14R-03, see the end of this section); every probe that shows a defect was run again and still shows it.
+
+| Finding | At `552fa9e` | At `be6ec7c` | Probe executed at `be6ec7c`, result |
+|---|---|---|---|
+| M14R-01 MEDIUM | open | **OPEN** | `TestReviewAIModelLabelOutsideTheAuditCharset`: FAIL for 4 of 4 labels (503 on a finished provider call, the proposal stays `PENDING`, 0 tokens charged) |
+| M14R-02 MEDIUM | open | **OPEN** | `TestReviewAICancelledCallsAreNotCharged`: FAIL, 20 provider calls with 0 tokens charged against a budget that allows 5 |
+| M14R-03 MEDIUM | open | **OPEN** | `TestReviewAIStaggeredAdmissionsFinishTogether` FAIL in 3 of 3 rounds (3, 4 and 3 of 6 results lost, `PENDING`); `TestReviewAIConcurrentResultsAreNotLost` FAIL in 3 of 3 rounds (6 of 8 answered 409 `ai_conflict` in each, one stored result lost in round 3); `TestReviewAITokenExpiresDuringProviderPhase` logs the third trigger (HTTP 401 after the provider answered, proposal `PENDING`) and `TestReviewAIOrphanIsSweptAndChargedByTheReservation` its price (the next admission after the lease charges the orphan's reservation, 67,244 tokens) |
+| M14R-04 MEDIUM (= IR-06) | open | **OPEN** | `TestReviewRollbackOvertakesConcurrentRejection`: FAIL, the rollback onto the rejected hash succeeds |
+| M14R-05 LOW | open | **OPEN** | `TestReviewNarrowExemptionBandBetweenProbes`: FAIL, the defect is present: the bands 626..749, 501..502 and 1500..1999 skip approval and the verifier answers PASS with 0 findings; the control bands 600..900 (3 findings) and 3001..4999 (1 finding) are caught |
+| M14R-06 LOW | open | **OPEN** | `TestReviewAIProviderBehaviours`, case "reports negative and enormous usage": 429 `BUDGET`, `used_tokens=100005674` charged |
+| M14R-07 LOW | open | **OPEN** | the same test, case "hangs without honouring the context": FAIL, no answer 12 s after a 2 s wall clock |
+| M14R-08 LOW | open | **OPEN** | `TestReviewRedactionSurvivors`: FAIL, the defect is present: 10 of 28 secret shapes survive (an Azure SAS `sig=`, an Azure storage connection string, `Basic <base64>`, a password in prose, `hf_`, `whsec_`, a `Cookie:` header, spaced digit groups, a key with a Cyrillic look-alike prefix, a key split over a line break) |
+
+The claims that held at the pinned commit were attacked again at `be6ec7c` with the same probes and held (PASS): prompt content (`TestReviewAIPromptCarriesNoIdentity`), the 58-second provider phase
+through `httpserver.New` (`TestReviewAIFiftyEightSecondProviderPhase`), concurrent provider phases leave the database free (`TestReviewAIConcurrentProviderPhasesFreeTheDatabase`), decisions happen
+once (`TestReviewAIDecisionHappensOnce`), apply against a human edit (`TestReviewAIApplyVersusHumanEdit`), a proposal's own status claims never confirm it
+(`TestReviewAIConfirmIgnoresWhatTheModelSaysAboutItsOwnStatus`), tenant isolation (`TestReviewAICrossTenantProposalAccess`), and `Holds` against the approve route for 7 role shapes
+(`TestReviewHoldsVsDecideExtended`: 1 allowed, 6 denied, `Holds` equal to the route decision in all 7). The unit probes of the HTTP provider dial path (`TestReviewProviderEndpointForms`, `...ResolverAnswerShapes`, `...HostSpelling`, `...FilterBypassSpellingsAreRefusedAtDialTime`) and of the 58 address forms (`TestReviewDeniedAddressForms`) pass, and the two fuzz probes (`FuzzReviewPatchProposal` about 156,000 executions, `FuzzReviewRequirementProposal` about 736,000, 60 s each) found no input.
+
+What the IR-02 fix changes for this half: of the five triggers listed under M14R-03 the fourth, an admission queue emptied by four slow-body connections (an honest proposal that returned 503 after
+9.54 s and stayed `PENDING`), is gone: `TestReviewSlowBodyHoldsAdmissionSlots` (the unchanged probe) now ends with both proposals `READY`: the honest proposal behind four trickling bodies answers 201 in 1.53 s (baseline 1.55 s), where it ended `PENDING` after a 503 at 9.54 s. The other four (concurrent results, simultaneous admissions, a token that expires during the provider phase, a model label) are unchanged.
+The first two do not need a slow body at all: they come from the single `control.ai_usage` row that concurrent `ai_begin` and `ai_finish` update under REPEATABLE READ (40001, answered 409
+`ai_conflict`) and from a result exchange that is not retried (`access/ai.go:504-555`).
+
 ## Not covered
 
 * A real provider, a real vendor, billing of aborted calls, model quality and latency (no model exists in this environment).
@@ -299,8 +349,8 @@ Fix direction: extend the table; apply NFKC/confusable normalisation before matc
 * A new prompt-injection corpus: only the builders' 412-item corpus (part of the `internal/ai` unit run) and my patch and requirement-proposal fuzz.
 * More than one API process (the Go in-flight cap is per process; the database cap is per tenant), HTTP/2, a proxy that cuts the connection before 70 s.
 * Per-member fairness: one member can occupy every in-flight slot of the tenant (by design per tenant); not executed.
-* `00086` variants beyond the builders' regression tests (index or unique mutation of a frozen sandbox dataset) and `strict_candidate_json` variants of `00087`:
-  **NOT RUN**.
+* `00086` variants beyond the builders' regression tests: the records of a frozen sandbox and the `strict_candidate_json` differential of `00087` were run in the follow-up (integration
+  review, A.9 and A.10: PASS); index or unique-claim mutation of a frozen sandbox dataset: **NOT RUN**.
 * `API_ENV=production` refusal of AI configuration: read in `internal/config/config.go`, not executed.
 * Performance of the AI routes under the reference profile.
 
@@ -308,7 +358,7 @@ Fix direction: extend the table; apply NFKC/confusable normalisation before matc
 
 The probes need the helpers of the repository at the pinned commit (`m14Setup`, `m13Setup`, `labelPatch`, `fixtureDoc`, ...); copy each block to the named file, then run
 `node scripts/with-env.mjs ./scripts/go.sh test -tags=integration -count=1 -timeout 30m -v -run '^<TestName>$' ./tests/integration`
-(unit probes: `./scripts/go.sh test -count=1 -v -run '^<TestName>$' ./internal/verification`; the fuzz probe: `./scripts/go.sh test -run '^$' -fuzz '^FuzzReviewPatchProposal$' -fuzztime=90s ./internal/ai`). They were never committed; delete them after use. The redaction probe is not reproduced: it consists of secret-shaped literals.
+(unit probes: `./scripts/go.sh test -count=1 -v -run '^<TestName>$' ./internal/verification`; the fuzz probe: `./scripts/go.sh test -run '^$' -fuzz '^FuzzReviewPatchProposal$' -fuzztime=90s ./internal/ai`). They were never committed; delete them after use. The redaction probe is not reproduced: it consists of secret-shaped literals. Blocks A.1 to A.7 compile and run unchanged against `be6ec7c` as well (that is how the re-verification ran them).
 
 ### A.1 M14R-01 to M14R-03, M14R-06, M14R-07 and H1, H2, H4, H5, H8, H9, H14 - the AI route probes
 

@@ -28,7 +28,7 @@ checkpoint `a1d8b00` is pushed on `remediation/m9r-foundation`; main stays
   deferred/request-only. See the [current plan](M9R_REMEDIATION_PLAN.md).
 - Milestone-agent follow-up (22 October; see the [integration plan](LINE_INTEGRATION_PLAN.md)): the final
   [merge review](../verification/INTEGRATION_INDEPENDENT_REVIEW.md), the first
-  [M14 review](../verification/M14_INDEPENDENT_REVIEW.md) (both FAIL, pinned at `552fa9e`) and a
+  [M14 review](../verification/M14_INDEPENDENT_REVIEW.md) (both FAIL, pinned at `552fa9e`, each re-run at `be6ec7c`: IR-01, IR-02 and IR-05 fixed there, IR-06 and all eight M14R findings still open there, as the later commits answer them) and a
   [re-verification of the fixes](../verification/M14_AND_FIXES_INDEPENDENT_REVIEW.md) (pinned at `be6ec7c`) exist, and so do an
   [upgrade rehearsal](../verification/UPGRADE_AND_ORDERING_REHEARSAL.md) and a [documentation audit](../verification/DOCS_TRUTH_AUDIT.md).
   B-01, B-02, B-04, B-05, IR-01 to IR-06, M14R-01 to M14R-04, M14R-06, M14R-07 and F-01 to F-08 are fixed on `integration/m9r-m14`

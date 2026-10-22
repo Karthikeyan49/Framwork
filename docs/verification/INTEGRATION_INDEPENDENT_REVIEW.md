@@ -5,22 +5,26 @@ Reviewer: independent agent, no part in building either line; no product code wa
 `review/integration-final`. Rules of truth: PASS / FAIL / NOT RUN. Every "held" names the attack that was executed.
 The M14 half of the review is `docs/verification/M14_INDEPENDENT_REVIEW.md`.
 
-STATUS: COMPLETE for the attacks listed (what was not covered: last section). Overall: **FAIL** - 3 MEDIUM (IR-01, IR-02, IR-06),
+STATUS at `552fa9e` (the pinned commit): COMPLETE for the attacks listed (what was not covered: last section). Overall: **FAIL** - 3 MEDIUM (IR-01, IR-02, IR-06),
 3 LOW (IR-03 to IR-05), no HIGH. The merge kept the authority and tenant-isolation invariants of both lines in every attack executed; what it
 did not keep is one meaning of a version token in one SQL literal (IR-01), the availability of the admission slots (IR-02, inherited), one M13
 fence (IR-06), a gate that reproduces (IR-03) and truthful ledgers (IR-04).
 
-## Verdict by decision of the plan
+STATUS at `be6ec7cae1849bf535bad1811b21bf93067598b5` (re-verified 2026-10-22, the head of `origin/integration/m9r-m14` after the builders' fixes): the gate **PASS**es on every step I ran (`make check`, `make build`, `make test-unit`, the full integration suite as one run with 437 PASS / 5 SKIP / 0 FAIL, e2e 11, sign-in e2e 7, the five fuzz targets, the ten-minute outage); IR-01, IR-02 and IR-05 are verified **FIXED** by attacks that the builders' tests do not make; IR-04 is fixed for the statements cited (two sentences that still name `552fa9e` as the tip remain); IR-03 is **partly fixed** (two of three timing-bound causes repaired in the tests); **IR-06 (MEDIUM) is open and reproduces unchanged**. Overall: **FAIL** - one MEDIUM open in this report (IR-06) and, in the M14 report, three more (M14R-01 to M14R-03) and four LOW, none fixed by any commit after the pinned one; no HIGH.
+Everything from "Verdict by decision" down to the heading "Re-verification at `be6ec7c`" is the review of the pinned commit and is kept as written; the
+re-verification is the section of that name, before "Not covered".
 
-| # | Decision | Verdict | Deciding attack |
-|---|---|---|---|
-| 1 | One meaning per version token (authoring schema, IR and compiler 1.3.0 / 1.4.0 / 1.5.0; workflow DSL 2.0.0 / 2.1.0 / 2.2.0) | **FAIL** (IR-01) | `TestReviewUniqueFieldUnderEachSchemaVersion`; nine re-shaped IR artifacts restored (`TestReviewVersionTokenReadings`, held) |
-| 2 | Migration order and the shared `metadata_versions_schema_version_check` | PASS (IR-05 LOW) | mechanical object intersection of both migration sets; `TestReviewMigrateOverMilestoneNumbering` |
-| 3 | Derived worker guard `control.worker_grants_safe()` | PASS | evaluated in a real `framework_worker` session; privilege inventory of the four guarded schemas |
-| 4 | R7b event authority against the M10 ledger and the M11 freeze | PASS | `TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts`; isolation-level read of `RuntimeSnapshot`, `jobs.go`, `freezePattern` |
-| 5 | HTTP front door (`internal/platform/access/access.go`) | PASS for authority, **FAIL** for availability (IR-02) | `TestReviewRouteMatrix` (45 POST routes); `TestReviewSlowBodyHoldsAdmissionSlots` |
-| 6 | Honesty of the documents | **FAIL** (IR-04) | reading against the tree |
-| - | M13 fixes carried by the merge (migration `00088`) | **FAIL** (IR-06) | `TestReviewRollbackOvertakesConcurrentRejection` |
+## Verdict by decision of the plan (at the pinned commit; the last column is the re-verification)
+
+| # | Decision | Verdict at `552fa9e` | Deciding attack | Verdict at `be6ec7c` |
+|---|---|---|---|---|
+| 1 | One meaning per version token (authoring schema, IR and compiler 1.3.0 / 1.4.0 / 1.5.0; workflow DSL 2.0.0 / 2.1.0 / 2.2.0) | **FAIL** (IR-01) | `TestReviewUniqueFieldUnderEachSchemaVersion`; nine re-shaped IR artifacts restored (`TestReviewVersionTokenReadings`, held) | **PASS** (IR-01 fixed) |
+| 2 | Migration order and the shared `metadata_versions_schema_version_check` | PASS (IR-05 LOW) | mechanical object intersection of both migration sets; `TestReviewMigrateOverMilestoneNumbering` | PASS (IR-05 fixed for a real milestone database) |
+| 3 | Derived worker guard `control.worker_grants_safe()` | PASS | evaluated in a real `framework_worker` session; privilege inventory of the four guarded schemas | PASS (no file of the guard differs from the pinned commit) |
+| 4 | R7b event authority against the M10 ledger and the M11 freeze | PASS | `TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts`; isolation-level read of `RuntimeSnapshot`, `jobs.go`, `freezePattern` | PASS (`TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts` run again: the live reader still stops the migrator at 57 (55P03) and the database stays at 56; after the reader ends the same call applies 57 and 80-90 and the version is 90) |
+| 5 | HTTP front door (`internal/platform/access/access.go`) | PASS for authority, **FAIL** for availability (IR-02) | `TestReviewRouteMatrix` (45 POST routes); `TestReviewSlowBodyHoldsAdmissionSlots` | **PASS** (IR-02 fixed; route matrix PASS again) |
+| 6 | Honesty of the documents | **FAIL** (IR-04) | reading against the tree | **PASS** for the statements cited in IR-04; two sentences that name `552fa9e` as the tip remain (LOW, see the re-verification) |
+| - | M13 fixes carried by the merge (migration `00088`) | **FAIL** (IR-06) | `TestReviewRollbackOvertakesConcurrentRejection` | **FAIL** (IR-06 open, unchanged) |
 
 ## Progress (UTC)
 
@@ -40,6 +44,10 @@ fence (IR-06), a gate that reproduces (IR-03) and truthful ledgers (IR-04).
 | 08:16-08:25 | the flaky unit test 12 times while `internal/ai`, `internal/compiler`, `internal/promotion` ran under `-race` in parallel | 12 of 12 PASS |
 | 08:26-08:31 | every probe of the appendices re-run in one batch against the unchanged tree | every probe vets clean; the probes that show a defect fail as listed under Reproduction, the others pass; the working tree was clean afterwards |
 | 2026-10-22 11:44-12:00 | follow-up on items first marked NOT RUN, after another environment pause (Docker daemon restarted again): R7a burst against `bin/api`, frozen-sandbox records, `strict_candidate_json` differential, HTTP provider dial path and requirement-proposal fuzz (the last two are in the M14 report) | all PASS, see "Follow-up" |
+| 16:40-17:03 | re-verification at `be6ec7c` in a separate worktree (the head had moved): `make check`, `make build`, `make test-unit`, then the probes of the fixes and of the open findings | `make check` 90.2 s, `make build` 16.9 s, `make test-unit` 237.8 s: all PASS |
+| 17:03-17:34 | full integration suite at `be6ec7c`, `-race -v`, clean tree | **PASS** as one run, 1854.972 s: 437 PASS, 5 SKIP (the opt-in retained legacy artifact tests), 0 FAIL; 442 tests run; no data race, no panic |
+| 17:34-17:53 | e2e, sign-in e2e, fuzz, the probe batch, the negative control of the builders' SQL scan, the test count, the ten-minute outage, all at `be6ec7c` | all PASS; the probes confirm the three fixes and still reproduce IR-06 and M14R-01 to M14R-08 |
+| 17:53-18:01 | the IR-03 test fixes under CPU load (A.12), pinned tree against `be6ec7c` | (a) `TestM12APIDetailReadsOfALargeCandidateConverge`: pinned tree 0 of 3 failed (11/11/12 s), `be6ec7c` 0 of 3 failed (11/10/10 s); (b) `TestTimeoutWhileServerSleepsIsUnknownAndBounded` x300: pinned tree 33 failing executions, `be6ec7c` 0; (c) `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` (unchanged by the builders) at `be6ec7c`: 0 of 3 failed (8/8/8 s) |
 
 ## Findings
 
@@ -47,6 +55,8 @@ Severity: HIGH exploitable violation of a security or integrity invariant; MEDIU
 documented contract; LOW hardening, documentation or test gap.
 
 ### IR-01 MEDIUM - `field.unique` cannot be enabled under authoring schema/IR 1.5.0, and every write to such an entity is refused
+
+Status at `be6ec7c`: **FIXED** by migration `00090` (see "Re-verification at `be6ec7c`"). The finding below is as made at `552fa9e`.
 
 Contract: ADR100 Amendment I1: "`1.5.0` is a superset of `1.4.0`: it carries both and adds the tool activity";
 `metadata.IntegritySchema(v)` is true for 1.4.0 and 1.5.0; the compiler, `validateIntegrity` and the renderer accept `unique` under 1.5.0.
@@ -76,6 +86,8 @@ version literals.
 
 ### IR-02 MEDIUM - request bodies are read inside the database admission slot and transaction (inherited from the remediation line, extended by every M12-M14 POST route)
 
+Status at `be6ec7c`: **FIXED** for the database slots by the body pre-read in `serve` (`access.go:293-316`); residuals are listed in the re-verification. The finding below is as made at `552fa9e`.
+
 Contract: R7a (ADR061) "bounded process-local admission before protected API work"; `API_DB_CONCURRENCY` (default 4) bounds database work; the
 commands route reads its body *before* the transaction (`access.go`, `localCommand`) precisely to avoid this.
 
@@ -100,6 +112,8 @@ Fix direction: read and bound the body before `transactionAt` for every POST (as
 with `http.NewResponseController(w).SetReadDeadline` before taking the slot.
 
 ### IR-03 LOW - the gate is host-bound: three timing-bound assertions failed on a slower host session, and the plan's "green" was a composite (the pinned head passes as one run on a faster one)
+
+Status at `be6ec7c`: **PARTLY FIXED**: the test-side causes of two of the three timing-bound failures were repaired (a retrying set-up, a test server that aborts a departed client's handler), the worker-policy budget is unchanged by design; the gate passed as one run at `be6ec7c` on this host. The finding below is as made at `552fa9e`.
 
 Executed on this host (4 vCPU, `nice -n 10`, one process at a time) in two sessions: 2026-10-20 (session 1) and 2026-10-22 (session 2, after an environment
 pause; the host was visibly faster, the whole integration suite took 1880.1 s instead of 2716.8 s). The step-by-step table is under "Gate reproduction".
@@ -127,6 +141,8 @@ that the large-candidate test runs inside, the 750 ms slack of the unit test) or
 
 ### IR-04 LOW - documents of the merged tree contradict the tree
 
+Status at `be6ec7c`: **FIXED** for the statements cited (the live ledger, the script-test count, `make check`); the old wording remains only under headings that call it historical, and two new sentences that name `552fa9e` as the tip are listed in the re-verification. The finding below is as made at `552fa9e`.
+
 * `docs/migration/M9R_FINDING_STATUS.md` is declared the live ledger (plan lines 59-60; the appendix header, lines 212-217: "it is not the live ledger. The
   live ledger is the table above"). In the tree that contains M10 to M14 the table above says: "no M10/main merge" (lines 17 and 30), "M10 remains paused
   pending a separate user task" (line 207), row "Production active-release runtime / public promotion lifecycle | Not implemented ... | M12/M13" (line 160),
@@ -139,6 +155,8 @@ that the large-candidate test runs inside, the 750 ms slack of the unit test) or
 
 ### IR-05 LOW - nothing refuses a database that holds the milestone line's migration numbers
 
+Status at `be6ec7c`: **FIXED** for a real milestone database by `postgres.CheckMigrationLineage` (see the re-verification). The finding below is as made at `552fa9e`.
+
 The plan says `MAIN` "has to be rebuilt, not migrated". Executed (`TestReviewMigrateOverMilestoneNumbering`, Appendix A): a database at 44 with
 `goose_db_version` rows for the milestone numbers, then `migrate up`: with 45-53 the run stops at 54 with `column "aggregate_valid_v1" does not exist` and
 nothing is applied; with 45-53 and 60 goose refuses ("4 missing (out-of-order) migrations lower than database version (60): versions 54,55,56,57"). It is safe,
@@ -147,6 +165,8 @@ checksum of the applied versions), so a milestone database that stopped at 53 an
 silently.
 
 ### IR-06 MEDIUM - `rollback_release` does not write the M13R-01 fence: a rollback that began before a committed rejection moves the pointer onto the rejected hash
+
+Status at `be6ec7c`: **OPEN**, reproduces unchanged. The finding below is as made at `552fa9e`.
 
 Full write-up, evidence and repro: `docs/verification/M14_INDEPENDENT_REVIEW.md`, finding M14R-04 (the item belongs to the review of migration `00088`).
 In short: `db/migrations/00088_m13_review_fixes.sql:51,70` make `reject_release` and `activate_release` write the same `control.release_fences` row so that the
@@ -228,6 +248,79 @@ the rollback to c1 then **succeeds** (`err=<nil> pointer=2ffe0ddc61f1@3 rejectio
   leading and trailing whitespace) were checked by the function and by a reference built on a real tokenizer (no duplicate member by decoded name at any depth, no exponent,
   no surrounding whitespace). They agree on every body: 86,716 accepted by both, 0 accepted by the function only (holes), 0 refused by the function only (over-strict). **PASS.**
 
+## Re-verification at `be6ec7c` (2026-10-22)
+
+After the interim findings the builders moved `integration/m9r-m14` from the pinned `552fa9e` to `be6ec7cae1849bf535bad1811b21bf93067598b5` (`git log 552fa9e..be6ec7c`: `46d8a2a`, `dfec052`,
+`f997efe`, `6c4cee6`, `1fb0110`, `bbf2465`, `f6398bf` and the document commits). I repeated the gate on that commit in a separate worktree and attacked the fixes (probe files copied in,
+run, deleted; no product file was changed). The change set is small and was enumerated mechanically (`git diff --name-only 552fa9e be6ec7c`):
+
+* product Go files: `cmd/migrate/main.go`, `internal/compiler/restore.go`, `internal/metadata/models.go` (a comment), `internal/platform/access/access.go`,
+  `internal/platform/postgres/lineage.go`; besides them `scripts/runtime-env.mjs`, one `Makefile` line (`:65`) and the migration `00090`;
+* `internal/ai`, `internal/verification`, `internal/intent`, `internal/promotion`, `internal/audit`, `internal/runtime`, `internal/policy`, `internal/identity`,
+  `internal/tenant`, `internal/sandbox` and the migrations `00001` to `00089`: **no file differs** from the pinned commit. A held attack that touches only those holds by code identity;
+  the probes that cross a changed file were run again (below).
+
+### Status of the findings
+
+| Finding | At `552fa9e` | At `be6ec7c` | Deciding attack, executed at `be6ec7c` |
+|---|---|---|---|
+| IR-01 MEDIUM | open | **FIXED** | `TestReviewUniqueIsEnforcedUnderSchema15` (A.11): schemas 1.4.0 and 1.5.0 both register, build to `READY`, then accept the first value (200), refuse the duplicate (409) and accept an absent field (200) |
+| IR-02 MEDIUM | open | **FIXED** (residuals below) | `TestReviewSlowBodyHoldsAdmissionSlots` (A.2, the probe of the pinned commit, unchanged): with four trickling bodies the honest `GET` takes 10 ms (8.02 s at `552fa9e`) and the honest AI proposal answers 201 `READY` in 1.53 s (baseline 1.55 s; at `552fa9e` 503 after 9.54 s and `PENDING`); `TestReviewSlowBodiesAfterTheFix` (A.11): six kinds of attacker, six connections each, 14 s each: honest `GET` 10-41 ms and honest AI proposal 201 in 530-563 ms every time |
+| IR-03 LOW | open | **PARTLY FIXED**: two of the three timing-bound assertions were repaired in the tests, the third is unchanged by design | the full run (`TestM12APIDetailReadsOfALargeCandidateConverge` 9.59 s, `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` 6.10 s, `internal/tools` ok in the unit run) and a load experiment (A.12; a busy loop on one of the two CPUs the test may use): (a) `TestM12APIDetailReadsOfALargeCandidateConverge`: pinned tree 0 of 3 failed (11/11/12 s), `be6ec7c` 0 of 3 failed (11/10/10 s); (b) `TestTimeoutWhileServerSleepsIsUnknownAndBounded` x300: pinned tree 33 failing executions, `be6ec7c` 0; (c) `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` (unchanged by the builders) at `be6ec7c`: 0 of 3 failed (8/8/8 s). (a): no failure at the pinned tree either (0 of 3), so this load does not reproduce the defect and shows only that `be6ec7c` does not fail under it; (b): the load reproduced the failure at the pinned tree (33 of 300) and not at `be6ec7c` (0 of 300), so the repair works under it |
+| IR-04 LOW | open | **FIXED** for the statements cited (live ledger, script-test count, `make check`); two sentences that name `552fa9e` as the tip remain | reading against the tree; `make check` (below) |
+| IR-05 LOW | open | **FIXED** for a real milestone database; the guard is a heuristic | `TestReviewRealMilestoneDatabaseIsRefusedByTheMigrator` (A.11), `TestReviewMigrateOverMilestoneNumbering` (A.4) |
+| IR-06 MEDIUM | open | **OPEN, unchanged** | `TestReviewRollbackOvertakesConcurrentRejection` (A.2 of the M14 report) fails as before: the rollback succeeds onto the hash that a committed rejection had just refused |
+
+### The fixes, attacked beyond the builders' tests
+
+* **IR-01, migration `00090`.** The new function text was compared with the only earlier definition (`00052`, `CREATE FUNCTION runtime.register_unique_constraint`, 29 lines): after
+  `CREATE` became `CREATE OR REPLACE` exactly one line differs, the predicate (`m.schema_version='1.4.0'` against `m.schema_version IN('1.4.0','1.5.0')`, `00090:24`), as the file's
+  header says ("byte for byte except that predicate"). `register_unique_constraint` appears in `00052` and `00090` only, so `00090` replaces the latest definition and reverts nothing.
+  Its closing block refuses a changed owner (`:51`), a drifted ACL (`:54`) and any function of the four schemas whose text still matches `schema_version = '1.4.0'` (`:57`; that pattern does not see
+  other spellings such as `->>'schema_version'`, but the list I made of every SQL literal naming an authoring version at the pinned head found none, and `00090` adds none).
+  The lifecycle probe uses the builders' own fixture (`uniqueFixtureAt`) but asserts the behaviour that matters, which is uniqueness: under 1.4.0 and under 1.5.0 the claim is registered
+  (200) and built to `READY`, the first value is then accepted (200), the same value again is refused (409) and a record without the field is accepted (200).
+* **IR-02, the body pre-read.** Read: `access.go:293` (`preRead` only for a POST with a verified bearer, a body announced, and not one of the two routes that already buffer),
+  `:296` (`io.ReadAll(io.LimitReader(r.Body, 1<<20+1))` on a body that `httpserver.go:180` has already wrapped in a 1 MiB `MaxBytesReader`, so the 1 MiB error arrives as a
+  `*http.MaxBytesError`), `:297-301` (any other read error is 400 `invalid_request` before the slot), `:314-315` (the handler reads a replay that ends with the same error). There is no PUT, PATCH or DELETE
+  route in the non-test code (`grep` over `internal` and `cmd`), and the R7a gate is a rate (token-bucket) limiter, not a concurrency limit (`traffic/gate.go:45-67`), so a slow body holds a connection and at most 1 MiB, but no database slot
+  and no gate slot. Executed (A.11): six kinds of slow attacker, six connections each for 14 s against a real `httpserver.New` server with the production timeouts and four slots: an owner
+  trickling a `Content-Length` body to the AI route; the same to the metadata route; a viewer (whose request is denied only after the read); an owner trickling a chunked body;
+  an invalid token; an owner who declares 2 MiB, sends 1.2 MiB at once and stops. Results: honest `GET` 10, 14, 41, 13, 24, 17 ms and honest AI proposal 201 after 545, 530, 551, 550, 561, 563 ms (the scripted provider takes 500 ms), in the order of the kinds above; the sixth kind was answered 413 by the server 3,863 times; the six proposals made during the test are all `READY`. The probe of the pinned commit (A.2) on the same head: 10 ms, and 201 in 1.53 s with both proposals `READY` and 0 idle-in-transaction backends at +2 s.
+* **IR-05, `postgres.CheckMigrationLineage`** (`lineage.go:19-37`, called at `cmd/migrate/main.go:35` before the lock and the provider). The migrator exposes `up` and `status` only
+  (`:20`), both pass through the check. Executed with the real milestone line: its original `00045`-`00053` and `00060` (extracted from the milestone line's last commit, `60da6f2`) were applied
+  with goose on top of a database at 44, then `bin/migrate up` and `bin/migrate status` were run: both exit non-zero with `ErrForeignMigrationNumbering`, the database is untouched
+  (version 60). The heuristic is "`runtime.tool_invocations` exists and goose version 80 is not recorded as applied"; it cannot see a milestone database that never reached `00045` (it is
+  identical to the remediation line below 45, so migrating it is correct), and it says nothing about a database that holds a different foreign numbering.
+* **B-02, the restore pin** (`restore.go:50`): the probe of decision 1 was run again (A.7, unit). The control restores; seven of the nine re-shaped artifacts are refused with the same messages as at the pinned commit ("stored workflow model disagrees with application", "invalid stored integrity contract", "stored runtime model disagrees with application"); the other two are the restore-only legacy shapes, which restore, as documented; `TestReviewToolActivityUnderOlderSchemas` PASS.
+
+### Gate at `be6ec7c`
+
+| Step | Builders' claim (`LINE_INTEGRATION_PLAN.md:27-35`) | Result at `be6ec7c` |
+|---|---|---|
+| `make check` | PASS, 30 s | **PASS**, 90.2 s: docs checksums 84 + 43, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags (new, `Makefile:65`), `go mod verify`, eslint, tsc (cold build cache in the new worktree) |
+| `make test-unit` | PASS, 209 s | **PASS**, 237.8 s: 27 Go packages `ok` (`internal/ai` 171.0 s), 11 script tests, 126 frontend tests in 19 files |
+| `make build` | PASS, 24 s | **PASS**, 16.9 s: 8 Go binaries and `vite build` (45 modules) |
+| Full integration suite, `-race -v`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` | PASS, 1956.5 s; 443 listed, 442 run | **PASS** as one run, 1854.972 s: 437 PASS, 5 SKIP (the opt-in retained legacy artifact tests), 0 FAIL; 442 run of the 443 that `-list` reports (the excluded test is the other one); no data race, no panic. The tests the builders added for the fixes pass (`TestM14SlowRequestBodiesDoNotHoldDatabaseSlots` 5.14 s, `TestM9RUniqueLifecycleIsTheSameUnderEveryIntegrityCapableSchema` 6.03 s, `TestMigrationLineageRefusesTheMilestoneLinesOldNumbering` 1.97 s, `TestIntegrationTenantRoleApproverGatesAToolSend` 17.42 s), and so do the two timing-bound ones (`TestM12APIDetailReadsOfALargeCandidateConverge` 9.59 s, `TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry` 6.10 s) |
+| `make test-e2e`, `make test-signin-e2e` | 11 passed, 7 passed | **PASS**, 11 passed (33.5 s); **PASS**, 7 passed (9.8 s) |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS (5 targets of 10 s) | **PASS**: `FuzzPointer` 147,099, `FuzzRuleCompile` 248,805, `FuzzRuleRestoreAndInputs` 19,098, `FuzzFixedDecimalMoney` 12,164, `FuzzWorkflowRestore` 181,951 executions |
+| `make test-event-outage` | PASS, 610 s | **PASS**, 608.60 s: real_absence_s=600.000 total_elapsed_s=606.378 completed=3 inbox=3 effects=3 audits=3 immutable_intents=3 attempts_retained=19 unconfirmed_redeliveries=2 |
+| The SQL version-gate scan without `00090` (the builders' negative control) | "fails without 00090" | **confirmed**: with the file moved away `TestSQLFunctionsNameWholeSchemaVersionFamilies` fails ("runtime.register_unique_constraint does not accept schema 1.5.0"); with it the three tests pass |
+
+### What the fixes do not do (so that nobody reads them as more)
+
+* IR-02 moves the wait, it does not remove it: a slow body still occupies a connection and up to 1 MiB until the 10 s read timeout, bounded by the rate limits and not by a connection limit
+  (the plan says so, `LINE_INTEGRATION_PLAN.md:41-46`). An unreadable body is answered 400 before the transaction and writes no audit row.
+* IR-03: the worker-policy assertion (`TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry`, a 2 s statement budget against a compensation scan that took 2.2 s on the slower host of session 1) is unchanged on purpose (the plan gives it to D1); it passed here in 6.10 s as part of the full run and in 3 of 3 runs under the load of A.12. That load slows the Go test process only, not the PostgreSQL container in which the scan and most of the set-up run, so it is a weak model of the slower host of session 1; it does not show that the assertion became robust, and a variant with a CPU-limited database container was **NOT RUN**. No minimum runner speed is stated beside the 90-minute deadline (`Makefile:41`; the plan says the deadlines "leave room for a slower runner", `LINE_INTEGRATION_PLAN.md:211`). The host of this re-verification was about as fast as the builders' (1855.0 s against their 1956.5 s), so the full run says nothing new about a slower one.
+* IR-04: the live ledger section (`M9R_FINDING_STATUS.md:185`, "Live findings - merged preview") now says that M10 and M14 are implemented preview and that the M12/M13 control plane exists; the
+  checkpoint (`:3-34`) names the tree as the combination of remediation and M10-M14. The statements of the old state (`no M10/main merge`, `Not implemented`, `AI is not implemented`) remain at
+  `:56`, `:69`, `:312`, `:322`, under the headings "Historical checkpoint progression" (`:36`, which declares its M10 pause and tool/AI wording historical) and "Appendix: milestone-line audit"
+  (`:251`, "it is not the live ledger"); a reader who jumps to the appendix table sees dated rows. What is left is new and of the same class: two sentences written when the tip was `552fa9e` are false at
+  `be6ec7c`, one in the live part (`M9R_FINDING_STATUS.md:224`, "integration/m9r-m14 remains `552fa9e`") and one in a section dated 20 October (`LINE_INTEGRATION_PLAN.md:85-87`, "Integration still
+  points to `552fa9e`"); `LINE_INTEGRATION_PLAN.md:103` ("M14/merge independent review is NOT RUN") is superseded by these reports.
+* IR-05: the check protects `cmd/migrate`; a person who runs goose directly against a milestone database is not stopped.
+* IR-06 and the findings of the M14 report are not fixed by any commit after the pinned one (the IR-02 fix removes one of the five triggers of M14R-03, nothing else).
+
 ## Not covered
 
 * The reference-scale performance gates of the remediation line (build tag `performance`, seven files; the R7a/R7b reference profile: ten-client read p95,
@@ -243,6 +336,10 @@ the rollback to c1 then **succeeds** (`err=<nil> pointer=2ffe0ddc61f1@3 rejectio
 * A real IdP, MFA and a production HTTPS gateway (the ledger itself lists them as deferred), backup and restore, an upgrade from a database older than migration 44.
 * A manual review of the web UI beyond `make test-e2e` and `make test-signin-e2e`.
 * The AI half of the merge is in the M14 report, including its own list of what was not covered.
+* At `be6ec7c`: the items above stay as they were (performance gates, `driverpanic`, the M8 Redis ACL test, HTTP/2 and a proxy, more than one API replica, a real IdP, backup and restore), and one is new:
+  the launcher fix B-01 was checked by its script tests (11 PASS) and by reading `scripts/runtime-env.mjs`, not by starting `bin/api` with a real provider file - **NOT RUN**. The builders' counts
+  of failures under load (11 of 150 before, 0 of 600 after) are theirs; A.12 is my own, smaller experiment, and it loads the test process, not the database: IR-03 with a CPU-limited PostgreSQL
+  container is **NOT RUN**. `postgres.CheckMigrationLineage` protects `cmd/migrate` only; goose used directly is not stopped.
 
 ## Appendix A - probe sources (Phase 1)
 
@@ -762,8 +859,9 @@ func TestReviewCutoverRefusesLiveOldReaderBeforeMilestonePorts(t *testing.T) {
 	}
 	_ = m.QueryRow(`SELECT (SELECT max(version_id) FROM goose_db_version WHERE is_applied)`).Scan(&version)
 	t.Logf("old reader gone: Up applied=%v err=%v; db version=%d", applied, upErr, version)
-	if upErr != nil || version != 89 || len(applied) != 11 {
-		t.Errorf("the retry did not apply 57 and 80-89")
+	// 57 and every milestone port from 80 on (80-89 at the pinned commit; the integration branch has since added 90).
+	if upErr != nil || len(applied) < 11 || applied[0] != 57 || applied[1] != 80 || version != applied[len(applied)-1] {
+		t.Errorf("the retry did not apply 57 and 80 onwards")
 	}
 	var safe bool
 	wdb, _ := postgres.Open(os.Getenv("WORKER_DATABASE_URL"))
@@ -1375,4 +1473,341 @@ func TestReviewStrictCandidateJSONDifferential(t *testing.T) {
 		t.Errorf("%d texts pass strict_candidate_json although they hold a duplicate member or an exponent number", holes)
 	}
 }
+```
+
+**Note on A.11 and A.12 (they need the repository at `be6ec7c`).** The block A.11 compiles against the helpers of `be6ec7c` (`m14Setup`, `uniqueFixtureAt(t, count, duplicates, version)`, `m8DatabaseAt`, ...), not against the pinned commit. To run the earlier probes A.1 and A.2 at `be6ec7c` rename the helper `uniqueFixtureAt` of A.1 (the builders added a function of that name with four parameters); A.2 needs `statuses` from A.1 of the M14 report. The third test needs `OLD_MIGRATIONS_DIR`, a directory holding the milestone line's original `00045`-`00053` and `00060` (`git show 60da6f2:db/migrations/<file>` for each; `60da6f2` is the last commit of the milestone line), and `MIGRATE_BIN`, a built `cmd/migrate` (`make build`); without them it skips.
+
+### A.11 Re-verification at `be6ec7c` - slow bodies after the fix, unique constraints under schema 1.5.0, a real milestone database
+
+File: `tests/integration/zz_review_reverify_test.go`
+
+```go
+//go:build integration
+
+package integration
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/ai"
+	"github.com/Karthikeyan49/Framwork/internal/platform/httpserver"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
+	"github.com/pressly/goose/v3"
+)
+
+// Review probes (not product code) for the fixes of integration/m9r-m14 after the pinned commit: the body pre-read of `serve` (IR-02),
+// the unique registration under schema 1.5.0 (IR-01) and the migration lineage guard (IR-05).
+
+// ---------------------------------------------------------------- IR-02: slow bodies of every kind
+
+type slowKind struct {
+	name  string
+	path  func(e *m14Env) string
+	token func(e *m14Env) string
+	// run sends the request on c and keeps it alive until stop; it returns the first line of the server's answer, if one came.
+	run func(c net.Conn, path, token string, stop time.Time) string
+}
+
+func firstLine(c net.Conn, wait time.Duration) string {
+	_ = c.SetReadDeadline(time.Now().Add(wait))
+	line, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(line)
+}
+
+func TestReviewSlowBodiesAfterTheFix(t *testing.T) {
+	e := m14Setup(t, m14Options{})
+	doc := e.draft("500")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httpserver.New(ln.Addr().String(), e.h)
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	addr := ln.Addr().String()
+	honestGET := func() (int, time.Duration) {
+		started := time.Now()
+		req, _ := http.NewRequest("GET", "http://"+addr+"/v1/tenants/"+e.f.tenantA+"/access", nil)
+		req.Header.Set("Authorization", "Bearer "+e.viewer)
+		resp, err := (&http.Client{Timeout: 40 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}).Do(req)
+		if err != nil {
+			return 0, time.Since(started)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, time.Since(started)
+	}
+	honestPropose := func() (int, time.Duration) {
+		e.provider.Push(ai.ScriptStep{Payload: labelPatch(t, doc, "entity.order", "Honest"), Delay: 500 * time.Millisecond, Usage: ai.Usage{InputTokens: 100, OutputTokens: 100}, Model: "m"})
+		started := time.Now()
+		req, _ := http.NewRequest("POST", "http://"+addr+e.root+"/ai/patch-proposals", strings.NewReader(`{"request":"Rename the order entity."}`))
+		req.Header.Set("Authorization", "Bearer "+e.alice)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := (&http.Client{Timeout: 90 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}).Do(req)
+		if err != nil {
+			return 0, time.Since(started)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, time.Since(started)
+	}
+	drip := func(c net.Conn, stop time.Time, chunked bool) {
+		for time.Now().Before(stop) {
+			time.Sleep(700 * time.Millisecond)
+			piece := "a"
+			if chunked {
+				piece = "1\r\na\r\n"
+			}
+			if _, err := c.Write([]byte(piece)); err != nil {
+				return
+			}
+		}
+	}
+	head := func(path, token, extra string) string {
+		return fmt.Sprintf("POST %s HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Type: application/json\r\n%s\r\n", path, token, extra)
+	}
+	aiPath := func(e *m14Env) string { return e.root + "/ai/patch-proposals" }
+	metaPath := func(e *m14Env) string { return "/v1/tenants/" + e.f.tenantA + "/metadata/" + e.app + "/versions" }
+	owner := func(e *m14Env) string { return e.alice }
+	viewer := func(e *m14Env) string { return e.viewer }
+	kinds := []slowKind{
+		{"owner, content-length drip, AI route", aiPath, owner, func(c net.Conn, p, tok string, stop time.Time) string {
+			_, _ = c.Write([]byte(head(p, tok, "Content-Length: 30000\r\n") + `{"request":"`))
+			drip(c, stop, false)
+			return ""
+		}},
+		{"owner, content-length drip, metadata route", metaPath, owner, func(c net.Conn, p, tok string, stop time.Time) string {
+			_, _ = c.Write([]byte(head(p, tok, "Content-Length: 30000\r\n") + `{"expected_revision":1,"document":`))
+			drip(c, stop, false)
+			return ""
+		}},
+		{"viewer (denied after the read), content-length drip, AI route", aiPath, viewer, func(c net.Conn, p, tok string, stop time.Time) string {
+			_, _ = c.Write([]byte(head(p, tok, "Content-Length: 30000\r\n") + `{"request":"`))
+			drip(c, stop, false)
+			return ""
+		}},
+		{"owner, chunked drip, AI route", aiPath, owner, func(c net.Conn, p, tok string, stop time.Time) string {
+			_, _ = c.Write([]byte(head(p, tok, "Transfer-Encoding: chunked\r\n") + "c\r\n{\"request\":\"\r\n"))
+			drip(c, stop, true)
+			return ""
+		}},
+		{"invalid token, content-length drip, AI route", aiPath, func(*m14Env) string { return "not-a-token" }, func(c net.Conn, p, tok string, stop time.Time) string {
+			_, _ = c.Write([]byte(head(p, tok, "Content-Length: 30000\r\n") + `{"request":"`))
+			drip(c, stop, false)
+			return ""
+		}},
+		{"owner, 2 MiB declared, 1.2 MiB sent at once, then silence", aiPath, owner, func(c net.Conn, p, tok string, stop time.Time) string {
+			_, _ = c.Write([]byte(head(p, tok, "Content-Length: 2097152\r\n")))
+			_, _ = c.Write([]byte(strings.Repeat("a", 1_200_000)))
+			line := firstLine(c, 5*time.Second)
+			return line
+		}},
+	}
+	for _, k := range kinds {
+		k := k
+		t.Run(k.name, func(t *testing.T) {
+			stop := time.Now().Add(14 * time.Second)
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			answers := map[string]int{}
+			for i := 0; i < 6; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for time.Now().Before(stop) {
+						c, err := net.Dial("tcp", addr)
+						if err != nil {
+							return
+						}
+						line := k.run(c, k.path(e), k.token(e), stop)
+						c.Close()
+						if line != "" {
+							mu.Lock()
+							answers[line]++
+							mu.Unlock()
+						}
+					}
+				}()
+			}
+			time.Sleep(2 * time.Second)
+			code, took := honestGET()
+			t.Logf("honest GET under 6 attackers -> HTTP %d after %v", code, took.Round(time.Millisecond))
+			if code != 200 || took > 1500*time.Millisecond {
+				t.Errorf("an honest GET was delayed or refused: HTTP %d after %v", code, took)
+			}
+			pcode, ptook := honestPropose()
+			t.Logf("honest AI proposal under 6 attackers -> HTTP %d after %v", pcode, ptook.Round(time.Millisecond))
+			if pcode != 201 || ptook > 6*time.Second {
+				t.Errorf("an honest AI proposal was delayed or lost: HTTP %d after %v", pcode, ptook)
+			}
+			wg.Wait()
+			mu.Lock()
+			if len(answers) > 0 {
+				t.Logf("what the attackers were answered: %v", answers)
+			}
+			mu.Unlock()
+		})
+	}
+	t.Logf("proposals afterwards: %s", reviewProposalStatuses(e))
+}
+
+// ---------------------------------------------------------------- IR-01: the unique lifecycle under 1.5.0 enforces uniqueness
+
+func TestReviewUniqueIsEnforcedUnderSchema15(t *testing.T) {
+	for _, version := range []string{"1.4.0", "1.5.0"} {
+		version := version
+		t.Run(version, func(t *testing.T) {
+			m8Database(t)
+			_, h, base, token, _, _ := uniqueFixtureAt(t, 5, false, version)
+			path := base + "/unique-constraints/field.contact.memo0"
+			w := m5Call(h, path+"/register", token, map[string]any{"expected_generation": int64(0)})
+			if w.Code != 200 {
+				t.Fatalf("schema %s: register -> %d %s", version, w.Code, w.Body.String())
+			}
+			x := struct {
+				State      string `json:"state"`
+				Generation int64  `json:"generation"`
+				Checkpoint int64  `json:"checkpoint"`
+			}{}
+			decode := func(b []byte) {
+				if err := json.Unmarshal(b, &x); err != nil {
+					t.Fatal(err)
+				}
+			}
+			decode(w.Body.Bytes())
+			for i := 0; x.State != "READY" && i < 20; i++ {
+				w = m5Call(h, path+"/build", token, map[string]any{"expected_generation": x.Generation, "expected_checkpoint": x.Checkpoint})
+				if w.Code != 200 {
+					t.Fatalf("schema %s: build -> %d %s", version, w.Code, w.Body.String())
+				}
+				decode(w.Body.Bytes())
+			}
+			first := m5Call(h, base+"/commands", token, map[string]any{"operation": "create", "command_key": uuid(t), "values": uniqueValues("only-one")})
+			second := m5Call(h, base+"/commands", token, map[string]any{"operation": "create", "command_key": uuid(t), "values": uniqueValues("only-one")})
+			absent := m5Call(h, base+"/commands", token, map[string]any{"operation": "create", "command_key": uuid(t), "values": m5Values("no unique value")})
+			t.Logf("schema %s: state %s; create 'only-one' -> %d, the same value again -> %d (%s), a record without the field -> %d", version, x.State, first.Code, second.Code, strings.TrimSpace(second.Body.String())[:min(90, len(strings.TrimSpace(second.Body.String())))], absent.Code)
+			if x.State != "READY" || first.Code != 200 || second.Code != 409 || absent.Code != 200 {
+				t.Errorf("schema %s: the unique lifecycle does not hold (state %s, %d, %d, %d)", version, x.State, first.Code, second.Code, absent.Code)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------- IR-05: a REAL database built with the milestone line's old numbers
+
+func TestReviewRealMilestoneDatabaseIsRefusedByTheMigrator(t *testing.T) {
+	dir, bin := os.Getenv("OLD_MIGRATIONS_DIR"), os.Getenv("MIGRATE_BIN")
+	if dir == "" || bin == "" {
+		t.Skip("needs OLD_MIGRATIONS_DIR (the milestone line's migrations 45-53 and 60) and MIGRATE_BIN (a built cmd/migrate)")
+	}
+	m8DatabaseAt(t, 44)
+	m, err := postgres.Open(os.Getenv("MIGRATION_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	ctx := context.Background()
+	p, err := goose.NewProvider(goose.DialectPostgres, m, os.DirFS(dir), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := p.Up(ctx)
+	version := func() int64 {
+		var v int64
+		_ = m.QueryRow(`SELECT max(version_id) FROM goose_db_version WHERE is_applied`).Scan(&v)
+		return v
+	}
+	t.Logf("the milestone line's own migrations applied on top of 44: %d migrations, error %v, database version %d", len(results), err, version())
+	if err != nil || version() != 60 {
+		t.Fatalf("could not build the old-numbered database: %v", err)
+	}
+	var toolLedger bool
+	_ = m.QueryRow(`SELECT to_regclass('runtime.tool_invocations') IS NOT NULL`).Scan(&toolLedger)
+	t.Logf("tool ledger table present: %v", toolLedger)
+	if err = postgres.CheckMigrationLineage(ctx, m); !errors.Is(err, postgres.ErrForeignMigrationNumbering) {
+		t.Errorf("CheckMigrationLineage on a real milestone database answered %v", err)
+	}
+	for _, arg := range []string{"up", "status"} {
+		out, runErr := exec.Command(bin, arg).CombinedOutput()
+		t.Logf("migrate %-6s -> %v: %.200s", arg, runErr, strings.TrimSpace(string(out)))
+		if runErr == nil {
+			t.Errorf("migrate %s succeeded on a milestone database", arg)
+		}
+	}
+	if v := version(); v != 60 {
+		t.Errorf("the refused migrate changed the database: version %d", v)
+	}
+}
+
+func reviewProposalStatuses(e *m14Env) string {
+	e.t.Helper()
+	rows, err := e.f.operator.Query(`SELECT status||'/'||coalesce(failure_code,'') FROM control.ai_proposals WHERE tenant_id=$1 AND app_id=$2 ORDER BY created_at`, e.f.tenantA, e.app)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		_ = rows.Scan(&v)
+		out = append(out, v)
+	}
+	return strings.Join(out, ",")
+}
+```
+
+### A.12 Re-verification at `be6ec7c` - the IR-03 test fixes under CPU load (shell)
+
+File: `a scratch script, not a repository file` - the script that produced the numbers quoted in the re-verification (it also logged the time of every run and counted the failing executions)
+
+```bash
+#!/bin/bash
+# IR-03 under load, before and after the builders' test changes.
+#   MAIN = checkout of the pinned tree (product and test code equal 552fa9e), NEW = worktree of be6ec7c, OUT = a scratch directory.
+#   Everything goes through ./scripts/go.sh and node scripts/with-env.mjs as elsewhere; taskset is needed.
+set -u
+
+# 1. the four test binaries, built unloaded
+( cd $NEW  && ./scripts/go.sh test -race -tags=integration -c -o $OUT/it-new.test ./tests/integration )
+( cd $NEW  && ./scripts/go.sh test -race -c -o $OUT/tools-new.test ./internal/tools )
+( cd $MAIN && ./scripts/go.sh test -race -tags=integration -c -o $OUT/it-old.test ./tests/integration )
+( cd $MAIN && ./scripts/go.sh test -race -c -o $OUT/tools-old.test ./internal/tools )
+
+# 2. the load: one busy loop on CPU 0; the tests may use CPUs 0 and 1 (about a quarter of the normal capacity of a 4 vCPU host)
+taskset -c 0 bash -c 'while :; do :; done' &
+BUSY=$!
+trap 'kill $BUSY' EXIT
+
+run_it() { # label binary tree test runs
+  for i in $(seq 1 $5); do
+    node $3/scripts/with-env.mjs taskset -c 0,1 bash -c "cd $3/tests/integration && exec $2 -test.run '^$4\$' -test.v -test.count=1 -test.timeout=20m"
+  done
+}
+
+# (a) the large-candidate test: before and after the retrying set-up
+run_it pinned  $OUT/it-old.test $MAIN TestM12APIDetailReadsOfALargeCandidateConverge 3
+run_it be6ec7c $OUT/it-new.test $NEW  TestM12APIDetailReadsOfALargeCandidateConverge 3
+# (c) the worker-policy test, which the builders did not change
+run_it be6ec7c $OUT/it-new.test $NEW  TestM9RSQLWorkerStatementPolicyCostAndRowLeaseExpiry 3
+# (b) the tools timeout test, 300 executions each, before and after the test server aborts a departed client's handler
+for pair in "$OUT/tools-old.test $MAIN" "$OUT/tools-new.test $NEW"; do
+  set -- $pair
+  ( cd $2/internal/tools && taskset -c 0,1 $1 -test.run '^TestTimeoutWhileServerSleepsIsUnknownAndBounded$' -test.count=300 -test.timeout=30m )
+done
 ```
