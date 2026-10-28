@@ -331,6 +331,9 @@ func Main(ctx context.Context, service string) int {
 		logger.Error("configuration invalid", "error", err.Error())
 		return 1
 	}
+	if refuseOperatorCredentials(os.Getenv, logger) {
+		return 1
+	}
 	if Run(ctx, service, c, logger) != nil {
 		logger.Error("service failed; inspect configuration and dependency status")
 		return 1

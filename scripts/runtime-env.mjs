@@ -3,7 +3,9 @@ import path from 'node:path'
 // segments of any of its arguments once dot segments, trailing slashes and a main.go are gone: cmd/<kind> is a package (./cmd/worker,
 // cmd/worker/, github.com/Karthikeyan49/Framwork/cmd/worker, ./cmd/worker/main.go) and bin/<kind> is a binary (bin/api, ./bin/api,
 // /abs/path/bin/api). A spelling that this does not recognise is handed the whole environment, which is why the forms a launcher
-// can be given are listed in the test rather than guessed (independent review F-04).
+// can be given are listed in the test rather than guessed (independent review F-04). The list is a convenience, not the control: the
+// API, worker and dispatcher refuse to start when an operator credential is in their environment (internal/platform/app/operator_env.go),
+// so a backend started in a way that is not listed fails at start-up instead of running with the migrator's credentials (IR-07).
 export function runtimeKindOf(command, args = []) {
   for (const arg of [command, ...args]) {
     const parts = path.posix.normalize(String(arg).replaceAll('\\', '/')).split('/').filter(Boolean)

@@ -238,6 +238,12 @@ development Compose bootstrap inputs. They have no committed defaults. Existing
 `.env` is never overwritten. Do not delete it while retaining the PG volume: role
 passwords are initialized once. Rotate database role passwords explicitly.
 
+`make api`, `make worker` and `make dispatcher` hand each backend only its own configuration. The
+API, worker and dispatcher also refuse to start (exit 1, naming the variables, never their values) when
+`MIGRATION_DATABASE_URL`, `MIGRATOR_PASSWORD`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`,
+`EVENT_OPERATOR_REDIS_URL` or `EVENT_OPERATOR_PASSWORD` is set in their environment, so a backend started
+through a launcher spelling that is not recognised does not run with operator credentials.
+
 Production runtime and migration configuration refuse PostgreSQL connections without `sslmode=verify-full`, non-TLS
 Redis, absent connection passwords, non-HTTPS CORS origins, and insecure telemetry
 origins. Runtime readiness also rejects superuser/BYPASSRLS/create-role/create-database
