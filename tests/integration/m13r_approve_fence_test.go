@@ -174,3 +174,27 @@ func TestF05EveryCandidateHasItsFenceRow(t *testing.T) {
 		t.Fatalf("%d candidates, %d with a fence row", candidates, fenced)
 	}
 }
+
+// The residual that the fix of F-05 names. The first activation of an application has no pointer row to lock, so an approval of ANOTHER first
+// candidate whose transaction began before that activation does not abort (there is nothing for FOR SHARE to find, and a row created after a
+// snapshot is invisible to it). Whatever the approval does, it cannot take effect: that candidate was built on no release, the pointer is now
+// the first release, and activation refuses the candidate as stale.
+func TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect(t *testing.T) {
+	e := m13Setup(t)
+	m13RequireStack(t, e, true)
+	first, _ := e.build("500", nil, e.carol)
+	other, _ := e.build("500", m13Relabel("Other first release"), e.carol)
+	m13Code(t, "approve the first", e.httpApprove(e.dave.token, first), 201)
+	finish := e.heldApproval(e.dave.subject, other) // its snapshot predates the activation, and there is no pointer row yet
+	m13Code(t, "activate the first", e.httpActivate(e.erin.token, first, "", 0), 200)
+	aerr := finish()
+	t.Logf("the approval of the other first candidate: err=%v, %d approval(s) recorded", aerr, len(e.approvalsOf(other)))
+	_, err := e.activatePort(e.erin.subject, other, "", 0)
+	m13Refused(t, "activation of the other first candidate", err, "55000")
+	if hash, generation, _ := e.activePointer(); hash != first || generation != 1 {
+		t.Errorf("the pointer is %s at generation %d, want the first release at 1", hash, generation)
+	}
+	if n := len(e.approvalsOf(first)); n != 1 {
+		t.Errorf("%d approvals on the activated release, want 1", n)
+	}
+}

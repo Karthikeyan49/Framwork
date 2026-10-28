@@ -379,7 +379,9 @@ These supersede the matching sentences above where they differ.
    `TestF05ApprovalsStillRunTogether` (another hash's veto, concurrent approvers, a veto racing a first approval is recorded),
    `TestF05EveryCandidateHasItsFenceRow`, and the existing `TestM13AdversarialRaceRejectVersusApprove`, which a first version of the migration
    (the approver creating the row) failed in round 2. **Residual:** a first activation (no pointer row yet) racing an approval of another
-   first candidate cannot be fenced by a lock on a row that does not exist; the approval is inert at the pointer.
+   first candidate cannot be fenced by a lock on a row that does not exist; the approval is inert at the pointer. Executed on 28 October
+   (`TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect`): the approval is recorded (no abort, one approval row), the activation of that
+   candidate is then refused 55000 as stale and the pointer stays on the first release at generation 1.
 
 ## Consequences
 
