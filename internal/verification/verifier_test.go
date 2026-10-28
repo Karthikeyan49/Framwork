@@ -1,8 +1,11 @@
 package verification
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -45,7 +48,10 @@ type orderOptions struct {
 	noteNotNull     bool   // route also requires note to be set
 	orNote          string // route is amount > threshold OR note == orNote (over-approval)
 	rejectCompletes bool   // a rejected approval ends in complete instead of failed
-	exemptBand      bool   // amounts strictly between 600 and 900 skip approval
+	exemptBand      bool   // amounts strictly between bandLow (600) and bandHigh (900) skip approval
+	bandLow         string // with exemptBand: the lower edge of the window
+	bandHigh        string // with exemptBand: the upper edge of the window
+	amountLiterals  int    // routes to completion for orders of exactly that many distinct amounts
 }
 
 func orderDocument(o orderOptions) metadata.Document {
@@ -127,9 +133,25 @@ func orderDocument(o orderOptions) metadata.Document {
 			// Keeps state.failed reachable, which the workflow contract requires.
 			start = append(start, metadata.Transition{To: "state.failed", Condition: &metadata.Expression{Op: "eq", Args: []metadata.Expression{{Op: "field", FieldRef: "field.order.id"}, {Op: "literal", Value: json.RawMessage(`"invalid"`)}}}})
 		}
+		// Routes to completion for orders of exactly those amounts, eight to a route (a condition holds only so many).
+		for from := 0; from < o.amountLiterals; from += 8 {
+			var exact []metadata.Expression
+			for i := from; i < o.amountLiterals && i < from+8; i++ {
+				lit := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(fmt.Sprintf(`{"amount":"%d","currency":"%s"}`, 10000+i, o.currency))}
+				exact = append(exact, metadata.Expression{Op: "eq", Args: []metadata.Expression{amountField, lit}})
+			}
+			condition := &exact[0]
+			if len(exact) > 1 {
+				condition = &metadata.Expression{Op: "or", Args: exact}
+			}
+			start = append(start, metadata.Transition{To: "state.complete", Condition: condition})
+		}
 		if o.exemptBand {
-			low := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"600","currency":"` + o.currency + `"}`)}
-			high := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"900","currency":"` + o.currency + `"}`)}
+			if o.bandLow == "" {
+				o.bandLow, o.bandHigh = "600", "900"
+			}
+			low := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"` + o.bandLow + `","currency":"` + o.currency + `"}`)}
+			high := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"` + o.bandHigh + `","currency":"` + o.currency + `"}`)}
 			band := and(metadata.Expression{Op: "gt", Args: []metadata.Expression{amountField, low}}, metadata.Expression{Op: "lt", Args: []metadata.Expression{amountField, high}})
 			start = append(start, metadata.Transition{To: "state.complete", Condition: band})
 		}
@@ -401,6 +423,149 @@ func TestExemptionBandBetweenBoundaryProbesFails(t *testing.T) {
 	}
 	if r := mustVerify(t, input(orderProgram(t, orderOptions{}), set, controlSpec(set))); r.Outcome != Pass {
 		t.Fatalf("honest route: %s %+v", r.Outcome, r.Findings)
+	}
+}
+
+// Independent review M14R-05: a window that lets orders skip the approval and is narrower than the gap between the fixed probes was
+// passed (626..749, 501..502 and 1500..1999 over a threshold of 500, with 0 findings). The probes around the amounts the plan itself
+// compares the field with find it: the fixed probes alone pass each of the narrow windows (they pass without the literal probes).
+func TestExemptionWindowsBetweenTheFixedProbesFail(t *testing.T) {
+	set := requirementSet(thresholdRequirement("po-approval", regular))
+	spec := controlSpec(set)
+	for _, w := range []struct {
+		low, high string
+		narrow    bool // the fixed probes do not land inside it
+	}{
+		{"600", "900", false}, {"3001", "4999", false},
+		{"626", "749", true}, {"501", "502", true}, {"1500", "1999", true}, {"2501", "2999", true},
+	} {
+		r := mustVerify(t, input(orderProgram(t, orderOptions{exemptBand: true, bandLow: w.low, bandHigh: w.high}), set, spec))
+		prefix := "po-approval/probe/"
+		if w.narrow {
+			prefix += "lit-"
+		}
+		if r.Outcome != Fail || !hasFindingPrefix(r, CodeApprovalMismatch, prefix) {
+			t.Errorf("window %s..%s: %s, findings %+v", w.low, w.high, r.Outcome, r.Findings)
+		}
+	}
+	// The honest plan passes, and so does a window below the threshold: orders of 10 to 499 need no approval anyway.
+	for name, o := range map[string]orderOptions{"honest route": {}, "window below the threshold": {exemptBand: true, bandLow: "10", bandHigh: "499"}} {
+		if r := mustVerify(t, input(orderProgram(t, o), set, spec)); r.Outcome != Pass {
+			t.Errorf("%s: %s %+v", name, r.Outcome, r.Findings)
+		}
+	}
+}
+
+func TestLiteralProbesFollowTheAmountsOfThePlan(t *testing.T) {
+	thr := intent.ApprovalThreshold{WorkflowID: "workflow.order.approve", EntityID: "entity.order", FieldID: "field.order.amount", Currency: "USD", Op: "GT", Amount: "500.00", ApproverRoles: []string{"admin"}}
+	probesOf := func(o orderOptions) ([]string, map[string]intent.Probe) {
+		wf, err := orderProgram(t, o).Workflow("workflow.order.approve")
+		if err != nil {
+			t.Fatal(err)
+		}
+		amounts := literalAmounts(wf.Plan(), thr)
+		fixed, err := intent.DeriveProbes("r", thr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		taken := map[string]bool{}
+		for _, p := range fixed {
+			if p.Currency == thr.Currency {
+				taken[p.Amount] = true
+			}
+		}
+		more, err := literalProbes("r", thr, amounts, taken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var edges []string
+		for _, a := range amounts {
+			edges = append(edges, a.FloatString(2))
+		}
+		byAmount := map[string]intent.Probe{}
+		for _, p := range more {
+			if _, dup := byAmount[p.Amount]; dup {
+				t.Fatalf("amount %s probed twice", p.Amount)
+			}
+			byAmount[p.Amount] = p
+		}
+		return edges, byAmount
+	}
+	// The honest plan compares the field with 500 only, which the fixed probes already cover: nothing is added.
+	if edges, more := probesOf(orderOptions{}); !reflect.DeepEqual(edges, []string{"500.00"}) || len(more) != 0 {
+		t.Fatalf("honest plan: amounts %v, %d extra probes", edges, len(more))
+	}
+	// A route that reads another money field is not about the threshold field: its amounts are not probed.
+	if edges, more := probesOf(orderOptions{discount: true}); len(edges) != 0 || len(more) != 0 {
+		t.Fatalf("a route on another field: amounts %v, %d extra probes", edges, len(more))
+	}
+	// A window from 626 to 749 adds a unit below, at and a unit above each edge, and the midpoints of 500, 626 and 749.
+	edges, more := probesOf(orderOptions{exemptBand: true, bandLow: "626", bandHigh: "749"})
+	if !reflect.DeepEqual(edges, []string{"500.00", "626.00", "749.00"}) {
+		t.Fatalf("amounts %v", edges)
+	}
+	for _, want := range []string{"625.99", "626.00", "626.01", "748.99", "749.00", "749.01", "563.00", "687.50"} {
+		p, ok := more[want]
+		if !ok {
+			t.Errorf("no probe at %s (have %d)", want, len(more))
+			continue
+		}
+		// The expectation never comes from the plan: every one of these amounts needs the admin approval.
+		if p.Expect.Outcome != intent.OutcomeApprovalRequired || !reflect.DeepEqual(p.Expect.Roles, []string{"admin"}) {
+			t.Errorf("probe %s expects %s", want, p.Expect)
+		}
+	}
+	if len(more) != 8 {
+		t.Errorf("%d extra probes, want 8", len(more))
+	}
+	// The midpoints include the threshold of the requirement, which the plan need not spell: a plan that compares with 5000 is probed
+	// halfway between that and 500, too (5000 itself is ten times the threshold, a fixed probe).
+	edges, more = probesOf(orderOptions{threshold: "5000"})
+	if !reflect.DeepEqual(edges, []string{"5000.00"}) {
+		t.Fatalf("amounts %v", edges)
+	}
+	for _, want := range []string{"4999.99", "5000.01", "2750.00"} {
+		if _, ok := more[want]; !ok {
+			t.Errorf("no probe at %s (have %d)", want, len(more))
+		}
+	}
+	if len(more) != 3 {
+		t.Errorf("%d extra probes, want 3", len(more))
+	}
+}
+
+// A change to the checks needs a new VerifierVersion, never an edit (report.go). The probes are the checks: this pins the ids and the
+// expectations of the probes of one honest plan and one plan with a window to the version, so that adding, removing or moving a probe
+// fails here until the version is bumped and the digest is updated with it.
+func TestProbeSetIsPinnedToTheVerifierVersion(t *testing.T) {
+	set := requirementSet(thresholdRequirement("po-approval", regular))
+	sum := sha256.New()
+	for _, o := range []orderOptions{{}, {exemptBand: true, bandLow: "626", bandHigh: "749"}} {
+		r := mustVerify(t, input(orderProgram(t, o), set, controlSpec(set)))
+		for _, c := range r.Results {
+			fmt.Fprintf(sum, "%s|%s|%s\n", c.ID, c.Source, c.Expected)
+		}
+	}
+	const pinned = "verifier-v3"
+	const digest = "bab54f37caada06bded13034fc1f795066d8abc3c2f2c362c1d677f33b5a1fa9"
+	if VerifierVersion != pinned || hex.EncodeToString(sum.Sum(nil)) != digest {
+		t.Fatalf("the probes of %s hash to %s (this test pins %s, digest %s): bump VerifierVersion and update both", VerifierVersion, hex.EncodeToString(sum.Sum(nil)), pinned, digest)
+	}
+}
+
+// The probes around the amounts of a plan are bounded: a plan that compares the field with more distinct amounts than the verifier
+// probes is BLOCKED, not probed in part.
+func TestAPlanWithTooManyAmountsIsBlocked(t *testing.T) {
+	set := requirementSet(thresholdRequirement("po-approval", regular))
+	spec := controlSpec(set)
+	// 500 (the threshold) and 31 more amounts are exactly the bound: probed, and the routes to completion are found out.
+	r := mustVerify(t, input(orderProgram(t, orderOptions{amountLiterals: MaxLiteralAmounts - 1}), set, spec))
+	if r.Outcome != Fail || !hasFindingPrefix(r, CodeApprovalMismatch, "po-approval/probe/lit-") {
+		t.Fatalf("at the bound: %s %+v", r.Outcome, r.Findings)
+	}
+	r = mustVerify(t, input(orderProgram(t, orderOptions{amountLiterals: MaxLiteralAmounts}), set, spec))
+	if r.Outcome != Blocked || len(codesOf(r, Blocked)) == 0 || codesOf(r, Blocked)[0] != CodeUnsupportedByVerifier {
+		t.Fatalf("beyond the bound: %s %+v", r.Outcome, r.Findings)
 	}
 }
 

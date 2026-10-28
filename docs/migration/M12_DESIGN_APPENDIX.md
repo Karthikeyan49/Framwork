@@ -144,6 +144,9 @@ is rejected (a human declaring `500001 INR → finance approval` for `GT 500 USD
 rejected).
 
 ### Verifier `verifier-v2` (vocabulary `acceptance-vocabulary-v1`)
+
+*Superseded by `verifier-v3` (2026-10-28), which adds the probes around the amounts of the plan itself: ADR102 amendment 13. The text below describes `verifier-v2`.*
+
 Inputs: restored `compiler.Program` (never compiles), requirement set,
 acceptance spec, `ClassifyStorage` delta, tool catalog + plan pins, sandbox
 evidence. Executes: for threshold cases, set the money field and the case's other

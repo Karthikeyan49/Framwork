@@ -386,6 +386,33 @@ forward-only; 83, 84 and 85 unchanged). Written by the builder agent, NOT indepe
     `TestM13PortsCloseTheM6RWriteGap`) and F6 (worker-asserted approval flag) by migration 00085 (`TestM10R02*`);
     neither is touched here.
 
+## Amendment after the third independent review (2026-10-28)
+
+Recorded by the fix for M14R-05 of `docs/verification/M14_INDEPENDENT_REVIEW.md`. Written by the builder agent, NOT independently
+reviewed.
+
+13. **`verifier-v3` probes the amounts the plan itself compares the threshold field with (M14R-05; extends item 9).** The review
+    showed that an exemption window narrower than the gap between the fixed probes of the oracle passed with no finding: with a
+    threshold of 500, orders strictly between 626 and 749, between 501 and 502 or between 1500 and 1999 skipped the approval
+    and the verifier answered PASS. A window that lets orders skip the approval has to be written into the plan, with the
+    amounts of its edges, so the verifier now also reads them: every money literal, in the currency of the requirement, of every
+    condition of the plan that reads the threshold field (`literals.go`). For each such amount it adds a probe one minor unit
+    below, at and one above, and a probe at the midpoint of every two neighbours among those amounts and the threshold of the
+    requirement (amounts that a fixed probe already uses are not repeated). The ids are `<requirement>/probe/lit-below-<amount>`,
+    `lit-at-`, `lit-above-` and `lit-mid-`. What is probed comes from the plan; what is expected never does: the expectation of
+    every probe is the oracle's, computed from the requirement alone. A plan that compares the field with more than
+    `MaxLiteralAmounts` (32) distinct amounts is BLOCKED (`UNSUPPORTED_BY_VERIFIER`) rather than probed in part. Because the
+    checks changed, `VerifierVersion` is `verifier-v3`: candidates recorded under `verifier-v2` read stale and bundles that name it
+    fail closed (ADR103 item on the verifier version, unchanged). Evidence: `TestExemptionWindowsBetweenTheFixedProbesFail` (the
+    review's three windows and a fourth between the 5x and 7x probes fail with a `lit-` finding, the fixed probes alone pass them,
+    the honest plan and a window below the threshold pass), `TestLiteralProbesFollowTheAmountsOfThePlan` (the amounts and the
+    eight extra probes of a 626 to 749 window, the plan that spells 5000, a route on another field), `TestAPlanWithTooManyAmountsIsBlocked`
+    (32 amounts probed, 33 blocked), `TestProbeSetIsPinnedToTheVerifierVersion` (a digest of the probe ids and expectations, so
+    that a change of the checks fails until the version is bumped); eight mutations of the new code are each failed by the test
+    that names them. **Still a mechanical floor, not a proof:** a window that the plan writes with arithmetic instead of with the
+    amounts of its edges (`amount * 2 > 1252`), on another field, or in a world the requirement pins away is not found here, and
+    the human acceptance cases remain the control for special regions.
+
 ## Consequences
 
 Candidates become reproducible server-built artifacts whose risk, dependencies

@@ -237,6 +237,26 @@ func (v *run) threshold(r intent.RequirementV2, t intent.ApprovalThreshold) {
 		v.block(CodeUnsupportedByVerifier, r.ID, "", "cannot derive probes")
 		return
 	}
+	// The fixed probes cannot know where the plan puts an exemption window: probe the amounts its conditions compare the field with
+	// (independent review M14R-05).
+	amounts := literalAmounts(plan, t)
+	if len(amounts) > MaxLiteralAmounts {
+		v.block(CodeUnsupportedByVerifier, r.ID, "", "%s is compared with %d distinct amounts; the verifier probes at most %d", t.FieldID, len(amounts), MaxLiteralAmounts)
+		v.result(r.ID, r.ID, SourceStatic, "PROBEABLE_AMOUNTS", fmt.Sprintf("%d amounts", len(amounts)), Blocked)
+		return
+	}
+	taken := map[string]bool{}
+	for _, p := range probes {
+		if p.Currency == t.Currency {
+			taken[p.Amount] = true
+		}
+	}
+	more, err := literalProbes(r.ID, t, amounts, taken)
+	if err != nil {
+		v.block(CodeUnsupportedByVerifier, r.ID, "", "cannot derive probes")
+		return
+	}
+	probes = append(probes, more...)
 	known := map[string]bool{}
 	for _, f := range entity.Fields {
 		known[f.ID] = true

@@ -1,6 +1,6 @@
 # verification
 
-Deterministic independent-acceptance verifier (`verifier-v2`, ADR102 section 4).
+Deterministic independent-acceptance verifier (`verifier-v3`, ADR102 section 4 and amendments 9 and 13).
 
 `Verify(Input)` is pure: no clock, randomness, network, database or file, no
 goroutine, and it never calls `compiler.Compile` (a test enforces this). It takes a
@@ -13,10 +13,15 @@ operator tool catalog and the sandbox evidence hash, and returns a canonical
 What it checks, per MANDATORY and RESOLVED requirement:
 
 - `approval_threshold`: the derived boundary probes (one minor unit below/at/above,
-  zero, negative, wrong currency) and the human cases are run through the stored
+  zero, negative, wrong currency, decades, multiples and ratios of the threshold), the
+  probes around every money amount the plan's own conditions compare the threshold field
+  with (one unit below, at, one above, and the midpoints between neighbours and the
+  threshold; `literals.go`) and the human cases are run through the stored
   workflow plan with `workflow.Program.Next` and the rule engine, exactly as the
-  runtime would, and compared with the pure oracle (`intent.OracleThreshold`).
-  Observed approval roles must equal the required roles.
+  runtime would, and compared with the pure oracle (`intent.OracleThreshold`). The plan
+  decides what is probed, never what is expected. A plan that compares the field with
+  more than 32 distinct amounts is `BLOCKED`. Observed approval roles must equal the
+  required roles.
 - `approval_gate`: every path to completion must pass an approval state with
   exactly the required roles (memoised walk, linear in states + transitions).
 - `tool_effect`: each pinned use resolves in the catalog for the tenant and stays
@@ -40,10 +45,12 @@ Honest limits:
   matches none (at most 8 fields and 6 values per field; worlds that fail or cannot
   be evaluated are skipped). It catches exemptions and extra branches on unpinned
   fields and caps on huge orders, and an approval whose rejection still completes.
-  It does not mine decimal, money, date or datetime fields, and a bypass that
-  lives only in a world the requirement pins away (for example `note = "vip"` when
-  the requirement pins `note = "regular"`) is outside what the requirement
-  promises; the independent acceptance author is expected to add that case.
+  It does not mine decimal, money, date or datetime fields other than the threshold
+  field, whose amounts are probed as above; a window written with arithmetic
+  (`amount * 2 > 1252`) instead of with the amounts of its edges is not found; and a
+  bypass that lives only in a world the requirement pins away (for example
+  `note = "vip"` when the requirement pins `note = "regular"`) is outside what the
+  requirement promises; the independent acceptance author is expected to add that case.
 - The report is replayable evidence derived from stored bytes, not an attestation
   by an independent credential. Approval and activation (M13) must recompute it.
 - Observed approver roles must EQUAL the required set (a deliberate tightening of

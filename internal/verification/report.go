@@ -21,8 +21,10 @@ import (
 )
 
 // VerifierVersion names the verification procedure. A change to the checks needs
-// a new version, never an edit.
-const VerifierVersion = "verifier-v2"
+// a new version, never an edit. verifier-v2 added the ratio probes of the threshold
+// (FR-02); verifier-v3 adds the probes around the amounts the plan itself compares the
+// threshold field with (M14R-05).
+const VerifierVersion = "verifier-v3"
 
 // Outcomes. Precedence is BLOCKED > FAIL > PASS.
 const (
