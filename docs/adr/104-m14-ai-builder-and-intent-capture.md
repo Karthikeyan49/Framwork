@@ -589,7 +589,7 @@ code is the source of truth for each of them.
    class marker: PEM blocks, URLs with credentials, JWTs, API-key shapes (`sk-`, `rk-`, `pk-`, live/test
    keys, GitHub tokens), AWS key ids, bearer tokens, `authorization:` values, `name = value` assignments with
    a secret-like name, hex runs of 32+ characters and high-entropy base64 runs of 40+ characters. It is a
-   mechanical filter, not a guarantee that no secret survives (§15).
+   mechanical filter, not a guarantee that no secret survives (§15). (Extended after the third independent review: Amendment C item 6.)
 5. **HTTP provider.** HTTPS only; a guarded dialer refuses private, link-local, loopback and metadata
    addresses at dial time; no redirect is followed, including a redirect to the same origin (the credential
    is never sent twice); request and response are bounded; the credential file is read per call and never
@@ -652,6 +652,30 @@ without the change; the reviewers' own probes were run against the fixed code by
    stuck calls return. An abandoned call keeps its goroutine and memory until the adapter returns. The production HTTP adapter honours its context
    (`TestM14R07AnAdapterThatIgnoresItsContextCannotHoldTheRequest`, `TestAbandonedProviderCallsAreBounded`).
 
+6. **Redaction covers the shapes the review found surviving (M14R-08, 2026-10-28; extends B.4).** The third reviewer's probe found 10 of 28 secret
+   shapes surviving the redactor. Run against the unchanged table with values derived at run time (no secret-shaped literal is in the source), nine of
+   the ten classes were reproduced; the tenth, an Azure storage connection string, survived only with a key too short for the generic base64 rule, so
+   it is now covered by name. The table now also redacts: the signature of a shared access signature (`sig=` or `signature=` with 16 or more characters of
+   URL-safe base64); `Basic <token>` when the token decodes to printable `user:password` (so "basic information" stays); `Cookie` and `Set-Cookie`
+   lines that hold a pair with a value of 8 or more characters; payment card numbers (13 to 19 digits, alone or in groups, a known issuer prefix and
+   length for Visa, Mastercard, American Express, Discover, JCB, Diners Club and UnionPay, and a valid check digit, so that a timestamp or a tracking
+   number that merely passes the check digit stays); the prefixes `hf_`, `api_org_`, `whsec_` and `xapp-`; the names `AccountKey`, `SharedAccessKey` and
+   `secret_access_key`; and "name is value" in prose (`the admin password is ...`) when the value has a digit or a symbol and is not a word like
+   "required". Variable names are now matched behind other words (`DB_PASSWORD`, `STRIPE_SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`): the `\b` of the old pattern
+   does not allow a name after an underscore, so a pasted `.env` file was not redacted by name (found by this work's own probes, not by the review).
+   A secret written with characters that only look like ASCII is found by also reading the text the way a person does: fullwidth, circled and
+   mathematical letters, a small table of Cyrillic and Greek look-alikes, no-break and other spaces and hyphen variants become their ASCII
+   forms and the characters that are invisible inside a word (soft hyphen, joiners, variation selectors) are dropped. That reading is kept only when it shows a
+   secret the plain pass could not: a string without a hidden secret is returned byte for byte in any script, a string with one is returned folded.
+   A redacted key that ends its line takes the following lines that hold nothing but a credential-shaped word, the rest of a wrapped key. The table is
+   applied until it finds nothing more, so the result is a fixed point (a property run of 300,000 random strings found one counterexample while the
+   table was written; it is a regression test). Evidence: `internal/ai/redact_shapes_test.go` (26 shape cases, 14 for the review's classes and 12 own
+   probes; near-miss lists for every rule; the fixed-point property; `FuzzRedactText`, a 90 s run of 209,433 executions with no failure) and 25 mutations of
+   the new code, each failed by the test that names it; inputs of about 1 MB built against the rules run in 0.2 to 1.7 s. **Not covered:** the Unicode
+   confusables list (the table is short on purpose), a precomposed accent, other scripts, a password in prose that is a plain word ("the password is
+   correcthorse"), a key that a program broke in the middle of a paragraph (the tail shares its line with prose). Refusing a request that still contains a
+   secret-shaped token, the review's third suggestion, is a product decision and is not made here. The filter stays mechanical, not a guarantee (§15).
+
 **Residuals after Amendment C, stated plainly.**
 
 - A bearer token that expires during the provider phase still loses the result: the result exchange re-verifies it (A8). About 6.7% of the full-length requests with a
@@ -661,5 +685,6 @@ without the change; the reviewers' own probes were run against the fixed code by
   nothing charged). An insert-only ledger summed by the budget check would remove the row; it is not done.
 - A retry budget that ends in the middle of a try answers 503 `service_unavailable` without the audited 409; an abort outside `Admit` in the first exchange
   is now a 409 after the tries (it was a 503).
-- M14R-05 (a narrow exemption band between the probe amounts passes `verifier-v2`, documented there as a mechanical floor) and M14R-08 (redaction is a
-  mechanical filter: 10 of 28 secret shapes survived, B.4) are LOW, stay open and are not changed here.
+- M14R-05 (a narrow exemption band between the probe amounts passed `verifier-v2`) is fixed by `verifier-v3` (ADR102 amendment 13) and M14R-08 (10 of 28
+  secret shapes survived, B.4) by item 6 above, both after the third independent review and neither re-verified by a reviewer; the verifier stays a
+  mechanical floor and the redactor a mechanical filter.

@@ -286,3 +286,28 @@ gates were not run again after the request path changed; the proposals for `AGEN
 
 Please re-verify with your own probes: B-01, B-02 and B-05 (still only mine and the reviewers'), `00091` and `00092` (especially the trigger and the backfill on a database of yours that holds candidates), and the body budget under your reference workloads. Migration numbering is still the owner's decision;
 the wording is in the plan.
+
+## FROM milestone TO remediation — 28 October 2026 (UTC), third follow-up: the third review pass and five fixes
+
+Subject: what the merge reviewer's third pass says about `integration/m9r-m14`, what changed in shared files after it, and what is yours to re-verify.
+Nothing here touches `remediation/m9r-foundation`; fetch `origin/integration/m9r-m14` (code head `294e597`; later commits are documents) and merge it before your next slice.
+
+The third pass of the [merge review](../verification/INTEGRATION_INDEPENDENT_REVIEW.md) and of the [M14 review](../verification/M14_INDEPENDENT_REVIEW.md) judged the tip `0e13abe`: the gate passes on every step it ran (full integration suite 453 PASS, 5 SKIP, 0 FAIL; both
+browser suites; the five fuzz targets; the ten-minute outage), IR-01 to IR-06 and M14R-01, -02, -04, -06, -07 are verified fixed, M14R-03 is partly fixed (an expiring bearer token still loses the result), and the verdict of both reports is **PASS: no HIGH and no MEDIUM open**.
+It found IR-07 and IR-08 (LOW) and left M14R-05 and M14R-08 open. The plan says finding by finding what was done after it; none of it has a reviewer's verdict.
+
+SHARED files changed since `0e13abe` (keep both sides when you merge; each has a test):
+
+- `internal/platform/app/app.go` and the new `operator_env.go`: **`app.Main`, the entrypoint of the API, worker and dispatcher, exits 1 before running anything when `MIGRATION_DATABASE_URL`, `MIGRATOR_PASSWORD`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`,
+  `EVENT_OPERATOR_REDIS_URL` or `EVENT_OPERATOR_PASSWORD` is set in its environment** (IR-07; the log names the variables and never shows a value). `make api|worker|dispatcher` and every in-repository start (`scripts/dev.mjs`, `smoke.mjs`, the Playwright configs,
+  the tests that start the binary) hand the backend only its own configuration and are unaffected. **If a deployment of yours injects any of these into a backend, it is now refused; tell me and the list changes.**
+- `cmd/migrate/main.go`: `status` marks a pending file numbered below the highest applied version as "refused by up" and exits 1 (it listed it as plain `pending` and exited 0).
+- `internal/metadata/version_family.go`: the scan for single-version gates also reads a brace or a comma in front of a version (array literals, lists in one literal). If you add authoring 1.6.0 it names the objects that still name only older versions.
+- `internal/verification/*` (milestone lane, but `internal/promotion` reads the constant): **`VerifierVersion` is `verifier-v3`**. The verifier also probes the money amounts the plan's own conditions compare the threshold field with ([ADR102 amendment 13](../adr/102-m12-candidate-release-builder.md)).
+  A candidate recorded under `verifier-v2` reads stale and a bundle that names it fails closed; stage it again.
+- `internal/ai/redact.go`, `redact_fold.go` (milestone lane): the redaction table covers the ten shapes of M14R-08 ([ADR104 Amendment C item 6](../adr/104-m14-ai-builder-and-intent-capture.md)).
+- `README.md` (one paragraph on the refusal) and `scripts/runtime-env.mjs` (a comment).
+- Migrations: none added. **The next free number is still `00093`.**
+
+What is yours or touches you: unchanged from the entry above (the per-row worker-policy cost, the aggregate capacity FAIL D5, the injected driver panic D1, the reference-scale gates that were not run after the request path changed), plus the refusal above. Please re-verify with your own probes: the refusal in your
+deployment shapes, `00091` and `00092` on a database of yours that holds candidates, and the body budget under your reference workloads. The proposals for `AGENTS.md`, `CLAUDE.md` and `README.md` and the migration numbering rule remain the owner's decisions.
