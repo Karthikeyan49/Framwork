@@ -62,10 +62,37 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("migration status failed")
 	}
-	for _, r := range results {
-		fmt.Printf("%s %s\n", r.Source.Path, r.State)
+	lines, refused := statusLines(results)
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	if refused > 0 {
+		return fmt.Errorf("%d pending migration(s) are numbered below the highest applied version and \"migrate up\" refuses them (docs/migration/LINE_INTEGRATION_PLAN.md, migration numbers)", refused)
 	}
 	return nil
+}
+
+// statusLines renders the migrations, one line each, and marks the pending ones that "up" will never apply: a migration numbered below
+// the highest applied version is refused, and listing it as plain "pending" while "up" refuses it hid the state from whoever read the
+// status (third independent review, residual of the numbering rule). It also returns how many were marked.
+func statusLines(results []*goose.MigrationStatus) ([]string, int) {
+	var highest int64
+	for _, r := range results {
+		if r.State == goose.StateApplied && r.Source.Version > highest {
+			highest = r.Source.Version
+		}
+	}
+	var lines []string
+	refused := 0
+	for _, r := range results {
+		line := fmt.Sprintf("%s %s", r.Source.Path, r.State)
+		if r.State == goose.StatePending && r.Source.Version < highest {
+			line += fmt.Sprintf(" (refused by up: numbered below the highest applied version %d)", highest)
+			refused++
+		}
+		lines = append(lines, line)
+	}
+	return lines, refused
 }
 
 // outOfOrder is goose's refusal of a migration numbered below the database's highest applied version; it carries version numbers only.
