@@ -46,8 +46,9 @@ own (IR-07, IR-08, LOW) and left M14R-05 and M14R-08 open. The last five rows of
 | IR-04 (LOW) | `make check` did not compile the tagged suites; the gate table counted 5 script tests; the ledger still said "M10 paused" | `make check` now vets `./tests/integration` with the `integration` and `performance` tags (the files tagged `trafficreview`, `eventoutage`, `driverpanic` and `race` are not compiled by it); the script test count is corrected; the ledger rows are in [M9R_FINDING_STATUS.md](M9R_FINDING_STATUS.md) | `make check` |
 | missing combination | no test joined a tool step with a tenant-defined approver | `TestIntegrationTenantRoleApproverGatesAToolSend`: a 1.5.0 workflow whose approval names `finance_manager`; the stored plan is DSL 2.2.0 with the tenant role and the pinned tool contract; an admin without the role, the requesting owner and a forged role claim get 403 and the provider sees nothing; a holder approves and exactly one send follows; after the role is revoked the next instance cannot be released until a holder acts | PASS (18.6 s); the same token is denied before the assignment, accepted after it, denied after the revocation and accepted again |
 
-Open after this work, so that nothing above is read as more: the residuals of M14R-03 (a bearer token that expires during the provider phase; the single `control.ai_usage` row) and F-05
-named in their rows; B-03 (a documented restriction, below); the per-row cost of the worker row-level policy (D1 of the remediation line); the aggregate capacity FAIL (D5) and the injected
+Open after this work, so that nothing above is read as more: the residuals of M14R-03 (a bearer token that expires during the provider phase, which a request could avoid by being refused
+at admission when its token ends before its provider phase can, without any change of the authentication policy, but `identity.Verifier.Verify` returns no expiry today and the identity
+module is shared; the single `control.ai_usage` row) and F-05 named in their rows; B-03 (a documented restriction, below); the per-row cost of the worker row-level policy (D1 of the remediation line); the aggregate capacity FAIL (D5) and the injected
 driver-panic FAIL (D1), both the remediation line's; the reference-scale performance gates, which were not run again after the request path changed (`f997efe`, `c76968f`, `b427e8b`,
 `a2c5c52`, `8528fde`); the leading non-ASCII letters that the label reduction drops (F-07); a real model provider, a production data plane and the separate verifier credential (R6), which
 this branch does not build. Everything in the last five rows of the table is the builder's own work and has no reviewer's verdict; the new verifier version means that a candidate
@@ -85,6 +86,29 @@ at 503, and the traffic gate does not stop them; a connection that sends nothing
 remediation D6). Only a caller whose bearer verified is read; an anonymous or invalid caller is answered 401 at once on every route. A body that cannot be read (client gone, read timeout) is answered
 400 `invalid_request` before the transaction and writes no audit row, where the old path let the handler answer a typed 400 inside it. A client that sends its headers slowly or never finishes its body still
 occupies a connection until the read timeout and holds the bytes it has sent; it no longer occupies a database slot.
+
+Gate on the code head `294e597` (28 October 2026, this host, the isolated Compose stack; the development database `MAIN` was not touched): the five fixes made after the third review pass.
+One run of each step; the evidence says nothing about flake rates.
+
+| Step | Result |
+|---|---|
+| `make check` | PASS, 32 s |
+| `make test-unit` | PASS, 276 s: 29 Go packages, 13 script tests, 126 frontend tests in 19 files (`internal/ai` 193 s under `-race`, as on `507c12c`) |
+| `make build` | PASS, 16 s |
+| Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` | **PASS**, one uninterrupted run: 1838.8 s Go time, 1858 s wall including the stack reset (the run is not `-v`, so no test count was taken) |
+| `make test-e2e` / `make test-signin-e2e` | 11 passed (37.1 s) / 7 passed (8.9 s); both start `bin/api` through the launcher, so the API accepted an environment curated by it |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS, 128 s |
+| `make test-event-outage` (real ten-minute consumer absence) | PASS, 610 s test time: recovery after 600.0 real seconds with 3 completed, 3 inbox rows, 3 effects, 3 audits, 3 immutable intents, 19 retained attempts and 2 unconfirmed redeliveries |
+
+The gated tree is `294e597`. The tree that is pushed differs from it by documents and by four benchmarks of the body budget in `bodybudget_test.go`, test code that no suite runs: they were added
+while the unit step was running, and `go test ./internal/platform/access` and `go vet` pass on the final tree. What the gate does and does not exercise of the five fixes: the integration suite verifies
+every candidate it stages and approves under `verifier-v3` and builds every AI context through the redactor; the refusal of operator credentials is exercised by its unit tests and by the manual runs of
+the real binary in the table above (the integration tests that start the binary give it a curated environment and do not trigger it); the version-gate scan reads the live catalog in
+`TestM9RNoCatalogObjectGatesOnPartOfTheAuthoringFamily`, which passed; `migrate status` was run by hand against an isolated migrated database.
+
+The cost of the body budget, measured alone (`go test -run '^$' -bench BodyBudget ./internal/platform/access`, idle host, 4 cores of a 2.1 GHz Xeon): a hold, a 4 KiB booking and its release take 59 ns
+without contention and 188 ns with four goroutines on its one lock, with no allocation; reading a 64 KiB body in 4 KiB chunks through the booking reader takes 1.35 us against 0.95 us plain (+0.4 us and
+two allocations of 80 bytes per request). That is the lock and the counter only. The cost of the pre-read at the reference load, end to end, is still not measured, and the reference-scale gates were not run.
 
 ### Migration numbers from here on (proposal; the owner decides)
 

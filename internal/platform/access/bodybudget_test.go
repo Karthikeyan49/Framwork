@@ -195,3 +195,65 @@ func TestBookedBodyPassesEndAndErrorsThrough(t *testing.T) {
 type errReader struct{ err error }
 
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// The cost the body budget adds to every body-carrying request, measured alone (the third review noted that nobody had measured the
+// pre-read, the budget lock and the extra gate pass at the reference load; this is the part of it that is a lock and a counter, not the
+// end-to-end cost). go test -run '^$' -bench BodyBudget ./internal/platform/access
+func BenchmarkBodyBudgetHoldAddRelease(b *testing.B) {
+	budget := NewBodyBudget(DefaultBodyBudgetBytes, DefaultBodyBudgetPerUser)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		h := budget.Hold("issuer\x00subject")
+		h.Add(4 << 10)
+		h.Release()
+	}
+}
+
+// Many requests of many identities at once: the one lock of the budget under contention.
+func BenchmarkBodyBudgetHoldAddReleaseParallel(b *testing.B) {
+	budget := NewBodyBudget(DefaultBodyBudgetBytes, DefaultBodyBudgetPerUser)
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		subject := "issuer\x00subject-" + strings.Repeat("x", 8)
+		for pb.Next() {
+			h := budget.Hold(subject)
+			h.Add(4 << 10)
+			h.Release()
+		}
+	})
+}
+
+// A 64 KiB body read in 4 KiB chunks through the booking reader, as serve reads it.
+func BenchmarkBodyBudgetBookedBodyRead(b *testing.B) {
+	budget := NewBodyBudget(DefaultBodyBudgetBytes, DefaultBodyBudgetPerUser)
+	body := strings.Repeat("a", 64<<10)
+	buf := make([]byte, 4<<10)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	for i := 0; i < b.N; i++ {
+		h := budget.Hold("issuer\x00subject")
+		r := &bookedBody{src: strings.NewReader(body), hold: h}
+		for {
+			if _, err := r.Read(buf); err != nil {
+				break
+			}
+		}
+		h.Release()
+	}
+}
+
+// The same read without the booking, for the difference.
+func BenchmarkBodyBudgetPlainRead(b *testing.B) {
+	body := strings.Repeat("a", 64<<10)
+	buf := make([]byte, 4<<10)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	for i := 0; i < b.N; i++ {
+		r := strings.NewReader(body)
+		for {
+			if _, err := r.Read(buf); err != nil {
+				break
+			}
+		}
+	}
+}
