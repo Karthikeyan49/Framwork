@@ -125,19 +125,28 @@ func TestFamilyGapsSeesTheOriginalDefect(t *testing.T) {
 		"a CASE":                              `CASE m.schema_version WHEN '1.4.0' THEN 1 ELSE 0 END`,
 		"an ANY array":                        `WHERE m.schema_version=ANY(ARRAY['1.4.0'])`,
 		"a policy-style IS NOT DISTINCT FROM": `m.schema_version IS NOT DISTINCT FROM '1.4.0'`,
+		// Independent review IR-08: the spellings of an array literal and of a list in one literal.
+		"an array literal, one member":     `WHERE m.schema_version = ANY('{1.4.0}'::text[])`,
+		"an array literal, a partial list": `WHERE m.schema_version = ANY('{1.3.0,1.4.0}'::text[])`,
+		"an array literal through unnest":  `WHERE m.schema_version IN (SELECT unnest('{1.4.0}'::text[]))`,
+		"a list in one literal":            `WHERE m.schema_version = ANY(string_to_array('1.4.0,1.3.0', ','))`,
+		"a later member of a list only":    `WHERE m.schema_version = ANY('{1.2.0,1.3.0,1.4.0}'::text[])`,
 	} {
 		if gaps := familyGaps(body); len(gaps) == 0 {
 			t.Errorf("%s names only 1.4.0 and was not reported", name)
 		}
 	}
 	for name, body := range map[string]string{
-		"the whole integrity family":    `WHERE m.schema_version IN('1.4.0','1.5.0')`,
-		"the whole family, major.minor": `WHERE m.schema_version IN('1.4','1.5')`,
-		"every member by prefix":        `WHERE m.schema_version LIKE '1.%'`,
-		"numbers that are no version":   `SELECT 1.4 + 11.4 + x1.4`,
-		"the whole workflow family":     `WHERE m.schema_version IN('1.2.0','1.3.0','1.4.0','1.5.0')`,
-		"only the newest contract":      `WHERE m.schema_version='1.5.0'`,
-		"an unrelated event version":    `jsonb_build_object('schema_version','1.0.0')`,
+		"the whole integrity family":     `WHERE m.schema_version IN('1.4.0','1.5.0')`,
+		"the whole family, major.minor":  `WHERE m.schema_version IN('1.4','1.5')`,
+		"every member by prefix":         `WHERE m.schema_version LIKE '1.%'`,
+		"numbers that are no version":    `SELECT 1.4 + 11.4 + x1.4`,
+		"the whole workflow family":      `WHERE m.schema_version IN('1.2.0','1.3.0','1.4.0','1.5.0')`,
+		"an array literal, whole family": `WHERE m.schema_version = ANY('{1.2.0,1.3.0,1.4.0,1.5.0}'::text[])`,
+		"a list in one literal, whole":   `WHERE m.schema_version = ANY(string_to_array('1.4.0,1.5.0', ','))`,
+		"numbers after a comma":          `SELECT least(x,1.5), greatest(0,11.4)`,
+		"only the newest contract":       `WHERE m.schema_version='1.5.0'`,
+		"an unrelated event version":     `jsonb_build_object('schema_version','1.0.0')`,
 	} {
 		if gaps := familyGaps(body); len(gaps) != 0 {
 			t.Fatalf("%s was reported: %v", name, gaps)

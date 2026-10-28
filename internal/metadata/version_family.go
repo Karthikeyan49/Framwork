@@ -13,9 +13,15 @@ import (
 // whether it gates on part of a family of versions, so the next superset contract cannot repeat the omission.
 
 // sqlVersionToken finds a version spelled in SQL text in the forms a gate can take: a quoted literal ('1.4.0', "1.4.0", E'1.4.0',
-// $v$1.4.0$v$, a member of a JSON document), a prefix ('1.4%', '^1\.4\.') or the first half of a concatenation ('1.4.' || '0').
-// It needs the opening quote, dollar or caret in front so that numbers such as 1.5 or 11.4 are not taken for versions.
-var sqlVersionToken = regexp.MustCompile(`['"$^]1\\?\.([0-9]+)`)
+// $v$1.4.0$v$, a member of a JSON document), a member of an array literal ('{1.4.0}', '{1.3.0,1.4.0}') or of a list in one literal
+// ('1.4.0,1.3.0'), a prefix ('1.4%', '^1\.4\.') or the first half of a concatenation ('1.4.' || '0'). It needs the opening quote,
+// dollar, caret, brace or comma in front so that numbers such as 1.5 or 11.4 are not taken for versions (a number right after a
+// comma, as in round(x,1.3), is taken for one; none exists in the migrations, and a body that has one is reported for its author to
+// look at). It does not see a version that is assembled ('1.'||4||'.0', format('1.%s.0', 4)), cut out of the column (split_part,
+// substr, left) or matched by a pattern that does not spell it (LIKE '1_4%', '^1[.]4[.]', SIMILAR TO): an honest author writes one of
+// the spellings above, and the behavioural test of a feature under every integrity-capable schema (TestM9RUniqueLifecycleIsTheSame
+// UnderEveryIntegrityCapableSchema) is the control for the rest (independent review IR-08).
+var sqlVersionToken = regexp.MustCompile(`['"$^{,]1\\?\.([0-9]+)`)
 
 func knownSchemaVersions() []string {
 	return []string{SchemaVersion, RuleSchemaVersion, WorkflowSchemaVersion, ApprovalSchemaVersion, IntegritySchemaVersion, ToolWorkflowSchemaVersion}
