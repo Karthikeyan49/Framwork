@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/erp"
@@ -245,12 +246,7 @@ func (v *run) threshold(r intent.RequirementV2, t intent.ApprovalThreshold) {
 		v.result(r.ID, r.ID, SourceStatic, "PROBEABLE_AMOUNTS", fmt.Sprintf("%d amounts", len(amounts)), Blocked)
 		return
 	}
-	taken := map[string]bool{}
-	for _, p := range probes {
-		if p.Currency == t.Currency {
-			taken[p.Amount] = true
-		}
-	}
+	taken := takenAmounts(probes, t.Currency)
 	more, err := literalProbes(r.ID, t, amounts, taken)
 	if err != nil {
 		v.block(CodeUnsupportedByVerifier, r.ID, "", "cannot derive probes")
@@ -446,8 +442,14 @@ const (
 )
 
 // minedProbe selects the probes repeated for every mined value: the boundary and
-// one decade each way, which is where an exemption or a second branch shows.
+// one decade each way, which is where an exemption or a second branch shows, and
+// every probe around an amount of the plan (literalProbes), because a window written
+// with those amounts and gated on another field is invisible in the world of the
+// requirement (independent review PF-01).
 func minedProbe(id string) bool {
+	if strings.Contains(id, "/probe/lit-") {
+		return true
+	}
 	for _, kind := range []string{"below", "at", "above", "plus1e6", "minus1e6"} {
 		if len(id) > len(kind) && id[len(id)-len(kind)-1:] == "/"+kind {
 			return true

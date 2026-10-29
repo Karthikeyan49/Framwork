@@ -23,8 +23,10 @@ import (
 // VerifierVersion names the verification procedure. A change to the checks needs
 // a new version, never an edit. verifier-v2 added the ratio probes of the threshold
 // (FR-02); verifier-v3 adds the probes around the amounts the plan itself compares the
-// threshold field with (M14R-05).
-const VerifierVersion = "verifier-v3"
+// threshold field with (M14R-05); verifier-v4 repeats those probes for the mined values of
+// the other fields and takes the midpoints between the amounts exactly, with the decimals the
+// data layer accepts, instead of rounding them to the minor unit (PF-01, PF-02).
+const VerifierVersion = "verifier-v4"
 
 // Outcomes. Precedence is BLOCKED > FAIL > PASS.
 const (

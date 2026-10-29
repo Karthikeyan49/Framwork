@@ -51,6 +51,8 @@ type orderOptions struct {
 	exemptBand      bool   // amounts strictly between bandLow (600) and bandHigh (900) skip approval
 	bandLow         string // with exemptBand: the lower edge of the window
 	bandHigh        string // with exemptBand: the upper edge of the window
+	bandNote        string // with exemptBand or exactAt: the exemption applies only to orders whose note is this
+	exactAt         string // orders of exactly this amount skip approval (and only with bandNote, when that is set)
 	amountLiterals  int    // routes to completion for orders of exactly that many distinct amounts
 }
 
@@ -153,7 +155,18 @@ func orderDocument(o orderOptions) metadata.Document {
 			low := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"` + o.bandLow + `","currency":"` + o.currency + `"}`)}
 			high := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"` + o.bandHigh + `","currency":"` + o.currency + `"}`)}
 			band := and(metadata.Expression{Op: "gt", Args: []metadata.Expression{amountField, low}}, metadata.Expression{Op: "lt", Args: []metadata.Expression{amountField, high}})
+			if o.bandNote != "" {
+				band = and(*band, *note(o.bandNote))
+			}
 			start = append(start, metadata.Transition{To: "state.complete", Condition: band})
+		}
+		if o.exactAt != "" {
+			at := metadata.Expression{Op: "typed_literal", ValueType: "money", Value: json.RawMessage(`{"amount":"` + o.exactAt + `","currency":"` + o.currency + `"}`)}
+			exact := &metadata.Expression{Op: "eq", Args: []metadata.Expression{amountField, at}}
+			if o.bandNote != "" {
+				exact = and(*exact, *note(o.bandNote))
+			}
+			start = append(start, metadata.Transition{To: "state.complete", Condition: exact})
 		}
 		if o.vipSkip {
 			start = append(start, metadata.Transition{To: "state.complete", Condition: note("vip")})
@@ -468,12 +481,7 @@ func TestLiteralProbesFollowTheAmountsOfThePlan(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		taken := map[string]bool{}
-		for _, p := range fixed {
-			if p.Currency == thr.Currency {
-				taken[p.Amount] = true
-			}
-		}
+		taken := takenAmounts(fixed, thr.Currency)
 		more, err := literalProbes("r", thr, amounts, taken)
 		if err != nil {
 			t.Fatal(err)
@@ -491,9 +499,10 @@ func TestLiteralProbesFollowTheAmountsOfThePlan(t *testing.T) {
 		}
 		return edges, byAmount
 	}
-	// The honest plan compares the field with 500 only, which the fixed probes already cover: nothing is added.
+	// The honest plan compares the field with 500 only, which the fixed probes (the unit below, at and above it) already cover and
+	// repeat for the mined values: nothing is added.
 	if edges, more := probesOf(orderOptions{}); !reflect.DeepEqual(edges, []string{"500.00"}) || len(more) != 0 {
-		t.Fatalf("honest plan: amounts %v, %d extra probes", edges, len(more))
+		t.Fatalf("honest plan: amounts %v, %d extra probes %v", edges, len(more), more)
 	}
 	// A route that reads another money field is not about the threshold field: its amounts are not probed.
 	if edges, more := probesOf(orderOptions{discount: true}); len(edges) != 0 || len(more) != 0 {
@@ -519,18 +528,19 @@ func TestLiteralProbesFollowTheAmountsOfThePlan(t *testing.T) {
 		t.Errorf("%d extra probes, want 8", len(more))
 	}
 	// The midpoints include the threshold of the requirement, which the plan need not spell: a plan that compares with 5000 is probed
-	// halfway between that and 500, too (5000 itself is ten times the threshold, a fixed probe).
+	// halfway between that and 500, too. 5000 itself is ten times the threshold, a fixed probe, but one that is not repeated for the
+	// mined values of other fields, so it is probed again as a literal (PF-01).
 	edges, more = probesOf(orderOptions{threshold: "5000"})
 	if !reflect.DeepEqual(edges, []string{"5000.00"}) {
 		t.Fatalf("amounts %v", edges)
 	}
-	for _, want := range []string{"4999.99", "5000.01", "2750.00"} {
+	for _, want := range []string{"4999.99", "5000.00", "5000.01", "2750.00"} {
 		if _, ok := more[want]; !ok {
 			t.Errorf("no probe at %s (have %d)", want, len(more))
 		}
 	}
-	if len(more) != 3 {
-		t.Errorf("%d extra probes, want 3", len(more))
+	if len(more) != 4 {
+		t.Errorf("%d extra probes, want 4", len(more))
 	}
 }
 
@@ -546,8 +556,8 @@ func TestProbeSetIsPinnedToTheVerifierVersion(t *testing.T) {
 			fmt.Fprintf(sum, "%s|%s|%s\n", c.ID, c.Source, c.Expected)
 		}
 	}
-	const pinned = "verifier-v3"
-	const digest = "bab54f37caada06bded13034fc1f795066d8abc3c2f2c362c1d677f33b5a1fa9"
+	const pinned = "verifier-v4"
+	const digest = "3d1f06b02395ebeb1d6fd7ee8bd35211db42f6c1a36b4613fda2ca87331f50be"
 	if VerifierVersion != pinned || hex.EncodeToString(sum.Sum(nil)) != digest {
 		t.Fatalf("the probes of %s hash to %s (this test pins %s, digest %s): bump VerifierVersion and update both", VerifierVersion, hex.EncodeToString(sum.Sum(nil)), pinned, digest)
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strings"
 
 	"github.com/Karthikeyan49/Framwork/internal/erp"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
@@ -15,6 +16,40 @@ import (
 // MaxLiteralAmounts bounds the distinct money amounts the conditions of a plan may compare the threshold field with. Every amount
 // is probed on both sides and between its neighbours, so a plan beyond the bound is BLOCKED rather than probed in part.
 const MaxLiteralAmounts = 32
+
+// moneyScale is the number of decimals the data layer accepts in a money amount whatever the currency (erp.Money.Validate): two
+// amounts that a request can carry may be closer than the minor unit of the currency (independent review PF-02).
+const moneyScale = 18
+
+// moneyText writes an amount with the decimals of its currency and, when the amount needs them, with as many more as the data layer
+// accepts and no trailing zero beyond the currency's own.
+func moneyText(r *big.Rat, minor int) string {
+	text := r.FloatString(moneyScale)
+	keep := len(text) - (moneyScale - minor) // up to the point and the currency's own decimals
+	end := len(text)
+	for end > keep && text[end-1] == '0' {
+		end--
+	}
+	text = text[:end]
+	if minor == 0 {
+		text = strings.TrimSuffix(text, ".")
+	}
+	return text
+}
+
+// takenAmounts are the amounts that a fixed probe covers in every world the literal probes run in. A fixed probe that is repeated for
+// the mined values of the other fields (minedProbe) covers its amount for them; one that is not (zero, the decades, the multiples
+// and the ratios of the threshold) covers its amount in the world of the requirement only, so a literal probe of the same amount is
+// still added and gets its mined variants (independent review PF-01: a single-amount exemption gated on another field).
+func takenAmounts(fixed []intent.Probe, currency string) map[string]bool {
+	taken := map[string]bool{}
+	for _, p := range fixed {
+		if p.Currency == currency && minedProbe(p.ID) {
+			taken[p.Amount] = true
+		}
+	}
+	return taken
+}
 
 // literalAmounts returns, ascending and without duplicates, the money amounts in the currency of the requirement that the
 // conditions of the plan compare against. Only conditions that read the threshold field count: an exemption window that lets orders
@@ -67,10 +102,14 @@ func literalAmounts(plan workflow.Plan, t intent.ApprovalThreshold) []*big.Rat {
 
 // literalProbes are the boundary probes of the amounts the plan compares the threshold field with (independent review M14R-05: an
 // exemption window narrower than the gap between the fixed probes of intent.DeriveProbes passed). For every amount: one minor unit
-// below, at and one above; and the midpoint of every two neighbours among those amounts and the threshold. The expectation of a probe
-// is the oracle's, computed from the requirement alone, so the plan decides what is probed and never what is expected. Amounts that
-// an earlier probe already uses (taken) are left out. It is still a mechanical floor: a window that the plan writes with arithmetic
-// instead of with the amounts of its edges, or on another field, is not found here.
+// below, at and one above; and the exact midpoint of every two neighbours among those amounts and the threshold, written with as many
+// decimals as the data layer accepts (PF-02: rounded to the minor unit, the midpoint of two neighbours one unit apart was one of them).
+// A condition that compares the field with literals only changes its answer at those literals, so its answer is the same everywhere
+// inside an interval between two neighbours, and the amounts themselves plus one amount inside each interval see every region it
+// can define. The expectation of a probe is the oracle's, computed from the requirement alone, so the plan decides what is probed and
+// never what is expected. Amounts that an earlier probe already covers (taken) are left out. The caller repeats every one of these
+// probes for the mined values of the other fields (minedProbe). It is still a mechanical floor: a window that the plan writes with
+// arithmetic instead of with the amounts of its edges is not found here.
 func literalProbes(requirement string, t intent.ApprovalThreshold, amounts []*big.Rat, taken map[string]bool) ([]intent.Probe, error) {
 	minor, err := erp.Currency(t.Currency).MinorUnits()
 	if err != nil {
@@ -98,7 +137,7 @@ func literalProbes(requirement string, t intent.ApprovalThreshold, amounts []*bi
 	}
 	probes := []intent.Probe{}
 	for _, s := range specs {
-		text := s.amount.FloatString(minor)
+		text := moneyText(s.amount, minor)
 		if taken[text] {
 			continue
 		}
