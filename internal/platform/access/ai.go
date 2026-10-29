@@ -436,8 +436,9 @@ const aiResultMargin = 10 * time.Second
 // provider phase and result exchange can: the result exchange authenticates again (ADR104 A8), so a token that lapses in between lost
 // a paid answer and left the proposal PENDING until the sweep charged its whole reservation (independent review M14R-03, the residual
 // its fixes name). The client signs in again and retries. A token is counted without the clock skew that verification tolerates. An
-// Authenticator that cannot say how long its token lasts is not asked, and a token that does not verify is left to the exchange, which
-// answers it.
+// Authenticator that cannot say how long its token lasts is not asked. A token that verified at the front door and no longer does (it
+// ended in between) is answered 401 at once like any other: letting it through would pay for an answer that the result exchange
+// cannot deliver (independent review PF-03).
 func (a API) aiTokenOutlivesTheRun(r *http.Request, run time.Duration) *requestRejection {
 	expiring, ok := a.Auth.(identity.Expiring)
 	if !ok {
@@ -447,10 +448,14 @@ func (a API) aiTokenOutlivesTheRun(r *http.Request, run time.Duration) *requestR
 	if len(headers) != 1 || !strings.HasPrefix(headers[0], "Bearer ") {
 		return nil
 	}
-	if _, remaining, err := expiring.VerifyRemaining(strings.TrimPrefix(headers[0], "Bearer ")); err != nil || remaining >= run {
-		return nil
+	_, remaining, err := expiring.VerifyRemaining(strings.TrimPrefix(headers[0], "Bearer "))
+	switch {
+	case err != nil:
+		return &requestRejection{response: denied(401, "unauthenticated", "Authentication is required")}
+	case remaining < run:
+		return &requestRejection{response: denied(401, "token_expiring", "The access token ends before this request can finish; sign in again and retry")}
 	}
-	return &requestRejection{response: denied(401, "token_expiring", "The access token ends before this request can finish; sign in again and retry")}
+	return nil
 }
 
 // aiAuthorize re-authenticates the bearer token of the request in a new transaction
