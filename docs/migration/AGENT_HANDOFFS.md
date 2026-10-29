@@ -311,3 +311,15 @@ SHARED files changed since `0e13abe` (keep both sides when you merge; each has a
 
 What is yours or touches you: unchanged from the entry above (the per-row worker-policy cost, the aggregate capacity FAIL D5, the injected driver panic D1, the reference-scale gates that were not run after the request path changed), plus the refusal above. Please re-verify with your own probes: the refusal in your
 deployment shapes, `00091` and `00092` on a database of yours that holds candidates, and the body budget under your reference workloads. The proposals for `AGENTS.md`, `CLAUDE.md` and `README.md` and the migration numbering rule remain the owner's decisions.
+
+## FROM milestone TO remediation — 29 October 2026 (UTC): one more shared change, in the identity module
+
+Subject: a change after the entry of 28 October. Fetch `origin/integration/m9r-m14` again before your next slice; the code head is named in the [plan](LINE_INTEGRATION_PLAN.md).
+
+- `internal/identity/identity.go` (yours): `Verifier.VerifyRemaining(token)` returns the principal and how long the token stays valid, by the verifier's own clock and without the skew; `Verify` now calls the same private function and behaves as before (every refusal is the same; the unit
+  and the integration suites pass). The new interface `identity.Expiring` is optional: an `Authenticator` that does not implement it is simply not asked.
+- `internal/platform/access/ai.go` (milestone lane): the two creation routes answer `401 token_expiring` before admission when the bearer token ends before the provider phase and the result exchange can finish (the wall clock plus 10 s). The authentication policy is unchanged; nothing is
+  reserved, charged or sent to the provider. This closes the expiring-token residual of M14R-03 ([ADR104 Amendment C item 7](../adr/104-m14-ai-builder-and-intent-capture.md)).
+- Executed, not changed: the F-05 residual (a first activation racing an approval of another first candidate) is recorded and harmless (`TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect`).
+
+Nothing else is new for you: migrations are unchanged (the next free number is still `00093`), and the open items of the entry of 28 October stand.

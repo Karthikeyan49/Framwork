@@ -676,10 +676,23 @@ without the change; the reviewers' own probes were run against the fixed code by
    correcthorse"), a key that a program broke in the middle of a paragraph (the tail shares its line with prose). Refusing a request that still contains a
    secret-shaped token, the review's third suggestion, is a product decision and is not made here. The filter stays mechanical, not a guarantee (§15).
 
+7. **A creation whose bearer token ends before its run can finish is refused at admission (the M14R-03 residual, 2026-10-29; extends A8).** The result
+   exchange authenticates again (A8), so a token that lapsed during the provider phase lost a paid answer, left the proposal PENDING and, when the sweep ran,
+   charged its whole reservation (about 6.7% of the full-length requests with a 15-minute token and a 60 s phase). `identity.Verifier.VerifyRemaining` verifies
+   exactly as `Verify` does and also returns how long the token stays valid by the verifier's own clock, without the skew that `Verify` tolerates;
+   `aiPropose` asks an `identity.Expiring` authenticator for it before it reserves anything and answers `401 token_expiring` (an audited
+   `ai.propose.rejected`, with `WWW-Authenticate`) when less than the effective wall clock plus the result margin (10 s) is left. Nothing is reserved, charged or
+   sent to the provider; the client signs in again and retries. The authentication policy is unchanged: the result exchange still verifies the token and still
+   refuses an expired one, and an authenticator that cannot say how long its token lasts is not asked. Evidence:
+   `TestM14R03ATokenThatEndsBeforeTheRunCanFinishIsRefusedBeforeAnythingIsSpent` (tokens with 5, 25 and 36 s left against a run of 40 s: three 401, no provider call,
+   no token used, no proposal row, three rejection audit rows; a token with 120 s left is served), which fails without the check (the 5 s token is accepted and
+   reaches the provider), and `TestVerifyRemainingReportsTheRestOfTheLifetime`. A client that treats every 401 as "sign out" will ask for a new sign-in up to
+   70 seconds early; there is no release-AI user interface in this build that does.
+
 **Residuals after Amendment C, stated plainly.**
 
-- A bearer token that expires during the provider phase still loses the result: the result exchange re-verifies it (A8). About 6.7% of the full-length requests with a
-  15-minute token and a 60 s phase (60/900). Nothing is applied; the user asks again; the sweep charges the reservation.
+- A bearer token that expires during the provider phase lost the result: the result exchange re-verifies it (A8). About 6.7% of the full-length requests with a
+  15-minute token and a 60 s phase (60/900). Closed on 29 October by item 7: such a request is refused at admission, before anything is spent.
 - `control.ai_usage` is still one row per tenant and day that every admission and every result updates under REPEATABLE READ. The retries make the
   contention survivable, not absent: a burst of 24 simultaneous creations still saw 4 `409 ai_conflict` at admission after 0.3 s (nothing stored,
   nothing charged). An insert-only ledger summed by the budget check would remove the row; it is not done.
