@@ -1,6 +1,6 @@
 # verification
 
-Deterministic independent-acceptance verifier (`verifier-v3`, ADR102 section 4 and amendments 9 and 13).
+Deterministic independent-acceptance verifier (`verifier-v4`, ADR102 section 4 and amendments 9, 13 and 14).
 
 `Verify(Input)` is pure: no clock, randomness, network, database or file, no
 goroutine, and it never calls `compiler.Compile` (a test enforces this). It takes a
@@ -15,8 +15,10 @@ What it checks, per MANDATORY and RESOLVED requirement:
 - `approval_threshold`: the derived boundary probes (one minor unit below/at/above,
   zero, negative, wrong currency, decades, multiples and ratios of the threshold), the
   probes around every money amount the plan's own conditions compare the threshold field
-  with (one unit below, at, one above, and the midpoints between neighbours and the
-  threshold; `literals.go`) and the human cases are run through the stored
+  with (one unit below, at, one above, and the exact midpoints between neighbours and the
+  threshold, with as many decimals as the data layer accepts; `literals.go`; repeated, like
+  the boundary probes, for the values that the plan's other conditions compare the optional
+  fields with) and the human cases are run through the stored
   workflow plan with `workflow.Program.Next` and the rule engine, exactly as the
   runtime would, and compared with the pure oracle (`intent.OracleThreshold`). The plan
   decides what is probed, never what is expected. A plan that compares the field with

@@ -411,7 +411,36 @@ reviewed.
     that a change of the checks fails until the version is bumped); eight mutations of the new code are each failed by the test
     that names them. **Still a mechanical floor, not a proof:** a window that the plan writes with arithmetic instead of with the
     amounts of its edges (`amount * 2 > 1252`), on another field, or in a world the requirement pins away is not found here, and
-    the human acceptance cases remain the control for special regions.
+    the human acceptance cases remain the control for special regions. *Two details of this item are changed by item 14
+    (`verifier-v4`): the probes are repeated for the mined values of the other fields, and the midpoints are written exactly.*
+
+## Amendment after the post-fix independent review (2026-10-29)
+
+Recorded by the fixes for PF-01 and PF-02 of the post-fix review (`docs/verification/POSTFIX_INDEPENDENT_REVIEW.md`). Written by the
+builder agent, NOT independently reviewed.
+
+14. **`verifier-v4` repeats the literal probes for the mined values of the other fields and takes the midpoints exactly (PF-01, PF-02;
+    extends item 13).** The review of the fix of item 13 found two gaps. **PF-01 (MEDIUM):** the probes around the amounts of the plan ran
+    in the world of the requirement only, whereas the boundary probes are also run with the values that the plan's other conditions
+    compare the optional fields with (review F4/F5). An exemption written with those amounts and gated on a field that the requirement does
+    not pin (`amount` between 626 and 749 and `note` is `gold`) therefore passed, although the same window without the gate fails. The
+    literal probes (`lit-` ids) are now repeated for every mined value as well (`minedProbe`), and a fixed probe that is not repeated for the
+    mined values (zero, the decades, the multiples and the ratios of the threshold) no longer stands in for the literal probe of the same
+    amount (`takenAmounts`): an exemption of exactly 1000 for `gold` orders, which is twice the threshold, passed on the same grounds. The
+    fix is bounded by the work budget of the verification (`MaxWork`, a larger plan is BLOCKED with `BUDGET`, never passed). **PF-02 (LOW):**
+    every probe amount was written with the decimals of the currency although the data layer accepts 18 decimals for every currency
+    (`erp.Money.Validate`), so the midpoint of two amounts one minor unit apart was rounded onto one of them and a window between
+    them (`500.001` to `500.009`, `626` to `626.01`, a plan that starts approving at `500.01` over a threshold of `500.00`) passed. The
+    midpoints are now exact (`moneyText`: the currency's own decimals, and more only where the amount needs them). A condition that
+    compares the field with literals changes its answer only at those literals, so each literal and one amount inside every interval
+    between neighbours see every region it can define; probes one step (10^-18) around each amount would add nothing and were left out.
+    `VerifierVersion` is `verifier-v4`: candidates recorded under `verifier-v3` read stale. Evidence:
+    `TestAWindowGatedOnAnotherFieldIsFound` (five gated plans fail with a `lit-` finding that names the mined value; with the note pinned by
+    the requirement they pass by design; the honest plan passes), `TestWindowsBetweenTheMinorUnitsAreFound` (five plans between the minor
+    units fail, the honest plan and a window below the threshold pass), `TestLiteralProbesReachBetweenNeighboursOneMinorUnitApart` (USD, KWD and JPY),
+    `TestMoneyTextKeepsTheDecimalsOfTheCurrencyAndNoMore`, and the updated `TestLiteralProbesFollowTheAmountsOfThePlan` and
+    `TestProbeSetIsPinnedToTheVerifierVersion`; three mutations (the mined repetition, the old covering rule, the grid text) are each failed by
+    the tests that name them. **Unchanged limit:** a window written with arithmetic, and a world the requirement pins away, are not found.
 
 ## Consequences
 
