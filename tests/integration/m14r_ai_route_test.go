@@ -312,3 +312,43 @@ func TestM14R06AnEnormousReportedUsageDoesNotLockTheTenantOut(t *testing.T) {
 		t.Fatalf("the next honest request: HTTP %d %s", w.Code, w.Body.String())
 	}
 }
+
+// M14R-03, the residual that its fixes name: the result exchange authenticates again, so a bearer token that lapsed during the provider phase lost a
+// paid answer and left the proposal PENDING until the sweep charged the whole reservation (the reviewer: 401 after the provider answered,
+// PENDING, the next request 429 ai_busy). A creation whose token ends before its run can finish (the wall clock plus the result margin) is now
+// refused before anything is reserved or sent to the provider.
+func TestM14R03ATokenThatEndsBeforeTheRunCanFinishIsRefusedBeforeAnythingIsSpent(t *testing.T) {
+	e := m14Setup(t, m14Options{limits: ai.ServiceLimits{WallClock: 30 * time.Second, InFlightPerTenant: 1}}) // the run needs 30 s + 10 s
+	doc := e.draft("500")
+	expiring := func(left time.Duration) string {
+		return e.f.token(t, e.f.aliceSubject, map[string]any{"exp": time.Now().Add(left).Unix()})
+	}
+	before := e.provider.Calls()
+	for _, left := range []time.Duration{5 * time.Second, 25 * time.Second, 36 * time.Second} {
+		w := e.propose(expiring(left), "Rename the order entity.")
+		if w.Code != 401 || m14Code(w) != "token_expiring" || w.Header().Get("WWW-Authenticate") == "" {
+			t.Fatalf("a token with %v left (the run needs 40 s): HTTP %d %s %q", left, w.Code, m14Code(w), w.Body.String())
+		}
+	}
+	if calls := e.provider.Calls() - before; calls != 0 {
+		t.Fatalf("%d provider calls for requests that were refused", calls)
+	}
+	if requests, used := e.m14rUsage(); requests != 0 || used != 0 {
+		t.Fatalf("the refused requests used %d requests and %d tokens", requests, used)
+	}
+	if got := e.m14rProposals(); len(got) != 0 {
+		t.Fatalf("proposals left by refused requests: %v", got)
+	}
+	// The refusal is an audited rejection of the creation, not an authentication failure.
+	if states := e.auditStates("ai.propose.rejected"); len(states) != 3 {
+		t.Fatalf("%d rejection audit rows, want 3", len(states))
+	}
+	// A token that lasts through the run is served, and so is the same member with a fresh token right after the refusals.
+	e.provider.Push(ai.ScriptStep{Payload: labelPatch(t, doc, "entity.order", "Renamed"), Usage: ai.Usage{InputTokens: 1200, OutputTokens: 300}, Model: "m"})
+	if p := e.proposal(e.propose(expiring(120*time.Second), "Rename the order entity."), 201); p.Status != ai.ProposalReady {
+		t.Fatalf("proposal %s/%s", p.Status, p.FailureCode)
+	}
+	if got := e.m14rProposals(); len(got) != 1 {
+		t.Fatalf("proposals %v, want the one that was served", got)
+	}
+}

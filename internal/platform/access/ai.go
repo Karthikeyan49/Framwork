@@ -408,6 +408,9 @@ func (a API) aiPropose(ctx context.Context, q postgres.Executor, r *http.Request
 		return aiDeny(400, "invalid_ai_request", "Request body is invalid"), nil
 	}
 	svc := a.AI.Service
+	if rejection := a.aiTokenOutlivesTheRun(r, svc.Limits.Effective().WallClock+aiResultMargin); rejection != nil {
+		return reply{}, rejection
+	}
 	adm, err := svc.Admit(ctx, q, access, ai.ProposeInput{Kind: kind, App: app, Request: body.Request, ExpectedRevision: body.ExpectedRevision})
 	if err != nil {
 		return aiReplyRetrying(r, err)
@@ -428,6 +431,27 @@ func (a API) aiPropose(ctx context.Context, q postgres.Executor, r *http.Request
 // aiResultMargin is added to the provider wall clock to form the connection's write deadline for
 // the whole exchange: the result transaction (capped at 3 s) and the response.
 const aiResultMargin = 10 * time.Second
+
+// aiTokenOutlivesTheRun refuses, before anything is reserved or sent to the provider, a creation whose bearer token ends before its
+// provider phase and result exchange can: the result exchange authenticates again (ADR104 A8), so a token that lapses in between lost
+// a paid answer and left the proposal PENDING until the sweep charged its whole reservation (independent review M14R-03, the residual
+// its fixes name). The client signs in again and retries. A token is counted without the clock skew that verification tolerates. An
+// Authenticator that cannot say how long its token lasts is not asked, and a token that does not verify is left to the exchange, which
+// answers it.
+func (a API) aiTokenOutlivesTheRun(r *http.Request, run time.Duration) *requestRejection {
+	expiring, ok := a.Auth.(identity.Expiring)
+	if !ok {
+		return nil
+	}
+	headers := r.Header.Values("Authorization")
+	if len(headers) != 1 || !strings.HasPrefix(headers[0], "Bearer ") {
+		return nil
+	}
+	if _, remaining, err := expiring.VerifyRemaining(strings.TrimPrefix(headers[0], "Bearer ")); err != nil || remaining >= run {
+		return nil
+	}
+	return &requestRejection{response: denied(401, "token_expiring", "The access token ends before this request can finish; sign in again and retry")}
+}
 
 // aiAuthorize re-authenticates the bearer token of the request in a new transaction
 // and re-evaluates policy for the action: identity, tenant membership and policy are

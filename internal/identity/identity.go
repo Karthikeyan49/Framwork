@@ -41,6 +41,13 @@ func (u User) MarshalJSON() ([]byte, error) {
 type Authenticator interface {
 	Verify(string) (Principal, error)
 }
+
+// Expiring is implemented by an Authenticator that can also say how long the token it verified stays valid. A request that has to
+// authenticate again after a long wait (the result of an AI proposal, after the provider phase) uses it to refuse, before it
+// spends anything, a token that will have lapsed by then.
+type Expiring interface {
+	VerifyRemaining(string) (Principal, time.Duration, error)
+}
 type Verifier struct {
 	issuer, audience string
 	keys             map[string]*rsa.PublicKey
@@ -95,7 +102,22 @@ func NewVerifierWithClockSkew(issuer, audience string, jwks []byte, skew time.Du
 }
 
 func (v *Verifier) Verify(token string) (Principal, error) {
-	fail := func() (Principal, error) { return Principal{}, ErrUnauthenticated }
+	p, _, err := v.verify(token)
+	return p, err
+}
+
+// VerifyRemaining verifies the token exactly as Verify does and also returns how long it stays valid from now, by the verifier's
+// own clock and without the clock skew that Verify tolerates, so that a caller never counts on time the token does not have.
+func (v *Verifier) VerifyRemaining(token string) (Principal, time.Duration, error) {
+	p, exp, err := v.verify(token)
+	if err != nil {
+		return Principal{}, 0, err
+	}
+	return p, time.Unix(exp, 0).Sub(v.now()), nil
+}
+
+func (v *Verifier) verify(token string) (Principal, int64, error) {
+	fail := func() (Principal, int64, error) { return Principal{}, 0, ErrUnauthenticated }
 	payload, err := v.signedPayload(token, false)
 	if err != nil {
 		return fail()
@@ -124,7 +146,7 @@ func (v *Verifier) Verify(token string) (Principal, error) {
 	if !matched || !v.validTimes(c.Exp, c.Iat, c.Nbf) {
 		return fail()
 	}
-	return Principal{c.Iss, c.Sub}, nil
+	return Principal{c.Iss, c.Sub}, c.Exp, nil
 }
 
 func (v *Verifier) validTimes(exp, iat, nbf int64) bool {
