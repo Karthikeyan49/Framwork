@@ -109,6 +109,11 @@ The cost of the body budget, measured alone (`go test -run '^$' -bench BodyBudge
 without contention and 188 ns with four goroutines on its one lock, with no allocation; reading a 64 KiB body in 4 KiB chunks through the booking reader takes 1.35 us against 0.95 us plain (+0.4 us and
 two allocations of 80 bytes per request). That is the lock and the counter only. The cost of the pre-read at the reference load, end to end, is still not measured, and the reference-scale gates were not run.
 
+Gate on the code head `585499d` (29 October 2026, same host and stack), repeated in full after the change to the identity module and the AI creation route (the expiring-token row of the table above): `make check` PASS 34 s;
+`make test-unit` PASS 263 s (29 Go packages, 13 script tests, 126 frontend tests); `make build` PASS 34 s; the full integration suite with `-race` **PASS** as one run, 2058.6 s Go time, 2067 s wall; `make test-e2e` 11 passed (39.6 s) and
+`make test-signin-e2e` 7 passed (9.5 s); the fuzz targets PASS 88 s; `make test-event-outage` PASS, 609 s, recovery after 600.0 real seconds with 3 completed, 3 inbox rows, 3 effects, 3 audits, 3 immutable intents, 19 retained attempts and
+2 unconfirmed redeliveries. The commits after it are documents only.
+
 ### Migration numbers from here on (proposal; the owner decides)
 
 Wording from the upgrade and ordering rehearsal ([report](../verification/UPGRADE_AND_ORDERING_REHEARSAL.md), which tested every sentence of the first proposal against a real goose, a
