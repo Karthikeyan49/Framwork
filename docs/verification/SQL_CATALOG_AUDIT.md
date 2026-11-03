@@ -70,7 +70,7 @@ Result counts are from the m12db dump unless stated. Queries are summarised in a
   `control.worker_authority()` (00056:7,34). Migration 00026 (loop at lines 38-43) set every definer of the four schemas to
   `pg_catalog, pg_temp`; these four were redefined later without it. The 100 other definers have it.
 - Why it matters: without an explicit `pg_temp`, PostgreSQL searches the session's temporary schema first for relations and types.
-  `claim_event` (`JOIN pg_roles r`) and `worker_authority` (`JOIN pg_roles principal`) name the catalog view `pg_roles` unqualified,
+  `claim_event` (`JOIN pg_roles r`) and `worker_authority` (`JOIN pg_roles principal`) are the two of the four that name the catalog view `pg_roles` unqualified (`prosrc ~ '\mpg_roles\M'` returns exactly them),
   so a temporary table named `pg_roles` would shadow it for the dispatcher/worker session that calls them (P5 shows the mechanism).
 - Not exploitable on the delivered stack: no runtime role has TEMP on the database (`REVOKE ALL ON DATABASE framework FROM PUBLIC` in
   `infra/compose/postgres-init.sh`; `datacl`: `framework_app=c, framework_worker=c, framework_dispatcher=c`). It becomes exploitable only
@@ -133,7 +133,8 @@ Roles were switched with `SET SESSION AUTHORIZATION`; every GRANT used as an exp
 - Behavioural proof of any finding on the shared m12db stack (read-only rule): the executed probes ran on the private cluster built from the same migration files (PostgreSQL 16, one patched function body).
 - A populated-data RLS replay for all 72 tables (covered by the integration suite, not re-run here).
 - A line-by-line review of every definer body for authorization logic (check 1g is static reachability of a tenant binding).
-- `pg_parameter_acl` (PostgreSQL 15+ GRANT SET ON PARAMETER): PARAMACL_PLACEHOLDER
+- `pg_parameter_acl` (PostgreSQL 15+ `GRANT SET ON PARAMETER`, relevant to `session_replication_role`, which would skip all `ENABLE`-mode triggers): queried on the private cluster only (0 rows); not queried on m12db.
+- The finding repro queries (`SC-01` .. `SC-04`) were executed on the private cluster and returned exactly the rows stated (4 definers, 10 tables, the policy list). The same script was submitted to `dbrunm12db` after the main dump and was still waiting for the lock (another agent's integration run) when this report was committed; the check-table figures come from the main m12db dump.
 
 ## Appendix A - queries (summary)
 
