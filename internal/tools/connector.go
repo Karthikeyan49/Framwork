@@ -180,8 +180,15 @@ func expandPath(template string, value func(name string) (string, bool)) (string
 }
 
 // parseFlatObject strictly decodes one JSON object whose members are all
-// scalars or null. Duplicate members, nesting and trailing data are refused.
+// scalars or null. Duplicate members, nesting and trailing data are refused, and so
+// is text that is not valid UTF-8: the JSON decoder would replace each invalid byte
+// with U+FFFD, and an answer in another character set would be stored corrupted as
+// a success, two different byte strings collapsing into one value (independent
+// red team TS-04).
 func parseFlatObject(raw []byte) (map[string]json.RawMessage, bool) {
+	if !utf8.Valid(raw) {
+		return nil, false
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {

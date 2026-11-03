@@ -138,6 +138,11 @@ func TestResponseBodyLimitsAndValidation(t *testing.T) {
 		"bad decimal":         `{"id":"n-1","balance":"1e3"}`,
 		"string too long":     `{"id":"` + strings.Repeat("x", 65) + `"}`,
 		"nul in string":       `{"id":"a\u0000b"}`,
+		"invalid utf-8 value": "{\"id\":\"n-\xff1\"}",
+		"invalid utf-8 key":   "{\"i\xffd\":\"n-1\"}",
+		"truncated sequence":  "{\"id\":\"n-\xe2\x82\"}",
+		"overlong sequence":   "{\"id\":\"n-\xc0\xaf\"}",
+		"lone surrogate":      "{\"id\":\"n-\xed\xa0\x80\"}",
 		"non-string key type": `{1:"a"}`,
 		"html":                `<html>gateway error</html>`,
 	}

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -345,5 +346,38 @@ func TestNewCatalogRejectsUnsafeDefinitions(t *testing.T) {
 	next.Version = "1.1.0"
 	if c, err := NewCatalog([]Definition{base(), next}); err != nil || c.Len() != 2 {
 		t.Error("versions of one ref")
+	}
+}
+
+// Invalid UTF-8 in the operator's file would be replaced by U+FFFD while decoding, so that the definition, and the hash pinned for it,
+// would not say what the file says (independent red team TS-04).
+func TestLoadCatalogRefusesInvalidUTF8(t *testing.T) {
+	good := catalogJSON(t, validDefinitions())
+	if _, err := LoadCatalog(good); err != nil {
+		t.Fatal(err)
+	}
+	// The place the red team found it accepted: a string of a SIMULATE fixture, which no other rule looks into. Control: the same text
+	// with a valid multi-byte character loads.
+	fixture := []byte(`"region":"north"`)
+	if !bytes.Contains(good, fixture) {
+		t.Fatal("the fixture value is not where the test expects it")
+	}
+	if _, err := LoadCatalog(bytes.Replace(good, fixture, []byte(`"region":"n\u00f6rth"`), 1)); err != nil {
+		t.Fatalf("a valid escape is refused: %v", err)
+	}
+	if _, err := LoadCatalog(bytes.Replace(good, fixture, []byte("\"region\":\"n\xc3\xb6rth\""), 1)); err != nil {
+		t.Fatalf("valid UTF-8 text is refused: %v", err)
+	}
+	for name, bad := range map[string]string{
+		"a stray byte":         "\"region\":\"nor\xffth\"",
+		"a truncated sequence": "\"region\":\"nor\xe2\x82th\"",
+		"an overlong sequence": "\"region\":\"nor\xc0\xafth\"",
+		"an encoded surrogate": "\"region\":\"nor\xed\xa0\x80th\"",
+		"a lone continuation":  "\"region\":\"nor\x80th\"",
+		"in the member name":   "\"re\xffgion\":\"north\"",
+	} {
+		if _, err := LoadCatalog(bytes.Replace(good, fixture, []byte(bad), 1)); !errors.Is(err, ErrCatalog) {
+			t.Errorf("%s: err=%v, want ErrCatalog", name, err)
+		}
 	}
 }

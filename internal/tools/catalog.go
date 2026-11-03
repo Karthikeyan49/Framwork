@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // CatalogVersion identifies the operator-owned tool catalog contract (ADR100).
@@ -204,7 +205,8 @@ func EmptyCatalog() Catalog {
 // LoadCatalog strictly decodes operator configuration. Unknown, duplicate or
 // differently cased keys, trailing documents and unsafe definitions fail closed.
 func LoadCatalog(raw []byte) (Catalog, error) {
-	if len(raw) == 0 || len(raw) > MaxCatalogBytes || !strictKeys(raw) {
+	// Invalid UTF-8 would be replaced by U+FFFD while decoding: a definition, and the hash pinned for it, must say what the file says.
+	if len(raw) == 0 || len(raw) > MaxCatalogBytes || !utf8.Valid(raw) || !strictKeys(raw) {
 		return Catalog{}, ErrCatalog
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
