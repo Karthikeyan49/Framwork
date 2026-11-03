@@ -41,11 +41,10 @@ deployment is authorized here.
   full-release compatibility. See the [live ledger](M9R_FINDING_STATUS.md)
   and [handoff](AGENT_HANDOFFS.md) for evidence, owners and limits.
 - The remediation lane ran no independent review: the user deferred agents
-  until 22 October, 21:00 UTC. A separate reviewer's interim report on the
-  merge is in this tree ([INTEGRATION_INDEPENDENT_REVIEW.md](../verification/INTEGRATION_INDEPENDENT_REVIEW.md),
-  pinned `552fa9e`); that reviewer's final reports, the M14 review and a
-  re-verification of the integration fixes exist as reports on the branches
-  `review/integration-final` and `review/m14-and-fixes`. Historical independent
+  until 22 October, 21:00 UTC. A separate reviewer's reports are in this tree: the merge
+  review ([INTEGRATION_INDEPENDENT_REVIEW.md](../verification/INTEGRATION_INDEPENDENT_REVIEW.md), pinned `552fa9e`,
+  re-run at `be6ec7c` and `0e13abe`: PASS at `0e13abe`), the M14 review and the
+  re-verification of the integration fixes. Historical independent
   reviews certify their pinned slices, not this merged tree or later fixes. No
   causal merge regression is established by these runs without a controlled
   pre-merge run.
@@ -481,7 +480,7 @@ Those reports retain their original gate results and review qualifications.
 |---|---|---|
 | Sandbox evidence | M11 server-owned synthetic datasets, capability ceilings, frozen immutable record/tool manifests | Redacted/dedicated modes, UI and residual port trust; latest fixes lack independent re-verification |
 | Business intent | M14 typed human apply/confirm of AI proposals; M12 `requirements-v2` requiredness floors and provenance | No real model/provider deployment verified; B-01 launcher loss fixed on the integration branch (re-verification pending); open/unsupported mandatory categories block |
-| Executable acceptance | M12 `acceptance-v2`, exact independent money oracle and `verifier-v2` over pinned plans; four supported categories | Deterministic verifier runs in API trust domain; separate verifier credential/attestation is absent; no claim of arbitrary ERP acceptance |
+| Executable acceptance | M12 `acceptance-v2`, exact independent money oracle and `verifier-v4` over pinned plans; four supported categories | Deterministic verifier runs in API trust domain; separate verifier credential/attestation is absent; no claim of arbitrary ERP acceptance |
 | Risk and exact candidate | M12 derives diff/storage/risk and builds bundle2.0; API bodies cannot declare authority; load recomputes against the candidate's own base | Database cannot independently recompute verifier/diff/risk; the B-02 version guard and B-05 1.5 unique registration are fixed on the integration branch (re-verification pending) |
 | Approval/activation/rollback | M13 preview HTTP lifecycle, SQL ports, exact approved hash, current authority/quorum, CAS/fences and immutable history | Active pointer is control-plane state: no production datasets/routes/storage-migration execution; credential-bound approvals and latest fix reviews remain open |
 

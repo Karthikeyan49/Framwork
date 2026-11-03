@@ -343,7 +343,7 @@ These supersede the matching sentences above where they differ.
    route over eight roles), `TestNativeHolds`, `TestDefinedHoldsFollowsTheGrants`. `Holds` repeats the grant
    rules of `Defined.Decide` for a member who is not the caller; the comparison test is what keeps the two
    equal. *M13R-06:* a candidate recorded under other runtime components now reads stale
-   (`RUNTIME_CHANGED`, M12 API fixes) and the verifier version is part of the components (`verifier-v2`).
+   (`RUNTIME_CHANGED`, M12 API fixes) and the verifier version is part of the components (`verifier-v2`; now `verifier-v4`, ADR102 amendments 13 and 14).
    *FR-01 (re-verification):* a worker can set status, termination and failure of its own leased instance
    without a transition; this is the ADR024 residual of a compromised worker inside its exact lease.
    *Informational items I-1..I-8* of the review stand as written there.

@@ -12,7 +12,7 @@ ARCH-01..10 in `architecture_test.go`).
 | `contract.go`, `limits.go`, `errors.go` | public types, ceilings, typed errors |
 | `schema.go`, `schema_text.go`, `canonical.go` | closed output schemas, strict decoding, canonical hashes |
 | `patch.go`, `kinds.go` | apply with per-target hash checks, the kind allowlist, server-derived sensitive aspects |
-| `context.go`, `redact.go` | metadata-only, deterministic, capped, redacted context; untrusted-segment wrapping |
+| `context.go`, `redact.go`, `redact_fold.go` | metadata-only, deterministic, capped, redacted context; untrusted-segment wrapping; look-alike folding for the redactor |
 | `template.go` | versioned prompt templates (system text, repair lead-in) |
 | `gateway.go`, `repair.go` | the bounded repair loop, budgets, usage, per-attempt trace |
 | `provider_scripted.go`, `provider_http.go`, `config.go` | deterministic scripted provider; HTTPS-JSON provider with a guarded dialer; `ai-provider-v1` loading |

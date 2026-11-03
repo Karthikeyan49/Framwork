@@ -670,7 +670,7 @@ without the change; the reviewers' own probes were run against the fixed code by
    A redacted key that ends its line takes the following lines that hold nothing but a credential-shaped word, the rest of a wrapped key. The table is
    applied until it finds nothing more, so the result is a fixed point (a property run of 300,000 random strings found one counterexample while the
    table was written; it is a regression test). Evidence: `internal/ai/redact_shapes_test.go` (26 shape cases, 14 for the review's classes and 12 own
-   probes; near-miss lists for every rule; the fixed-point property; `FuzzRedactText`, a 90 s run of 209,433 executions with no failure) and 25 mutations of
+   probes; near-miss lists for the Basic, prose-password, cookie, `sig=`, card-number, variable-name, prefix and wrapped-key rules; the fixed-point property; `FuzzRedactText`, a 90 s run of 209,433 executions with no failure) and 25 mutations of
    the new code, each failed by the test that names it; inputs of about 1 MB built against the rules run in 0.2 to 1.7 s. **Not covered:** the Unicode
    confusables list (the table is short on purpose), a precomposed accent, other scripts, a password in prose that is a plain word ("the password is
    correcthorse"), a key that a program broke in the middle of a paragraph (the tail shares its line with prose). Refusing a request that still contains a

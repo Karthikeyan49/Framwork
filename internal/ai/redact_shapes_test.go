@@ -210,6 +210,13 @@ func TestRedactionLeavesTextNearTheNewRulesAlone(t *testing.T) {
 		"Remember the cookie policy page.",
 		"DB_HOST=db.internal",
 		"MAX_TOKENS=4096",
+		// The prefixed key rules need a body of the length of a real key: the prefix alone, or with a short word, is prose.
+		"The hf_ prefix marks a model hub token.",
+		"A whsec_ value is a webhook secret.",
+		"hf_short and whsec_short and api_org_short are placeholders.",
+		"The Slack app level token starts with xapp-1 and a long body.",
+		"The AccountKey and SharedAccessKey names are explained in the storage guide.",
+		"AccountKey is the second part of the connection string.",
 		"Создать поле Пароль для клиента",
 		"Δημιουργία πελάτη",
 		"می‌خواهم یک فرم",

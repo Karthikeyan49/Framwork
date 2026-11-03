@@ -11,7 +11,7 @@ capability. No real model was called, no provider endpoint or credential was ava
 *(Update, 22 October 2026: the first independent review of M14 has run since this report was written, verdict FAIL with
 four MEDIUM and four LOW findings, [M14_INDEPENDENT_REVIEW.md](../verification/M14_INDEPENDENT_REVIEW.md); the fixes and the
 residuals are [ADR104 Amendment C](../adr/104-m14-ai-builder-and-intent-capture.md) and the
-[integration plan](LINE_INTEGRATION_PLAN.md). The sentences below are the builder's evidence of 19 October.)*
+[integration plan](LINE_INTEGRATION_PLAN.md). A third pass at `0e13abe` gave PASS (no HIGH, no MEDIUM open); the fixes after it have no reviewer's verdict. The sentences below are the builder's evidence of 19 October.)*
 
 ## What changed
 

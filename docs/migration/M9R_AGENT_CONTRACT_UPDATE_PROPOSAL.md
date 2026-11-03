@@ -5,6 +5,7 @@ This document is review material for slice C, not an effective replacement for
 AGENTS.md or CLAUDE.md. The user's current migration instruction governs this
 session; these files remain byte-identical to the starting checkpoint a1d8b00.
 No command in C applies the patch.
+The scheduling override that the patch would write ("no independent agents until 22 October 2026, 21:00 UTC", lines 157 to 162 of this file) has expired and three review passes exist: drop or rewrite it before an apply (documentation audit DT-23).
 
 ## Exact baseline
 

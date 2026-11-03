@@ -215,9 +215,9 @@ What I changed in SHARED files (keep both sides when you merge; each has a regre
 - `scripts/runtime-env.mjs` and its test — the per-process allowlists (B-01).
 - `Makefile` — `make check` also vets `./tests/integration` with the `integration` and `performance` tags.
 - `cmd/migrate/main.go`, `internal/platform/postgres/lineage.go` — `migrate` refuses a database that holds the milestone line's old numbers.
-- `db/migrations/00090_integration_unique_schema_1_5.sql` — new; **the next free number is `00091`**.
+- `db/migrations/00090_integration_unique_schema_1_5.sql` — new; **the next free number is `00091`** (superseded: `00093` since 22 October).
 - `internal/metadata/sql_version_gate_test.go` — fails when a SQL function or the `metadata_versions` CHECK names only part of a schema-version family. If you add
-  authoring 1.6.0 (a superset of 1.5.0), this test will tell you which SQL bodies still name the older versions.
+  authoring 1.6.0 (a superset of 1.5.0), add it to `knownSchemaVersions()` and to the family functions of `internal/metadata/version_family.go`; this test then names the SQL bodies that still name only the older versions (a guard, not a proof).
 - test helpers: `tests/integration/m10_fixture_test.go` (options `approvers`, `customRoles`), `m12api_fixture_test.go`, `m14_fixture_test.go` (option `admission`), `internal/tools/harness_test.go`.
 - documents: `LINE_INTEGRATION_PLAN.md` (new top section), rows of `M9R_FINDING_STATUS.md` (B-01 to B-05, the IR rows, one checkpoint bullet).
 
@@ -275,7 +275,7 @@ SHARED files changed since `f6398bf` (keep both sides when you merge; each has a
 - `internal/platform/postgres/retry.go`: new `RetryWithin(parent, budget, attempts, run, retriable)`; `RetryLocalWhen` is unchanged in behaviour (4 s, 3 attempts) and calls it.
 - `internal/runtime/workflow/execution.go`: `CompensationScanSQL` (your D1 statement, see the addendum above).
 - `scripts/runtime-env.mjs`, `scripts/with-env.mjs`: `runtimeKindOf` recognises every spelling of a backend command (F-04).
-- `internal/metadata/version_family.go` (new, non-test) and `sql_version_gate_test.go`; `tests/integration/m9r_catalog_version_gate_test.go` reads the live catalog (F-03). If you add authoring 1.6.0, both tell you which objects still name only older versions; a gate written as a character class is not read.
+- `internal/metadata/version_family.go` (new, non-test) and `sql_version_gate_test.go`; `tests/integration/m9r_catalog_version_gate_test.go` reads the live catalog (F-03). If you add authoring 1.6.0, add it to `knownSchemaVersions()` and to the family functions; both then name the objects that still name only older versions; a gate written as a character class is not read.
 - `cmd/migrate/main.go` messages and `db/migrations/numbering_test.go` (D2, the numbering rule as a test).
 - migrations **`00091`** (`rollback_release` writes the release fence) and **`00092`** (`approve_release` locks the pointer `FOR SHARE` and writes the fence; every candidate gets its fence row at staging by a `SECURITY DEFINER`
   trigger, and the existing ones in the migration, written as the schema owner). **The next free number is `00093`.** Both start from the latest definition on this branch and assert owner and ACL.
@@ -290,7 +290,7 @@ the wording is in the plan.
 ## FROM milestone TO remediation — 28 October 2026 (UTC), third follow-up: the third review pass and five fixes
 
 Subject: what the merge reviewer's third pass says about `integration/m9r-m14`, what changed in shared files after it, and what is yours to re-verify.
-Nothing here touches `remediation/m9r-foundation`; fetch `origin/integration/m9r-m14` (code head `294e597`; later commits are documents) and merge it before your next slice.
+Nothing here touches `remediation/m9r-foundation`; fetch `origin/integration/m9r-m14` (code head `294e597`; see the entry of 29 October for the later code change) and merge it before your next slice.
 
 The third pass of the [merge review](../verification/INTEGRATION_INDEPENDENT_REVIEW.md) and of the [M14 review](../verification/M14_INDEPENDENT_REVIEW.md) judged the tip `0e13abe`: the gate passes on every step it ran (full integration suite 453 PASS, 5 SKIP, 0 FAIL; both
 browser suites; the five fuzz targets; the ten-minute outage), IR-01 to IR-06 and M14R-01, -02, -04, -06, -07 are verified fixed, M14R-03 is partly fixed (an expiring bearer token still loses the result), and the verdict of both reports is **PASS: no HIGH and no MEDIUM open**.
@@ -302,7 +302,7 @@ SHARED files changed since `0e13abe` (keep both sides when you merge; each has a
   `EVENT_OPERATOR_REDIS_URL` or `EVENT_OPERATOR_PASSWORD` is set in its environment** (IR-07; the log names the variables and never shows a value). `make api|worker|dispatcher` and every in-repository start (`scripts/dev.mjs`, `smoke.mjs`, the Playwright configs,
   the tests that start the binary) hand the backend only its own configuration and are unaffected. **If a deployment of yours injects any of these into a backend, it is now refused; tell me and the list changes.**
 - `cmd/migrate/main.go`: `status` marks a pending file numbered below the highest applied version as "refused by up" and exits 1 (it listed it as plain `pending` and exited 0).
-- `internal/metadata/version_family.go`: the scan for single-version gates also reads a brace or a comma in front of a version (array literals, lists in one literal). If you add authoring 1.6.0 it names the objects that still name only older versions.
+- `internal/metadata/version_family.go`: the scan for single-version gates also reads a brace or a comma in front of a version (array literals, lists in one literal). If you add authoring 1.6.0, add it to `knownSchemaVersions()` and to the family functions; the scan then names the objects that still name only older versions (a guard, not a proof).
 - `internal/verification/*` (milestone lane, but `internal/promotion` reads the constant): **`VerifierVersion` is `verifier-v3`**. The verifier also probes the money amounts the plan's own conditions compare the threshold field with ([ADR102 amendment 13](../adr/102-m12-candidate-release-builder.md)).
   A candidate recorded under `verifier-v2` reads stale and a bundle that names it fails closed; stage it again.
 - `internal/ai/redact.go`, `redact_fold.go` (milestone lane): the redaction table covers the ten shapes of M14R-08 ([ADR104 Amendment C item 6](../adr/104-m14-ai-builder-and-intent-capture.md)).
@@ -320,6 +320,6 @@ Subject: a change after the entry of 28 October. Fetch `origin/integration/m9r-m
   and the integration suites pass). The new interface `identity.Expiring` is optional: an `Authenticator` that does not implement it is simply not asked.
 - `internal/platform/access/ai.go` (milestone lane): the two creation routes answer `401 token_expiring` before admission when the bearer token ends before the provider phase and the result exchange can finish (the wall clock plus 10 s). The authentication policy is unchanged; nothing is
   reserved, charged or sent to the provider. This closes the expiring-token residual of M14R-03 ([ADR104 Amendment C item 7](../adr/104-m14-ai-builder-and-intent-capture.md)).
-- Executed, not changed: the F-05 residual (a first activation racing an approval of another first candidate) is recorded and harmless (`TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect`).
+- Executed, not changed: the F-05 residual (a first activation racing an approval of another first candidate) is recorded and cannot move the pointer: the approval is recorded, the activation of that candidate is refused as stale (`TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect`).
 
 Nothing else is new for you: migrations are unchanged (the next free number is still `00093`), and the open items of the entry of 28 October stand.
