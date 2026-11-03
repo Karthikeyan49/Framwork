@@ -65,9 +65,10 @@ var (
 		`|\bgpg2?\b[^\n]*?\s--passphrase(?:\s+|=)` +
 		`|\bldap(?:search|modify|add|delete|passwd|compare)\b[^\n]*?\s(?-i:-w)\s*)` + passwordValue)
 
-	// A .netrc entry: "machine HOST login USER password SECRET" (on one line or several), "default login ... password ...", or a host with a dot and no login.
-	passwordOfANetrcEntry = regexp.MustCompile(`(?i)\b(?:(?:machine\s+[^\s"']+|default)\s+login\s+[^\s"']+\s+password\s+` +
-		`|machine\s+[^\s"'/]+\.[^\s"'/]+\s+password\s+)` + passwordValue)
+	// A .netrc entry: "machine HOST login USER password SECRET" (on one line or several), "default login USER password SECRET" at the start of a line, or a host with a
+	// dot and no login. A sentence such as "the default login admin password rotation" is not an entry: the word "default" must begin its line.
+	passwordOfANetrcEntry = regexp.MustCompile(`(?i)(?:(?:\bmachine\s+[^\s"']+|(?m:^)[ \t]*default)\s+login\s+[^\s"']+\s+password\s+` +
+		`|\bmachine\s+[^\s"'/]+\.[^\s"'/]+\s+password\s+)` + passwordValue)
 )
 
 // sqlStatementSpan is how far past its first words a statement that names a user or a role is read for a password.

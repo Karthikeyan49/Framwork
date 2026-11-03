@@ -44,6 +44,8 @@ func TestRedactionKeepsOrdinaryTextThatUsesTheWordsOfTheCommandRules(t *testing.
 		"Each machine has a login and a password field for the operator console.",
 		"Add a machine login password reset flow.",
 		"Machine learning password strength checks run at sign-up.",
+		"The default login admin password rotation is monthly.",
+		"Reset the default login password every 90 days.",
 		"Show a password \"hint\" field on the sign-up form.",
 		"Label the password 'Passcode' on the form.",
 		"Rename the password \"Pass phrase\" column.",
