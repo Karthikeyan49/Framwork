@@ -11,10 +11,10 @@ Result words: PASS / FAIL / NOT RUN only. Every "held" names the attack that was
 | 1 | 62cc527 expiring-token admission check | attacked (integration probes, unit edge probes); one LOW |
 | 2 | 3c27378 verifier-v3 | attacked (unit probes, two mutations); PF-01 MEDIUM, PF-02 LOW |
 | 3 | bca9d98 operator credentials refused at start | attacked: real binaries, launcher, tree comparison; no finding |
-| 4 | db9c2fa F-05 residual test | not started |
+| 4 | db9c2fa F-05 residual test | mutated 00092 and `activate_release`: PF-07 (LOW) |
 | 5 | b88a465 version-gate scan | attacked: scratch migrations, mutations of every enumerated place; PF-04, PF-05 (LOW) |
 | 6 | 294e597 migrate status | not started |
-| 7 | 80a582f body-budget benchmarks | not started |
+| 7 | 80a582f body-budget benchmarks | run; PF-08 (LOW, comment) |
 | 8 | regression subset | not started |
 | 0 | redactor code defects (panics, complexity, latency at the largest input) | not started |
 
@@ -82,6 +82,33 @@ Direction: read only the string literals of the body (single, escape and dollar 
 and from `WorkflowSchema` each fails a named test (`TestMetadataVersionsCheckListsEveryKnownVersion`, `TestSQLFunctionsNameWholeSchemaVersionFamilies`, `TestAdversarialCorpus` and two more in `internal/ai`,
 `TestIRRestoreKeepsTheExactCompilerIdentityOfEveryIntegrityCapableContract`, `TestWorkflowSchemaVersions`).
 
+### PF-06 (LOW, a variant of PF-01 that survives `verifier-v4`) a window gated on a null-safe condition over a field of a type the miner does not read passes
+
+`internal/verification/verifier.go` `minedValues` collects the values of fields of kind `string`, `enum`, `bool` and `integer` only. Against the tree of `55ee30e` (exported to a
+scratch directory; PF-01 and PF-02 repros all FAIL there as they should, see "Fixes re-verified"), a window `amount > 626 AND amount < 749 AND <gate>` with the requirement not pinning the
+gate field still PASSES (64 results, 0 findings) when the gate is `eq(field, literal)` or `not(is_null(field))` over a `date`, `datetime`, `decimal` or `money` (USD) field. The same gate over a
+string, enum or bool field fails with a `lit-...` finding that names the mined value. A gate that is not null-safe (`gt`, `lt` over decimal, money, datetime, integer) makes the probe unevaluable and the
+verdict is `BLOCKED INCOMPLETE_CASE_INPUT` (fail closed; the author must pin the field). Repro: `zz_review_pf2b_test.go` `TestZZGateTypes` (not committed; shape as in PF-01 with the added
+field `field.order.g` of the type under test). ADR102 amendment 14 does not list these types among the residuals. Direction: mine a value for the other literal-bearing kinds
+(a literal of the field's own kind taken from the conditions, plus a value that matches none) or block a plan whose threshold exemption depends on such a field.
+
+### PF-07 (LOW) `TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect` passes against a weakened migration 00092 and against a weakened `activate_release`
+
+`tests/integration/m13r_approve_fence_test.go:178-200`. Mutation 1: in `db/migrations/00092_m13_approve_release_fence.sql` the `FOR SHARE` of the pointer read and the
+`INSERT INTO control.release_fences ...` statement are neutralised (kept as comments so that the migration's own self-check, which looks for those two strings, still passes): the three tests
+that the fence is for (`TestF05ApprovalOvertakenByACommittedRejection`, `...ByAnActivationOfAnotherCandidate`, `...ByARollback`) and `TestF05ApprovalsStillRunTogether` FAIL, and
+`TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect` PASSES (log: `err=<nil>, 1 approval(s) recorded`). Mutation 2: in `00088_m13_review_fixes.sql` the stale-base test of
+`activate_release` (`has_cur AND (cur.artifact_hash<>p_expected_base OR ...)`) is replaced by `FALSE`: the same test still PASSES (the pointer compare-and-set refuses the activation with 55000
+on its own). So the test is evidence that the system refuses to activate the stale candidate, through at least two controls, and not evidence for 00092: with no pointer row the fence cannot
+abort the approval (nothing to lock, an unchanged fence row), the approval commits, and the test only logs that. A third mutation (both controls) was NOT RUN. Direction: assert the approval's outcome
+(recorded, with the candidate reading stale) and name the control, or document the test as a system property.
+
+### PF-08 (LOW) the parallel body-budget benchmark does not measure many identities
+
+`internal/platform/access/bodybudget_test.go` `BenchmarkBodyBudgetHoldAddReleaseParallel`: the comment says "Many requests of many identities at once" but every goroutine books under the same
+`"issuer\x00subject-xxxxxxxx"`, so it measures one hot identity on the one lock. The numbers in `LINE_INTEGRATION_PLAN.md` are of the right order (see the table): the cost of the budget is a lock
+and a counter, below one microsecond per request on a loaded host.
+
 ## Attacks that held
 
 | claim | executed attack | result |
@@ -103,6 +130,9 @@ and from `WorkflowSchema` each fails a named test (`TestMetadataVersionsCheckLis
 | 3: launcher | `node --test scripts/*.test.mjs` (13 of 13); `node scripts/with-env.mjs <dir>/pf-bin/api` (an unrecognised spelling) with the real `.env`; `node scripts/with-env.mjs <dir>/bin/api` (recognised); `runtimeKindOf` over `sh -c`, `bash -c`, `env`, `nice`, `time`, `go run .`, `./API` | held: the unrecognised spelling exits 1 naming exactly the six variables; the recognised one starts and answers `/healthz` 200 and `/readyz` 200; `go run .` and `./API` are not recognised (fail closed at the daemon) |
 | 5: SQL places that list 1.5.0 | removed `1.5.0` from the `00080` CHECK and from the function of `00090` (scratch), ran `go test ./internal/metadata` | held: `TestMetadataVersionsCheckListsEveryKnownVersion` and `TestSQLFunctionsNameWholeSchemaVersionFamilies` fail |
 | 5: array literal and list spellings of b88a465 | scratch migration with `= ANY('{1.4.0}'::text[])` | held: reported (gap 1.5.0) |
+| 7: benchmarks | `nice gt test -run '^$' -bench BodyBudget -benchtime 1s -count 3 -benchmem ./internal/platform/access`, load average 11.7 on 4 cores (other agents running) | held: hold+add+release 102-110 ns/op, 0 B, 0 allocs (document: 59 ns idle); parallel 121-125 ns (document: 188 ns idle, four goroutines on one identity); 64 KiB booked read 2.16-2.51 us with 80 B/op and 2 allocs/op against 1.36-1.60 us plain (document: 1.35 against 0.95 us, "two allocations of 80 bytes"): the same order of magnitude and the same allocations, about 1.7x slower here because of the load; the extra cost per request stays below 1 us |
+| 0: redactor, odd inputs | `redactText` over `""`, `" "`, newlines only, NUL, `\xff`, a lone surrogate, `sk-`, a bare `[REDACTED:`, a marker at the end of a line followed by tail-shaped lines with CRLF and trailing blanks | held: no panic, each result is a fixed point (`TestZZRedactOddInputs`) |
+| 0: redactor, latency | 26 adversarial shapes (one token, key per line, wrapped tails, assignments, `a_` chains, cards, digit pairs, PEM prefixes, cookie pairs, credentials in URLs, Cyrillic and fullwidth look-alikes, invalid UTF-8, hex runs, glued card+key chains) at 16 KiB, 64 KiB, 256 KiB and 1 MiB through `redactText` | held with a cost: linear, worst 49 ms at 16 KiB (the 4,000-rune request limit), 187 ms at 64 KiB, 0.99 s at 256 KiB and 3.65 s at 1 MiB (shape: one key then 150,000 one-word lines; the output is 2.7 times the input), measured on a host with load average 11; see PF-09 |
 
 ## Gate subset
 
