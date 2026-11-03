@@ -573,14 +573,31 @@ const (
 	aiResultBudget   = 6 * time.Second
 )
 
+// aiResultRetriable names the failures of a result exchange that leave nothing behind and that a second try can resolve: the known
+// aborts, and a full admission queue, which refuses the exchange before its transaction starts. Under a burst of other requests the
+// queue was full at the moment the paid answer arrived, the exchange was refused with a bare 503, and the proposal stayed PENDING until
+// the sweep charged its whole reservation (independent edge rehearsal ER-04: 8 of 8 answers lost).
+func aiResultRetriable(err error) bool {
+	return postgres.KnownAbort(err) || errors.Is(err, postgres.ErrAdmissionFull)
+}
+
+// aiResultPause is the wait before the next try: a conflict of rows is over in a few milliseconds, a full queue drains at the speed of
+// the database, so the waits grow, 100 ms to 1.5 s, and the six tries fit the budget.
+func aiResultPause(attempt int, err error) (time.Duration, bool) {
+	if errors.Is(err, postgres.ErrAdmissionFull) {
+		return min(1500*time.Millisecond, 100*time.Millisecond<<(attempt-1)), true
+	}
+	return postgres.ConflictPause(attempt, err)
+}
+
 // aiResultExchange is aiExchangeOnce with that repetition. When the last try still aborts, the answer is lost either way: the
 // request is refused as the conflict it is, audited, instead of a bare 503.
 func (a API) aiResultExchange(ctx context.Context, r *http.Request, action, app string, handle aiHandler) reply {
 	var response reply
-	err := postgres.RetryWithin(ctx, aiResultBudget, aiResultAttempts, func(ctx context.Context) (err error) {
+	err := postgres.RetryPaced(ctx, aiResultBudget, aiResultAttempts, aiResultPause, func(ctx context.Context) (err error) {
 		response, err = a.aiExchangeOnce(ctx, r, action, app, handle)
 		return err
-	}, postgres.KnownAbort)
+	}, aiResultRetriable)
 	if postgres.KnownAbort(err) {
 		response, err = a.aiExchangeOnce(ctx, r, action, app, func(context.Context, postgres.Executor, identity.User, tenant.Access, *audit.Entry) (reply, error) {
 			return aiRejection(409, "ai_conflict", "A concurrent change prevented this request; reload and retry")

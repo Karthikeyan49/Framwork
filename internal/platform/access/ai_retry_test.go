@@ -1,12 +1,16 @@
 package access
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/ai"
+	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -67,5 +71,46 @@ func TestAIReplyRetryingLeavesKnownAbortsToTheRetryLoop(t *testing.T) {
 	unknown := errors.New("transport lost")
 	if _, err := aiReplyRetrying(r, unknown); err != unknown {
 		t.Errorf("an unknown error became %v", err)
+	}
+}
+
+// ER-04: the result exchange of a paid answer is repeated after a known abort and after a full admission queue, and nothing else.
+func TestAIResultExchangeRepeatsOnlyWhatLeavesNothingBehind(t *testing.T) {
+	for name, err := range map[string]error{
+		"serialization failure": &pgconn.PgError{Code: "40001"},
+		"deadlock":              &pgconn.PgError{Code: "40P01"},
+		"full queue":            postgres.ErrAdmissionFull,
+		"full queue, wrapped":   fmt.Errorf("exchange: %w", postgres.ErrAdmissionFull),
+	} {
+		if !aiResultRetriable(err) {
+			t.Errorf("%s is not repeated", name)
+		}
+	}
+	for name, err := range map[string]error{
+		"transport lost":      errors.New("transport lost"),
+		"unknown outcome":     context.DeadlineExceeded,
+		"another unique":      &pgconn.PgError{Code: "23505"},
+		"a rejection":         &requestRejection{response: denied(403, "forbidden", "Access is denied")},
+		"permission denied":   &pgconn.PgError{Code: "42501"},
+		"no error at all (!)": nil,
+	} {
+		if aiResultRetriable(err) {
+			t.Errorf("%s is repeated", name)
+		}
+	}
+	// A conflict is over in milliseconds; a queue drains in seconds, and the six tries span about three of the six allowed.
+	if d, ok := aiResultPause(1, &pgconn.PgError{Code: "40001"}); !ok || d < 5*time.Millisecond || d > 25*time.Millisecond {
+		t.Errorf("pause after a conflict: %v %v", d, ok)
+	}
+	var total time.Duration
+	for attempt := 1; attempt < aiResultAttempts; attempt++ {
+		d, ok := aiResultPause(attempt, postgres.ErrAdmissionFull)
+		if !ok || d < 100*time.Millisecond || d > 1500*time.Millisecond {
+			t.Errorf("pause %d after a full queue: %v %v", attempt, d, ok)
+		}
+		total += d
+	}
+	if total < 2*time.Second || total > aiResultBudget {
+		t.Errorf("the pauses of a full queue add up to %v; they must span seconds and fit the %v budget", total, aiResultBudget)
 	}
 }

@@ -46,6 +46,24 @@ func RetryLocalWhen(parent context.Context, run func(context.Context) error, ret
 // transaction, resolves live authorization and has no external side effect, and the predicate must be as narrow as KnownAbort.
 // The budget bounds the waiting, not an attempt that is running: its context is the one the attempt is given.
 func RetryWithin(parent context.Context, budget time.Duration, attempts int, run func(context.Context) error, retriable func(error) bool) error {
+	return RetryPaced(parent, budget, attempts, ConflictPause, run, retriable)
+}
+
+// ConflictPause is the pause of RetryWithin: 5 to 25 ms, which is as long as a conflict of rows needs, because the writer that won the
+// round has finished by then. It reports false when no random pause can be drawn, and the repetition ends with the error it has.
+func ConflictPause(int, error) (time.Duration, bool) {
+	n, err := rand.Int(rand.Reader, big.NewInt(21))
+	if err != nil {
+		return 0, false
+	}
+	return time.Duration(5+n.Int64()) * time.Millisecond, true
+}
+
+// RetryPaced is RetryWithin with the caller's pause before the next try, for a failure that a few milliseconds do not resolve: a full
+// admission queue drains at the speed of the database, so the tries of a paid answer that waits for a slot must be spaced over
+// seconds, not over a few dozen milliseconds (independent edge rehearsal ER-04). pause receives the number of the try that just failed
+// and its error. The rules, the budget and the predicate are those of RetryWithin.
+func RetryPaced(parent context.Context, budget time.Duration, attempts int, pause func(attempt int, err error) (time.Duration, bool), run func(context.Context) error, retriable func(error) bool) error {
 	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
 	for attempt := 1; ; attempt++ {
@@ -53,11 +71,11 @@ func RetryWithin(parent context.Context, budget time.Duration, attempts int, run
 		if !retriable(err) || attempt >= attempts || ctx.Err() != nil {
 			return err
 		}
-		n, e := rand.Int(rand.Reader, big.NewInt(21))
-		if e != nil {
+		wait, ok := pause(attempt, err)
+		if !ok {
 			return err
 		}
-		timer := time.NewTimer(time.Duration(5+n.Int64()) * time.Millisecond)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
