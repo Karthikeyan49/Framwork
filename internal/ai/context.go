@@ -159,6 +159,7 @@ func (g *gateway) BuildContext(in ContextInput) (Context, error) {
 
 	patch := in.Task == TaskApplicationPatch
 	rows := make([]definitionRow, 0, len(in.Draft.Definitions))
+	bodies := 0
 	for _, d := range in.Draft.Definitions {
 		row := definitionRow{ID: redactString(clip(d.ID, maxRowTextRunes)), Kind: redactString(clip(d.Kind, 32)), Label: redactString(clip(d.Label, maxLabelRunes))}
 		if patch {
@@ -171,6 +172,12 @@ func (g *gateway) BuildContext(in ContextInput) (Context, error) {
 					return Context{}, fmt.Errorf("ai: a definition cannot be encoded: %w", rerr)
 				}
 				row.Definition = body
+				// The bundle holds every body, so the bundle is over the cap as soon as the bodies are: the refusal is certain, and
+				// the definitions that remain are not redacted for it. A draft may hold 256 KiB, and redaction costs a few
+				// microseconds a byte (independent review PF-11).
+				if bodies += len(body); bodies > MaxContextBytes {
+					return Context{}, ErrContextTooLarge
+				}
 			}
 		}
 		rows = append(rows, row)

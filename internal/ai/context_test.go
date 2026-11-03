@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/intent"
@@ -315,6 +316,60 @@ func TestBuildContextTooLargeIsRefusedNeverTruncated(t *testing.T) {
 	}
 	if _, err := NewGateway(NewScriptedProvider(), Options{}).BuildContext(ctxInput(t, doc, "Rename the contact entity.")); !errors.Is(err, ErrContextTooLarge) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// bulkDraft is a draft of n entities whose labels are text that the redactor works on (a secret assignment repeated).
+func bulkDraft(t *testing.T, n int) metadata.Document {
+	t.Helper()
+	doc := fixtureDoc(t, exWorkflow)
+	for i := 0; i < n; i++ {
+		d := doc.Definitions[0]
+		d.ID = fmt.Sprintf("entity.bulk%03d", i)
+		d.Label = strings.Repeat("password=hunter2xx; ", 20)
+		d.Entity = &metadata.Entity{Fields: []string{}}
+		doc.Definitions = append(doc.Definitions, d)
+	}
+	return doc
+}
+
+// PF-11 (independent post-fix review): a draft of 256 KiB was redacted whole before the 64 KiB limit was checked, so a refused
+// creation cost four times the work of an accepted one, inside the admission slot and the transaction. The work now stops when the
+// bodies pass the cap: the refusal costs no more than a context that just fits.
+func TestBuildContextRefusalCostsNoMoreThanAContextThatFits(t *testing.T) {
+	g := NewGateway(NewScriptedProvider(), Options{})
+	// The largest draft that fits, found by growing it; the refused one is four times as large.
+	n := 10
+	for ; n < 2000; n += 10 {
+		if _, err := g.BuildContext(ctxInput(t, bulkDraft(t, n), "Rename the contact entity.")); err != nil {
+			break
+		}
+	}
+	if n >= 2000 || n < 30 {
+		t.Fatalf("the size at which a draft stops fitting (%d definitions) is not what the test assumes", n)
+	}
+	fits, over := bulkDraft(t, n-10), bulkDraft(t, 4*n)
+	best := func(doc metadata.Document, want error) time.Duration {
+		in := ctxInput(t, doc, "Rename the contact entity.")
+		min := time.Hour
+		for i := 0; i < 5; i++ {
+			start := time.Now()
+			_, err := g.BuildContext(in)
+			if took := time.Since(start); took < min {
+				min = took
+			}
+			if !errors.Is(err, want) && !(want == nil && err == nil) {
+				t.Fatalf("err %v, want %v", err, want)
+			}
+		}
+		return min
+	}
+	cost, refused := best(fits, nil), best(over, ErrContextTooLarge)
+	t.Logf("a context that fits: %s; a draft four times as large, refused: %s", cost, refused)
+	// Stopping at the cap costs about the same as a context that fits (1.1 times on a quiet host); redacting the whole draft costs four
+	// times as much. Three times is between them with room for a loaded host.
+	if refused > 3*cost {
+		t.Fatalf("the refusal of an oversize draft took %s, more than three times the %s of a context that fits: the whole draft is redacted before the cap is checked", refused, cost)
 	}
 }
 
