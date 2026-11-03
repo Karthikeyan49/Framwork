@@ -401,3 +401,144 @@ func TestRedactionOfQuotedKeysAndCompoundNames(t *testing.T) {
 		}
 	}
 }
+
+// survives reports whether twelve consecutive characters of secret are still in text.
+func survives(text, secret string) bool {
+	for i := 0; i+12 <= len(secret); i++ {
+		if strings.Contains(text, secret[i:i+12]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hexOf(label string, n int) string { return fmt.Sprintf("%x", material(label, (n+1)/2))[:n] }
+
+// Independent red team RT-03: a key that a line break cut before its first part was long enough for any rule. The head is the end of a
+// line of prose, the rest stands alone on the next line. The first lines of 2 to 30 characters of the key are tried at four widths.
+func TestRedactionOfAKeyWrappedAfterAFewCharacters(t *testing.T) {
+	keys := map[string]string{
+		"ghp":       "ghp_" + alnum("wrap/ghp", 36),
+		"sk":        "sk-" + alnum("wrap/sk", 48),
+		"akia":      "AKIA" + strings.ToUpper(alnum("wrap/akia", 16)),
+		"sk_live":   "sk_live_" + alnum("wrap/live", 24),
+		"base64-40": b64("wrap/secret", 30),
+	}
+	for name, key := range keys {
+		for _, width := range []int{60, 64, 72, 76} {
+			for head := 2; head <= 30 && head < len(key)-6; head += 2 {
+				prose := strings.Repeat("Please use this key, it is for the nightly import and nothing else. ", 2)
+				prose = prose[:width-head-1] + " "
+				text := prose + key[:head] + "\n" + key[head:] + "\nthanks"
+				out, n := redactText(text)
+				if n == 0 || survives(out, key) || !strings.HasSuffix(out, "\nthanks") {
+					t.Errorf("%s cut after %d characters at width %d: %d replaced, %q", name, head, width, n, strings.ReplaceAll(out, key[head:], "<TAIL>"))
+				}
+			}
+		}
+	}
+	// A wrap that is not a key is left alone: two plain words, and a line of prose followed by a camelCase word.
+	for _, keep := range []string{
+		"Please read the section on approval\nworkflows before you continue.",
+		"The order is held until the manager has looked at the request and signed off on\nOrderApprovalThreshold",
+	} {
+		if out, n := redactText(keep); out != keep || n != 0 {
+			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+}
+
+// Independent red team RT-04: vendor token formats that no rule named, in the four carriers a paste comes in.
+func TestRedactionOfVendorTokenFormats(t *testing.T) {
+	digits := func(label string, n int) string {
+		out := make([]byte, n)
+		for i, c := range material(label, n) {
+			out[i] = '0' + c%10
+		}
+		out[0] = '1'
+		return string(out)
+	}
+	for name, token := range map[string]string{
+		"google oauth client secret": "GOCSPX-" + alnum("v/gocspx", 28),
+		"docker hub":                 "dckr_pat_" + alnum("v/docker", 27),
+		"shopify access":             "shpat_" + hexOf("v/shpat", 32),
+		"shopify shared secret":      "shpss_" + hexOf("v/shpss", 32),
+		"vault":                      "hvs." + alnum("v/vault", 24),
+		"gitlab runner":              "glrt-" + alnum("v/glrt", 20),
+		"gitlab deploy":              "gldt-" + alnum("v/gldt", 20),
+		"square":                     "sq0atp-" + alnum("v/square", 22),
+		"new relic":                  "NRAK-" + strings.ToUpper(alnum("v/nrak", 27)),
+		"telegram bot":               digits("v/tg", 10) + ":A" + alnum("v/tgb", 34),
+		"discord bot":                "M" + alnum("v/d1", 23) + "." + alnum("v/d2", 6) + "." + alnum("v/d3", 27),
+		"azure ad secret":            alnum("v/az1", 3) + "8Q~" + alnum("v/az2", 34),
+	} {
+		for carrier, text := range map[string]string{
+			"bare":       token,
+			"sentence":   "Use " + token + " for the build.",
+			"json value": `{"credential": "` + token + `"}`,
+			"assignment": "VALUE=" + token,
+		} {
+			if out, n := redactText(text); n == 0 || survives(out, token) {
+				t.Errorf("%s as %s survives: %s", name, carrier, strings.ReplaceAll(out, token, "<TOKEN>"))
+			}
+		}
+	}
+}
+
+// Independent red team RT-08: the password is an argument of a command or a literal after the word, not NAME=value.
+func TestRedactionOfPasswordsGivenAsArguments(t *testing.T) {
+	s := alnum("arg/secret", 12)
+	for name, text := range map[string]string{
+		"curl -u":                 "curl -u admin:" + s + " https://api.example.com/v1/orders",
+		"curl --user quoted":      `curl --user "admin:` + s + `" https://api.example.com/v1/orders`,
+		"mysql -p":                "mysql -uroot -p" + s + " orders",
+		"mysqldump -p":            "mysqldump -h db -u app -p" + s + " orders > orders.sql",
+		"sshpass quoted":          "sshpass -p '" + s + "' ssh deploy@host",
+		"sshpass":                 "sshpass -p " + s + " ssh deploy@host",
+		"docker login -p":         "docker login -u bob -p " + s + " registry.example.com",
+		"docker login --password": "docker login registry.example.com --password " + s,
+		"create user":             "CREATE USER bob WITH PASSWORD '" + s + "';",
+		"alter role":              "ALTER ROLE app WITH LOGIN PASSWORD '" + s + "';",
+		"identified by quoted":    "CREATE USER 'bob'@'%' IDENTIFIED BY '" + s + "';",
+		"identified by":           "GRANT ALL ON db.* TO bob IDENTIFIED BY " + s + ";",
+		"netrc":                   "machine api.example.com login bob password " + s,
+		"redis-cli -a":            "redis-cli -h cache -a " + s + " ping",
+		"mongo -p":                "mongo --host db -u admin -p " + s,
+		"wget":                    "wget --http-password " + s + " https://files.example.com/a.zip",
+		"zip -P":                  "zip -P " + s + " backup.zip data/",
+	} {
+		if out, n := redactText(text); n == 0 || strings.Contains(out, s) {
+			t.Errorf("%s: the password survives: %s", name, strings.ReplaceAll(out, s, "<SECRET>"))
+		}
+	}
+	// Commands that mention the options without a password stay as written.
+	for _, keep := range []string{
+		"curl -u admin https://api.example.com/v1/orders",
+		"mysql -u root orders",
+		"ssh -p 2222 deploy@host",
+		"docker login registry.example.com",
+		"Use the password option of the form to change it.",
+		"zip -r backup.zip data/",
+	} {
+		if out, n := redactText(keep); out != keep || n != 0 {
+			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+}
+
+// Independent red team RT-05: a sentence that says what a token or password is keeps its subject, and one that hands one over does not.
+func TestRedactionKeepsSentencesAboutCredentialFormats(t *testing.T) {
+	for _, keep := range []string{
+		"The token is 64-character hex.", "The secret is 256-bit AES.", "The token is HS256-signed.", "The token is OAuth2-compliant.",
+		"The password is SHA-256 hashed with a salt.", "The credentials are SHA-256 hashed.", "The password was 2FA-verified.",
+	} {
+		if out, n := redactText(keep); out != keep || n != 0 {
+			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+	for _, give := range []string{"The password is hunter2xyz.", "the admin password is Summer-2026", "The token is " + alnum("prose/token", 20) + "."} {
+		if out, n := redactText(give); n == 0 || out == give {
+			t.Errorf("%q was kept", give)
+		}
+	}
+}

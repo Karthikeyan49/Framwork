@@ -47,7 +47,7 @@ var redactRules = []redactRule{
 	{"pem", regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)`), nil},
 	{"url_credentials", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/?#@"'<>\\]*@[^\s"'<>\\]+`), nil},
 	{"jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*`), nil},
-	{"api_key", regexp.MustCompile(`\b(?:(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|api_org_[A-Za-z0-9]{30,}|whsec_[A-Za-z0-9]{16,})`), nil},
+	{"api_key", regexp.MustCompile(`\b(?:(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|api_org_[A-Za-z0-9]{30,}|whsec_[A-Za-z0-9]{16,}|GOCSPX-[A-Za-z0-9_-]{24,}|dckr_pat_[A-Za-z0-9_-]{20,}|shp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32}|hvs\.[A-Za-z0-9_-]{20,}|gl(?:rt|dt|ptt|ft|imt|oas|soat|cbt)-[A-Za-z0-9_-]{16,}|sq0(?:atp|csp)-[A-Za-z0-9_-]{22,}|NRAK-[A-Z0-9]{27}|\d{8,10}:A[A-Za-z0-9_-]{34}|[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}|[A-Za-z0-9_.-]{3}\dQ~[A-Za-z0-9_.~-]{31,34})`), nil},
 	{"aws_key_id", regexp.MustCompile(`\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[0-9A-Z]{16}\b`), nil},
 	{"bearer", regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}`), nil},
 	{"authorization", regexp.MustCompile(`(?i)\bauthorization\s*[:=]\s*(?:bearer\s+|basic\s+|token\s+)?[^\s,;"']{8,}`), nil},
@@ -60,6 +60,9 @@ var redactRules = []redactRule{
 	{"cookie", regexp.MustCompile(`(?i)\b(?:set-)?cookie[ \t]*:[^\r\n]*?[A-Za-z0-9_.%-]+=[^\s;]{8,}[^\r\n]*`), nil},
 	// A payment card number: 13 to 19 digits, alone or in groups, with a known issuer prefix and a valid check digit.
 	{"card", regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`), cardNumber},
+	// A password given as an argument or as a quoted literal after the word: curl -u user:SECRET, mysql -pSECRET, sshpass -p SECRET, docker login -p SECRET,
+	// IDENTIFIED BY SECRET, a .netrc "password SECRET", SQL PASSWORD 'SECRET'.
+	{"password_arg", regexp.MustCompile(`(?i)(?:(?:\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?[^\s:"']+:|\b(?:sshpass|redis-cli|mongo(?:sh)?|docker\s+login|zip)\b[^\n]*?\s(?:-p|-a|--password)\s*|\bwget\b[^\n]*?--(?:http-|ftp-)?password[\s=]+|\bmysql(?:dump|admin)?\b[^\n]*?\s-p|\bidentified\s+by\s+|\bmachine\b[^\n]*?\bpassword\s+)["']?[^\s"';]{4,}["']?|\bpassword\s+["'][^"'\n]{4,200}["'])`), nil},
 }
 
 // assignment finds "name = value" pairs with a secret-like name, also at the end of a longer variable name (DB_PASSWORD, PGPASSWORD,
@@ -74,6 +77,11 @@ var (
 	longHex    = regexp.MustCompile(`\b[0-9A-Fa-f]{32,}\b`)
 	longBase64 = regexp.MustCompile(`[A-Za-z0-9+/_-]{40,}={0,2}`)
 )
+
+// proseSpecification matches a value that says what a credential is rather than being one: a number or a name followed by a plain
+// lower-case word ("64-character", "HS256-signed", "OAuth2-compliant", "256-bit") or an algorithm with its size ("SHA-256", "AES-256"). "The
+// token is 64-character hex." keeps its subject (independent red team RT-05); "the password is Summer-2026" does not match and is redacted.
+var proseSpecification = regexp.MustCompile(`^(?:[A-Za-z0-9]+-)+[a-z]{3,}$|^[A-Za-z]{2,4}-[0-9]+$`)
 
 func assignmentReplace(m string) string {
 	parts := assignment.FindStringSubmatch(m)
@@ -93,7 +101,7 @@ func assignmentReplace(m string) string {
 	default:
 		// Prose: the end of the sentence is not part of the value, and "." and "-" are as common in words as in passwords.
 		trailing := value[len(strings.TrimRight(value, ".,;:!?)]}")):]
-		if value = value[:len(value)-len(trailing)]; len(value) < 6 || !strings.ContainsAny(value, "0123456789@!#$%^&*+/=") {
+		if value = value[:len(value)-len(trailing)]; len(value) < 6 || !strings.ContainsAny(value, "0123456789@!#$%^&*+/=") || proseSpecification.MatchString(value) {
 			return m
 		}
 		return marker("secret") + trailing
@@ -335,7 +343,75 @@ func redactPlain(s string) (string, int) {
 		}
 		return out
 	})
-	return redactWrappedTails(s, &n), n
+	return redactWrappedTails(redactSplitKeys(s, &n), &n), n
+}
+
+// keyPart reports whether w is made of the characters of a key and is not empty.
+func keyPart(w string) bool {
+	return w != "" && strings.IndexFunc(w, func(c rune) bool {
+		return !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || strings.ContainsRune("+/_=-.", c))
+	}) < 0
+}
+
+// wholeToken returns the class of w when all of it is one secret: a prefix rule, a hex run or, for a wrapped paragraph, a long entropic run.
+func wholeToken(w string, wrapped bool) (string, bool) {
+	var n int
+	out := w
+	for _, r := range redactRules {
+		out = r.apply(out, &n)
+	}
+	if class, ok := strings.CutPrefix(out, redactionPrefix); ok && n > 0 && strings.HasSuffix(class, "]") && !strings.ContainsAny(class[:len(class)-1], "[]") {
+		return class[:len(class)-1], true
+	}
+	switch {
+	case longHex.FindString(w) == w:
+		return "hex", true
+	case wrapped && longBase64.FindString(w) == w && base64Replace(w) != w:
+		return "token", true
+	}
+	return "", false
+}
+
+// redactSplitKeys redacts a key that a line break cut before its first part was long enough for its rule (independent red team RT-03):
+// the last word of a line plus the next lines that hold one key-shaped word each (three at most) is read as one word. A run without a
+// prefix needs a first line of 48 or more columns, a wrapped paragraph. It runs before redactWrappedTails, so a longer wrap is continued
+// by that rule.
+func redactSplitKeys(s string, n *int) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	changed := false
+	for i := 0; i+1 < len(lines); i++ {
+		head := strings.TrimRight(lines[i], " \t\r")
+		cut := strings.LastIndexAny(head, " \t") + 1
+		if len(head)-cut < 2 || !keyPart(head[cut:]) {
+			continue
+		}
+		joined := head[cut:]
+		for j := i + 1; j < len(lines) && j <= i+3; j++ {
+			tail := strings.TrimSpace(lines[j])
+			if !keyPart(tail) {
+				break
+			}
+			if joined += tail; len(joined) < 19 {
+				continue
+			}
+			if class, ok := wholeToken(joined, len(head) >= 48); ok {
+				lines[i] = head[:cut] + marker(class)
+				for k := i + 1; k <= j; k++ {
+					lines[k] = lines[k][:len(lines[k])-len(strings.TrimLeft(lines[k], " \t"))] + marker(class)
+				}
+				*n += j - i + 1
+				changed, i = true, j
+				break
+			}
+		}
+	}
+	if !changed {
+		return s
+	}
+	return strings.Join(lines, "\n")
 }
 
 // redactStructural is the part of the redactor that also applies to identifier-shaped
