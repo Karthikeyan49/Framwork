@@ -27,13 +27,13 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1b | Target 1 - M13 promotion package (counting, floors, staleness, runtime components, restore gate) | 36 | 19 | 3 | 65% (36/55) |
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 8 | 2 | 0 | 80% (8/10) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 17 | 10 | 3 | 63% (17/27) |
 | 3b | Target 3 - M14 route and SQL (internal/platform/access/ai.go, migration 00089) | 0 | 0 | 0 | not reached |
-| 4 | Target 4 - platform front door and traffic | 17 | 9 | 1 | 65% (17/26) |
-| 5 | Target 5 - M10 tools gateway and M11 sandbox | 0 | 0 | 0 | not reached |
-| all | all targets reached | 109 | 64 | 10 | 63% (109/173) |
+| 4 | Target 4 - platform front door and traffic | 18 | 9 | 1 | 67% (18/27) |
+| 5 | Target 5 - M10 tools gateway and M11 sandbox | 7 | 5 | 1 | 58% (7/12) |
+| all | all targets reached | 126 | 77 | 14 | 62% (126/203) |
 
-Discarded (did not compile or the edit did not apply, redone or dropped): B09, TR07.
+Discarded (did not compile or the edit did not apply, redone or dropped): B09, A19, G02, G03, AC17, AC18, AC21, AC25.
 
 ## Findings
 
@@ -144,6 +144,70 @@ func TestGateWithFewerRolesThanRequiredFails(t *testing.T) {
 	r := mustVerify(t, input(orderProgram(t, orderOptions{gate: true, roles: []string{"admin"}}), set, spec))
 	if r.Outcome != Fail || !hasFinding(r, CodeGateRolesMismatch, "") {
 		t.Fatalf("a gate with only the admin role passed for admin+owner: %s %+v", r.Outcome, r.Findings)
+	}
+}
+```
+
+### MA-04 (LOW) - the loop starts a provider call whose worst case the budget does not cover (mutant A12)
+
+`internal/ai/repair.go:199`: `if remaining < estimateTokens(len(reqJSON))+int64(outTokens)` refuses the next attempt before any provider call when the tokens left cannot cover the request plus the output the call may produce. Weakening it to `remaining < estimateTokens(len(reqJSON))` passes the whole `internal/ai` package: the only boundary test (`TestRunPatchBudgets`, "a call larger than the remaining budget stops the loop", `gateway_test.go:303-317`) leaves 100 tokens of slack, so it cannot tell the two apart. What is unprotected: one attempt can overrun the reservation that admission made, by up to the output ceiling (charged afterwards, capped at `2*outTokens+1024`), so the daily budget accounting is exceeded.
+Killing test, verified (passes on the original; fails on A12: `status ... 1 provider calls with a budget one token short of the reservation`):
+
+```go
+package ai
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestNoCallWithoutTheOutputReservation(t *testing.T) {
+	r := newRig(t, Options{})
+	r.prov.Push(ScriptStep{Payload: r.broken("G0"), Usage: usage(1200, 300)})
+	b := okBudget()
+	probe := r.patchInput(b)
+	req, _ := r.g.(*gateway).request(runSpec{task: TaskApplicationPatch, context: probe.Context, schema: mustSchema(t, r.doc)}, DefaultTemplates(), 1, b.MaxOutputTokens, nil)
+	raw, _ := json.Marshal(req)
+	b.TokensRemaining = estimateTokens(len(raw)) + int64(b.MaxOutputTokens) - 1 // one token short of what one attempt may cost
+	run := r.run(b)
+	if run.Status != RunBudgetExceeded || r.prov.Calls() != 0 {
+		t.Fatalf("status %s, %d provider calls with a budget one token short of the reservation", run.Status, r.prov.Calls())
+	}
+}
+```
+
+### MA-05 (LOW) - a nearly full admission bucket can refill past its burst (mutant TR06)
+
+`internal/platform/traffic/gate.go:58`: `b.credit = min(ceiling, b.credit+int64(elapsed)*int64(rate))`. Without the `min` ceiling every traffic test still passes, and a bucket that had 19 of 20 tokens and refills 15 holds 34: the burst that `Limits.Validate` bounds to twice the rate is exceeded by up to 2x between two requests. Killing test, verified (passes on the original; fails on TR06: more than 20 requests admitted (34 by the arithmetic)):
+
+```go
+package traffic
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+func TestRefillNeverExceedsTheBurst(t *testing.T) {
+	now := time.Unix(1000, 0)
+	g, err := New(Limits{PeerRate: 10, PeerBurst: 20, GlobalRate: 100, GlobalBurst: 200}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, remote := context.Background(), "192.0.2.1:4000"
+	if !g.Peer(ctx, remote).Allowed() { // 19 tokens left
+		t.Fatal("the first request was refused")
+	}
+	now = now.Add(1500 * time.Millisecond) // +15 tokens: 34 without the ceiling, 20 with it
+	allowed := 0
+	for i := 0; i < 40; i++ {
+		if g.Peer(ctx, remote).Allowed() {
+			allowed++
+		}
+	}
+	if allowed != 20 {
+		t.Fatalf("%d requests were admitted in one burst, the burst is 20", allowed)
 	}
 }
 ```
@@ -310,10 +374,10 @@ func TestGateWithFewerRolesThanRequiredFails(t *testing.T) {
 | A04 | internal/ai/repair.go:78 | chargeUsage: output not raised to the byte estimate | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestChargeUsageIsCappedNearTheSizeOfTheRequest |
 | A05 | internal/ai/repair.go:221 | cancel charge: the reserved output is not charged (M14R-02) | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestACanceledCallIsChargedTheReservedOutput |
 | A06 | internal/ai/repair.go:233 | timeout charge: the input estimate is not charged | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestAnAdapterThatIgnoresItsContextCannotHoldTheRun |
-| A07 | internal/ai/repair.go:235 | provider error: the run budget is not reduced | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| A07 | internal/ai/repair.go:235 | provider error: the run budget is not reduced | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: after a provider error the input estimate is not taken off the run budget; no test; cost control only |
 | A08 | internal/ai/repair.go:251 | answer: the output is not taken off the run budget | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | KILLED | TestPropertiesOfEveryRun (widened) |
 | A09 | internal/ai/repair.go:115 | abandoned bound: off by one | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestAbandonedProviderCallsAreBounded |
-| A10 | internal/ai/repair.go:152 | abandoned bound 16 -> 17 | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| A10 | internal/ai/repair.go:152 | abandoned bound 16 -> 17 | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: the abandoned-call bound test loops to the constant itself |
 | V43 | internal/verification/verifier.go:688 | migration: TRANSFORM allowed under a COMPATIBLE maximum | go test ./internal/verification (whole package) | KILLED | TestMigrationRequirements |
 | V44 | internal/verification/verifier.go:602 | gate: reaching completion is not a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
 | V45 | internal/verification/verifier.go:604 | gate: a failed end counts as a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
@@ -329,19 +393,92 @@ func TestGateWithFewerRolesThanRequiredFails(t *testing.T) {
 | F09 | internal/platform/access/bodybudget.go:81 | Release: a second release gives the bytes back twice | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | EQUIVALENT | Release zeroes h.n, so a second release subtracts 0 whatever the guard says; the released flag is still tested through F07 |
 | F10 | internal/platform/access/bodybudget.go:130 | bookedBody: the bytes that did not fit are reported to the caller | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBookedBodyStopsTheReadThatDoesNotFit |
 | F11 | internal/platform/access/bodybudget.go:33 | default identity share below the largest admitted body | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | LOW: a default identity share below 1 MiB would refuse honest uploads; no test pins the default |
-| TR01 | internal/platform/traffic/gate.go:29 | Validate: a peer rate above the global rate is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
-| TR02 | internal/platform/traffic/gate.go:29 | Validate: a peer burst above the global burst is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
-| TR03 | internal/platform/traffic/gate.go:29 | Validate: peer rate ceiling 10000 -> 100000 | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
-| TR04 | internal/platform/traffic/gate.go:29 | Validate: burst may be three times the rate | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
-| TR05 | internal/platform/traffic/gate.go:62 | bucket: a credit of exactly one token is not enough | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
-| TR06 | internal/platform/traffic/gate.go:58 | bucket: refill without the burst ceiling | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR01 | internal/platform/traffic/gate.go:29 | Validate: a peer rate above the global rate is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: configuration validation relation not tested |
+| TR02 | internal/platform/traffic/gate.go:29 | Validate: a peer burst above the global burst is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: configuration validation relation not tested |
+| TR03 | internal/platform/traffic/gate.go:29 | Validate: peer rate ceiling 10000 -> 100000 | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: configuration validation bound not tested |
+| TR04 | internal/platform/traffic/gate.go:29 | Validate: burst may be three times the rate | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: configuration validation bound not tested |
+| TR05 | internal/platform/traffic/gate.go:62 | bucket: a credit of exactly one token is not enough | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: a credit of exactly one token is refused; no test lands on it |
+| TR06 | internal/platform/traffic/gate.go:58 | bucket: refill without the burst ceiling | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW (MA-05): the refill can exceed the burst by up to 2x |
+| TR07 | internal/platform/traffic/gate.go:182 | Peer: the global bucket is never consumed | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
 | TR08 | internal/platform/traffic/gate.go:171 | Peer: the global bucket is never checked | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
 | TR09 | internal/platform/traffic/gate.go:100 | pool: one key above the bound | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
 | TR10 | internal/platform/traffic/gate.go:197 | Invalid: no global bound on invalid credentials | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
 | TR11 | internal/platform/traffic/gate.go:149 | decide: a clock that goes backwards is used as is | go test ./internal/platform/traffic (whole package) | KILLED | TestRefillFractionalCreditRetryAndClockRegression |
 | TR12 | internal/platform/traffic/gate.go:210 | Subject: no length prefix (issuer, subject) pairs can collide | go test ./internal/platform/traffic (whole package) | KILLED | TestSubjectKeyIsSignedIdentityTupleAndNotPeerOrConcatenation |
 | TR13 | internal/platform/traffic/gate.go:142 | peerKey: IPv4-mapped IPv6 addresses get their own bucket | go test ./internal/platform/traffic (whole package) | KILLED | TestRefillFractionalCreditRetryAndClockRegression |
-| TR14 | internal/platform/traffic/gate.go:142 | peerKey: IPv6 zones multiply the buckets of one host | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR14 | internal/platform/traffic/gate.go:142 | peerKey: IPv6 zones multiply the buckets of one host | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: IPv6 zones come from the server-side connection, not from the client |
 | TR15 | internal/platform/traffic/gate.go:42 | RetrySeconds: rounds down to zero | go test ./internal/platform/traffic (whole package) | KILLED | TestRefillFractionalCreditRetryAndClockRegression |
 | TR16 | internal/platform/traffic/gate.go:194 | Invalid: no per-peer bound on invalid credentials | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
 | TR17 | internal/platform/traffic/gate.go:214 | Subject: the key keeps one byte of the digest | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
+| A11 | internal/ai/repair.go:131 | abandoned calls are never uncounted | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestAnAdapterThatIgnoresItsContextCannotHoldTheRun |
+| A12 | internal/ai/repair.go:199 | reservation check ignores the output | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW (MA-04): the loop calls the provider with a budget that does not cover the reserved output |
+| A13 | internal/ai/repair.go:185 | an exhausted budget (0) may still call the provider | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | EQUIVALENT | remaining == 0 is refused by the next check (remaining < estimate + output), which is positive |
+| TR08b | internal/platform/traffic/gate.go:182 | Peer: the peer bucket is never consumed | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
+| A14 | internal/ai/repair.go:180 | attempt bound off by one | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestRunPatchNeedsHumanAtTheAttemptLimit |
+| A15 | internal/ai/repair.go:159 | configured attempts may exceed the ceiling | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestRunPatchBudgets |
+| A16 | internal/ai/repair.go:167 | output token ceiling dropped | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: the output-token ceiling is enforced a second time by ServiceLimits.Effective |
+| A17 | internal/ai/repair.go:171 | wall clock ceiling dropped | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: the wall-clock ceiling is enforced a second time by ServiceLimits.Effective (TestEffectiveWallClock) |
+| A18 | internal/ai/repair.go:258 | output size bound is exclusive | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: the output size bound is exclusive at exactly MaxOutputBytes; no boundary test |
+| A20 | internal/ai/repair.go:53 | estimateTokens rounds down | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: estimateTokens rounds down; every test uses multiples of four bytes |
+| A21 | internal/ai/repair.go:215 | caller cancellation not charged | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestACanceledCallIsChargedTheReservedOutput |
+| A22 | internal/ai/repair.go:282 | a terminal verdict still gets another model call | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestRunPatchInfrastructureAndCallerErrors |
+| A23 | internal/ai/repair.go:301 | diagnostics bound off by one | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | KILLED | TestAdversarialCorpus (widened) |
+| TL01 | internal/tools/catalog.go:276 | Lookup: the pinned hash is not compared (a changed tool replaces a pinned one) | go test ./internal/tools (whole package) | KILLED | TestLoadCatalogAcceptsValidDefinitions |
+| TL03 | internal/tools/catalog.go:236 | NewCatalog: a duplicate ref@version silently replaces the first | go test ./internal/tools (whole package) | KILLED | TestNewCatalogRejectsUnsafeDefinitions |
+| TL04 | internal/tools/catalog.go:225 | NewCatalog: no size bound | go test ./internal/tools (whole package) | SURVIVED | LOW: the catalog size bound has no test at the bound |
+| TL05 | internal/tools/catalog.go:255 | NewCatalog: a sandbox may use another tool's production credential | go test ./internal/tools (whole package) | KILLED | TestSandboxMayNotUseAnotherToolsProductionHostOrCredential |
+| TL06 | internal/tools/catalog.go:184 | AllowsTenant: a tenant id prefix matches | go test ./internal/tools (whole package) | EQUIVALENT | definition tenants must match tenantPattern (a whole tenant id) or be "*", so a prefix match equals equality |
+| SB01 | internal/sandbox/context.go:12 | Validate: a sandbox with production credentials mounted is valid | go test ./internal/sandbox (whole package) | KILLED | TestIsolationAdmission |
+| SB02 | internal/sandbox/context.go:12 | Validate: a sandbox without an id is valid | go test ./internal/sandbox (whole package) | SURVIVED | LOW: legacy 1.0.0 bundle admission only; an empty sandbox id is valid |
+| SB03 | internal/sandbox/context.go:16 | Validate: production data is a sandbox data mode | go test ./internal/sandbox (whole package) | SURVIVED | LOW: legacy 1.0.0 bundle admission only; production data mode accepted |
+| SB04 | internal/sandbox/context.go:21 | Validate: a live tool mode is a sandbox tool mode | go test ./internal/sandbox (whole package) | SURVIVED | LOW: legacy 1.0.0 bundle admission only; the test names one arbitrary bad tool mode |
+| TL07 | internal/tools/catalog.go:582 | asciiKey: upper-case and punctuation keys are admitted | go test ./internal/tools (whole package) | KILLED | TestLoadCatalogRejectsMalformedDocuments |
+| TL08 | internal/tools/catalog.go:611 | strictKeys: duplicate keys are admitted | go test ./internal/tools (whole package) | KILLED | TestLoadCatalogRejectsMalformedDocuments |
+| A24 | internal/ai/repair.go:59 | clampTokens: no upper clamp | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | EQUIVALENT | chargeUsage takes min(..., 2*in+1024) after the clamp, which is far below maxChargeTokens |
+| TL09 | internal/tools/catalog.go:261 | NewCatalog: the catalog hash does not cover the catalog version | go test ./internal/tools (whole package) | SURVIVED | LOW: the catalog hash omits CatalogVersion; the version is covered by the runtime components hash |
+| TL10 | internal/tools/catalog.go:259 | NewCatalog: the catalog hash depends on the order of the definitions | go test ./internal/tools (whole package) | KILLED | TestCatalogHashStableAndOrderIndependent |
+| N01 | internal/tools/netpolicy.go:91 | classifyAddress: IPv4-mapped IPv6 is not unmapped | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
+| N02 | internal/tools/netpolicy.go:95 | classifyAddress: the metadata address list is not consulted | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
+| N03 | internal/tools/netpolicy.go:52 | neverV4: the link-local block is only internal | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
+| N04 | internal/tools/netpolicy.go:52 | neverV4: the Azure WireServer is public | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
+| N05 | internal/tools/netpolicy.go:109 | classifyAddress: ISATAP embedded IPv4 is not examined | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
+| N06 | internal/tools/netpolicy.go:121 | classifyAddress: NAT64 is public whatever it embeds | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
+| A25 | internal/ai/repair.go:57 | clampTokens: negative figures refill the budget | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | EQUIVALENT | chargeUsage takes max(clamp(v), estimate) with estimate >= 0, so a negative figure and 0 give the same charge |
+| N07 | internal/tools/netpolicy.go:149 | embeddedClass: an internal IPv4 inside a translation form is public | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
+| G01 | internal/ai/gateway.go:95 | RunPatch: apply conflicts ignored | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestRunPatchHostileAnswersNeverProduceADocument |
+| N08 | internal/tools/netpolicy.go:165 | DeniedAddress: internal addresses are always allowed | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
+| N09 | internal/tools/netpolicy.go:200 | dialContext: any address may be dialed | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
+| N10 | internal/tools/netpolicy.go:217 | dialContext: only the first resolved answer is validated | go test ./internal/tools (whole package) | KILLED | TestOneDeniedAnswerRefusesTheWholeDestination |
+| N11 | internal/tools/netpolicy.go:210 | dialContext: no bound on the resolved answers | go test ./internal/tools (whole package) | SURVIVED | LOW: the bound on resolved answers is untested |
+| AC01 | internal/platform/access/metadata.go:28 | AcceptsPOST: the AI POST routes are not admitted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: no unit test pins that the AI POST routes are admitted by AcceptsPOST (the comment at ai.go:36 cites an ai_test.go that does not exist); the integration suite would see every AI POST refused |
+| N12 | internal/tools/netpolicy.go:271 | controlContext: the port is not re-validated | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
+| N13 | internal/tools/netpolicy.go:271 | controlContext: the literal address is not re-validated | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
+| G04 | internal/ai/gateway.go:201 | RunRequirements: NEEDS_HUMAN for any last outcome | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| N14 | internal/tools/netpolicy.go:296 | AddressGuard: the denied predicate is not consulted | go test ./internal/tools (whole package) | SURVIVED | see N14b |
+| AC02 | internal/platform/access/ai.go:67 | aiPOST: an unregistered route is admitted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: no unit test pins aiPOST against the registered routes |
+| N15 | internal/tools/netpolicy.go:296 | AddressGuard: any port | go test ./internal/tools (whole package) | SURVIVED | see N15b |
+| N16 | internal/tools/netpolicy.go:90 | classifyAddress: a zoned IPv6 address bypasses the prefix checks | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
+| AC03 | internal/platform/access/ai.go:49 | aiPatterns: reject needs only ai.read | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: no unit test pins the policy action of the apply, confirm, reject and GET routes (aiPatterns, ai.go:42-50); release routes have such a pin (promote_test.go:67-73) |
+| N17 | internal/tools/netpolicy.go:54 | neverV6: only a /64 of the AWS block | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
+| AC04 | internal/platform/access/ai.go:43 | aiPatterns: creating a patch proposal needs only ai.read | go test ./internal/platform/access (whole package) | KILLED | TestAICreateRoutesAreExactlyTheProposeRoutes |
+| AC05 | internal/platform/access/ai.go:47 | aiPatterns: apply needs ai.propose instead of ai.apply | go test ./internal/platform/access (whole package) | KILLED | TestAICreateRoutesAreExactlyTheProposeRoutes |
+| AC06 | internal/platform/access/ai.go:57 | aiCreatePOST: requirement proposals are not repeated after a known abort | go test ./internal/platform/access (whole package) | KILLED | TestAICreateRoutesAreExactlyTheProposeRoutes |
+| G05 | internal/ai/gateway.go:110 | RunPatch: a program the compiler returned invalid is accepted | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| AC07 | internal/platform/access/ai.go:84 | aiCreateBody 32 KiB -> 64 KiB | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the body caps are tested by the integration suite only |
+| AC08 | internal/platform/access/ai.go:87 | aiRejectBody 4 KiB -> 64 KiB | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the body caps are tested by the integration suite only |
+| AC09 | internal/platform/access/ai.go:107 | aiBody: a body of exactly the limit is too large | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: boundary of the body cap |
+| AC10 | internal/platform/access/ai.go:119 | aiBody: unknown keys are admitted | go test ./internal/platform/access (whole package) | SURVIVED |  |
+| AC11 | internal/platform/access/ai.go:124 | aiBody: required keys may be absent | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: required keys of the AI bodies |
+| AC12 | internal/platform/access/ai.go:100 | aiBody: any content type | go test ./internal/platform/access (whole package) | SURVIVED |  |
+| P01 | internal/ai/patch.go:109 | apply: replacing an existing definition of a forbidden kind | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalRefusesToReplaceAnExistingToolUnderAnAllowedId |
+| AC13 | internal/platform/access/ai.go:450 | aiTokenOutlivesTheRun: a token that ends exactly with the run is refused | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: token-expiry boundary is tested by the integration suite (m14r_ai_route_test.go) |
+| AC14 | internal/platform/access/ai.go:450 | aiTokenOutlivesTheRun: any unexpired token is accepted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: token-expiry check is tested by the integration suite (m14r_ai_route_test.go) |
+| AC15 | internal/platform/access/ai.go:407 | aiPropose: expected_revision 0 is valid | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: expected_revision lower bound |
+| AC16 | internal/platform/access/ai.go:518 | aiRun: the result exchange need not be the requester | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the requester check of the result exchange is tested by the integration suite |
+| AC19 | internal/platform/access/promote.go:614 | activateCandidate: the expected generation need not match the candidate base | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side expected generation check (the port repeats it) |
+| P02 | internal/ai/patch.go:115 | apply: a definition carrying a tool payload | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalRefusesEveryNonAllowlistedKind |
+| AC20 | internal/platform/access/promote.go:598 | activateCandidate: generation bound dropped | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side generation bound (the port repeats it) |
+| AC22 | internal/platform/access/promote.go:691 | rollbackRelease: a never-activated target is not refused in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side never-activated check (the port repeats it) |
+| AC23 | internal/platform/access/promote.go:706 | rollbackRelease: no plan is required in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side plan requirement (the port repeats it) |
+| AC24 | internal/platform/access/promote.go:698 | rollbackRelease: a rejected target is not refused in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side rejected-target check (the port repeats it) |
+| P03 | internal/ai/patch.go:118 | apply: definition kind need not match the target | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED |  |
