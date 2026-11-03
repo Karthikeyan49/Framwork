@@ -44,6 +44,27 @@ func TestRuntimeProcessRefusesOperatorCredentials(t *testing.T) {
 	}
 }
 
+// The list is the control: a name removed from it is not refused any more, and the loop above, which runs over the list itself, would
+// not notice (independent post-fix review PF-10). The six names are pinned here as the AGENTS.md rule states them: the database
+// superuser and the migrator, the Redis administrator and the event operator.
+func TestOperatorCredentialListIsPinnedByName(t *testing.T) {
+	want := []string{"MIGRATION_DATABASE_URL", "MIGRATOR_PASSWORD", "POSTGRES_PASSWORD", "REDIS_PASSWORD", "EVENT_OPERATOR_REDIS_URL", "EVENT_OPERATOR_PASSWORD"}
+	if !reflect.DeepEqual(operatorCredentials, want) {
+		t.Fatalf("operator credentials %v, want %v: changing the list changes which processes are refused; update the launcher, AGENTS.md and this test together", operatorCredentials, want)
+	}
+	for _, name := range want {
+		got := func(k string) string {
+			if k == name {
+				return "synthetic-secret-value"
+			}
+			return ""
+		}
+		if held := heldOperatorCredentials(got); !reflect.DeepEqual(held, []string{name}) {
+			t.Errorf("%s alone: held %v", name, held)
+		}
+	}
+}
+
 func TestOperatorCredentialRefusalNamesAndNeverShows(t *testing.T) {
 	var out bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&out, nil))
