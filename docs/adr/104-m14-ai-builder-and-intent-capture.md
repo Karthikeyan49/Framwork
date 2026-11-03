@@ -693,8 +693,10 @@ without the change; the reviewers' own probes were run against the fixed code by
    ([report](../verification/REDACTION_REDTEAM.md), pinned at `11a4ee4`; FAIL for the claim that it catches the accidental pastes of common credentials: five
    MEDIUM, four LOW) was reproduced with values derived at run time. The assignment rule now reads a key that is quoted or subscripted
    (`"password": "..."`, `os.environ["DB_PASSWORD"] = "..."`, `define('DB_PASSWORD', '...')`, RT-01), a name that ends a longer word (`secret_key_base`,
-   `client-secret`, a camel-cased `dbPassword`, RT-02), a name followed by neither `=` nor `:` (`the admin password is ...`, `name', 'value`, RT-08), and keeps
-   a sentence that says what a credential is instead of being one ("The token is 64-character hex.", "HS256-signed", RT-05). A key that a line break cut
+   `client-secret`, a camel-cased `dbPassword`, RT-02), a name followed by neither `=` nor `:` in the comma form of a call (`name', 'value`, RT-01; the connector
+   `the admin password is ...` was in the table before, and RT-05 limited it), and keeps a sentence that says what a credential is instead of being one ("The
+   token is 64-character hex.", "HS256-signed", RT-05; **the first form of that exemption, and of the password rule below, were wrong in two ways that the independent
+   review of the fixes found: item 15 a and b**). A key that a line break cut
    before its first part was long enough for any rule is read across up to three following key-shaped lines (RT-03). The `api_key` rule names ten more vendor
    families (Google OAuth client secrets, Docker Hub tokens, Shopify, HashiCorp Vault, GitLab, Square, New Relic, Telegram bot tokens, Discord bot tokens and
    Azure AD client secrets, RT-04), and a password given as an argument or a quoted literal after the word is redacted (`curl -u user:SECRET`, `mysql -pSECRET`,
@@ -706,18 +708,22 @@ without the change; the reviewers' own probes were run against the fixed code by
 9. **The card rule looks at every window (PF-09, 2026-11-03; extends item 6).** The card rule was one regular expression that takes the longest match from the
    left and a check that refuses it, so "Order 99871 4111 ..." or "... 1111 12/27" (the card after or before another number) returned unchanged. It is now a
    scan over the chains of digit groups (digits, one space or hyphen between groups): from every group that a word boundary precedes, the windows of 13 to 19
-   digits that end at a group are tried, the longest first, and the first with a card network prefix, length and check digit is replaced. Definition and
-   boundaries are those of the old rule; the windows it hid are found. Random digits pass both checks about once in 40 windows of 16 digits and once in 400
-   of 14, so a long list of short numbers separated by single spaces or hyphens can lose a number to the marker (accepted: the cheaper error for a safety net).
-   Evidence: `redact_cards_test.go` (the review's five inputs and seven more; the old rule on the same inputs; numbers that are not cards; 4,000 random texts
-   against an independent definition; linear time on chains of 100,000 groups) and the negative control with the old rule behind it.
+   digits that end at a group are tried, the longest first, and one with a card network prefix, length and check digit is found. Definition and
+   boundaries are those of the old rule; the windows it hid are found. Windows that overlap are one span and are replaced as a whole, so that no digit of any
+   valid window stays (the first form replaced the first window found and consumed it, which left the other groups of a real card visible when a window of
+   chance overlapped it: item 15 c). Random digits pass both checks about once in 38 windows of 16 digits, once in 374 of 14 and about once in 100 across the lengths
+   (measured by the independent review over 2,000,000 windows per length), so a long list of short numbers separated by single spaces or hyphens can lose a number to
+   the marker (accepted: the cheaper error for a safety net). Evidence: `redact_cards_test.go` (the review's five inputs and seven more; the old rule on the same
+   inputs; numbers that are not cards; 10,000 random texts against the exact output of an independent definition; the number of four groups before a card; linear
+   time on chains of 100,000 groups) and the negative controls with the old rule and with the first-window loop behind it.
 
 10. **Asking for a proposal and reading one need `metadata.read` (AO-02, 2026-11-03; extends A6).** A6 composed the writes (`ai.apply` needs `metadata.write`,
     confirm needs `requirements.decide`) and nothing composed the reads, so a stored role that held only `ai.read` read the full definition of every definition
     a proposal changes (403 on the metadata routes, 200 here) and a role with `ai.read` and `ai.propose` had the whole draft sent to the operator's provider and
     returned again in the READY proposal. The two creation routes and the read of one proposal now also require `metadata.read`, evaluated before anything is
     reserved or sent; a refusal is audited as `ai.propose.rejected` or `ai.read.rejected` with the decision id. The list holds hashes and states only and keeps
-    `ai.read` alone. A veto still needs only `ai.apply` and now answers with the summary of the proposal (`Store.Summary`), not its body. The built-in roles hold
+    `ai.read` alone. A veto still needs only `ai.apply` and now answers with the summary of the proposal (`Store.Summary`), not its body; so do apply and confirm,
+    and the header of the new revision or of the new requirement set replaces the document and the set (item 15 d). The built-in roles hold
     `metadata.read` and are unchanged; a custom role built for the AI builder must be granted it. Evidence: `TestM14APIPolicyMatrix` (the list and the body are
     separate columns) and `TestM14APIAskingAndReadingNeedMetadataRead`, both failing without the composition.
 
@@ -728,16 +734,19 @@ without the change; the reviewers' own probes were run against the fixed code by
     fires, and the traffic gate allows 300 requests a second per peer), and `Prepare` still runs inside the transaction. A per-member limit on refused
     creations, or moving `Prepare` out of the transaction, would close it.
 
-12. **The result exchange waits for a full admission queue (ER-04, 2026-11-03; extends A8 and item 3).** The exchange that stores a paid answer takes a slot of the
+12. **The result exchange waits for a full admission queue (ER-04, 2026-11-03; extends A8 and item 4).** The exchange that stores a paid answer takes a slot of the
     same 4 + 128 admission as every other request and was repeated only after a known abort; with the queue full it ended in a bare 503, the proposal stayed
     PENDING and the sweep charged the whole reservation (8 of 8 answers lost under a burst of reads in the edge rehearsal). It is now repeated after a full queue too,
-    with waits of 100 ms to 1.5 s (`postgres.RetryPaced`), inside the same 6 s budget and the 8 s context. **Not tested** at the burst size of the rehearsal (more than
+    with waits of 100 ms to 1.5 s, each spread by a quarter either way so that the answers that waited for the same moment do not come back at the same moment
+    (`postgres.RetryPaced`, `postgres.Jittered`), inside the same 6 s budget and the 8 s context. With a full queue every try fails at once, so the six tries end after
+    about three seconds of the six; a burst that lasts longer loses the answer as before (a bare 503, no audit). **Not tested** at the burst size of the rehearsal (more than
     132 database requests at one moment); the mechanism is tested against a real `Admission` that drains after 250 ms.
 
 13. **A stopping API waits for its paid phases (ER-03, 2026-11-03; extends A5).** The API gave its running requests 10 s after SIGTERM; a creation holds its request up
     to 70 s. A routine restart abandoned every running phase, left the proposals PENDING, charged each its whole reservation (about 31% of the default daily budget per
-    request) and held the tenant's slot for 80 s. `Config.ShutdownTimeout` is 10 s, 80 s when `AI_PROVIDER_FILE` is set, and `SHUTDOWN_TIMEOUT` (1 s to 5 min)
-    overrides both. **Deployment constraints that follow** (edge rehearsal ER-01 to ER-03, [report](../verification/EDGE_REHEARSAL.md)): the termination grace of the
+    request) and held the tenant's slot for 80 s. `Config.ShutdownTimeout` is 10 s, 80 s when `AI_PROVIDER_FILE` is set, and `SHUTDOWN_TIMEOUT` (1 s to 5 min; a duration with a unit, `30s`: a bare `30` is refused, by the API, the worker and the dispatcher alike, because `config.Load`
+    reads it for all three and only the API uses it) overrides both. A creation that still waits in the admission queue when the signal arrives and starts its provider phase after it
+    can need more than the 80 s and is then cut by `Close` (by reading, not run). **Deployment constraints that follow** (edge rehearsal ER-01 to ER-03, [report](../verification/EDGE_REHEARSAL.md)): the termination grace of the
     orchestrator must be longer than the value in force; a proxy in front of the API needs a response and idle timeout of at least 75 s (90 s recommended) on the two
     creation routes, because a cut at T costs a FAILED/INTERNAL row charged 22.6% of the reservation or a READY proposal the client never saw; nothing may repeat
     a `POST .../patch-proposals` or `.../requirement-proposals` automatically (each repetition is a second paid run: the creations are not idempotent); all replicas need
@@ -746,6 +755,69 @@ without the change; the reviewers' own probes were run against the fixed code by
 14. **A token that no longer verifies at the pre-admission check is refused (PF-03, 2026-11-03; extends item 7).** `aiTokenOutlivesTheRun` let a request through when the
     second verification of the token failed (a token that verified at the front door and ended in between); it is now answered `401 unauthenticated` at once, as any
     other would be, because letting it through pays for an answer the result exchange cannot deliver. Evidence: `TestTokenCheckBeforeAdmission`.
+
+15. **Corrections after the independent review of items 8 to 14 ([report](../verification/TAKEOVER_FIXES_INDEPENDENT_REVIEW.md), pinned at `0155f7b`, 2026-11-03;
+    PASS WITH FINDINGS: no HIGH, five MEDIUM, seven LOW).** The reviewer did not write the fixes and changed no code; its probes were deleted. Each finding below was
+    reproduced here before it was changed, and each change has a test that fails without it. The changes are the integrator's and are not re-verified by a reviewer.
+
+    a. **TF-01 (MEDIUM): the password rule took words out of ordinary requests.** The rule of item 8 (`password_arg`) redacted any word of four letters after `identified by`
+    ("Each customer is identified by email address."), after `machine ... password` ("The machine learning model validates the password strength"), any quoted word after
+    `password` (`Show a password "hint" field`) and the value after a `-p` of `zip`, `redis-cli` or `mysql` ("zip codes with -plus4", `redis-cli -p 6379`, `mysql -P3306`,
+    `docker login --password-stdin`); the request the model read lost its meaning, and a definition whose label held such words could not be updated by the AI builder (the
+    placeholder is refused when written back). Every form now needs the command or the statement around it. The flag of each command is its own (`-p` is the port of
+    redis-cli, `-P` that of mysql; the case of a flag counts). A `.netrc` entry needs `machine HOST login USER password`, `default login USER password` or a host with a dot.
+    The SQL forms are read as a statement that starts with `CREATE|ALTER USER|ROLE` or `GRANT ... ON ... TO` and ends at `;` or after 1,000 bytes: every
+    `IDENTIFIED [WITH plugin] BY` clause in it (so several users), and the quoted `PASSWORD` of a role that only the option words of `CREATE ROLE` precede; the words of the
+    statement stay, the clause is replaced. A quoted literal is a password; a bare word after `IDENTIFIED BY` only when it has a digit or a symbol. Added in the same pass:
+    `curl -uUSER:PASSWORD` without a space, `redis-cli --pass`, `az login`, `gpg --passphrase`, `ldapsearch -w`, a `.netrc` on several lines. **Residuals:** a bare all-letter
+    password after `IDENTIFIED BY` stays, a quoted word in such a statement is redacted whatever it means ("Create user accounts identified by 'email'"), and the value of a
+    command-line password ends at a `;`. Evidence: `redact_prose_test.go` (35 requests and commands that stay as written, 24 command and statement forms that are redacted, a
+    statement keeps its name), the idempotence property run on 300,000 texts with the new fragments, and a cost probe (linear: 1.4 to 3.8 microseconds a byte at 64 and 256 KiB
+    on a shared host, the worst shape is `create user x identified by '...'` repeated); the near-miss tests fail on the first form of the rule.
+
+    b. **TF-04 (MEDIUM): the exemption for sentences about credential formats kept passphrases.** `^(?:[A-Za-z0-9]+-)+[a-z]{3,}$` is also the shape of a passphrase: "the password
+    is" followed by a word, a hyphen and a lower-case word was kept, as was the same value in `define('DB_PASSWORD', '...')`. The exemption is now a closed list: a size and its
+    unit (`64-character`, `256-bit`, `15-minute`) or a named algorithm, standard or protocol with its size or a plain participle (`SHA-256`, `RSA-2048`, `HS256-signed`,
+    `OAuth2-compliant`, `2FA-verified`, `RFC-7519`). A value spelled like one of them stays kept; any other value with a digit or a symbol is redacted. The price the red team
+    named is paid in the other direction too: values such as `Summer-2026` are redacted, as before.
+
+    c. **TF-06 (LOW): a window of chance could leave twelve digits of a card.** See item 9: 19,478 texts of a 16-digit number in four groups followed by a card in four groups, and
+    in 7.5% of them the first window found (one that began in the number and ended in the first group of the card) was redacted and consumed, and up to 12 of the 16 digits of the
+    card stayed. Windows that overlap are now one span. The test compares the scan with the exact text and count of an independent definition (`redactedByDefinition`), not with
+    "no window is left" (TF-12), and asserts the neighbours of the case that had an empty one.
+
+    d. **TF-02 (MEDIUM): AO-02 was closed for the creations, the read of one proposal and the veto, not for apply and confirm.** The answer to an apply held the proposal with its
+    operations and the revision with its document, the answer to a confirm the proposal and the whole stored requirement set, to a role with `ai.apply` and `metadata.write` (or
+    `requirements.decide`) and without `metadata.read`. They now hold the summary of the proposal (`Store.Summary`), the header of the new revision (no document) and the header of
+    the new requirement set (no body, `aiRequirementsHeader`); `Recorded` (ids, categories and states of the decisions the caller made) stays. The caller reads the result where it
+    may. Evidence: `TestM14APIPolicyMatrix` asserts the bodies of the apply and the confirm of the two roles; with the three changes undone it fails ("holds "operations"", run on
+    the database).
+
+    e. **TF-07 (LOW): a lone surrogate escape was stored as U+FFFD, and the provider adapter substituted.** The check for invalid UTF-8 (TS-04) does not see `\ud800`, which is ASCII,
+    and `parseEnvelope` decoded a payload "byte for byte" with a decoder that substitutes. `tools.HasLoneSurrogateEscape` finds the escape of half of a pair that the other half does
+    not complete (checked against the decoder on 20,000 random strings, both sides); it is applied to the answers of a tool, to the catalog file, to the envelope of the provider
+    (which now also refuses invalid UTF-8) and to every proposal payload (`strictTree`). A pair and the escape of U+FFFD itself are text and stay. **Not changed:** the general
+    metadata decoder (`metadata.DecodeJSON`) still turns such an escape into U+FFFD in a document an author sends (it refuses invalid bytes).
+
+    f. **TF-08 (LOW): the OpenTelemetry exporters wrote the raw value of a malformed `OTEL_EXPORTER_OTLP_*` variable to standard error,** the sibling of LE-02 (`parse headers` with the
+    whole header list, `parse url` with the credentials inside the endpoint, at start-up, from the operator's own setting). `observability.Start` replaces the library's logger before
+    the first exporter is made; the log holds one fixed warning at most every ten seconds. Evidence: a child-process test (without `Start` the value is on standard error, with `Start`
+    nothing is) that fails without the call.
+
+    g. **TF-09 (LOW): forms next to the closed ones.** Fixed, with tests: the hash rocket (`'password' => '...'`, `:password => "..."`), the short declaration (`dbPassword := "..."`) and a
+    comparison with a literal (`password == "..."`); a bare word on their right is a name (`password == confirmPassword`) and stays. **Still open, documented:** escaped quotes
+    (`password=\"...\"`), a quoted JSON value of 7 characters or of 14 letters (the `:` form needs 8 characters and a digit or a symbol), a hard-wrapped key whose continuation lines
+    carry a quote prefix, a hard-wrapped key over five lines, and a continuation followed by prose (RT-03, RT-06, RT-07 and RT-09 are listed above).
+
+    h. **TF-10, TF-11 (LOW).** The comment on the chance rate said one window in two hundred (it is one in 38 for 16 digits and about one in 100 across the lengths); item 12 pointed at
+    item 3 (item 4 is the repetition) and item 8 attributed the `is` connector to RT-08 (it was in the table before): corrected. The comment of `operator_env_test.go` said AGENTS.md names
+    the six credentials (it does not; the launcher does): corrected. The pauses of ER-04 are jittered (item 12). `scripts/m6r-env.mjs` and `scripts/m8-env.mjs` set the mode of `.env`
+    before they append credentials, not after (IS-03). `scripts/bootstrap.sh` removes `.local/toolchains/go` before it unpacks a toolchain, so two releases are never mixed, and says in
+    the message what a SHUTDOWN_TIMEOUT is.
+
+    i. **TF-12, TF-11 (tests).** `TestM14APIPolicyMatrix` asserts the bodies (d). TS-01 has a reproduction that the next owner can run: `TestTS01ACancelledInstanceLeavesNoInvocationThatCannotBeSettled`
+    (`tests/integration/m10_ts01_test.go`) states the invariant that the fix must give and FAILS today, so it runs only with `FRAMEWORK_REPRODUCE_TS01=1`. `TestBuildContextRefusalCostsNoMoreThanAContextThatFits`
+    is a ratio test (threshold 3, measured 1.1 on a quiet host and 1.7 to 2.0 on a loaded one) and can flake on a host that is heavier still.
 
 **Residuals after Amendment C, stated plainly.**
 
@@ -764,4 +836,5 @@ without the change; the reviewers' own probes were run against the fixed code by
   `derived.sensitive: []` and `aspects: []` for changes that were never classified), AO-04 (326 invisible or format characters still pass the rule for model text, the
   supplement variation selectors among them) and AO-05 (the model's free text is stored and returned to every `ai.read` holder unredacted; the document states that output
   is not filtered, this names the consequence).
-- Items 8 to 14 above, like items 6 and 7 before them, have not been seen by an independent reviewer. The red-team reports judge the tree they were pinned to (`11a4ee4`).
+- Items 8 to 14 above were reviewed by the independent review of the takeover fixes (`0155f7b`); its findings are item 15, fixed by the integrator and not re-verified by a
+  reviewer. Item 6 and 7 before them were reviewed in the third pass of the merge review. The red-team reports judge the tree they were pinned to (`11a4ee4`).

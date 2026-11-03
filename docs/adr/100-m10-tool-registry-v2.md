@@ -251,12 +251,17 @@ protocol and the freeze PASS WITH FINDINGS (static only): TS-01 and TS-02 MEDIUM
 - **Valid UTF-8 only (TS-04; extends decision 6).** A provider answer that is not valid UTF-8 is `UNKNOWN invalid_response` (it was decoded with
   U+FFFD substituted and stored as a SUCCESS), and a catalog file that is not valid UTF-8 is `ErrCatalog` (a SIMULATE fixture value loaded).
   Evidence: `TestResponseBodyLimitsAndValidation` (five sequences) and `TestLoadCatalogRefusesInvalidUTF8`, both failing without the check.
+  **The escape form was found by the independent review of these fixes (TF-07) and is refused too:** `\ud800`, which is ASCII, passed the check and was decoded as
+  U+FFFD (two different texts, one value; a member name was the same). `tools.HasLoneSurrogateEscape` refuses an answer or a catalog that holds the escape of half of a
+  surrogate pair that the other half does not complete; a pair and the escape of U+FFFD itself stay ([ADR104 Amendment C item 15 e](104-m14-ai-builder-and-intent-capture.md)).
 - **Open, MEDIUM (TS-01): a workflow that becomes terminal while its tool ledger is `SENDING` or `UNKNOWN` can never be reconciled.** The report
-  found it by reading; it was **reproduced on the database on 3 November** (a throwaway test, not kept): a NATIVE_KEY write whose provider answers 500
+  found it by reading; it was **reproduced on the database on 3 November** (first as a throwaway test; kept since as
+  `TestTS01ACancelledInstanceLeavesNoInvocationThatCannotBeSettled`, which states the invariant a fix must give, FAILS today and so runs only with `FRAMEWORK_REPRODUCE_TS01=1`): a NATIVE_KEY write whose provider answers 500
   ends `UNKNOWN`, the instance waits in `RETRY_WAIT`; a `cancel` signal makes it `CANCELLED` and the ledger stays `UNKNOWN`
   (`SELECT count(*) ... state IN ('SENDING','UNKNOWN')` is 1 for the instance); a `reconcile` signal on it answers 409 `workflow_conflict`
   (`signals.go` requires status `RECONCILE`). The deadline path (`execution.go`, the workflow deadline is tested before any ledger logic) was not
-  executed. A sandbox that holds such a row cannot be frozen (`runtime.freeze_sandbox` refuses while any invocation of the dataset is `SENDING`
+  executed; `workflows.cancel` is open to every role but the viewer (`internal/policy/policy.go`, as ADR101 says), so one cancel of a waiting instance strands the row and blocks the
+  freeze of that sandbox for good. A sandbox that holds such a row cannot be frozen (`runtime.freeze_sandbox` refuses while any invocation of the dataset is `SENDING`
   or `UNKNOWN`, migration 00086; read, not executed), so it can never become evidence for M12; only a new sandbox helps. Amendment A3 says that
   unknowns never die; this path lets one die. **Not fixed**, because every fix changes the state machine of the shared workflow runtime and needs a migration:
   (1) make the settlement of a ledger row independent of the instance (`reconcile` accepted on a terminal instance whose invocation is still

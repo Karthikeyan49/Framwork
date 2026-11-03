@@ -143,7 +143,7 @@ it and was shown to fail without the change, and the integrator ran it); the led
 | ER-03 (MEDIUM) | a routine SIGTERM abandoned every AI phase longer than 10 s and the process exited 1 | `d6ed47b`: `ShutdownTimeout` 80 s when the AI builder is configured, `SHUTDOWN_TIMEOUT` overrides (item 13) | `TestShutdownTimeoutFollowsTheAIBuilder`, the launcher test; **not run** with a real process under SIGTERM |
 | LE-02 (MEDIUM) | the Redis client library wrote the dial target and the driver's error to stderr, and an anonymous `GET /readyz` triggers it | `02af0e5`: `observability.Start` installs a logger that drops the text | child-process test: the library's line without the fix, none with it |
 | RB-01 (LOW) | a panic in a readiness probe ended the process | `55bc0b3`: each probe recovers and fails alone | `TestReadinessProbePanicFailsOnlyThatProbe`; without the recover the test binary dies |
-| IS-01, IS-02, IS-03 | Go 1.27.2 is behind GO-2026-6809 (crypto/x509); x/net 0.59.0 has seven advisories; a pre-existing `.env` kept its mode | `f3d3fe8` (Go 1.27.3 in `go.mod`, `scripts/go.sh`, `scripts/bootstrap.sh`), `35ac1ab` (x/net 0.62.0, with x/sync, x/sys and x/text one minor each), `7db6350` (chmod 0600) | the toolchain downloads and verifies, `make check`, the gate below; the script tests (the m6r case fails without the chmod) |
+| IS-01, IS-02, IS-03 | Go 1.27.2 is behind GO-2026-6809 (crypto/x509); x/net 0.59.0 has seven advisories; a pre-existing `.env` kept its mode | `f3d3fe8` (Go 1.27.3 in `go.mod`, `scripts/go.sh`, `scripts/bootstrap.sh`), `35ac1ab` (x/net 0.62.0, with x/sync, x/sys and x/text one minor each), `7db6350` (chmod 0600) | `go mod verify` and `go mod tidy -diff` (offline), `make check` and the gate on `d6ed47b` below (which has Go 1.27.3 and x/net 0.62.0; the earlier gates do not); the script tests (the m6r case fails without the chmod). **Not verified by anyone offline:** the SHA-256 and the URL of the toolchain in `scripts/bootstrap.sh`, and the advisory identifiers (no network) |
 | PF-10, MA-01 to MA-14 | tests that did not pin what they claimed | `a3806f3`, `2b25e7c`: the list of six operator credentials; the killing tests of the mutation audit | the audit's own mutants; not re-mutated here |
 | DT-01 to DT-26 | 26 documentation defects (9 MEDIUM) | `491edc6`, except DT-02 (README lines, in the owner's proposal) | the final documentation audit; the rows below were written after it |
 
@@ -151,8 +151,8 @@ it and was shown to fail without the change, and the integrator ran it); the led
 tool ledger is `UNKNOWN` is `CANCELLED` for good, `reconcile` answers 409, and a sandbox that holds the row cannot be frozen
 ([ADR100 Amendment I2](../adr/100-m10-tool-registry-v2.md)); it needs a migration and a decision about the workflow runtime that the remediation line shares. The LOW findings that were
 documented and not fixed are PF-04 to PF-08, RT-06, RT-07, RT-09, TS-03, TS-05, AO-01, AO-03 to AO-05, LE-01, LE-03, LE-04, RB-02 to RB-04, RC-01 to RC-09, SC-01 to SC-04,
-FS-01 to FS-06 and IS-04 to IS-10 (one row each in the ledger). The README still names Go 1.27.2 (DT-02 and the Go line are in the owner's proposal). No independent reviewer
-has seen any change of this section. The recorded FAILs of the remediation line (aggregate capacity D5, injected driver panic D1) are untouched.
+FS-01 to FS-06 and IS-04 to IS-10 (one row each in the ledger). The README still names Go 1.27.2 (DT-02 and the Go line are in the owner's proposal). An independent review of the changes of this section ([report](../verification/TAKEOVER_FIXES_INDEPENDENT_REVIEW.md), pinned at `0155f7b`) was merged afterwards;
+its findings are fixed in the follow-up below, and the follow-up has not been seen by a reviewer. (The post-fix review had re-run the repros of PF-01, PF-02 and PF-03 against `55ee30e` before that.) The recorded FAILs of the remediation line (aggregate capacity D5, injected driver panic D1) are untouched.
 
 Gate on the code head `d6ed47b` (3 November 2026, this host, the isolated Compose stack; the development database `MAIN` was not touched). The host restarted between the
 build and the integration step, so the gate has two parts on the same code: `make check`, `make test-unit` and `make build` ran on `d6ed47b`, the heavy steps on `0155f7b`, which
@@ -174,6 +174,32 @@ the compiler), every candidate staged under `verifier-v4`, and every AI context 
 paced retry are covered by unit tests and a child-process test, not by the integration suite. **Not run, and so not claimed:** the reference-scale performance gates and the `driverpanic`
 diagnostic of the remediation line, `TestM8RedisACLStreamLossAndPendingRecovery` (coupled to the main Compose project), a real API process under SIGTERM with a running AI phase (ER-03),
 the burst of more than 132 database requests of the edge rehearsal (ER-04), and an independent review of any change of this section. The code commits after `d6ed47b` are documents only.
+
+### Follow-up: the independent review of the takeover fixes — 3 November 2026 (UTC)
+
+An independent reviewer (who wrote none of the fixes above, changed no code and ran nothing against Docker, a database or Redis) reviewed the nineteen commits of the takeover, the
+documents that describe them and TS-01 as described: [TAKEOVER_FIXES_INDEPENDENT_REVIEW.md](../verification/TAKEOVER_FIXES_INDEPENDENT_REVIEW.md), pinned at `0155f7b`, merged as `eb4b51b`.
+Verdict **PASS WITH FINDINGS: no HIGH, five MEDIUM, seven LOW**. The fixes did what their messages say for the inputs they name and their negative controls were real, but several left a hole
+next to the one they closed and one of them (the password rule) made the redactor destroy ordinary sentences. Each finding was reproduced here before it was changed.
+
+| Finding | What it was | Change | Evidence |
+|---|---|---|---|
+| TF-01 (MEDIUM) | the `password_arg` rule of RT-08 took words out of ordinary requests ("each customer is identified by email address", "machine learning ... password", a password "hint" field, `zip codes with -plus4`, `redis-cli -p 6379`) and a label with such words could not be updated by the AI builder | `aa3ee70`: every form needs its command or statement, the flag of each command is its own, the SQL forms are a scan of the statement, a bare word after `IDENTIFIED BY` needs a digit or a symbol ([ADR104 Amendment C item 15 a](../adr/104-m14-ai-builder-and-intent-capture.md)) | `redact_prose_test.go`: 35 requests and commands stay as written, 24 forms are redacted; the near-miss tests fail on the first form of the rule; the idempotence property on 300,000 texts; the cost is linear |
+| TF-04 (MEDIUM) | the exemption of RT-05 let "word, hyphen, lower-case word" through, which is the shape of a passphrase | `aa3ee70`: a closed list of sizes with units, algorithms, standards and participles | passphrase-shaped values redacted in every connector; the first form fails the test |
+| TF-02 (MEDIUM) | the answers to an apply and a confirm still held the proposal body, the new document and the requirement set, for a role without `metadata.read` | `040ad44`: summary and headers (item 15 d) | `TestM14APIPolicyMatrix` asserts the bodies; **negative control on the database**: with the three changes undone it fails ("holds "operations"") |
+| TF-06 (LOW) | a window of chance could leave 12 digits of a card (7.5% of the review's texts) | `b9ac1ee`: windows that overlap are one span | exact-output property test against an independent definition; the review's case; negative control with the first-window loop |
+| TF-07 (LOW) | `{"currency":"\ud800"}` was a SUCCESS with U+FFFD, and the provider adapter substituted for bytes that are not UTF-8 | `949da13`: `tools.HasLoneSurrogateEscape` on tool answers, the catalog, the provider envelope and every proposal payload | scanner checked against the decoder on 20,000 strings; the escape cases fail with the four checks disabled |
+| TF-08 (LOW) | the OpenTelemetry exporters wrote raw `OTEL_EXPORTER_OTLP_*` values to standard error | `e5afb07`: a logr sink installed before the first exporter | child-process test, fails without the call |
+| TF-09 (LOW) | `=>`, `:=`, `==` with a literal, `curl -uUSER:PASSWORD`, `gpg --passphrase`, `az login -p`, `ldapsearch -w` left a value in | `aa3ee70` | `redact_prose_test.go`; escaped quotes, short quoted JSON values and two wrapped-key forms stay open (item 15 g) |
+| TF-10, TF-11, TF-12 (LOW) | comments and sentences that contradict the tree; no jitter in the ER-04 pauses; the chmod after the append; no kept reproduction of TS-01; weak tests | `0b1407e`, the documents of this entry | `TestJitteredStaysWithinAQuarterAndSpreads`; `TestTS01ACancelledInstanceLeavesNoInvocationThatCannotBeSettled` (gated by `FRAMEWORK_REPRODUCE_TS01=1`, fails today with "1 invocation(s) of a CANCELLED instance stay SENDING or UNKNOWN and the reconcile is answered 409") |
+| TF-05 (MEDIUM) | documents claimed evidence that the repository did not contain, and said nobody had seen fixes that a reviewer had re-verified | corrected in the ledger, this plan, the handoffs, ADR101, ADR102 and ADR104 | the reviewer's list of statements |
+| **TF-03 (MEDIUM)** | `verifier-v4` finds a window gated on one other unpinned field and passes one gated on two | **not fixed, documented** next to PF-06 ([ADR102 amendment 14](../adr/102-m12-candidate-release-builder.md), `internal/verification/README.md`): either direction changes the probe set, the verifier version and every stored report | the reviewer executed it: FAIL with one gate, PASS with two |
+
+What the reviewer did not run (its NOT RUN list) is covered by the gate on the head after these changes, except the SHA-256 and the URL of the toolchain and the advisory identifiers, which need the network, and a real API process
+under SIGTERM with a running AI phase. **TS-01 stays open**, and the three owner decisions (the migration numbering rule, the contract proposal, the rebuild of the development database `MAIN`) and the question whether to move `main` are unchanged.
+The changes of this follow-up have not been seen by a reviewer.
+
+GATE_PLACEHOLDER
 
 ### Migration numbers from here on (proposal; the owner decides)
 

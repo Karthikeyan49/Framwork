@@ -417,7 +417,8 @@ reviewed.
 ## Amendment after the post-fix independent review (2026-10-29)
 
 Recorded by the fixes for PF-01 and PF-02 of the post-fix review (`docs/verification/POSTFIX_INDEPENDENT_REVIEW.md`). Written by the
-builder agent, NOT independently reviewed.
+builder agent. The independent review of the takeover fixes (`docs/verification/TAKEOVER_FIXES_INDEPENDENT_REVIEW.md`, 3 November 2026) re-ran the repros of
+PF-01, PF-02 and PF-03 against the fix and found them fixed; it also found what the last paragraph of item 14 names (TF-03). The text of item 14 was not itself reviewed.
 
 14. **`verifier-v4` repeats the literal probes for the mined values of the other fields and takes the midpoints exactly (PF-01, PF-02;
     extends item 13).** The review of the fix of item 13 found two gaps. **PF-01 (MEDIUM):** the probes around the amounts of the plan ran
@@ -441,6 +442,15 @@ builder agent, NOT independently reviewed.
     `TestMoneyTextKeepsTheDecimalsOfTheCurrencyAndNoMore`, and the updated `TestLiteralProbesFollowTheAmountsOfThePlan` and
     `TestProbeSetIsPinnedToTheVerifierVersion`; three mutations (the mined repetition, the old covering rule, the grid text) are each failed by
     the tests that name them. **Unchanged limit:** a window written with arithmetic, and a world the requirement pins away, are not found.
+
+    **Found by the independent review of the takeover fixes and NOT fixed (TF-03, MEDIUM): a window gated on two other fields passes.** A mined variant sets exactly
+    one field beyond the requirement's (`variant[m.field] = m.raw`), so a window gated on one unpinned optional field is found and a window gated on two is not. The
+    reviewer executed it with `amount` between 626 and 749 as the first transition and `note = gold` as the gate: outcome FAIL, 3 approval mismatches (116 results);
+    the same window with `note = gold and region = EU`: outcome PASS, 0 mismatches (155 results). A candidate author can therefore make a bypass pass by adding a
+    second gate field; PF-06 (a field of a type the miner does not read) is the same kind of limit. This item and the ledger presented the gated window as closed; it is
+    closed for one gate field. Two directions, neither done because each changes the probe set, hence `VerifierVersion` and every stored report: mine the
+    combinations of the mined fields inside the budget (the largest plan the reviewer built used 2,440 of the 50,000 steps at 31 amounts), or BLOCK a plan whose
+    route reads the amount and is gated on two or more unpinned optional fields. The verifier stays a mechanical floor; the human acceptance cases are the control.
 
 ## Consequences
 

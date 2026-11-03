@@ -332,7 +332,7 @@ lane branch is an ancestor of the integration branch). `main` is not moved.
 
 Shared code and configuration that the takeover changed (each with the finding it answers and a regression test; the ledger has the rows):
 
-- `go.mod`, `go.sum`, `scripts/go.sh`, `scripts/bootstrap.sh`: **Go 1.27.3** (IS-01) and `golang.org/x/net` 0.62.0 with x/sync, x/sys and x/text one minor each (IS-02). Run `make setup` or install the toolchain; the first build after it recompiles everything.
+- `go.mod`, `go.sum`, `scripts/go.sh`, `scripts/bootstrap.sh`: **Go 1.27.3** (IS-01) and `golang.org/x/net` 0.62.0 with x/sync, x/sys and x/text one minor each (IS-02). A checkout that has an older toolchain under `.local/toolchains/go` is repaired by `go` itself (the `go` line of `go.mod` makes it download 1.27.3 and check it against the checksum database), not by the pinned SHA-256 of `scripts/bootstrap.sh`, and with `GOTOOLCHAIN=local` the build fails with "go.mod requires go >= 1.27.3"; to use the pinned download remove `.local/toolchains/go` and run `make setup` (the script now removes it before it unpacks). The first build after it recompiles everything.
 - `internal/platform/httpserver/httpserver.go`: each readiness probe recovers its own panic (RB-01).
 - `internal/platform/postgres/retry.go`: `RetryPaced` and `ConflictPause`; `RetryWithin` behaves as before (ER-04).
 - `internal/platform/access/access.go`: `API.catalogFor(access)`, the compile catalog as one tenant sees it; the metadata compile route, the preview, the candidate builder and the AI compile use it, dataset admission does not (TS-02).
@@ -347,4 +347,24 @@ and is staged again (PF-01, earlier); a SIGTERM to an API that has the AI builde
 
 Not done, for the owner to decide or to schedule: **TS-01** (a workflow that is terminal while its tool ledger is `UNKNOWN` cannot be reconciled; reproduced on the database; it needs migration `00093` and a decision about the shared workflow runtime,
 [ADR100 Amendment I2](../adr/100-m10-tool-registry-v2.md)); the three owner decisions of the earlier entries (the migration numbering rule, the contract proposal, the rebuild of the development database `MAIN`), which also now include the `README.md`
-Go line; every LOW finding listed in the plan. No change was made to `AGENTS.md`, `CLAUDE.md` or `README.md`. Independent review: none of the changes of this entry has been seen by a reviewer.
+Go line; every LOW finding listed in the plan. No change was made to `AGENTS.md`, `CLAUDE.md` or `README.md`. Independent review: the changes of this entry were reviewed afterwards ([report](../verification/TAKEOVER_FIXES_INDEPENDENT_REVIEW.md), pinned at `0155f7b`); its findings are fixed in the entry below, which no reviewer has seen.
+
+## FROM milestone (as integrator) TO remediation and to the owner — 3 November 2026 (UTC), later: the review of the takeover fixes, and what it changed
+
+Subject: an independent reviewer, who wrote none of the fixes above and changed no code, reviewed them ([report](../verification/TAKEOVER_FIXES_INDEPENDENT_REVIEW.md), pinned at `0155f7b`;
+PASS WITH FINDINGS: no HIGH, five MEDIUM, seven LOW). Fetch `origin/integration/m9r-m14` again. Two of its MEDIUM findings were regressions that the fixes of the first entry caused (the redactor took words out
+of ordinary requests, and a security filter was weakened for passphrase-shaped credentials), one was an incomplete fix (apply and confirm still answered with the body that AO-02 protects), one is an open limit of the
+verifier (TF-03, below) and one concerned documents. The ledger has one row; [ADR104 Amendment C item 15](../adr/104-m14-ai-builder-and-intent-capture.md) has each finding, what changed and what stays open.
+
+Shared code that this follow-up changed:
+
+- `internal/ai/redact.go`: the password rules need their command or statement (`password_arg` is three rules now, the SQL forms a scan of the statement), the exemption for sentences about credential formats is a closed list, `:=`, `=>` and `==` with a literal are assignments, and the card scan redacts the union of overlapping windows. **Behaviour that changes:** a request such as "each customer is identified by email address" now reaches the model as written.
+- `internal/platform/access/ai_decide.go`, `internal/ai/service_decide.go`: **the answers to an apply and a confirm no longer hold the body of the proposal, the document of the new revision or the requirement set**; they hold the summary of the proposal and the header of the revision or of the set (`aiRequirementsHeader`: `requirements` has no body any more). Nothing in this repository reads them; a client that did reads the result with the GET routes (`metadata.read`, `requirements.read`).
+- `internal/tools/jsontext.go` (new, `HasLoneSurrogateEscape`), `internal/tools/connector.go`, `catalog.go`, `internal/ai/provider_http.go`, `schema.go`: an unpaired surrogate escape and, in the provider envelope, bytes that are not UTF-8 are refused (`invalid_response`, `ErrCatalog`, `ErrProviderMalformed`) instead of stored as U+FFFD.
+- `internal/observability/otellog.go` (new), `observability.go`, `go.mod` (`go-logr/logr` is a direct requirement): the OpenTelemetry libraries log through slog with one fixed warning.
+- `internal/platform/postgres/retry.go` (`Jittered`), `internal/platform/access/ai.go`: the pauses of the result exchange after a full queue are spread by a quarter either way.
+- `scripts/m6r-env.mjs`, `scripts/m8-env.mjs`, `scripts/bootstrap.sh`, `internal/config/config.go` (the message of `SHUTDOWN_TIMEOUT`).
+- `tests/integration/m10_ts01_test.go`: **the reproduction of TS-01 is kept and gated**: `FRAMEWORK_REPRODUCE_TS01=1 /home/user/bin/it-run m14 <tree> <log> TestTS01` runs it; it fails today and states the invariant that the fix must give.
+
+Not done, for the owner to decide: everything of the entry above (TS-01 and the three decisions), and **TF-03**: `verifier-v4` finds a window gated on one other unpinned field and passes a window gated on two ([ADR102 amendment 14](../adr/102-m12-candidate-release-builder.md)); the two directions (mine the combinations, or BLOCK such a plan)
+change the probe set and so the verifier version and every stored report. Independent review: none of the changes of this entry has been seen by a reviewer.

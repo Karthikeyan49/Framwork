@@ -140,7 +140,8 @@ migration 00086 (additive, forward-only; 81 and 85 unchanged) and `tests/integra
 
 ## Amendment of 2026-11-03: a frozen sandbox can be blocked for good (TS-01, open)
 
-The red team of M10 and M11 found, and the milestone agent reproduced on the database, that a workflow instance can become terminal (`CANCELLED` by a
+The red team of M10 and M11 found, and the milestone agent reproduced on the database for the cancel (the deadline path is by reading only: the code
+skips the outstanding check when a termination is set), that a workflow instance can become terminal (`CANCELLED` by a
 signal of any non-viewer member, or `TIMED_OUT` by its deadline) while its tool ledger is `UNKNOWN`, after which no operator path settles the row
 (Amendment 2 of this ADR says "the operator settles the outcome and freezes again"). `freeze_sandbox` refuses while such a row exists, so the sandbox
 can never be frozen. The evidence, the two repair directions and why it is not fixed here are in [ADR100 Amendment I2](100-m10-tool-registry-v2.md);

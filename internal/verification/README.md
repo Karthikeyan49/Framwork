@@ -53,6 +53,9 @@ Honest limits:
   bypass that lives only in a world the requirement pins away (for example
   `note = "vip"` when the requirement pins `note = "regular"`) is outside what the
   requirement promises; the independent acceptance author is expected to add that case.
+- A window gated on ONE other unpinned optional field is found (a mined variant sets exactly one field beyond the requirement's); a window gated on TWO such
+  fields (`note = "gold" and region = "EU"`) is not (independent review TF-03: FAIL with one gate, PASS with two). Mining the combinations inside the work
+  budget, or BLOCKing a plan whose amount-reading route is gated on two or more such fields, are the two directions; neither is done (ADR102 amendment 14).
 - The report is replayable evidence derived from stored bytes, not an attestation
   by an independent credential. Approval and activation (M13) must recompute it.
 - Observed approver roles must EQUAL the required set (a deliberate tightening of
