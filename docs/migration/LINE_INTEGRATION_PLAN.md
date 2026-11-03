@@ -199,7 +199,25 @@ What the reviewer did not run (its NOT RUN list) is covered by the gate on the h
 under SIGTERM with a running AI phase. **TS-01 stays open**, and the three owner decisions (the migration numbering rule, the contract proposal, the rebuild of the development database `MAIN`) and the question whether to move `main` are unchanged.
 The changes of this follow-up have not been seen by a reviewer.
 
-GATE_PLACEHOLDER
+Gate on the code head `364c7a4` (3 November 2026, this host, the isolated Compose stack; the development database `MAIN` was not touched), run in full, one heavy step after the other. An earlier start on
+`f69dcad` was stopped by the integrator after `make check` (PASS, 24 s) because a re-read of the new rules found a correction (the default entry of a `.netrc`, `83738a2`; and a guard in `Jittered`, `d98eb3d`); the gate
+below is the restart on the corrected head. One run of each step; the evidence says nothing about flake rates. The commits after `364c7a4` are documents only (`git diff 364c7a4 HEAD -- . ':!docs'` is empty).
+
+| Step | Result |
+|---|---|
+| `make check` (docs checksums, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 21 s |
+| `make test-unit` (Go packages with `-race`, script tests, frontend tests) | PASS, 400 s: 30 Go packages (`internal/ai` 362 s under `-race`), 15 script tests, 126 frontend tests in 19 files |
+| `make build` | PASS, 18 s |
+| Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` | **PASS**, one uninterrupted run: 2,120.4 s Go time, 2,142 s wall including the stack reset (the run is not `-v`, so no test count was taken) |
+| `make test-e2e` / `make test-signin-e2e` | 11 passed (23.5 s) / 7 passed (9.1 s) |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS, 64 s |
+| `make test-event-outage` (real ten-minute consumer absence) | PASS, 609.1 s test time, 629 s wall |
+
+What this gate exercises of the follow-up: the integration suite ran `TestM14APIPolicyMatrix` with the body assertions of the apply and the confirm (and the M14 API, M13 tool-pin and M10 groups that the answers touch); the unit run has the redactor
+tests (near misses, the card property against the independent definition, the 300,000-text idempotence run was a separate one-off, not part of the default run), the surrogate scanner against the decoder, the child-process tests of the Redis and
+OpenTelemetry loggers, the jitter, and the launcher tests. The TS-01 reproduction is skipped here by design (it fails until TS-01 is fixed). **Not run, and so not claimed:** the reference-scale performance gates and the `driverpanic` diagnostic of
+the remediation line, `TestM8RedisACLStreamLossAndPendingRecovery` (coupled to the main Compose project), a real API process under SIGTERM with a running AI phase (ER-03), the burst of more than 132 database requests of the edge rehearsal (ER-04),
+the SHA-256 and the URL of the toolchain and the advisory identifiers (no network), and an independent review of the changes of this follow-up.
 
 ### Migration numbers from here on (proposal; the owner decides)
 
