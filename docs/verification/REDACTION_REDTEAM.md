@@ -24,10 +24,11 @@ Each MEDIUM has a repro generated at run time and a patch of at most 80 diff lin
 **PASS for Part C: no path carries author text to a provider, a stored row, an audit row, a log line or a response without the redactor, except the model's own answer, which the code and the corpus
 state is not redacted.** Timing: PASS (no accepted input over 0.4 s, all growth linear). The 25 mutation checks of the ADR are not re-run; my own 90 are in the mutation section.
 
-What held (executed attacks): the 60 prefix-rule classes in 24 neutral carriers (8,640 samples, 0 failures); the fold against fullwidth, circled, mathematical and Cyrillic look-alikes and soft-hyphen/joiner
-insertions (shipped cases re-run, plus 4 own look-alike carriers inside RT corpus forms); `holdsRedaction` against `[`/`:` escapes in typed strings and raw messages; tail rule against prose and
-the typed-marker variants; 389 realistic inputs with no change in the requirement, role, code, markdown, non-English and ticket categories; 42 adversarial inputs per size from 4 KB to 1 MiB; 100,000-string and
-9,000-deep JSON trees; invalid UTF-8, NUL, lone surrogates; determinism and idempotence under fuzz (27,776 and 35,690 executions, below).
+What held (executed attacks): 66 classes with a rule (prefix, hex, 40+ base64, JWT, PEM, AWS key id) in 24 neutral carriers, 9,504 samples, 0 failures; the fold against fullwidth, Cyrillic and Greek look-alikes and against
+zero-width, soft-hyphen, LRM, combining-grapheme-joiner, Hangul-filler and RLO insertions (my own obfuscation tier: a marker appeared in every one of those rows); `holdsRedaction` against `\u005b` and `\u003a`
+escapes in typed strings and raw messages; the tail rule against prose lines and typed markers; 389 realistic inputs with no change in the requirement, role, code, markdown, non-English and ticket categories; 42
+adversarial inputs per size from 4 KB to 1 MiB; a 100,000-string and 9,000-deep JSON trees; invalid UTF-8, NUL, lone surrogates; determinism and idempotence under fuzz (402,055 executions on the pinned code, 5 minutes
+under `hv`).
 
 Not covered: see the last section.
 ## Findings
@@ -186,7 +187,7 @@ Corpus: 3020 class/carrier/form cells, 6 samples each (18120 redactions attempte
 | source hosts and registries | 616 | 2526 | 300 | 870 |
 | SQL | 10 | 12 | 0 | 48 |
 
-Every class with a prefix rule is REDACTED in all 24 neutral carriers (bare, sentence, label, JSON, YAML, env, CRLF, quotes, fences, URLs, punctuation, between secrets, followed by camelCase or hex words): 0 failures out of 8,640 samples of 60 such classes. The failures sit in the hard-wrap carriers (RT-03 and the documented residual) and in the classes below.
+66 of the 97 single-token classes are REDACTED in all 24 neutral carriers (bare, sentence, label, JSON, YAML, env, CRLF, quotes, fences, URLs, punctuation, between secrets, followed by camelCase or hex words): 0 failures out of 9,504 samples. The other 31 are listed below. The failures of the 66 sit only in the hard-wrap carriers (RT-03 and the documented residual).
 
 ### Classes with failures outside the wrap carriers (counts over all non-wrap carriers/forms of the class)
 
@@ -524,7 +525,7 @@ Caveat: the 28 survivors of the `-run Redact` scope were not re-run against the 
 - The Unicode confusables beyond the table, precomposed accents and other scripts, a password that is a plain word, a key broken in the middle of a paragraph (tail shares its line with prose): documented residuals, quantified only for the wrap (RT-03) and the obfuscation tier.
 ## Appendix A - generators, corpus builder and repro tests (Go; no secret literal: values are drawn at run time)
 
-All code is package `ai` test code (`zz_review_*_test.go`), deleted from the worktree before every commit. The full tables are about 105 classes and 170 templates in the same shape; the 28 carriers of Part A are listed in its text.
+All code is package `ai` test code (`zz_review_*_test.go`), deleted from the worktree before every commit. The full tables are 103 class entries and 183 templates in the same shape; the 28 carriers of Part A are listed in its text.
 
 ### A.1 helpers and class generators
 ```go
