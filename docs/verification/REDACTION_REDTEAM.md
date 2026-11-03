@@ -27,7 +27,7 @@ state is not redacted.** Timing: PASS (no accepted input over 0.4 s, all growth 
 What held (executed attacks): 66 classes with a rule (prefix, hex, 40+ base64, JWT, PEM, AWS key id) in 24 neutral carriers, 9,504 samples, 0 failures; the fold against fullwidth, Cyrillic and Greek look-alikes and against
 zero-width, soft-hyphen, LRM, combining-grapheme-joiner, Hangul-filler and RLO insertions (my own obfuscation tier: a marker appeared in every one of those rows); `holdsRedaction` against `\u005b` and `\u003a`
 escapes in typed strings and raw messages; the tail rule against prose lines and typed markers; 389 realistic inputs with no change in the requirement, role, code, markdown, non-English and ticket categories; 42
-adversarial inputs per size from 4 KB to 1 MiB; a 100,000-string and 9,000-deep JSON trees; invalid UTF-8, NUL, lone surrogates; determinism and idempotence under fuzz (402,055 executions on the pinned code, 5 minutes
+adversarial inputs per size from 4 KB to 1 MiB; a 100,000-string tree and a 9,000-deep JSON tree; invalid UTF-8, NUL, lone surrogates; determinism and idempotence under fuzz (402,055 executions on the pinned code, 5 minutes
 under `hv`).
 
 Not covered: see the last section.
