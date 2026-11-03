@@ -154,7 +154,9 @@ func TestJitteredStaysWithinAQuarterAndSpreads(t *testing.T) {
 	if low > base-base/5 || high < base+base/5 {
 		t.Errorf("2000 draws covered only %v to %v of %v to %v", low, high, base-base/4, base+base/4)
 	}
-	if d, ok := Jittered(0); !ok || d != 0 {
-		t.Errorf("Jittered(0) = %v, %v", d, ok)
+	for _, d := range []time.Duration{0, -1, -time.Second} {
+		if got, ok := Jittered(d); !ok || got != 0 {
+			t.Errorf("Jittered(%v) = %v, %v: a wait that is not positive is no wait, and must not panic", d, got, ok)
+		}
 	}
 }

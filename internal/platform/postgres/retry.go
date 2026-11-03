@@ -62,6 +62,9 @@ func ConflictPause(int, error) (time.Duration, bool) {
 // Jittered is d spread by a quarter either way, from 0.75 d to 1.25 d: waits that are equal send every request that waited for the same moment
 // back at that same moment (independent review TF-11). It reports false when no random value can be drawn, as ConflictPause does.
 func Jittered(d time.Duration) (time.Duration, bool) {
+	if d <= 0 {
+		return 0, true // nothing to spread, and rand.Int panics on a bound that is not positive
+	}
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(d)/2+1))
 	if err != nil {
 		return 0, false
