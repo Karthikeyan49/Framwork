@@ -364,7 +364,8 @@ type RejectInput struct {
 }
 
 // Reject withdraws a READY proposal of either kind. A veto is always safe, so it
-// needs no draft or acknowledgement check.
+// needs no draft or acknowledgement check. It answers with the summary of the proposal, not its body: a caller who holds ai.apply and
+// not metadata.read may veto, and must not read the definitions the proposal carries (AO-02).
 func (s *Service) Reject(ctx context.Context, q postgres.Executor, a tenant.Access, in RejectInput) (Proposal, error) {
 	if !slices.Contains(RejectReasons, in.Reason) {
 		return Proposal{}, &PortError{Kind: ErrInvalidRequest}
@@ -383,5 +384,5 @@ func (s *Service) Reject(ctx context.Context, q postgres.Executor, a tenant.Acce
 	if _, err = st.Decide(ctx, q, DecideArgs{App: in.App, Proposal: p.ID, Decision: DecisionReject, RejectReason: in.Reason, DecisionHash: apiDigest(record)}); err != nil {
 		return Proposal{}, err
 	}
-	return st.Get(ctx, q, a, in.App, p.ID)
+	return st.Summary(ctx, q, a, in.App, p.ID)
 }

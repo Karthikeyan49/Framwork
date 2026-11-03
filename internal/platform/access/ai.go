@@ -273,6 +273,15 @@ func (a API) ai(ctx context.Context, q postgres.Executor, r *http.Request, u ide
 	}
 	root := "/v1/tenants/{tenant}/preview/{app}/ai"
 	switch r.Pattern {
+	case "POST " + root + "/patch-proposals", "POST " + root + "/requirement-proposals", "GET " + root + "/proposals/{id}":
+		// A proposal is made from the whole draft and carries the definitions it changes, so asking for one and reading one are reading
+		// the draft: ai.read and ai.propose alone must not reach what metadata.read protects (independent AI-output red team AO-02, the
+		// read side of the composition rule of ADR104 A6). The list holds hashes and states only, and a veto answers without the body.
+		if err := a.aiCompose(ctx, u, access, "metadata.read", "metadata", app, evidence); err != nil {
+			return reply{}, err
+		}
+	}
+	switch r.Pattern {
 	case "POST " + root + "/patch-proposals":
 		return a.aiPropose(ctx, q, r, u, access, app, ai.ProposalPatch, evidence)
 	case "POST " + root + "/requirement-proposals":

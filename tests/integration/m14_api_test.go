@@ -85,7 +85,9 @@ func TestM14APISliceProposeApply(t *testing.T) {
 // TestM14APIPolicyMatrix pins ADR104 A6 through the real routes: ai.read for every
 // member, ai.propose and ai.apply for owner and admin, nothing for an outsider or an
 // anonymous caller, custom roles by grant, and the composition rule (apply needs
-// metadata.write, confirm needs requirements.decide) on top of ai.apply.
+// metadata.write, confirm needs requirements.decide) on top of ai.apply, and the read side of it: asking for a proposal and reading one
+// need metadata.read on top of ai.propose and ai.read, because a proposal is made from the whole draft and carries the definitions it
+// changes (independent red team AO-02).
 func TestM14APIPolicyMatrix(t *testing.T) {
 	e := m14Setup(t, m14Options{})
 	e.draft("500")
@@ -93,7 +95,9 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 	member := e.member("mia", "member")
 	olga := e.addMemberIn(e.f.tenantB, "olga", "owner")
 	reader := e.customRole("ai_reader", "ai.read")
+	readerMeta := e.customRole("ai_reader_meta", "ai.read", "metadata.read")
 	author := e.customRole("ai_author", "ai.read", "ai.propose")
+	authorMeta := e.customRole("ai_author_meta", "ai.read", "ai.propose", "metadata.read")
 	applier := e.customRole("ai_applier_only", "ai.read", "ai.apply")
 	confirmerOnly := e.customRole("ai_confirm_only", "ai.read", "ai.apply")
 	withMeta := e.customRole("ai_applier_meta", "ai.read", "ai.apply", "metadata.write")
@@ -115,23 +119,25 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 		{"confirm", "POST", "/proposals/" + ready.ID + "/confirm", map[string]any{"expected_requirements_version": 0, "decisions": []any{}}},
 		{"reject", "POST", "/proposals/" + ready.ID + "/reject", map[string]any{"reason": "NOT_WANTED"}},
 	}
-	read := map[string]bool{"list": true, "get": true}
 	type actor struct {
 		name  string
 		token string
 		can   map[string]bool // routes the actor may use (they change state and are tested below)
-		read  bool
+		list  bool            // the list holds hashes and states: ai.read is enough
+		get   bool            // the body of a proposal holds definitions: ai.read and metadata.read
 	}
 	actors := []actor{
-		{"member", member.token, nil, true},
-		{"viewer", e.viewer, nil, true},
-		{"reader role", reader.token, nil, true},
-		{"author role", author.token, map[string]bool{"propose patch": true, "propose requirements": true}, true},
-		{"applier without metadata.write", applier.token, map[string]bool{"reject": true}, true},
-		{"applier with metadata.write", withMeta.token, map[string]bool{"apply": true, "reject": true}, true},
-		{"applier with requirements.decide", withReq.token, map[string]bool{"confirm": true, "reject": true}, true},
-		{"outsider (tenant B owner)", olga.token, nil, false},
-		{"anonymous", "", nil, false},
+		{"member", member.token, nil, true, true},
+		{"viewer", e.viewer, nil, true, true},
+		{"reader role (ai.read only)", reader.token, nil, true, false},
+		{"reader role with metadata.read", readerMeta.token, nil, true, true},
+		{"author role (no metadata.read)", author.token, nil, true, false},
+		{"author role with metadata.read", authorMeta.token, map[string]bool{"propose patch": true, "propose requirements": true}, true, true},
+		{"applier without metadata.write", applier.token, map[string]bool{"reject": true}, true, false},
+		{"applier with metadata.write", withMeta.token, map[string]bool{"apply": true, "reject": true}, true, false},
+		{"applier with requirements.decide", withReq.token, map[string]bool{"confirm": true, "reject": true}, true, false},
+		{"outsider (tenant B owner)", olga.token, nil, false, false},
+		{"anonymous", "", nil, false, false},
 	}
 	for _, a := range actors {
 		for _, r := range routes {
@@ -139,7 +145,7 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 			switch {
 			case a.token == "":
 				want = 401
-			case read[r.name] && a.read:
+			case r.name == "list" && a.list, r.name == "get" && a.get:
 				want = 200
 			case a.can[r.name]:
 				continue // allowed and state-changing: covered below
@@ -165,13 +171,13 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 	if e.auditCount("ai.propose", false) == 0 || e.auditCount("ai.apply", false) == 0 {
 		t.Error("policy denials must be audited with allowed=false")
 	}
-	// The author role may propose (and read) but its apply is refused.
+	// The author role (with metadata.read) may propose and read but its apply is refused.
 	e.provider.Push(e.answerFor(1, func(doc metadata.Document) []byte { return labelPatch(t, doc, "entity.order", "By author") }))
-	byAuthor := e.proposal(e.propose(author.token, "Rename the order entity."), 201)
-	if byAuthor.RequesterID != author.id {
+	byAuthor := e.proposal(e.propose(authorMeta.token, "Rename the order entity."), 201)
+	if byAuthor.RequesterID != authorMeta.id {
 		t.Fatal("the requester of record is the authenticated human", byAuthor.RequesterID)
 	}
-	if w := e.apply(author.token, byAuthor.ID, 1, nil); w.Code != 403 {
+	if w := e.apply(authorMeta.token, byAuthor.ID, 1, nil); w.Code != 403 {
 		t.Fatalf("author applied: %d", w.Code)
 	}
 	// Composition: ai.apply with metadata.write applies; without it, it does not. A
@@ -179,8 +185,12 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 	if w := e.apply(applier.token, ready.ID, 1, nil); w.Code != 403 {
 		t.Fatalf("ai.apply without metadata.write applied: %d %s", w.Code, w.Body.String())
 	}
-	if w := e.reject(applier.token, byAuthor.ID, "UNSAFE"); w.Code != 200 {
-		t.Fatalf("ai.apply alone may reject: %d %s", w.Code, w.Body.String())
+	vetoed := e.reject(applier.token, byAuthor.ID, "UNSAFE")
+	if vetoed.Code != 200 {
+		t.Fatalf("ai.apply alone may reject: %d %s", vetoed.Code, vetoed.Body.String())
+	}
+	if strings.Contains(vetoed.Body.String(), "By author") || strings.Contains(vetoed.Body.String(), `"operations"`) {
+		t.Fatalf("the veto of a role without metadata.read answered with the body of the proposal: %s", vetoed.Body.String())
 	}
 	if w := e.apply(withMeta.token, ready.ID, 1, nil); w.Code != 200 {
 		t.Fatalf("ai.apply with metadata.write refused: %d %s", w.Code, w.Body.String())
@@ -200,4 +210,67 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 	if w := e.confirm(withReq.token, req.ID, 0, decisions); w.Code != 200 {
 		t.Fatalf("confirm with requirements.decide: %d %s", w.Code, w.Body.String())
 	}
+}
+
+// TestM14APIAskingAndReadingNeedMetadataRead is AO-02 of the independent AI-output red team: a stored role that holds only AI actions
+// reached, through the AI routes, the definitions that metadata.read protects. A proposal is made from the whole draft and carries the
+// definitions it changes, so asking for one and reading one need metadata.read on top of ai.propose and ai.read (the read side of the
+// composition rule of ADR104 A6); the list holds hashes and states only, and a veto answers without the body.
+func TestM14APIAskingAndReadingNeedMetadataRead(t *testing.T) {
+	e := m14Setup(t, m14Options{})
+	e.draft("500")
+	ready := e.readyPatch(1, "workflow.order.approve", "Relabelled by the owner")
+	other := e.readyPatch(1, "entity.order", "Second relabel")
+	reader := e.customRole("zz_reader", "ai.read")
+	asker := e.customRole("zz_asker", "ai.read", "ai.propose")
+	vetoer := e.customRole("zz_vetoer", "ai.read", "ai.apply")
+	for name, who := range map[string]m13Actor{"reader": reader, "asker": asker, "vetoer": vetoer} {
+		if w := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/1", who.token, 0, nil); w.Code != 403 {
+			t.Fatalf("premise: the %s role reads the draft: %d", name, w.Code)
+		}
+	}
+	leaks := func(body string) bool {
+		return strings.Contains(body, "approval_roles") || strings.Contains(body, "Relabelled") || strings.Contains(body, "Second relabel") || strings.Contains(body, `"operations"`)
+	}
+
+	// Reading the body of a proposal needs metadata.read; the list does not.
+	if w := e.ai("GET", "/proposals/"+ready.ID, reader.token, nil); w.Code != 403 || leaks(w.Body.String()) {
+		t.Fatalf("a role with ai.read alone read a proposal: %d %s", w.Code, w.Body.String())
+	}
+	if w := e.ai("GET", "/proposals", reader.token, nil); w.Code != 200 || leaks(w.Body.String()) {
+		t.Fatalf("the list of a role with ai.read alone: %d %s", w.Code, w.Body.String())
+	}
+
+	// Asking needs metadata.read: nothing reaches the provider, nothing is stored or reserved, and the refusal is audited.
+	calls, rows := e.provider.Calls(), e.proposalRows()
+	if w := e.propose(asker.token, "Relabel everything."); w.Code != 403 || leaks(w.Body.String()) {
+		t.Fatalf("a role with ai.propose alone asked for a patch: %d %s", w.Code, w.Body.String())
+	}
+	if w := e.ai("POST", "/requirement-proposals", asker.token, map[string]any{"request": "What must hold?"}); w.Code != 403 {
+		t.Fatalf("a role with ai.propose alone asked for requirements: %d %s", w.Code, w.Body.String())
+	}
+	if e.provider.Calls() != calls || e.proposalRows() != rows {
+		t.Fatalf("a refused request reached the provider (%d -> %d calls) or stored a row (%d -> %d)", calls, e.provider.Calls(), rows, e.proposalRows())
+	}
+	if n := e.auditCount("ai.propose.rejected", false); n != 2 {
+		t.Errorf("the two refusals are audited as ai.propose.rejected with allowed=false: %d rows", n)
+	}
+
+	// A veto needs ai.apply only (ADR104), and answers with the summary: the state and the hashes, not the definitions.
+	vetoed := e.reject(vetoer.token, other.ID, "NOT_WANTED")
+	if vetoed.Code != 200 || leaks(vetoed.Body.String()) || !strings.Contains(vetoed.Body.String(), `"status":"REJECTED"`) {
+		t.Fatalf("the veto of a role without metadata.read: %d %s", vetoed.Code, vetoed.Body.String())
+	}
+
+	// With metadata.read the same roles work.
+	reads := e.customRole("zz_reads", "ai.read", "metadata.read")
+	got := e.proposal(e.ai("GET", "/proposals/"+ready.ID, reads.token, nil), 200)
+	if !strings.Contains(string(got.Proposal), "Relabelled by the owner") {
+		t.Fatalf("the proposal read with metadata.read lacks its body: %s", got.Proposal)
+	}
+	asks := e.customRole("zz_asks", "ai.read", "ai.propose", "metadata.read")
+	e.provider.Push(e.answerFor(1, func(doc metadata.Document) []byte {
+		return labelPatch(t, doc, "entity.order", "Asked with metadata.read")
+	}))
+	e.proposal(e.propose(asks.token, "Rename the order entity."), 201)
 }

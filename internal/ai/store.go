@@ -419,6 +419,19 @@ func (Store) Get(ctx context.Context, q postgres.Executor, a tenant.Access, app,
 	return p, err
 }
 
+// Summary reads one proposal without its body, derived data and diagnostics: the hashes, the state and the counters. It is the view that
+// a veto answers with, so that the route which needs only ai.apply never hands out the definitions the proposal carries (AO-02).
+func (Store) Summary(ctx context.Context, q postgres.Executor, a tenant.Access, app, id string) (Proposal, error) {
+	if !tenant.ValidID(id) || app == "" || a.TenantID() == "" {
+		return Proposal{}, ErrProposalNotFound
+	}
+	p, err := scanProposal(q.QueryRowContext(ctx, `SELECT `+summaryColumns+` FROM control.ai_proposals p WHERE p.tenant_id=$1 AND p.app_id=$2 AND p.id=$3`, a.TenantID(), app, id), false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Proposal{}, ErrProposalNotFound
+	}
+	return p, err
+}
+
 // List returns the newest proposals of an application without their bodies.
 func (Store) List(ctx context.Context, q postgres.Executor, a tenant.Access, app string, limit int) ([]Proposal, error) {
 	if app == "" || a.TenantID() == "" {
