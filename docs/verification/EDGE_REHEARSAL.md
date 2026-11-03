@@ -12,7 +12,8 @@ disposable database per test, real `httpserver.New` server (production timeouts:
 | 29 Oct 17:46 | run 1 (scenarios 1 and 6) finished: PASS, 340 s test time, 391 s with the lock wait |
 | 3 Nov 06:22 | report with scenarios 1 and 6 pushed |
 | 3 Nov 06:35 | run 2 finished (scenarios 2 and 4, real `cmd/api` processes, 94 s): ER-03 found |
-| 3 Nov 06:45 | run 3 finished (scenario 5, h2 status codes, result shed, 177 s); run 4 (scenario 3: result burst at production sizes, ramps of 50, 200, 400) queued |
+| 3 Nov 06:45 | run 3 finished (scenario 5, h2 status codes, result shed, 177 s) |
+| 3 Nov 06:55 | run 4 finished (scenario 3: ramps of 50, 200, 400 and the result burst at production sizes, 332 s): ER-04 found; run 5 (repeat of the process test) queued |
 
 ## Verdict (so far)
 
@@ -29,7 +30,7 @@ abandons every in-flight paid phase longer than 10 s (ER-03). Scenarios 3, 5, 7:
 | 1c | behind a Go reverse proxy, upstream timeout 30/60/120 s, client write timeout 60/120 s, plus cut-in-result, retry and idempotency probes | see section "Scenario 1 behind a proxy" | PASS WITH FINDINGS (ER-01, ER-02) |
 | 6 | protocol probes against the production server; h2 TLS proxy in front | HTTP/1.1 only (h2c prior knowledge, h2 preface, upgrade header, TLS ALPN all fail or are ignored); behind an h2 proxy: long stream 12.08 s, 30 parallel reads p50 65 ms p99 98 ms | N/A for the server; PASS behind a proxy |
 | 2 | real `cmd/api` process, SIGTERM during five 30 s phases (and during one 5 s phase), then a fresh process over the same database | in-grace phase served (201 at 5.17 s, exit 0); the five 30 s phases: all cut at SIGTERM+10.00 s, exit 1, **5 of 5 left PENDING**, 307,335 tokens charged pessimistically at the sweep (exactly once) | **FAIL (ER-03)** |
-| 3 | queued | | NOT RUN yet |
+| 3 | 50, 200 and 400 concurrent provider phases (40 s, 40 s, 57 s) over 7, 25 and 50 tenants (8 each), arrivals 25/s from 16 addresses; other tenants probed throughout; plus a read burst at production queue sizes while 8 answers arrive | 400 phases in flight at once, all 400 READY, 0 shed, 0 x 429; per phase about 6 goroutines and 2 descriptors (both ends are in this process) and 0.13 MiB RSS; no database connection held; other-tenant read p99 141 ms against 45 ms idle; **but 8 of 8 answers lost** when a read burst filled the database admission (ER-04) | PASS for the storm; **FAIL (ER-04)** for the result under load |
 | 4 | two (three) real `cmd/api` processes over one database: in-flight limit, daily budget, SIGKILL mid-phase, sweeps inside and after the lease, two sweeps at once | limit 2: 2 of 6 admitted over two processes; budget for 2.5 reservations: 2 of 6 admitted (one on each process); sweep inside the lease touched nothing; after the lease 2 rows EXPIRED and charged 61,467 once each, also with two sweepers at once | PASS |
 | 5 | 16 verified identities x 2 held connections from 16 addresses (and from one); owners' POSTs meanwhile; recovery; forwarding headers; 8,392 distinct addresses | 32.00 MiB booked in 20 ms; owner 503 `service_busy` / holder 429 `too_many_uploads`, both with Retry-After 1; sustained 24.3 s: 24 of 24 owner POSTs refused; recovery 10.08 s; headers ignored (20 of 25 either way); peer table full at 8,192 | **residual confirmed and sharpened (PASS of the documented numbers; no new defect)** |
 | 7 | UTC day rollover | no clock injection; `ai_begin` reads `clock_timestamp()` (`00089:142`) and the usage table refuses writes outside the port (`ai_port_write` trigger) | NOT RUN |
@@ -161,6 +162,39 @@ are unaffected; recovery takes 10.1 s after the last byte; the traffic gate neve
 non-test code under `internal/` or `cmd/`; the peer key is `r.RemoteAddr`, `access.go:243`, `gate.go:140`): a peer can neither dodge its own budget nor frame another. E7 is the documented fail-closed
 behaviour of the 8,192-key table (ADR061): 8,192 source addresses (an IPv6 /64 holds far more) keep every new address at 429 for as long as they are re-touched within two minutes.
 
+## Scenario 3, many long provider phases at once (run 4, `TestZZEdge3Storm`, `TestZZEdge3ResultBurst`, `TestZZEdge3ResultShed`)
+
+The server and the test client share one process, so every phase costs two sockets and both sets of goroutines. Arrivals: 10 requests every 0.4 s from 16 loopback addresses (about 25 per second),
+tenants of 8 in-flight each (limit 8), daily budget 100 million. The observer is another tenant's owner from its own address: 3 workers, one read every 60 ms each, kinds `healthz` (no database),
+`session` and `access` (database reads). **The host was at load average 11 to 14 (other agents) throughout**, so every latency is inflated; the baseline below is measured under the same load.
+
+| stage | ramp | phases in flight (provider peak) | goroutines (idle 19) | descriptors (idle 20) | RSS (idle 50 to 65) | heap (idle 10 to 13) | app pool in use | responses | landed within |
+|---|---|---|---|---|---|---|---|---|---|
+| 50 x 40 s | 2.0 s | 50 | 319 | 120 | 57 MiB | 14 MiB | 0 | 50 x 201 READY | 1.6 s |
+| 200 x 40 s | 8.0 s | 200 | 1,219 | 420 | 85 MiB | 25 MiB | 0 to 1 | 200 x 201 READY | 7.7 s |
+| 400 x 57 s | 16.0 s | 400 | 2,423 | 820 | 116 MiB | 37 MiB | 0 to 2 | 400 x 201 READY | 15.8 s |
+
+After each stage goroutines returned to 19 and descriptors to 20 (RSS 82 MiB after the last stage, heap 18 MiB, not yet returned to the OS). Per phase in flight, both ends together: **6 goroutines,
+2 descriptors (one is the server's), 0.13 to 0.20 MiB RSS, 0.07 MiB heap**. No database connection is held in a phase (the pool counter is 0, the 1 to 2 seen during the ramp are admissions).
+The traffic gate counts a request once, when it arrives (`Peer`, `Subject`); a phase holds nothing in it. Nothing was shed or limited: 650 creations, 0 x 429, 0 x 503.
+
+| latency of the other tenant (ms) | access p50 / p99 / max | session p50 / p99 / max | healthz p99 |
+|---|---|---|---|
+| idle (n = 86 each) | 11 / 45 / 56 | 9 / 33 / 56 | 3 |
+| during 50 phases (n = 435) | 14 / 254 / 457 | 13 / 276 / 402 | 2 |
+| during 200 phases (n = 450) | 15 / 167 / 552 | 13 / 233 / 289 | 4 |
+| during 400 phases (n = 701) | 13 / 141 / 186 | 12 / 148 / 180 | 4 |
+| while the 400 results landed (n = 260) | 13 / 122 / 138 | 12 / 106 / 140 | 8 (max 32) |
+
+0 failures in about 2,100 probe requests. **The first thing that breaks was not found by concurrency up to 400**: not memory, descriptors (the process limit here is 20,000, which at 2 per phase is about
+10,000 phases in this combined process; linear extrapolation, not measured), goroutines, database connections or the gate. What does break is the result exchange when the database admission is full (ER-04).
+
+**ER-04 evidence.** (1) `TestZZEdge3ResultShed`, admission limit 1 and queue 2 (4 and 128 in production) so that it is deterministic: control with a free queue 201 READY at 3.07 s; with the slot held and
+the two queue places taken when the answer arrives (3 s): **503 `service_unavailable` at 3.02 s, the proposal stays PENDING**, audit admitted 2 / created 1, `used_tokens` 5,974 (the control only).
+(2) `TestZZEdge3ResultBurst`, production sizes: 20 creations of one tenant (12 refused 429 `ai_busy`, the tenant limit being 8 in this probe), whose 8 answers fall due 6.0 to 6.4 s after their start;
+at 5 s 400 looping clients (16 identities, 16 addresses) began reading `/v1/session` for 4.2 s: 17,977 requests offered, 226 answered, **5,195 x 503 shed by the admission queue, 12,556 x 429 shed by the
+gate**. Result: **8 provider answers, 8 x 503 `service_unavailable`, 8 PENDING rows, 0 READY, `used_tokens` 0, audit admitted 8 / created 0.**
+
 ## Findings
 
 **ER-01 (LOW, a documented residual that now has numbers and a constraint that is not written down): a proxy timeout below the API's own 60 s wall clock loses the paid answer.**
@@ -182,6 +216,13 @@ limit burn 61%) and 80 s of that tenant's capacity. What to change (not done her
 SIGTERM and wait for the running ones, and let a cancelled run store its FAILED result before the process ends; and log how many requests were abandoned.
 Also write down: the orchestrator's termination grace must exceed the application's (the application ends itself at 10 s today).
 
+**ER-04 (MEDIUM, availability and cost): the result exchange of a paid answer takes a slot of the same 4 + 128 database admission as every other request and is not retried when the queue is full, so an
+overload loses the answer.** `aiResultExchange` repeats only known aborts (`ai.go:564-579`, `postgres.KnownAbort`, `retry.go:19-25`); `Admission.Acquire` returns `ErrAdmissionFull` at once when 128 are
+waiting (`admission.go:49-52`), which becomes the bare 503 `service_unavailable` (the "retry budget" residual of ADR104 Amendment C names a different case). Evidence above: 8 of 8 answers lost under a read burst;
+the user sees a 503 without a proposal id, the row stays PENDING for the lease (80 s, slot held), and the sweep charges the whole 61,470 reservation (about ten times the scripted use). Not claimed: that a
+normal load reaches 132 concurrent transactions (the idle API served 400 phases and 2,100 probes without a single shed); the burst needs more than 132 database requests at one moment. What to change (not
+done here): retry `ErrAdmissionFull` for the result exchange inside its 8 s context (it is not latency sensitive), or give result exchanges their own reserved slots.
+
 (Further findings are added below as the scenarios finish.)
 
 ## Deployment constraints that follow (so far)
@@ -189,7 +230,10 @@ Also write down: the orchestrator's termination grace must exceed the applicatio
 1. Response and idle timeout of every proxy or load balancer in front of the API: at least 75 s (recommended 90 s) for the two AI creation routes; a client-facing write timeout of 60 s
    makes the client see EOF instead of the API's own 503 at 60.2 s.
 2. No automatic POST retry on the creation routes (proxy `retry` on 5xx/reset, client libraries, service-mesh defaults).
-3. Rolling restarts: until ER-03 is addressed, drain a replica of AI traffic (and wait 80 s) before stopping it, or accept the loss of every running proposal and its 61,467-token charge.
+3. Capacity: a phase costs the server about 1 descriptor, 3 goroutines and under 0.1 MiB; 400 at once did not move the other tenants' reads beyond p99 150 ms on a loaded host. The limits that
+   bite first are the per-tenant ones: 61,470 tokens are reserved per run, so with the default daily budget of 200,000 a tenant can have 3 runs in flight whatever its in-flight limit, and the
+   4 + 128 admission queue, which must not fill while results arrive (ER-04).
+3b. Rolling restarts: until ER-03 is addressed, drain a replica of AI traffic (and wait 80 s) before stopping it, or accept the loss of every running proposal and its 61,467-token charge.
 4. Body-carrying requests are the exposed surface: put connection and bandwidth limits per source (and per account) at the edge; the API's own protection is the 32 MiB budget, which 16 accounts can hold.
 5. All replicas need identical `in_flight_per_tenant` and `daily_token_budget` (the limits are arguments of the database port, not database state).
 6. TLS and HTTP/2, if wanted, are terminated in front of the API: the API cannot do either. Behind a proxy all users share one peer bucket (300/s, burst 600) and one 4+128 admission queue. The traffic gate, the body budget and the AI in-flight cap are per process (replicas multiply them).
