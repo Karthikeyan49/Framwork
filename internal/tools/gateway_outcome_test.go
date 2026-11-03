@@ -146,10 +146,28 @@ func TestResponseBodyLimitsAndValidation(t *testing.T) {
 		"non-string key type": `{1:"a"}`,
 		"html":                `<html>gateway error</html>`,
 	}
+	// The escape form of the same defect (independent review TF-07): "@u" stands for the backslash and the u of an escape.
+	for name, body := range map[string]string{
+		"lone high surrogate escape":         `{"id":"n-@ud800"}`,
+		"lone low surrogate escape":          `{"id":"n-@udc00"}`,
+		"high surrogate and a letter":        `{"id":"n-@ud800A"}`,
+		"surrogate escape in a key":          `{"@ud800":"n-1","id":"n-1"}`,
+		"two lone halves in the wrong order": `{"id":"n-@udc00@ud800"}`,
+	} {
+		invalid[name] = strings.ReplaceAll(body, "@u", `\u`)
+	}
 	for name, body := range invalid {
 		prod.set(reply(200, body))
 		got := h.run(def, ModeLive, KindSend, testKey, writeInputs())
 		if got.Outcome != Unknown || got.Class != ClassInvalidResponse || got.Retryable || got.Status != 200 || len(got.Output) != 0 {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+
+	// The controls of the escape cases: a pair of escapes and the escape of U+FFFD itself are text, and are stored.
+	for name, body := range map[string]string{"a pair of escapes": `{"id":"n-@ud83d@ude00"}`, "the escape of the replacement character": `{"id":"n-@ufffd"}`} {
+		prod.set(reply(200, strings.ReplaceAll(body, "@u", `\u`)))
+		if got := h.run(def, ModeLive, KindSend, testKey, writeInputs()); got.Outcome != Success || got.Class != ClassOK {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}

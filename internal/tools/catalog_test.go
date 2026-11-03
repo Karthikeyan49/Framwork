@@ -375,9 +375,21 @@ func TestLoadCatalogRefusesInvalidUTF8(t *testing.T) {
 		"an encoded surrogate": "\"region\":\"nor\xed\xa0\x80th\"",
 		"a lone continuation":  "\"region\":\"nor\x80th\"",
 		"in the member name":   "\"re\xffgion\":\"north\"",
+		// The escape form (independent review TF-07): "@u" stands for the backslash and the u of an escape.
+		"a lone high surrogate escape": "\"region\":\"nor@ud800th\"",
+		"a lone low surrogate escape":  "\"region\":\"nor@udc00th\"",
+		"a half in the member name":    "\"re@ud800gion\":\"north\"",
 	} {
+		bad = strings.ReplaceAll(bad, "@u", `\u`)
 		if _, err := LoadCatalog(bytes.Replace(good, fixture, []byte(bad), 1)); !errors.Is(err, ErrCatalog) {
 			t.Errorf("%s: err=%v, want ErrCatalog", name, err)
+		}
+	}
+	// Controls: a pair of escapes and the escape of U+FFFD itself are text.
+	for name, ok := range map[string]string{"a pair of escapes": "\"region\":\"nor@ud83d@ude00th\"", "the replacement character": "\"region\":\"nor@ufffdth\""} {
+		ok = strings.ReplaceAll(ok, "@u", `\u`)
+		if _, err := LoadCatalog(bytes.Replace(good, fixture, []byte(ok), 1)); err != nil {
+			t.Errorf("%s is refused: %v", name, err)
 		}
 	}
 }

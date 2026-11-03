@@ -206,7 +206,7 @@ func EmptyCatalog() Catalog {
 // differently cased keys, trailing documents and unsafe definitions fail closed.
 func LoadCatalog(raw []byte) (Catalog, error) {
 	// Invalid UTF-8 would be replaced by U+FFFD while decoding: a definition, and the hash pinned for it, must say what the file says.
-	if len(raw) == 0 || len(raw) > MaxCatalogBytes || !utf8.Valid(raw) || !strictKeys(raw) {
+	if len(raw) == 0 || len(raw) > MaxCatalogBytes || !utf8.Valid(raw) || HasLoneSurrogateEscape(raw) || !strictKeys(raw) {
 		return Catalog{}, ErrCatalog
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))

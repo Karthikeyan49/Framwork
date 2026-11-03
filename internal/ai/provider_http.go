@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
@@ -182,6 +183,12 @@ type envelope struct {
 // as a scripted one would.
 func parseEnvelope(raw []byte) (envelope, error) {
 	bad := fmt.Errorf("%w: unreadable envelope", ErrProviderMalformed)
+	// Bytes that are not UTF-8, and the escape of half of a surrogate pair that the other half does not complete, would be decoded as U+FFFD, and the
+	// payload would be used "byte for byte" with a character in it that the endpoint did not send: an answer that is not text is refused (independent
+	// review TF-07). The same check is made on the payload itself, which is JSON inside a string (strictTree).
+	if !utf8.Valid(raw) || tools.HasLoneSurrogateEscape(raw) {
+		return envelope{}, bad
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Karthikeyan49/Framwork/internal/intent"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
 // Strict decoding of model output (ADR104 section 5). A payload is accepted only if
@@ -73,6 +74,9 @@ func strictTree(raw []byte) (any, *ProposalError) {
 		return nil, proposalErr(ErrMalformed, "", "empty payload")
 	case len(raw) > MaxOutputBytes:
 		return nil, proposalErr(ErrTooLarge, "", "payload exceeds the output limit")
+	case tools.HasLoneSurrogateEscape(raw):
+		// The decoder would store U+FFFD for it, a character that the model did not write (independent review TF-07); bytes that are not UTF-8 are refused below.
+		return nil, proposalErr(ErrMalformed, "", "payload is not one well-formed JSON document")
 	}
 	tree, err := metadata.DecodeJSONBounded(raw, MaxOutputBytes)
 	if err == nil {
