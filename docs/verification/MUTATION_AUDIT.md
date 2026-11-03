@@ -23,17 +23,19 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 
 | key | target | killed | survived | equivalent | score |
 |---|---|---|---|---|---|
-| 1a | Target 1 - M13 policy (Holds / NativeHolds / Decide / permits / RoleStore) | 12 | 23 | 1 | 34% (12/35) |
+| 1a | Target 1 - M13 policy (Holds / NativeHolds / Decide / permits / RoleStore), unit and end to end | 12 | 23 | 1 | 34% (12/35) |
 | 1b | Target 1 - M13 promotion package (counting, floors, staleness, runtime components, restore gate) | 36 | 19 | 3 | 65% (36/55) |
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
+| 1d | Target 1 - M13 handlers (holdingApprovers, internal/platform/access/promote.go), end to end | 0 | 0 | 0 | not reached |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 17 | 10 | 3 | 63% (17/27) |
-| 3b | Target 3 - M14 route and SQL (internal/platform/access/ai.go, migration 00089) | 0 | 0 | 0 | not reached |
-| 4 | Target 4 - platform front door and traffic | 18 | 9 | 1 | 67% (18/27) |
-| 5 | Target 5 - M10 tools gateway and M11 sandbox | 7 | 5 | 1 | 58% (7/12) |
-| all | all targets reached | 126 | 77 | 14 | 62% (126/203) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 25 | 12 | 3 | 68% (25/37) |
+| 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
+| 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 3 | 18 | 0 | 14% (3/21) |
+| 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
+| 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
+| all | all targets reached | 152 | 100 | 14 | 60% (152/252) |
 
-Discarded (did not compile or the edit did not apply, redone or dropped): B09, A19, G02, G03, AC17, AC18, AC21, AC25.
+Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, P08, P09, P10.
 
 ## Findings
 
@@ -212,6 +214,141 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 }
 ```
 
+### MA-06 (LOW, unit-only) - the built-in role matrix does not pin roles.write/assign, commands.reconcile and workflows.reconcile/recover (mutants U027, U028, U031)
+
+`permits` (`internal/policy/policy.go:62-171`): making viewers hold `commands.reconcile` (U027, line 105), members hold `workflows.reconcile` (U028, line 114) or admins hold `roles.write` and `roles.assign` (U031, line 75) leaves every test of `internal/policy` green: `TestPolicyMatrix` (`policy_test.go:12-56`) names none of these actions. The integration suite (role administration, workflow tests) is expected to see them; that was NOT RUN. Killing test, verified (passes on the original; fails on U027, U028 and U031, `kill_results.tsv`):
+
+```go
+package policy
+
+import "testing"
+
+func TestBuiltInRolesAndTheLessCommonActions(t *testing.T) {
+	role := Resource{TenantID: "tenant-a", Type: "role"}
+	preview := Resource{TenantID: "tenant-a", Type: "preview", AppID: "app.orders"}
+	workflow := Resource{TenantID: "tenant-a", Type: "workflow", AppID: "app.orders", EntityID: "entity.order", RecordID: "r1", WorkflowID: "workflow.order.approve"}
+	for _, tc := range []struct {
+		role, action string
+		resource     Resource
+		want         bool
+	}{
+		{"owner", "roles.write", role, true}, {"admin", "roles.write", role, false}, {"member", "roles.write", role, false},
+		{"owner", "roles.assign", role, true}, {"admin", "roles.assign", role, false},
+		{"member", "commands.reconcile", preview, true}, {"viewer", "commands.reconcile", preview, false},
+		{"owner", "workflows.reconcile", workflow, true}, {"admin", "workflows.reconcile", workflow, true}, {"member", "workflows.reconcile", workflow, false}, {"viewer", "workflows.reconcile", workflow, false},
+		{"admin", "workflows.recover", workflow, true}, {"member", "workflows.recover", workflow, false},
+		{"member", "workflows.cancel", workflow, true}, {"viewer", "workflows.cancel", workflow, false}, {"viewer", "workflows.read", workflow, true},
+	} {
+		if got := permits("alice", "tenant-a", []string{tc.role}, tc.action, tc.resource); got != tc.want {
+			t.Errorf("%s/%s: allow=%v, want %v", tc.role, tc.action, got, tc.want)
+		}
+	}
+}
+```
+
+### Structural gap (LOW) - the engine's request path cannot be unit tested
+
+`Native.Decide`'s `tenantScoped` path, `Defined.Decide`, `validSubject` and `Defined.DataScope` take a `policy.Subject` whose `identity.User` and `tenant.Access` have unexported fields and no test constructor, so no test in `internal/policy` can call them with a real subject. The 13 surviving policy mutants U010 to U022 and the 4 of `policy/store.go` (U033 to U036: inactive role head, bootstrap grants, several roles, worker actor binding), which need a database as well (selector widening, subject binding, DENY ordering, empty-scope and cancelled-context behaviour) are therefore judged only by the integration suite; of those, `TestM9RStoredRoleEngineBindsTenantAndActor` (`m9r_capabilities_test.go:487`) covers the `d.actorID` and `d.tenantID` conjuncts of `validSubject` and `TestM13R03HoldsMatchesDecide` covers the DENY ordering through the routes, and the rest (U010-U014 individually, U017-U022) were NOT RUN end to end except where a row of the table says otherwise.
+
+### MA-07 (LOW, unit gaps with verified killing tests) - helpers and bounds that no unit test pins
+
+Each of these mutants passes every unit test of its package; each killing test below passes on the original and fails on the mutants named (`kill_results.tsv`).
+- `promotion.WorseRollbackClass` / `rollbackRank` (`decisions.go:410-430`, mutants D20, D21) and the bounds `MaxNoteRunes` (`decisions.go:92`, D23: the SQL bound is `char_length <= 280`) and `MaxRollbackSpan` (D22): the worst class of a rollback span decides whether an acknowledged plan is required (M13R-02); only the integration test `TestM13R02*` can see the ranking (NOT RUN against D20/D21).
+- `ai.estimateTokens` (`repair.go:53`, A20): rounding down under-charges every call by up to 3 bytes' worth of tokens; every test uses multiples of four bytes.
+- `access.BodyHold.Add` (`bodybudget.go:71`, F02: the total reached exactly) and `DefaultBodyBudgetPerUser` (`bodybudget.go:33`, F11: a default share below the 1 MiB body the front door admits would refuse honest uploads).
+
+```go
+package promotion // zz: WorseRollbackClass and the bounds (kills D20, D21, D22, D23)
+
+import (
+	"testing"
+
+	"github.com/Karthikeyan49/Framwork/internal/risk"
+)
+
+func TestWorseRollbackClassAndTheBoundsThatMirrorTheDatabase(t *testing.T) {
+	for _, tc := range []struct{ a, b, want string }{
+		{risk.RollbackPointerSafe, risk.RollbackDataNotReversible, risk.RollbackDataNotReversible},
+		{risk.RollbackDataNotReversible, risk.RollbackPointerSafe, risk.RollbackDataNotReversible},
+		{risk.RollbackDataNotReversible, risk.RollbackExternalEffects, risk.RollbackExternalEffects},
+		{risk.RollbackExternalEffects, risk.RollbackDataNotReversible, risk.RollbackExternalEffects},
+		{risk.RollbackPointerSafe, "", ""},
+		{"", risk.RollbackPointerSafe, ""},
+		{risk.RollbackDataNotReversible, "", risk.RollbackDataNotReversible},
+		{risk.RollbackPointerSafe, "weird", "weird"},
+	} {
+		if got := WorseRollbackClass(tc.a, tc.b); got != tc.want {
+			t.Errorf("WorseRollbackClass(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
+		}
+	}
+	if MaxNoteRunes != 280 || MaxRollbackSpan != 32 { // the note bound is the database's char_length <= 280
+		t.Errorf("MaxNoteRunes %d MaxRollbackSpan %d", MaxNoteRunes, MaxRollbackSpan)
+	}
+}
+```
+
+```go
+package ai // zz: kills A20
+
+import "testing"
+
+func TestEstimateTokensRoundsUp(t *testing.T) {
+	for bytes, want := range map[int]int64{0: 0, 1: 1, 3: 1, 4: 1, 5: 2, 8: 2, 9: 3} {
+		if got := estimateTokens(bytes); got != want {
+			t.Errorf("estimateTokens(%d) = %d, want %d", bytes, got, want)
+		}
+	}
+}
+```
+
+```go
+package access // zz: kills F02, F11
+
+import "testing"
+
+func TestBodyBudgetReachesItsTotalExactlyAndTheDefaultShareFitsAMegabyte(t *testing.T) {
+	b := NewBodyBudget(100, 60)
+	if r := b.Hold("a").Add(60); r != "" {
+		t.Fatalf("a share of exactly 60 refused: %q", r)
+	}
+	if r := b.Hold("b").Add(40); r != "" { // 60 + 40 == the total of 100
+		t.Fatalf("the last 40 bytes of a total of 100 refused: %q", r)
+	}
+	if r := b.Hold("c").Add(1); r != bodyRefusedTotal {
+		t.Fatalf("a byte over the total: %q", r)
+	}
+	if DefaultBodyBudgetPerUser <= 1<<20 || DefaultBodyBudgetBytes < DefaultBodyBudgetPerUser {
+		t.Fatalf("defaults %d total, %d per identity", DefaultBodyBudgetBytes, DefaultBodyBudgetPerUser)
+	}
+}
+```
+
+### MA-08 (LOW, defense in depth) - `tools.AddressGuard`, the last check before connect(2) of the AI provider adapter, has no test (mutants N14, N15; N14b, N15b)
+
+`internal/tools/netpolicy.go:293-301`, used at `internal/ai/provider_http.go:158`. Dropping the `denied(target.Addr())` predicate (N14) or the port comparison (N15) leaves `internal/tools` and `internal/ai` (the caller, run as N14b and N15b) green; nothing references `AddressGuard` in a test. The first layer still holds (every resolved address is checked with `p.denied` before the dial, `provider_http.go:150-154`, and the dial goes to the validated literal), so this is the second layer of a rebinding defence going untested; the tool gateway's own `controlContext` is covered (N12, N13 killed). Killing test, verified (passes on the original; fails on N14 and N15):
+
+```go
+package tools
+
+import (
+	"context"
+	"net/netip"
+	"testing"
+)
+
+func TestAddressGuardRefusesDeniedAddressesOtherPortsAndGarbage(t *testing.T) {
+	denied := netip.MustParseAddr("10.0.0.1")
+	guard := AddressGuard(443, func(a netip.Addr) bool { return a == denied })
+	for address, refused := range map[string]bool{
+		"203.0.113.7:443": false, "10.0.0.1:443": true, "203.0.113.7:80": true, "[2001:db8::1]:443": false, "not an address": true, "203.0.113.7": true,
+	} {
+		if err := guard(context.Background(), "tcp", address, nil); (err != nil) != refused {
+			t.Errorf("%s: err %v, refused should be %v", address, err, refused)
+		}
+	}
+}
+```
+
 ## Equivalent mutants
 
 - D25 (`internal/promotion/decisions.go:551`): the dedupe key `lower(actor)+actor` is injective in the actor id, so `CountEligible` counts the same set.
@@ -252,11 +389,11 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | U024 | internal/policy/policy.go:63 | permits: drop tenant equality | go test ./internal/policy (whole package) | KILLED | TestNativeHolds |
 | U025 | internal/policy/policy.go:67 | permits: unknown roles are treated as built-in | go test ./internal/policy (whole package) | KILLED | TestPolicyMatrix |
 | U026 | internal/policy/policy.go:97 | permits: viewers may invoke tools | go test ./internal/policy (whole package) | KILLED | TestToolInvokeCapability |
-| U027 | internal/policy/policy.go:105 | permits: viewers may reconcile commands | go test ./internal/policy (whole package) | SURVIVED |  |
-| U028 | internal/policy/policy.go:114 | permits: members may reconcile workflows | go test ./internal/policy (whole package) | SURVIVED |  |
+| U027 | internal/policy/policy.go:105 | permits: viewers may reconcile commands | go test ./internal/policy (whole package) | SURVIVED | MA-06 (unit); integration NOT RUN |
+| U028 | internal/policy/policy.go:114 | permits: members may reconcile workflows | go test ./internal/policy (whole package) | SURVIVED | MA-06 (unit); integration NOT RUN |
 | U029 | internal/policy/policy.go:154 | permits: members share/assign records | go test ./internal/policy (whole package) | KILLED | TestRecordAccessAdministrationCapabilities |
 | U030 | internal/policy/policy.go:160 | permits: members write metadata | go test ./internal/policy (whole package) | KILLED | TestPolicyMatrix |
-| U031 | internal/policy/policy.go:75 | permits: admins write and assign roles | go test ./internal/policy (whole package) | SURVIVED |  |
+| U031 | internal/policy/policy.go:75 | permits: admins write and assign roles | go test ./internal/policy (whole package) | SURVIVED | MA-06 (unit); integration NOT RUN |
 | U032 | internal/policy/policy.go:165 | permits: profile.read of another user | go test ./internal/policy (whole package) | KILLED | TestPolicyMatrix |
 | U033 | internal/policy/store.go:133 | compileVersion: an inactive role head still compiles | go test ./internal/policy (whole package) | SURVIVED |  |
 | U034 | internal/policy/store.go:137 | compileVersion: a bootstrap version may carry grants | go test ./internal/policy (whole package) | SURVIVED |  |
@@ -281,10 +418,10 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | D17 | internal/promotion/decisions.go:216 | rollbackArgs: a recovery plan is a pointer move | go test ./internal/promotion (whole package) | KILLED | TestArgumentShapesAreCheckedBeforeSQL |
 | D18 | internal/promotion/decisions.go:274 | Acknowledged: recovery_required ignored | go test ./internal/promotion (whole package) | KILLED | TestArgumentShapesAreCheckedBeforeSQL |
 | D19 | internal/promotion/decisions.go:153 | classify: 42501 mapped to conflict | go test ./internal/promotion (whole package) | KILLED | TestPortErrorsAreTypedWithoutHidingTheSQLState |
-| D20 | internal/promotion/decisions.go:414 | WorseRollbackClass: returns the better class | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED |  |
-| D21 | internal/promotion/decisions.go:424 | rollbackRank: external effects rank below irreversible data | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED |  |
-| D22 | internal/promotion/decisions.go:102 | MaxRollbackSpan 32 -> 33 | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED | MaxRollbackSpan boundary; only the integration test TestM13R02* could see it; NOT RUN |
-| D23 | internal/promotion/decisions.go:92 | MaxNoteRunes 280 -> 281 (database says 280) | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED | Go bound 281 against the SQL bound 280: the unit test uses the constant itself |
+| D20 | internal/promotion/decisions.go:414 | WorseRollbackClass: returns the better class | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED | MA-07 (unit); the integration test TestM13R02* is expected to see it, NOT RUN |
+| D21 | internal/promotion/decisions.go:424 | rollbackRank: external effects rank below irreversible data | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED | MA-07 (unit) |
+| D22 | internal/promotion/decisions.go:102 | MaxRollbackSpan 32 -> 33 | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED | MA-07 (unit) |
+| D23 | internal/promotion/decisions.go:92 | MaxNoteRunes 280 -> 281 (database says 280) | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | SURVIVED | MA-07 (unit) |
 | D24 | internal/promotion/decisions.go:561 | RollbackClassNeedsPlan: unknown or empty class needs no plan | go test ./internal/promotion (whole package) | KILLED | TestRollbackClassGate |
 | D25 | internal/promotion/decisions.go:551 | CountEligible: key includes the case-sensitive id (neutral) | go test ./internal/promotion (whole package) ; widened: ./internal/promotion | EQUIVALENT | the key seen[lower(actor)+actor] is injective in the actor id, so the distinct count is unchanged |
 | T01 | internal/promotion/staleness.go:82 | Staleness: ABA generation advance ignored | go test ./internal/promotion (whole package) | KILLED | TestSecondReleaseBindsAndVerifiesAgainstItsBase |
@@ -383,7 +520,7 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | V45 | internal/verification/verifier.go:604 | gate: a failed end counts as a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
 | V46 | internal/verification/verifier.go:301 | threshold: human cases of other requirements are evaluated | go test ./internal/verification (whole package) | SURVIVED |  |
 | F01 | internal/platform/access/bodybudget.go:68 | BodyHold.Add: the share of one identity is exclusive | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
-| F02 | internal/platform/access/bodybudget.go:71 | BodyHold.Add: the total is exclusive | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | LOW: the total bound is exclusive at exactly total bytes; no test books exactly the total |
+| F02 | internal/platform/access/bodybudget.go:71 | BodyHold.Add: the total is exclusive | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | MA-07 (unit) |
 | F03 | internal/platform/access/bodybudget.go:68 | BodyHold.Add: no per-identity share | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
 | F04 | internal/platform/access/bodybudget.go:71 | BodyHold.Add: no total bound | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
 | F05 | internal/platform/access/bodybudget.go:89 | Release: the total is never given back | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
@@ -392,7 +529,7 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | F08 | internal/platform/access/bodybudget.go:76 | Add: the hold forgets what it booked | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
 | F09 | internal/platform/access/bodybudget.go:81 | Release: a second release gives the bytes back twice | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | EQUIVALENT | Release zeroes h.n, so a second release subtracts 0 whatever the guard says; the released flag is still tested through F07 |
 | F10 | internal/platform/access/bodybudget.go:130 | bookedBody: the bytes that did not fit are reported to the caller | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBookedBodyStopsTheReadThatDoesNotFit |
-| F11 | internal/platform/access/bodybudget.go:33 | default identity share below the largest admitted body | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | LOW: a default identity share below 1 MiB would refuse honest uploads; no test pins the default |
+| F11 | internal/platform/access/bodybudget.go:33 | default identity share below the largest admitted body | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | MA-07 (unit) |
 | TR01 | internal/platform/traffic/gate.go:29 | Validate: a peer rate above the global rate is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: configuration validation relation not tested |
 | TR02 | internal/platform/traffic/gate.go:29 | Validate: a peer burst above the global burst is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: configuration validation relation not tested |
 | TR03 | internal/platform/traffic/gate.go:29 | Validate: peer rate ceiling 10000 -> 100000 | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED | LOW: configuration validation bound not tested |
@@ -419,7 +556,8 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | A16 | internal/ai/repair.go:167 | output token ceiling dropped | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: the output-token ceiling is enforced a second time by ServiceLimits.Effective |
 | A17 | internal/ai/repair.go:171 | wall clock ceiling dropped | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: the wall-clock ceiling is enforced a second time by ServiceLimits.Effective (TestEffectiveWallClock) |
 | A18 | internal/ai/repair.go:258 | output size bound is exclusive | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: the output size bound is exclusive at exactly MaxOutputBytes; no boundary test |
-| A20 | internal/ai/repair.go:53 | estimateTokens rounds down | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: estimateTokens rounds down; every test uses multiples of four bytes |
+| A19 | internal/ai/repair.go:239 | transient failure retried without the one-retry limit | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget\|Hostile\|Adversarial' | KILLED | TestRunPatchProviderFailures |
+| A20 | internal/ai/repair.go:53 | estimateTokens rounds down | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | MA-07 (unit) |
 | A21 | internal/ai/repair.go:215 | caller cancellation not charged | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestACanceledCallIsChargedTheReservedOutput |
 | A22 | internal/ai/repair.go:282 | a terminal verdict still gets another model call | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestRunPatchInfrastructureAndCallerErrors |
 | A23 | internal/ai/repair.go:301 | diagnostics bound off by one | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | KILLED | TestAdversarialCorpus (widened) |
@@ -446,6 +584,8 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | A25 | internal/ai/repair.go:57 | clampTokens: negative figures refill the budget | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | EQUIVALENT | chargeUsage takes max(clamp(v), estimate) with estimate >= 0, so a negative figure and 0 give the same charge |
 | N07 | internal/tools/netpolicy.go:149 | embeddedClass: an internal IPv4 inside a translation form is public | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
 | G01 | internal/ai/gateway.go:95 | RunPatch: apply conflicts ignored | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestRunPatchHostileAnswersNeverProduceADocument |
+| G02 | internal/ai/gateway.go:98 | RunPatch: forbidden kind reported as a plain conflict | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget\|Hostile\|Adversarial' ; widened: ./internal/ai | SURVIVED |  |
+| G03 | internal/ai/gateway.go:143 | RunPatch: an infrastructure failure becomes NEEDS_HUMAN | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget\|Hostile\|Adversarial' | KILLED | TestAdversarialCorpus |
 | N08 | internal/tools/netpolicy.go:165 | DeniedAddress: internal addresses are always allowed | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
 | N09 | internal/tools/netpolicy.go:200 | dialContext: any address may be dialed | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
 | N10 | internal/tools/netpolicy.go:217 | dialContext: only the first resolved answer is validated | go test ./internal/tools (whole package) | KILLED | TestOneDeniedAnswerRefusesTheWholeDestination |
@@ -454,9 +594,9 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | N12 | internal/tools/netpolicy.go:271 | controlContext: the port is not re-validated | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
 | N13 | internal/tools/netpolicy.go:271 | controlContext: the literal address is not re-validated | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
 | G04 | internal/ai/gateway.go:201 | RunRequirements: NEEDS_HUMAN for any last outcome | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
-| N14 | internal/tools/netpolicy.go:296 | AddressGuard: the denied predicate is not consulted | go test ./internal/tools (whole package) | SURVIVED | see N14b |
+| N14 | internal/tools/netpolicy.go:296 | AddressGuard: the denied predicate is not consulted | go test ./internal/tools (whole package) | SURVIVED | MA-08 |
 | AC02 | internal/platform/access/ai.go:67 | aiPOST: an unregistered route is admitted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: no unit test pins aiPOST against the registered routes |
-| N15 | internal/tools/netpolicy.go:296 | AddressGuard: any port | go test ./internal/tools (whole package) | SURVIVED | see N15b |
+| N15 | internal/tools/netpolicy.go:296 | AddressGuard: any port | go test ./internal/tools (whole package) | SURVIVED | MA-08 |
 | N16 | internal/tools/netpolicy.go:90 | classifyAddress: a zoned IPv6 address bypasses the prefix checks | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
 | AC03 | internal/platform/access/ai.go:49 | aiPatterns: reject needs only ai.read | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: no unit test pins the policy action of the apply, confirm, reject and GET routes (aiPatterns, ai.go:42-50); release routes have such a pin (promote_test.go:67-73) |
 | N17 | internal/tools/netpolicy.go:54 | neverV6: only a /64 of the AWS block | go test ./internal/tools (whole package) | KILLED | TestDeniedAddressCorpus |
@@ -482,3 +622,14 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 | AC23 | internal/platform/access/promote.go:706 | rollbackRelease: no plan is required in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side plan requirement (the port repeats it) |
 | AC24 | internal/platform/access/promote.go:698 | rollbackRelease: a rejected target is not refused in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side rejected-target check (the port repeats it) |
 | P03 | internal/ai/patch.go:118 | apply: definition kind need not match the target | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED |  |
+| N11b | internal/tools/netpolicy.go:210 | dialContext: no bound on the resolved answers (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | LOW: the bound on resolved answers of the AI adapter is untested |
+| P04 | internal/ai/patch.go:121 | apply: the kind of a definition may change | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED |  |
+| X06 | db/migrations/00089_m14_ai_proposals.sql:160 | ai_begin: an expired pending request is not charged its reservation | it-run fix 'TestM14' -v (32 top-level tests passed, canary ok) | KILLED | TestM14APIAdmissionBudgetsAndLimits/a_stale_PENDING_row_expires_and_frees_its_slot |
+| P05 | internal/ai/patch.go:124 | apply: redaction placeholders may be written back | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalRefusesRedactionPlaceholders |
+| N14b | internal/tools/netpolicy.go:296 | AddressGuard: the denied predicate is not consulted (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | MA-08 |
+| P06 | internal/ai/patch.go:127 | apply: schema version mismatch accepted | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalValidatesDefinitionsWithTheMetadataSchema |
+| P07 | internal/ai/patch.go:130 | apply: namespace mismatch accepted | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| N15b | internal/tools/netpolicy.go:296 | AddressGuard: any port (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | MA-08 |
+| P11 | internal/ai/patch.go:159 | apply: the per-target expected-hash compare-and-set is skipped | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| P12 | internal/ai/patch.go:99 | apply: two operations on one target | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalDuplicateTargets |
+| P13 | internal/ai/patch.go:60 | apply: operation bound is exclusive | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
