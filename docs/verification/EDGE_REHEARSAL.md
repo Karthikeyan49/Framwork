@@ -11,7 +11,8 @@ disposable database per test, real `httpserver.New` server (production timeouts:
 |---|---|
 | 29 Oct 17:46 | run 1 (scenarios 1 and 6) finished: PASS, 340 s test time, 391 s with the lock wait |
 | 3 Nov 06:22 | report with scenarios 1 and 6 pushed |
-| 3 Nov 06:35 | run 2 finished (scenarios 2 and 4, real `cmd/api` processes, 94 s): ER-03 found; run 3 (scenario 5, h2 status codes, result shed) queued; 3 follows |
+| 3 Nov 06:35 | run 2 finished (scenarios 2 and 4, real `cmd/api` processes, 94 s): ER-03 found |
+| 3 Nov 06:45 | run 3 finished (scenario 5, h2 status codes, result shed, 177 s); run 4 (scenario 3: result burst at production sizes, ramps of 50, 200, 400) queued |
 
 ## Verdict (so far)
 
@@ -30,7 +31,7 @@ abandons every in-flight paid phase longer than 10 s (ER-03). Scenarios 3, 5, 7:
 | 2 | real `cmd/api` process, SIGTERM during five 30 s phases (and during one 5 s phase), then a fresh process over the same database | in-grace phase served (201 at 5.17 s, exit 0); the five 30 s phases: all cut at SIGTERM+10.00 s, exit 1, **5 of 5 left PENDING**, 307,335 tokens charged pessimistically at the sweep (exactly once) | **FAIL (ER-03)** |
 | 3 | queued | | NOT RUN yet |
 | 4 | two (three) real `cmd/api` processes over one database: in-flight limit, daily budget, SIGKILL mid-phase, sweeps inside and after the lease, two sweeps at once | limit 2: 2 of 6 admitted over two processes; budget for 2.5 reservations: 2 of 6 admitted (one on each process); sweep inside the lease touched nothing; after the lease 2 rows EXPIRED and charged 61,467 once each, also with two sweepers at once | PASS |
-| 5 | queued | | NOT RUN yet |
+| 5 | 16 verified identities x 2 held connections from 16 addresses (and from one); owners' POSTs meanwhile; recovery; forwarding headers; 8,392 distinct addresses | 32.00 MiB booked in 20 ms; owner 503 `service_busy` / holder 429 `too_many_uploads`, both with Retry-After 1; sustained 24.3 s: 24 of 24 owner POSTs refused; recovery 10.08 s; headers ignored (20 of 25 either way); peer table full at 8,192 | **residual confirmed and sharpened (PASS of the documented numbers; no new defect)** |
 | 7 | UTC day rollover | no clock injection; `ai_begin` reads `clock_timestamp()` (`00089:142`) and the usage table refuses writes outside the port (`ai_port_write` trigger) | NOT RUN |
 
 ## Scenario 1 directly behind the production server (run 1, `TestZZEdge1Direct`)
@@ -103,8 +104,8 @@ Executed: Go client with unencrypted HTTP/2 prior knowledge: `http2: failed read
 raw `PRI * HTTP/2.0` preface: `HTTP/1.1 400 Bad Request`; `Upgrade: h2c` request: `HTTP/1.1 200 OK` (ignored); TLS handshake with ALPN h2 against the port: `first record does not look like a TLS handshake`.
 So the per-stream write-deadline, stream leak, multiplexing and `nextWithin` questions are **N/A for the server**. Behind a TLS proxy that speaks h2 to clients and HTTP/1.1 to the API: a 12 s
 creation returned 201 READY at 12.08 s while 30 reads on the same h2 connection took p50 65 ms, p99 98 ms (no head-of-line blocking); 700 streams in 1.0 s from the proxy's single address:
-355 x 200 and **345 x 503**, 0 x 429: the 503 of this path is `service_unavailable`, a failed transaction admission (4 active + 128 queued), not the traffic gate (700 requests in 1 s is under its
-600 burst + 300/s; run 1 recorded the status only, the code is recorded in a later run). By code (`gate.go:140`, ADR061) all clients behind one proxy share one peer key.
+355 x 200 and **345 x 503**, 0 x 429. Repeated in run 3 with the code recorded (host load 10): 700 streams in 1.4 s gave 195 x 200 and **505 x 503 `service_unavailable`, no Retry-After**, 0 x 429: the shed is the
+database admission (4 active + 128 queued), not the traffic gate (700 requests in 1.4 s is under its 600 burst + 300/s). By code (`gate.go:140`, ADR061) all clients behind one proxy share one peer key.
 
 ## Scenario 2, shutdown during a phase (run 2, `TestZZEdgeProcesses`, real process)
 
@@ -137,6 +138,29 @@ Three to five real processes (A, B, C, ...) over one database; the limits are de
 The in-flight and budget numbers come from the configuration of the process that handles the request (`p_inflight`, `p_daily_tokens` are arguments of the port), so replicas with different
 `in_flight_per_tenant` or `daily_token_budget` apply different limits to the same tenant (seen in 4c: the same dead rows refuse one instance and not the other).
 
+## Scenario 5, the body budget with several peers (run 3, `TestZZEdge5BodyBudget`)
+
+Default budget (32 MiB in all, 2 MiB per verified identity, `bodybudget.go:32-33`), the production server, 20 signed but unprovisioned identities, source addresses 127.0.0.2 to 127.0.0.150 and
+127.1.x.y (bound with `net.Dialer.LocalAddr`; Linux answers all of 127/8). A holder is one POST to the AI creation route that declares 1 MiB and sends 1 MiB minus one byte, then waits; an identity
+holds two of them (its 2 MiB share).
+
+| step | observed |
+|---|---|
+| E1 fill | 32 connections from 16 addresses, 16 identities: **33,554,400 bytes (32.00 MiB of 32) booked by 16 identities 20 ms after the last write** (32.0 MiB sent) |
+| E2 others meanwhile | the tenant owner's creation POST (45 bytes) from a new address: **503 `service_busy`, Retry-After 1, in 3 ms**; a holder's third connection (100 bytes): **429 `too_many_uploads`**, Retry-After 1, also from a never-seen address (the share is per identity, not per address); GET `/v1/session` without token: 401 in 8 ms; the owner's GET (no body): 200 in 10 ms; a 2-byte body on a non-AI route was admitted (400 `invalid_metadata` from the handler) because each holder stops one byte short and leaves 32 bytes free |
+| E3 recovery | holders only wait: budget empty again **9.94 s later (10.08 s after they began)**, the 10 s read timeout; of the 32 held connections 10 were answered 400 and 22 closed without an answer; the owner's creation then 201 in 148 ms |
+| E4 one address | the same 32 connections from ONE address: 33,554,400 bytes booked after 20 ms, the owner's POST 503 `service_busy`: the per-address gate is not involved (32 requests against 300/s, burst 600) |
+| E5 sustained | three windows of 8 s, holders re-send 32 MiB per window (4.0 MiB/s average with the pauses, 33 Mbit/s): **the owner's POSTs 24 of 24 refused (429/503), 0 served** over 24.3 s |
+| E6 headers | 25 invalid-bearer requests from one peer (its budget is 20, then 1/s): no header 20 x 401 / 5 x 429; `X-Forwarded-For` rotating 20 / 5; `Forwarded` rotating 21 / 4 (one refill); `X-Real-IP` rotating 20 / 5. Attacker 127.0.0.14 claiming `X-Forwarded-For: 127.0.0.15` in 25 requests, then the claimed victim from its own address: 1 x 401 admitted, 0 x 429 |
+| E7 peer table | 8,392 requests from 8,392 distinct addresses (a valid token each, paced, 36 s): 8,170 admitted, 222 x 429; afterwards a legitimate new address: **429 `rate_limited`**, Retry-After 1; an address already in the table: 200 |
+
+The residual of `LINE_INTEGRATION_PLAN.md` ("16 identities that really send 2 MiB each, again every read timeout, keep the body-carrying requests of every tenant at 503, and the traffic gate does
+not stop them") is **confirmed by execution** and can be stated in numbers: the price is 16 accounts and 32 MiB per 10 s, that is **3.2 MiB/s (26.8 Mbit/s) of uplink**, from one address or from 16;
+the effect is a 503 for every POST with a body of 33 bytes or more of every tenant, the AI creations included, while GETs and the result exchange of runs already in flight (they read no body)
+are unaffected; recovery takes 10.1 s after the last byte; the traffic gate never engages (32 requests). Headers `X-Forwarded-For`, `Forwarded` and `X-Real-IP` are not trusted (E6; no use of them in
+non-test code under `internal/` or `cmd/`; the peer key is `r.RemoteAddr`, `access.go:243`, `gate.go:140`): a peer can neither dodge its own budget nor frame another. E7 is the documented fail-closed
+behaviour of the 8,192-key table (ADR061): 8,192 source addresses (an IPv6 /64 holds far more) keep every new address at 429 for as long as they are re-touched within two minutes.
+
 ## Findings
 
 **ER-01 (LOW, a documented residual that now has numbers and a constraint that is not written down): a proxy timeout below the API's own 60 s wall clock loses the paid answer.**
@@ -166,8 +190,9 @@ Also write down: the orchestrator's termination grace must exceed the applicatio
    makes the client see EOF instead of the API's own 503 at 60.2 s.
 2. No automatic POST retry on the creation routes (proxy `retry` on 5xx/reset, client libraries, service-mesh defaults).
 3. Rolling restarts: until ER-03 is addressed, drain a replica of AI traffic (and wait 80 s) before stopping it, or accept the loss of every running proposal and its 61,467-token charge.
-4. All replicas need identical `in_flight_per_tenant` and `daily_token_budget` (the limits are arguments of the database port, not database state).
-5. TLS and HTTP/2, if wanted, are terminated in front of the API: the API cannot do either. Behind a proxy all users share one peer bucket (300/s, burst 600) and one 4+128 admission queue. The traffic gate, the body budget and the AI in-flight cap are per process (replicas multiply them).
+4. Body-carrying requests are the exposed surface: put connection and bandwidth limits per source (and per account) at the edge; the API's own protection is the 32 MiB budget, which 16 accounts can hold.
+5. All replicas need identical `in_flight_per_tenant` and `daily_token_budget` (the limits are arguments of the database port, not database state).
+6. TLS and HTTP/2, if wanted, are terminated in front of the API: the API cannot do either. Behind a proxy all users share one peer bucket (300/s, burst 600) and one 4+128 admission queue. The traffic gate, the body budget and the AI in-flight cap are per process (replicas multiply them).
 
 ## NOT RUN
 
