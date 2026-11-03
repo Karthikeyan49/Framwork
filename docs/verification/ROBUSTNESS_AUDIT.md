@@ -9,8 +9,8 @@ average 20 to 33 on 4 cores, about 12 waiters on the heavy lock), so every timin
 ## Verdict: PASS WITH FINDINGS (four LOW findings, no HIGH, no MEDIUM)
 
 No panic, no goroutine leak, no handle leak and no super-linear behaviour was found in the code paths that could be exercised
-without a database. The `-race -count=3` run is NOT RUN (see E-9). Everything below is split into what was read (S) and what was
-executed (E).
+without a database. The `-race -count=3` run is NOT RUN (see E-9). Below, the static reading comes first (with the answer for
+each item of the brief), then what was executed (E-1 to E-9).
 
 ## Findings
 
@@ -19,7 +19,7 @@ executed (E).
 | RB-01 | LOW | `internal/platform/httpserver/httpserver.go:50-94`, `internal/platform/app/app.go:288` | `/readyz` is an anonymous, unthrottled fan-out (12 goroutines, about 29 database statements and 5 Redis commands per request) and its probe goroutines have no `recover`: one probe panic ends the process. The fan-out is the documented residual of ADR061 (quantified here); the missing `recover` is new. |
 | RB-02 | LOW | `internal/ai/repair.go:115`, `:141-143`, `:152` | `maxAbandonedCalls = 16` is a check-then-act bound: 41 abandoned provider calls were observed at once with 200 concurrent runs. Needs an adapter that ignores its context (neither shipped adapter does). |
 | RB-03 | LOW | `internal/platform/app/app.go:134`, `:169`, `:211-213`; `internal/runtime/workflow/execution.go:485`; `internal/platform/jobs/dispatch.go:23` | No worker, dispatcher or consumer loop recovers a panic: a panic ends the whole process (fail-stop, never a silent death), so a panic that depends on one instance's stored data would crash-loop every tenant's work on that worker. No such panic was found; this is the missing containment, not a witnessed crash. |
-| RB-04 | LOW | `cmd/migrate/main.go:117` | `migrate up` has one fixed 30 s wall clock for the lock wait and all pending migrations; a long migration on a large database is cancelled (rolled back) every time, with no flag to extend it. NOT RUN against a large database. |
+| RB-04 | LOW | `cmd/migrate/main.go:117` | `migrate up` has one fixed 30 s wall clock for the lock wait and all pending migrations; the migration running when the 30 s end is cancelled and rolled back (each migration is its own transaction; none uses `NO TRANSACTION`), and a migration that alone needs longer fails on every retry, with no flag to extend the limit. NOT RUN against a large database. |
 
 ### RB-01 detail
 
@@ -40,8 +40,9 @@ executed (E).
   probe bodies running at once. Executed (E-8): a probe that panics ends the process (`exit status 2`, `panic: assignment to entry
   in nil map`) while a handler that panics is answered 500 by `recoverer` (`httpserver.go:190-200`) and the process survives.
 * Database cost of one `/readyz`, pool starvation under flood: NOT RUN (no database).
-* Repro: `cd <snapshot> && gt test -run 'TestZZReadyzAmplification|TestZZPanicInProbeVersusHandler' -v ./internal/platform/httpserver`
-  with the two probe files listed in the appendix.
+* Repro: copy the RB-01 test file of the appendix into `internal/platform/httpserver/` and run
+  `gt test -count=1 -run 'TestRepro' -v ./internal/platform/httpserver` (observed: `200=100 429=0 peak=1200`, then `exit status 2` for the
+  probe and `ZZ-STATUS 500` for the handler).
 * Fix direction (not applied): `defer recover` in the probe goroutine, a per-peer limiter or a separate listener for `/readyz`.
 
 ### RB-02 detail
@@ -49,8 +50,8 @@ executed (E).
 `call` (`repair.go:114-149`) reads `g.abandoned.Load() >= maxAbandonedCalls` (line 115) and increments only later, when a caller
 gives up (line 141-143). Any number of concurrent callers pass the check before the first increments. Executed (E-3): 200 concurrent
 `RunRequirements` against an adapter family where one in six ignores its context gave `abandonedBeforeRelease=41` and 41 adapter
-bodies still running, against the documented "at most 16" (`repair.go:112`). The earlier review's test
-(`INTEGRATION_INDEPENDENT_REVIEW.md:2670`) issues its 20 requests sequentially, so it cannot see this. After the adapters returned,
+bodies still running, against the documented "at most 16" (`repair.go:112`). M14R-07 is recorded FIXED (`docs/verification/M14_INDEPENDENT_REVIEW.md:223`); the fix holds for sequential callers only. The
+earlier review's test (`INTEGRATION_INDEPENDENT_REVIEW.md:2670`) issues its 20 requests sequentially, so it cannot see this. After the adapters returned,
 the counter fell to 0 and the goroutine count to the baseline: no leak, only an unenforced bound. Consequence: goroutines and
 buffered requests of every abandoned call stay until the adapter returns; concurrency is bounded only by the tenants'
 `InFlightPerTenant` and the HTTP server. The shipped adapters (`provider_http.go:267`, `provider_scripted.go:85`) honour the context.
@@ -77,8 +78,8 @@ buffered requests of every abandoned call stay until the adapter returns; concur
 | `time.After` / `time.Tick` in loops | none in non-test code. Five `time.NewTimer` (`dispatch.go:30`, `execution.go:492`, `delivery.go:265`, `retry.go:60`, `provider_scripted.go:85`), each stopped or drained on every path |
 | copied mutexes | `go vet ./...` (copylocks) clean (E-1); every mutex owner is used by pointer (`Gate`, `BodyBudget`, `Admission`, `Recompute`, `rateLimiter`, `rejectionLog`) |
 | unbounded maps, slices, caches, channels | all bounded: traffic pools 8192 keys with idle eviction (`gate.go:21-22`, `get`), `BodyBudget.bySubject` deleted at zero (`bodybudget.go:93`), tool limiter 4096 buckets (`ratelimit.go:10`), `Recompute` LRU by bytes and entries (`recompute.go:236-253`) with per-tenant tokens deleted at zero, `patchSchemas` stored only for 6 known versions (`schema_text.go:36`, `:91-193`), `fieldCache` keyed by Go type, sign-in flows capped 120 global / 20 per remote with TTL (`cache/login.go:17-28`), event stream `MaxLen 10000` (`redis.go:68`), audit batch 8192 (`batch.go:15`), admission queue 128 |
-| `rows.Close`, `tx.Rollback`, `Body.Close` | every one of the 36 `QueryContext` sites binds `rows` and closes it (mechanical scan, then the four ambiguous ones by hand: `shadow.go:117`, `unique.go:176`, `dataset.go:344` close explicitly or by defer); `defer tx.Rollback()` at `transaction.go:132`, `cmd/iam`, `cmd/worker-admin`; `defer resp.Body.Close()` at `provider_http.go:283`, `executor.go:336`, and the reject path at `identity/login.go:111`; all 14 `io.ReadAll` calls sit behind `io.LimitReader` |
-| `context.Background()` on request paths | 15 occurrences: process roots in `cmd/*`, shutdown contexts (`app.go:88`, `:313`), the deliberate 1 s connection cleanup (`transaction.go:110`) and `verification/verifier.go:386`, a pure call bounded by `len(plan.States)` and `MaxWork`; no request path loses cancellation. `Prepare` (redaction and compile) is CPU-bound inside the 3 s transaction (`transaction.go:87`): measured 0.3-2.0 s for a 256 KiB hostile draft on the loaded host (E-7), under the cap but with little margin on a loaded node |
+| `rows.Close`, `tx.Rollback`, `Body.Close` | every `QueryContext` call that binds a `*sql.Rows` closes it (scan of the 36 call sites; four showed no `Close` within six lines and were read by hand: `shadow.go:117` defers it, `unique.go:176` closes on both paths, `dataset.go:344` closes at `:367`, `metadata.go:135` is not a rows site); `defer tx.Rollback()` at `transaction.go:132`, `cmd/iam`, `cmd/worker-admin`; `defer resp.Body.Close()` at `provider_http.go:283`, `executor.go:336`, and the reject path at `identity/login.go:111`; all 13 `io.ReadAll` calls sit behind `io.LimitReader` (the one unbounded read, `os.ReadFile(c.ToolCAFile)` at `app.go:46`, names an operator-owned file) |
+| `context.Background()` on request paths | 15 occurrences: process roots in `cmd/*`, shutdown contexts (`app.go:88`, `:313`), the deliberate 1 s connection cleanup (`transaction.go:110`) and `verification/verifier.go:386`, a pure call bounded by `len(plan.States)` and `MaxWork`; no request path loses cancellation. `Prepare` (redaction and compile, `ai/service.go:290`, called inside the request transaction at `platform/access/ai.go:422`) is CPU-bound inside the 3 s transaction (`transaction.go:87`): the redaction alone measured 0.1-2.0 s for one 256 KiB hostile string on the loaded host (E-7), under the cap but with little margin on a loaded node |
 | `recover()` coverage | 12 sites: `httpserver.go:193`, `repair.go:127`, `provider_http.go:130`, `service.go:327` (provider phase becomes `ErrGatewayFailed`), `execution.go:372`, `executor.go:154`, `:278`, `netpolicy.go:251`, `traffic/gate.go:164`, and three re-panics (`transaction.go:92`, `preview.go:109`, `aggregate.go:121`) that leave the rollback to `WithRuntime` as documented |
 | integer conversions and size arithmetic | no `make` takes an untrusted number (every size is `len()` of a bounded collection; `corpus.go:550` is test-only data capped at 100000); the only narrowing conversions are `uint16(port)` at `netpolicy.go:224` and `provider_http.go:160`, with ports validated 1..65535 (`tools/catalog.go:410`, `ai/config.go:204`); `query.Limit+1` is reached only after `Limit <= MaxPage` (`query.go:212`); revision and cursor parses are range-checked (`metadata.go:135`) |
 | reflection and type assertions | `reflect` is used for `DeepEqual` and `jsonFields` (called only with struct types, `schema.go:219`); the unchecked assertions `normalized[f.ID].(string)` (`store.go:278`, `shadow.go:257`, `dataset.go:440`, `patch.go:158`) are guarded by the reference normaliser that returns only strings (`values.go:105-110`); `http.DefaultTransport.(*http.Transport)` (`identity/login.go:136`) runs at start-up only and nothing in the repository replaces the default transport |
@@ -99,12 +100,12 @@ toolchain through `gt`; heavy runs through `hv nice -n 10`.
 | E-1 | `hv nice -n 10 gt vet ./...` (tests included) | PASS: exit 0, no output |
 | E-2 | HTTP server leak probe (`TestZZLeakHTTPServer`): real `httpserver.New` + `Handler`, 200 requests: 60 `/healthz`, 40 `/readyz` with a context-honouring, a context-ignoring (400 ms) and a fast probe, 40 client aborts against a blocked handler, 20 handler panics, 20 uploads aborted mid-body, 20 raw half-open connections (partial header or body then close) | PASS: goroutines before 3, peak 628, 63 right after the requests, 2 after `Shutdown` and settling (limit 3+2); statuses: 200 x60, 503 x40 (probe deadline, by design), abort errors x40, upload aborts x20, 500 x20, probe calls 120 |
 | E-3 | AI gateway leak probe (`TestZZLeakAIGateway`): 200 concurrent `RunRequirements` with a provider that answers, honours the context, ignores it, panics, returns garbage (repair loop) or is slow; half of the callers cancel after 0-60 ms; wall clock 120 ms | PASS for leaks: goroutines before 2, peak 307, after release 2; abandoned counter 0 after release; 236 provider calls, about 39 adapter panics did not end the process. RB-02: 41 abandoned at once |
-| E-4 | native fuzz, 30 s, 2 workers: `ParsePatchProposal`, `ParseRequirementProposal`, `workflow.Restore`, workflow `CompileDefinitionWithTools` (authored workflow), `rules.Compile`+`Evaluate`+`Restore` (two targets), `metadata.Validator.Parse`/`ParseYAML`/`DecodeJSON`/`DecodeYAML`, `compiler.Restore` + accessors, each with a 3-4 s time guard | PASS, no crasher, no slow input (see E-4 table) |
+| E-4 | native fuzz, 30 s, 2 workers: `ParsePatchProposal`, `ParseRequirementProposal`, `workflow.Restore`, workflow `CompileDefinitionWithTools` (authored workflow), `rules.Compile`+`Evaluate`+`Restore` (two targets), `metadata.Validator.Parse`/`ParseYAML`/`DecodeJSON`/`DecodeYAML`, `compiler.Restore` + accessors, each with a 3-4 s time guard | PASS, no crasher, no slow input (figures below) |
 | E-5 | structure-aware mutation (valid documents; replace by 55 hostile values such as 1e19, depth-40 nests, 70 KB strings, 300-key objects; delete, copy subtrees, duplicate array elements), 25 s per target | PASS: AI parsers 17,118 calls (1,683 accepted, canonical and apply and compile and diff all run on the accepted ones); metadata 4,117 (724 valid); compiler 4,528 (747 compiled, each restored, diffed both ways, storage-classified); workflow 16,144 (1,222 compiled); rules 9,867 (651 compiled). 0 panics, 0 slow (limit 4 s), slowest call 1.03 s on the loaded host |
 | E-6 | `Admission` under 4000 goroutines with random cancellation (capacity 5000, limit 3) and `BodyBudget` under 2000 goroutines with double `Release` and `Add` after `Release` | PASS: max holders 3, final `Active 0 Queued 0`, goroutines back to base; budget never exceeded and ended at 0 bytes, 0 subjects |
-| E-7 | redactor on 256 KiB of 25 hostile shapes, then 32-256 KiB scaling for five of them | PASS: no quadratic growth (x1.3 to x2.7 per doubling); worst single call 2.0 s on the loaded host |
+| E-7 | redactor on 256 KiB of 25 hostile shapes, then 32-256 KiB scaling for five of them | PASS: no quadratic growth (x1.3 to x2.7 per doubling of the input; one 5x step from 32 to 64 KiB on a 34 ms base is noise); worst single call 2.0 s on the loaded host |
 | E-8 | `/readyz` probe panic versus handler panic in a child process | handler panic: HTTP 500, process alive; probe panic: process exits with status 2 (RB-01) |
-| E-9 | `hv nice -n 10 gt test -race -count=3` on the concurrency tests of 11 packages | NOT RUN: see below |
+| E-9 | `hv nice -n 10 gt test -race -count=3` on the concurrency tests of 11 packages | NOT RUN (lock never granted); the same tests without `-race`, `-count=3`: all `ok` |
 
 E-4 figures (executions in a 30 s run with 2 workers; the first runs were largely stalled by the input minimiser, which makes
 the engine report 0 executions per second for tens of seconds, so `ParsePatchProposal`, `ParseRequirementProposal`,
@@ -117,11 +118,22 @@ In the first runs the engine stalled for most of the 30 s on three targets (tota
 
 ### E-9: `-race -count=3`: NOT RUN
 
-The six packages were queued behind the heavy lock from 06:28 (eleven other waiters, load average above 30). The job
-(`hv nice -n 10 gt test -race -count=3 -run '<concurrency tests>' ./internal/platform/{traffic,postgres,signin,access,httpserver}
-./internal/{tools,promotion,ai,identity,metadata} ./internal/runtime/rules`) is documented in the appendix; if it had not started
-when this report was committed, no race result exists. The unit-level concurrency checks that could run without the lock are E-2,
-E-3 and E-6 (no `-race`), so data-race freedom is unverified by this audit.
+Reason: the heavy lock was never granted. The first attempt (per-package runs, 06:28) and the second (one combined job, 06:45) sat
+behind eight to twelve other waiters (`flock` is not fair; load average 20 to 33); the job was cancelled at 07:00 so that it would not
+take the lock after this report was committed. Data-race freedom is therefore UNVERIFIED by this audit.
+
+The job that was queued (run it under `hv` from a clean worktree at the pin; about 5 to 10 minutes on an idle host):
+
+```
+hv nice -n 10 gt test -race -count=3 -run 'ParallelAdmission|Admission|Concurren|Cancellation|RateLimiter|Recompute|BodyBudget|BookedBody|ExtendWriteDeadline|RunPatchIsSafe|CorpusUnderConcurrency|HTTPProvider|ACanceledCall|AbandonedProviderCalls|AnAdapterThatIgnores|RejectionLog|OIDC|EmbeddedSchemas|IndependentOlderCompletion|TLS' \
+  ./internal/platform/traffic ./internal/platform/postgres ./internal/platform/signin ./internal/platform/access ./internal/platform/httpserver \
+  ./internal/tools ./internal/promotion ./internal/ai ./internal/identity ./internal/metadata ./internal/runtime/rules
+```
+
+Fallback that was executed (NOT a substitute): the same selection, `-count=3`, WITHOUT `-race`, one package per run (no lock needed):
+`traffic`, `postgres`, `signin`, `tools`, `access`, `promotion`, `ai` (31.6 s, including the two leak probes three times),
+`httpserver`, `identity`, `metadata`, `runtime/rules` all `ok`. This shows the selected concurrency tests pass three times in a row; it
+cannot show the absence of a data race.
 
 ## NOT RUN / not covered
 
