@@ -144,3 +144,9 @@ test('provisioning tightens an existing .env that other users can read (IS-03)',
   }finally{fs.rmSync(temp,{recursive:true,force:true})}
  }
 })
+
+test('the shutdown timeout reaches only the API process (ER-03)',()=>{
+ const configured={...source,SHUTDOWN_TIMEOUT:'90s'}
+ assert.equal(runtimeEnv(configured,'api').SHUTDOWN_TIMEOUT,'90s')
+ for(const kind of ['worker','dispatcher','web'])assert.equal(runtimeEnv(configured,kind).SHUTDOWN_TIMEOUT,undefined)
+})

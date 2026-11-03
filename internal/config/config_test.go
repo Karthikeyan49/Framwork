@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfiguration(t *testing.T) {
@@ -150,5 +151,51 @@ func TestProductionDriverTrustCannotBeOverridden(t *testing.T) {
 				t.Fatal("runtime accepted Redis trust override")
 			}
 		})
+	}
+}
+
+// ER-03 (independent edge rehearsal): the API gave its running requests 10 s after SIGTERM whatever they were, and a paid AI creation
+// holds its request for up to 70 s. Every restart then cost each running creation its answer and its whole reservation.
+func TestShutdownTimeoutFollowsTheAIBuilder(t *testing.T) {
+	base := map[string]string{"DATABASE_URL": "postgres://app:private@localhost/db?sslmode=disable", "REDIS_URL": "redis://:private@localhost:6379/0", "AUTH_ISSUER": "https://issuer.example", "AUTH_AUDIENCE": "api", "AUTH_JWKS_FILE": "/run/auth/public.json"}
+	load := func(extra map[string]string) (Config, error) {
+		env := map[string]string{}
+		for k, v := range base {
+			env[k] = v
+		}
+		for k, v := range extra {
+			env[k] = v
+		}
+		return Load(func(k string) string { return env[k] })
+	}
+	for _, c := range []struct {
+		name    string
+		env     map[string]string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"no AI builder", nil, 10 * time.Second, false},
+		{"AI builder configured", map[string]string{"AI_PROVIDER_FILE": "/run/ai/provider.json"}, AIShutdownTimeout, false},
+		{"explicit, no AI builder", map[string]string{"SHUTDOWN_TIMEOUT": "30s"}, 30 * time.Second, false},
+		{"explicit overrides the AI default", map[string]string{"AI_PROVIDER_FILE": "/run/ai/provider.json", "SHUTDOWN_TIMEOUT": "2m"}, 2 * time.Minute, false},
+		{"lower bound", map[string]string{"SHUTDOWN_TIMEOUT": "1s"}, time.Second, false},
+		{"upper bound", map[string]string{"SHUTDOWN_TIMEOUT": "5m"}, 5 * time.Minute, false},
+		{"below the lower bound", map[string]string{"SHUTDOWN_TIMEOUT": "999ms"}, 0, true},
+		{"above the upper bound", map[string]string{"SHUTDOWN_TIMEOUT": "301s"}, 0, true},
+		{"negative", map[string]string{"SHUTDOWN_TIMEOUT": "-5s"}, 0, true},
+		{"not a duration", map[string]string{"SHUTDOWN_TIMEOUT": "soon"}, 0, true},
+		{"a bare number", map[string]string{"SHUTDOWN_TIMEOUT": "30"}, 0, true},
+	} {
+		got, err := load(c.env)
+		if (err != nil) != c.wantErr || !c.wantErr && got.ShutdownTimeout != c.want {
+			t.Errorf("%s: shutdown timeout %v, error %v; want %v, error %v", c.name, got.ShutdownTimeout, err, c.want, c.wantErr)
+		}
+		if err != nil && strings.Contains(err.Error(), "soon") {
+			t.Errorf("%s: the error echoes the value: %v", c.name, err)
+		}
+	}
+	// The wait for an AI creation must be longer than one: provider wall clock (60 s) plus the result margin (10 s).
+	if AIShutdownTimeout < 70*time.Second {
+		t.Errorf("AIShutdownTimeout %v is shorter than a creation", AIShutdownTimeout)
 	}
 }

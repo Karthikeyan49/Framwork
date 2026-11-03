@@ -53,6 +53,11 @@ type Config struct {
 	AIProviderFile string
 }
 
+// AIShutdownTimeout is how long a stopping API waits for its running requests when the AI builder is configured: the 70 s a creation can
+// hold its request, and ten seconds more. Without the AI builder the wait is ten seconds. SHUTDOWN_TIMEOUT overrides both, and the
+// termination grace of the orchestrator must be longer than the value in force.
+const AIShutdownTimeout = 80 * time.Second
+
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), WorkerDatabaseURL: getenv("WORKER_DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
 	var concurrencyErr error
@@ -125,6 +130,17 @@ func Load(getenv func(string) string) (Config, error) {
 		if c.Environment == "production" {
 			return c, fmt.Errorf("AI_PROVIDER_FILE is restricted to development/test: the AI builder is a preview capability")
 		}
+		// A creation holds its request up to 70 s (60 s of provider wall clock and the 10 s margin of the result exchange, ADR104 A5):
+		// a stop that waits 10 s abandons every paid phase in flight and the sweep charges each one its whole reservation
+		// (independent edge rehearsal ER-03).
+		c.ShutdownTimeout = AIShutdownTimeout
+	}
+	if raw := getenv("SHUTDOWN_TIMEOUT"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < time.Second || d > 5*time.Minute {
+			return c, fmt.Errorf("SHUTDOWN_TIMEOUT must be a duration from 1s to 5m")
+		}
+		c.ShutdownTimeout = d
 	}
 	c.AuthIssuer = getenv("AUTH_ISSUER")
 	c.AuthAudience = getenv("AUTH_AUDIENCE")
