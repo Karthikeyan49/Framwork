@@ -66,7 +66,7 @@ the check's own verification fails. Not exploitable beyond the caller's own tena
 on `1.4.0` only passes `TestSQLFunctionsNameWholeSchemaVersionFamilies` when it is written as (scratch migration `00091_zz_review_scratch.sql` with
 `CREATE OR REPLACE FUNCTION runtime.zz_review_gate(doc jsonb) ... SELECT doc->>'schema_version' <spelling>`; control `= ANY('{1.4.0}'::text[])` fails the test as it should):
 `= ANY('{ 1.4.0 }'::text[])` (a space inside the braces), a multi-line array literal (`'{` newline `1.4.0` newline `}'`), `~ '^(1\.4\.0)$'` (a group), `LIKE '%1.4.0'`. All
-four: `ok`. Also blind in `AuthoringVersionsNamed` (probe over 48 spellings): `~ '^1\.(4|5)\.0$'`, `string_to_array('x 1.4.0',' ')`, `';'`- and `'|'`-separated lists,
+four: `ok`. Also blind in `AuthoringVersionsNamed` (a probe over 49 spellings): `~ '^1\.(4|5)\.0$'`, `string_to_array('x 1.4.0',' ')`, `';'`- and `'|'`-separated lists,
 `SIMILAR TO`, `'1.' || '4.0'`. The comment in `version_family.go` lists `LIKE '1_4%'`, `'^1[.]4[.]'` and `SIMILAR TO` as the known blind spots and says "an honest author writes one of
 the spellings above"; a spaced or multi-line array literal is valid PostgreSQL and is what a formatter produces. The live-catalog scan
 (`tests/integration/m9r_catalog_version_gate_test.go`) reads the same text with the same function, so it is blind to the same spellings. No real place in
@@ -89,7 +89,7 @@ scratch directory; PF-01 and PF-02 repros all FAIL there as they should, see "Fi
 gate field still PASSES (64 results, 0 findings) when the gate is `eq(field, literal)` or `not(is_null(field))` over a `date`, `datetime`, `decimal` or `money` (USD) field. The same gate over a
 string, enum or bool field fails with a `lit-...` finding that names the mined value. A gate that is not null-safe (`gt`, `lt` over decimal, money, datetime, integer) makes the probe unevaluable and the
 verdict is `BLOCKED INCOMPLETE_CASE_INPUT` (fail closed; the author must pin the field). Repro: `zz_review_pf2b_test.go` `TestZZGateTypes` (not committed; shape as in PF-01 with the added
-field `field.order.g` of the type under test). ADR102 amendment 14 does not list these types among the residuals. Direction: mine a value for the other literal-bearing kinds
+field `field.order.g` of the type under test). ADR102 amendment 14 does not list these types among the residuals. A second survivor of the same family: `gt(money_round(amount), 500)` over a threshold of `GT 500.00` PASSES on `verifier-v3` and `verifier-v4` (the boundary is 500.005, there is no literal there, so no probe falls in 500.00..500.005; `gt(round(amount, 0), 500)` is found by the fixed `above` probe). Direction: mine a value for the other literal-bearing kinds
 (a literal of the field's own kind taken from the conditions, plus a value that matches none) or block a plan whose threshold exemption depends on such a field.
 
 ### PF-07 (LOW) `TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect` passes against a weakened migration 00092 and against a weakened `activate_release`
@@ -108,6 +108,23 @@ abort the approval (nothing to lock, an unchanged fence row), the approval commi
 `internal/platform/access/bodybudget_test.go` `BenchmarkBodyBudgetHoldAddReleaseParallel`: the comment says "Many requests of many identities at once" but every goroutine books under the same
 `"issuer\x00subject-xxxxxxxx"`, so it measures one hot identity on the one lock. The numbers in `LINE_INTEGRATION_PLAN.md` are of the right order (see the table): the cost of the budget is a lock
 and a counter, below one microsecond per request on a loaded host.
+
+### PF-09 (MEDIUM) the card rule loses a valid card number that follows another group of digits: a match the check refuses is consumed
+
+`internal/ai/redact.go:36-44` (`redactRule.apply`), `:62` (the card rule `\b\d(?:[ -]?\d){12,18}\b` with the `cardNumber` check) and `settled` (`:304`). `ReplaceAllStringFunc` takes the leftmost
+match; when `ok` refuses it (no issuer prefix or no check digit) the text is returned as written and the search resumes AFTER that match, so a card number that starts inside the refused span is
+never tried, and `settled` does not run again because nothing was replaced (`n == 0`). Repro (`redactText`, a Luhn-valid test number built from `4111` groups; no other secret in the text):
+`"Order 99871 4111111111111111 12/27"`, `"id 123 4111 1111 1111 1111"`, `"12 4111 1111 1111 1111"`, `"ref 20261029 4111 1111 1111 1111"`, `"x-99871-4111-1111-1111-1111"` all come back unchanged, `n = 0`;
+the same card alone, after a word, after a pipe, or after a number that fills the whole 19-digit window (`"1234567890123456 4111 1111 1111 1111"`) is redacted. This is a pasted order line or table
+row, the accident the redactor exists for, and the documented rule is "13 to 19 digits, alone or in groups" (ADR104 Amendment C item 6). Direction: for the rules that carry a check, try every start
+position of the span (re-run the match from the character after the refused start) or scan the digit groups of the text directly.
+
+### PF-10 (LOW) test gap: the list of operator credentials is not pinned by name
+
+`internal/platform/app/operator_env_test.go:32` loops over `operatorCredentials` itself, so a name removed from the list is no longer tested. Mutation: `REDIS_PASSWORD` and
+`EVENT_OPERATOR_REDIS_URL` removed from `operator_env.go:12-13`: `go test ./internal/platform/app` stays green. Only `MIGRATION_DATABASE_URL`, `MIGRATOR_PASSWORD` and
+`POSTGRES_PASSWORD` are pinned (`operator_env_test.go:41`). The other two tests and the position test fail for their mutations (call removed from `Main`: `TestMainRefusesOperatorCredentialsBeforeRunning`; values logged:
+`TestOperatorCredentialRefusalNamesAndNeverShows`). Direction: assert the literal list of six.
 
 ## Attacks that held
 
@@ -132,7 +149,19 @@ and a counter, below one microsecond per request on a loaded host.
 | 5: array literal and list spellings of b88a465 | scratch migration with `= ANY('{1.4.0}'::text[])` | held: reported (gap 1.5.0) |
 | 7: benchmarks | `nice gt test -run '^$' -bench BodyBudget -benchtime 1s -count 3 -benchmem ./internal/platform/access`, load average 11.7 on 4 cores (other agents running) | held: hold+add+release 102-110 ns/op, 0 B, 0 allocs (document: 59 ns idle); parallel 121-125 ns (document: 188 ns idle, four goroutines on one identity); 64 KiB booked read 2.16-2.51 us with 80 B/op and 2 allocs/op against 1.36-1.60 us plain (document: 1.35 against 0.95 us, "two allocations of 80 bytes"): the same order of magnitude and the same allocations, about 1.7x slower here because of the load; the extra cost per request stays below 1 us |
 | 0: redactor, odd inputs | `redactText` over `""`, `" "`, newlines only, NUL, `\xff`, a lone surrogate, `sk-`, a bare `[REDACTED:`, a marker at the end of a line followed by tail-shaped lines with CRLF and trailing blanks | held: no panic, each result is a fixed point (`TestZZRedactOddInputs`) |
-| 0: redactor, latency | 26 adversarial shapes (one token, key per line, wrapped tails, assignments, `a_` chains, cards, digit pairs, PEM prefixes, cookie pairs, credentials in URLs, Cyrillic and fullwidth look-alikes, invalid UTF-8, hex runs, glued card+key chains) at 16 KiB, 64 KiB, 256 KiB and 1 MiB through `redactText` | held with a cost: linear, worst 49 ms at 16 KiB (the 4,000-rune request limit), 187 ms at 64 KiB, 0.99 s at 256 KiB and 3.65 s at 1 MiB (shape: one key then 150,000 one-word lines; the output is 2.7 times the input), measured on a host with load average 11; see PF-09 |
+| 0: redactor, latency | 26 adversarial shapes (one token, key per line, wrapped tails, assignments, `a_` chains, cards, digit pairs, PEM prefixes, cookie pairs, credentials in URLs, Cyrillic and fullwidth look-alikes, invalid UTF-8, hex runs, glued card+key chains) at 16 KiB, 64 KiB, 256 KiB and 1 MiB through `redactText` | held with a cost: linear, worst 49 ms at 16 KiB (the 4,000-rune request limit), 187 ms at 64 KiB, 0.99 s at 256 KiB and 3.65 s at 1 MiB (shape: one key then 150,000 one-word lines; the output is 2.7 times the input), measured on a host with load average 11; the cost inside the admission slot is PF-11 |
+
+## Fixes re-verified (a4379a8 verifier-v4, 55ee30e token check; read-only, not on the pin)
+
+The tree of `55ee30e` was exported (`git archive`) to a scratch directory and the repros of PF-01, PF-02 and PF-03 were run there with the pinned toolchain.
+
+| finding | repro against 55ee30e | result |
+|---|---|---|
+| PF-01 | window 626..749, 501..502 and 600..900 gated on `note == "gold"`, note not pinned | FAIL with `lit-above-626.01/field.order.note="gold"`, `lit-below-748.99/...` (found); pinned note: PASS by design; ungated window FAIL; honest plan PASS |
+| PF-02 | `gte 500.01`, `gt 500.001`, `gte 500.005`, windows `(500.001, 500.009)`, `(626.001, 626.009)`, `(626, 626.01)`, `(626.005, 749.005)`, KWD `(500.001, 500.002)`, JPY `(50001, 50002)` | all FAIL with `lit-mid-500.005`, `lit-mid-500.0025`, `lit-mid-626.005`, `lit-mid-50001.5`, `lit-mid-500.0015`; JPY and KWD windows between the minor units are found |
+| PF-03 | `TestTokenCheckBeforeAdmission` (10 cases) and a read of `ai.go` | PASS: `VerifyRemaining` failing now answers 401 `unauthenticated`; exactly the run is served; one second short is `token_expiring`; the header shapes are still left to the front door. Not re-run through the integration harness |
+| unchanged | bound (31 and 32 distinct probed: 275-283 results; 33 and 34 `BLOCKED UNSUPPORTED_BY_VERIFIER`, 17 ms), forged relabelled report (`ErrReportMismatch` for a v2-style PASS labelled `verifier-v4`, one labelled `verifier-v2`, an honest plan labelled `verifier-v2`) | held. Cost at the bound with mined values: 670 and 928 results in 1.3 and 1.6 s on a host with load average 34 (verifier-v3: 0.24 and 0.31 s) |
+| variants | a gate of another type: `bool`, `enum`, `string` FAIL (found); `integer`, `decimal`, `money`, `datetime` with `gt`: `BLOCKED INCOMPLETE_CASE_INPUT` (fail closed); `date`, `decimal`, `money`, `datetime` with `eq` or `not(is_null(...))`: PASS | PF-06 survives; `gt(money_round(amount), 500)` PASS (boundary 500.005, sub-minor, no literal there); an honest `amount * 2 > 1000` is BLOCKED (the 10^18 probe overflows), so the documented arithmetic residual is fail-closed for factors above 1 |
 
 ## Gate subset
 
