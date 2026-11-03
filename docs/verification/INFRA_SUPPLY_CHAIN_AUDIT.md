@@ -10,15 +10,16 @@ Report-only: no product file was changed. Probe files live in the session scratc
 
 | time (UTC) | state |
 |---|---|
-| 06:50 | static review of every in-scope file done; history scan of all refs done; first findings written (this commit) |
-| next | govulncheck result (build was queued behind the heavy-run lock), npm audit of dev dependencies, report polish |
+| 06:41 | static review of every in-scope file, history scan, Go/npm advisory matching done; IS-01..IS-10 written and pushed (`c342c59`) |
+| 06:55 | IS-11 (`.gitignore` coverage) and IS-12 (CI trigger) added after reading the live Actions runs; lockfile-injection check added |
+| pending | govulncheck (still queued behind the shared heavy-run lock), full `npm audit` incl. dev dependencies (slow through the proxy), final history re-scan |
 
 ## Verdict
 
 **PASS WITH FINDINGS** for the infrastructure scope. No HIGH finding. No secret, key, `.env` or credential-bearing DSN exists
 anywhere in the history of the refs of this clone (first scan: 88 refs, 455 non-merge commits, 206,578 added lines; re-scanned at the end, see row 14). The bootstrap download,
 the Action pins, the npm lockfile and the Go module sums all verify. One MEDIUM (the pinned Go toolchain is one security patch
-behind) and nine LOW findings.
+behind) and eleven LOW findings.
 
 ## Findings
 
@@ -140,6 +141,27 @@ behind) and nine LOW findings.
   `pg_auth_members` rows at all) would close it. This is drift detection against an operator action, not a remote vector. Static reading only;
   no database was available (NOT RUN).
 
+### IS-11 LOW - `.gitignore` protects `.env*` and `.local/` only; key, certificate and secret-directory names elsewhere are not ignored
+
+- `.gitignore:1-9`. Executed `git check-ignore` on credential-shaped names: `.env.local`, `.env.production`, `.local/m8/users.acl` are ignored;
+  `private.pem`, `key.pem`, `tls.key`, `ca.crt`, `.npmrc`, `id_rsa`, `users.acl`, `jwks.json`, `secrets/crm_live`, `tool-secrets/crm_live` are
+  NOT ignored. The product reads such files from operator-chosen paths (`AUTH_JWKS_FILE`, `TOOL_SECRETS_DIR`, `TOOL_CA_FILE`;
+  `internal/tools/secrets.go:78` enforces 0600 but nothing stops a `git add -A`), and `AGENTS.md:45` forbids committing private keys.
+- There is no pre-commit hook and no secret-scanning step in CI; the only barrier is the host's push protection. The history itself is clean (row 14).
+
+### IS-12 LOW - CI runs the whole 36-minute stack on every push to every branch, and a later push cancels the earlier commit's run
+
+- `.github/workflows/ci.yml:2-4` (`push:` with no `branches`/`paths`, plus `pull_request:`), `:7-9` (`cancel-in-progress: true` per ref).
+- Observed through read-only `gh run list`: my first report push produced run `41591477368` ("Framework checks", `in_progress`) within a
+  minute, next to five more simultaneous runs from other audit/review branches; of the last 30 completed runs 19 are `cancelled`, 9 `success`,
+  2 `failure` (the most recent failures are two pushes to `review/integration-final`, step `make test`); the integration branch runs last 28.5-36.3 min each. A documentation-only push costs the same as a code push,
+  and a code commit followed within minutes by a documentation commit is cancelled and never gets its own verdict
+  (e.g. `80a582f` on `integration/m9r-m14`: cancelled after 4.1 min). A pull request update also runs twice (the `push` run and the
+  `pull_request` run use different concurrency groups).
+- Positive evidence for the pinned commit: run `40834565648` on `11a4ee4` is `success` (36.1 min); the previous code-head runs `db9c2fa` and `0e13abe` are `success`.
+- Fix direction: `branches: [main, integration/**]` for `push`, `paths-ignore: ['docs/**', '**/*.md']` or a cheap docs-only job, and a
+  separate group for pull requests; never `cancel-in-progress` on the integration branch.
+
 ## What held (executed attack or inspection)
 
 | # | Check | Result | Executed attack / evidence |
@@ -164,6 +186,8 @@ behind) and nine LOW findings.
 | 18 | Script injection surface | PASS | `scripts/with-env.mjs:16` uses `spawn` without a shell and parses dotenv as data (`:10`); `smoke.mjs`/`dev.mjs` spawn fixed binaries; Makefile has no user-interpolated shell besides `RULE_FUZZ_TIME ?= 10s`. |
 | 19 | Docs checksum gate | PASS (read) | `scripts/verify-docs.mjs` hashes 84 + 43 documents against `SHA256SUMS.md`; not re-run (docs-only, outside this scope). |
 | 20 | Redis image carries the Lua fix | PASS (knowledge) | `redis:8.2.3` is above 8.2.2, the release that fixed the October 2025 Lua use-after-free (CVE-2025-49844, "RediShell"), relevant because `framework_signin` holds `+eval`. From my knowledge of the advisory; not machine-checked. |
+| 21 | npm lockfile injection | PASS | for all 264 lock entries the `resolved` URL equals `https://registry.npmjs.org/<name>/-/<basename>-<version>.tgz` (0 mismatches), every `integrity` is `sha512`, root specs equal `package.json` (0 drift), no semver range in `package.json`. |
+| 22 | CI observed at the pinned commit; workflow history | PASS | `gh run list --branch integration/m9r-m14` (read-only): `11a4ee4` success 36.1 min, `db9c2fa` success, `0e13abe` success. `git log --all -p -- .github` (9 commits): `ci.yml` is the only workflow file on any ref; no `pull_request_target`, `workflow_run`, `self-hosted`, `secrets.`, `id-token`, `write-all`, `actions/cache`, `upload-artifact` or unpinned `uses:` was ever committed. |
 
 ## Not run
 
