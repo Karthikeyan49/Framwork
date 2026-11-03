@@ -114,6 +114,46 @@ Gate on `585499d` (code identical to `62cc527`, the last code change; 29 October
 `make test-signin-e2e` 7 passed (9.5 s); the fuzz targets PASS 88 s; `make test-event-outage` PASS, 609 s, recovery after 600.0 real seconds with 3 completed, 3 inbox rows, 3 effects, 3 audits, 3 immutable intents, 19 retained attempts and
 2 unconfirmed redeliveries. The commits after it are documents only.
 
+### Takeover by the integrator — 3 November 2026 (UTC)
+
+The three-agent plan (a remediation agent, a milestone agent and an integrator) was ended by the user, who asked the milestone agent to take over the whole
+project, to fetch the other agents' work from git and to merge it. **What was there to fetch:** every commit of the lane branches
+(`claude/m10-m11-tools-sandbox`, `claude/m12-candidate-builder`, `claude/m13-approval-promotion`, `claude/m14-ai-builder`, `remediation/m9r-foundation`) is
+already an ancestor of `integration/m9r-m14`; the remediation branch has had no commit since 20 October. **What was merged:** the sixteen report branches of the
+read-only audits and red teams (`audit/*`, `review/*`), documents only, saved as their agents left them (some are interim, and say so). `main` is
+untouched; it is an ancestor of the integration branch, and moving it is the owner's decision.
+
+Thirteen reports, all pinned at `11a4ee4` (code head `585499d`), are imported into `docs/verification/`: the post-fix review, the redaction red team, the tools and
+sandbox red team, the AI-output red team, the edge rehearsal, the route contract matrix, the robustness audit, the SQL catalog audit, the infrastructure and supply-chain
+audit, the frontend security audit, the logging and error-leak audit, the mutation audit and the final documentation audit. None found a HIGH finding. What fell in the
+milestone lane or in the shared integration code is **fixed on `integration/m9r-m14`** under the same rule as above (the probe that failed passes, a regression test pins
+it and was shown to fail without the change, and the integrator ran it); the ledger ([M9R_FINDING_STATUS.md](M9R_FINDING_STATUS.md)) has one row per report.
+
+| Finding | What was wrong | Fix | Evidence |
+|---|---|---|---|
+| PF-01, PF-02 (MEDIUM, LOW) | `verifier-v3` repeated the probes of the amounts that a plan compares the threshold with only for the fixed fields, and none lay between two minor units: a window gated on a second field, or one narrower than a minor unit, passed | `a4379a8`, `verifier-v4`: the literal probes are repeated for the mined values of the other fields and sit at the exact midpoints with as many decimals as the data layer accepts ([ADR102 amendment 14](../adr/102-m12-candidate-release-builder.md)) | `internal/verification/literals_test.go`, the pinned probe-set digest; a candidate staged under `verifier-v3` reads stale |
+| PF-03 (LOW) | the pre-admission check of an expiring token let a request through when the second verification failed | `55ee30e`: 401 `unauthenticated` at once | `TestTokenCheckBeforeAdmission` |
+| RT-01 to RT-05, RT-08 (MEDIUM, RT-05 LOW) | the redactor missed quoted keys, names that end a longer word, a name followed by neither `=` nor `:`, keys wrapped over lines, ten vendor token families, and it destroyed sentences about token formats | `e3c954c`, `5836a31` ([ADR104 Amendment C item 8](../adr/104-m14-ai-builder-and-intent-capture.md)) | `redact_shapes_test.go`, `redact_surfaces_test.go`, near-miss lists |
+| PF-09 (MEDIUM) | a card number after or before another number was never looked at (the refused leftmost match was consumed) | `3be63ec`: a scan over the windows of a chain of digit groups (item 9) | `redact_cards_test.go`: the review's inputs, the old rule on the same inputs, 4,000 random texts against an independent definition, linear time; 11 of 12 cases fail with the old rule |
+| AO-02 (MEDIUM) | `ai.read` and `ai.propose` reached draft definitions that `metadata.read` protects | `61eb1b4`, `e555654`: asking for a proposal and reading one also need `metadata.read`; a veto answers with the summary (item 10) | `TestM14APIPolicyMatrix`, `TestM14APIAskingAndReadingNeedMetadataRead` (isolated m14 stack); without the composition both fail with the red team's output |
+| PF-11 (MEDIUM, partly) | a refused creation with a large draft redacted the whole draft inside the admission slot (four times the work of an accepted one) | `2fd4628`: the redaction stops when the bodies pass the cap (item 11). **Not fixed:** no per-member limit on refused creations; `Prepare` still runs in the transaction | `TestBuildContextRefusalCostsNoMoreThanAContextThatFits`: 4.5 times as slow without the change |
+| TS-02 (MEDIUM) | the compiler did not check the tool tenant allowlist: a tenant could pin another tenant's private tool and tell that it exists | `6673055`: `compiler.Catalog.Tenant`, set by the platform per request; a restricted tool is `unknown_tool`, field for field the answer of an empty catalog ([ADR100 Amendment I2](../adr/100-m10-tool-registry-v2.md)) | compiler tests; `TestM13ToolPinTenantListIsPartOfThePinAndOfTheBuildCheck`; negative control: the preview answers 200 with the other tenant's tool IR |
+| TS-04 (LOW) | invalid UTF-8 in a provider answer was stored as a SUCCESS with U+FFFD, and loaded from a catalog file | `4937324`: refused (`invalid_response`, `ErrCatalog`) | `TestResponseBodyLimitsAndValidation`, `TestLoadCatalogRefusesInvalidUTF8`; both fail without the check |
+| ER-04 (MEDIUM) | the result exchange of a paid answer was refused with a bare 503 when the admission queue was full (8 of 8 answers lost under a burst) | `2f27b01`: `postgres.RetryPaced`; waits of 100 ms to 1.5 s inside the existing budget (item 12) | `retry_test.go` against a real `Admission` that drains after 250 ms; `RetryWithin` still fails there |
+| ER-03 (MEDIUM) | a routine SIGTERM abandoned every AI phase longer than 10 s and the process exited 1 | `d6ed47b`: `ShutdownTimeout` 80 s when the AI builder is configured, `SHUTDOWN_TIMEOUT` overrides (item 13) | `TestShutdownTimeoutFollowsTheAIBuilder`, the launcher test; **not run** with a real process under SIGTERM |
+| LE-02 (MEDIUM) | the Redis client library wrote the dial target and the driver's error to stderr, and an anonymous `GET /readyz` triggers it | `02af0e5`: `observability.Start` installs a logger that drops the text | child-process test: the library's line without the fix, none with it |
+| RB-01 (LOW) | a panic in a readiness probe ended the process | `55bc0b3`: each probe recovers and fails alone | `TestReadinessProbePanicFailsOnlyThatProbe`; without the recover the test binary dies |
+| IS-01, IS-02, IS-03 | Go 1.27.2 is behind GO-2026-6809 (crypto/x509); x/net 0.59.0 has seven advisories; a pre-existing `.env` kept its mode | `f3d3fe8` (Go 1.27.3 in `go.mod`, `scripts/go.sh`, `scripts/bootstrap.sh`), `35ac1ab` (x/net 0.62.0, with x/sync, x/sys and x/text one minor each), `7db6350` (chmod 0600) | the toolchain downloads and verifies, `make check`, the gate below; the script tests (the m6r case fails without the chmod) |
+| PF-10, MA-01 to MA-14 | tests that did not pin what they claimed | `a3806f3`, `2b25e7c`: the list of six operator credentials; the killing tests of the mutation audit | the audit's own mutants; not re-mutated here |
+| DT-01 to DT-26 | 26 documentation defects (9 MEDIUM) | `491edc6`, except DT-02 (README lines, in the owner's proposal) | the final documentation audit; the rows below were written after it |
+
+**Open after this work, so that nothing above is read as more.** **TS-01 (MEDIUM)** is open and was reproduced on the database: an instance cancelled while its
+tool ledger is `UNKNOWN` is `CANCELLED` for good, `reconcile` answers 409, and a sandbox that holds the row cannot be frozen
+([ADR100 Amendment I2](../adr/100-m10-tool-registry-v2.md)); it needs a migration and a decision about the workflow runtime that the remediation line shares. The LOW findings that were
+documented and not fixed are PF-04 to PF-08, RT-06, RT-07, RT-09, TS-03, TS-05, AO-01, AO-03 to AO-05, LE-01, LE-03, LE-04, RB-02 to RB-04, RC-01 to RC-09, SC-01 to SC-04,
+FS-01 to FS-06 and IS-04 to IS-10 (one row each in the ledger). The README still names Go 1.27.2 (DT-02 and the Go line are in the owner's proposal). No independent reviewer
+has seen any change of this section. The recorded FAILs of the remediation line (aggregate capacity D5, injected driver panic D1) are untouched.
+
 ### Migration numbers from here on (proposal; the owner decides)
 
 Wording from the upgrade and ordering rehearsal ([report](../verification/UPGRADE_AND_ORDERING_REHEARSAL.md), which tested the numbering sentences of the first proposal (not its ADR reservations) against a real goose, a

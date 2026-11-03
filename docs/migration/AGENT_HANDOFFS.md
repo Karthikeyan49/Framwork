@@ -323,3 +323,28 @@ Subject: a change after the entry of 28 October. Fetch `origin/integration/m9r-m
 - Executed, not changed: the F-05 residual (a first activation racing an approval of another first candidate) is recorded and cannot move the pointer: the approval is recorded, the activation of that candidate is refused as stale (`TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect`).
 
 Nothing else is new for you: migrations are unchanged (the next free number is still `00093`), and the open items of the entry of 28 October stand.
+
+## FROM milestone (as integrator) TO remediation and to the owner — 3 November 2026 (UTC): the takeover, and the shared files it changed
+
+Subject: the user ended the three-agent plan and asked the milestone agent to take over the whole project. Fetch `origin/integration/m9r-m14` before any work;
+the code head and its gate are named in the [plan](LINE_INTEGRATION_PLAN.md). Nothing of the remediation branch was missing (it has had no commit since 20 October, and every
+lane branch is an ancestor of the integration branch). `main` is not moved.
+
+Shared code and configuration that the takeover changed (each with the finding it answers and a regression test; the ledger has the rows):
+
+- `go.mod`, `go.sum`, `scripts/go.sh`, `scripts/bootstrap.sh`: **Go 1.27.3** (IS-01) and `golang.org/x/net` 0.62.0 with x/sync, x/sys and x/text one minor each (IS-02). Run `make setup` or install the toolchain; the first build after it recompiles everything.
+- `internal/platform/httpserver/httpserver.go`: each readiness probe recovers its own panic (RB-01).
+- `internal/platform/postgres/retry.go`: `RetryPaced` and `ConflictPause`; `RetryWithin` behaves as before (ER-04).
+- `internal/platform/access/access.go`: `API.catalogFor(access)`, the compile catalog as one tenant sees it; the metadata compile route, the preview, the candidate builder and the AI compile use it, dataset admission does not (TS-02).
+- `internal/compiler/compiler.go`, `workflow_tools.go`: `Catalog.Tenant` (not serialised, not in `CatalogHash`); a tool restricted to other tenants is `unknown_tool` for the compiling tenant (TS-02).
+- `internal/config/config.go`, `scripts/runtime-env.mjs`, `.env.example`: `SHUTDOWN_TIMEOUT`, and 80 s instead of 10 s when the AI builder is configured (ER-03). The launcher passes it to the API only.
+- `internal/observability/observability.go`: `Start` installs a logger for the Redis client library, which wrote raw driver errors to stderr (LE-02).
+- `scripts/m6r-env.mjs`, `scripts/m8-env.mjs`: `.env` is set to mode 0600 after credentials are appended (IS-03).
+
+Behaviour that changes for others, so that nobody finds out by accident: a custom role needs `metadata.read` next to `ai.read` and `ai.propose` to read or ask for an AI proposal (AO-02);
+a tenant removed from a tool's allowlist gets `unknown_tool` from the compile and the preview of every revision that pins the tool, until the document is edited (TS-02); a candidate staged under `verifier-v3` reads stale
+and is staged again (PF-01, earlier); a SIGTERM to an API that has the AI builder configured can take up to 80 s to finish, and the orchestrator's termination grace must be longer (ER-03).
+
+Not done, for the owner to decide or to schedule: **TS-01** (a workflow that is terminal while its tool ledger is `UNKNOWN` cannot be reconciled; reproduced on the database; it needs migration `00093` and a decision about the shared workflow runtime,
+[ADR100 Amendment I2](../adr/100-m10-tool-registry-v2.md)); the three owner decisions of the earlier entries (the migration numbering rule, the contract proposal, the rebuild of the development database `MAIN`), which also now include the `README.md`
+Go line; every LOW finding listed in the plan. No change was made to `AGENTS.md`, `CLAUDE.md` or `README.md`. Independent review: none of the changes of this entry has been seen by a reviewer.

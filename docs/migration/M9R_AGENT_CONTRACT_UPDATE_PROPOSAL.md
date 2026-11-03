@@ -41,6 +41,8 @@ of the patch against the two baseline files exits 0.
   audit's pin). The exact lines and the proposed text are in the
   [documentation audit](../verification/DOCS_TRUTH_AUDIT.md), section "Proposed text for the files
   that stay untouched" (DT-24). Applying them is the owner's decision, like this patch.
+- One more `README.md` line follows from the supply-chain audit (IS-01): line 136 says "Go **1.27.2**", and the pin is 1.27.3 since the takeover of 3 November
+  (`go.mod`, `scripts/go.sh`, `scripts/bootstrap.sh`; GO-2026-6809, a `crypto/x509` fix). The line should read "Go **1.27.3**". The README was not edited, for the same reason.
 - The proposed `ADR103` amendment of the audit is written: ADR103 amendments 15 and 16 record the
   rollback and approve fences (migrations 00091 and 00092).
 

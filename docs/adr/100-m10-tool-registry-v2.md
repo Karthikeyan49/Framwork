@@ -226,3 +226,42 @@ milestone line moved to free ones when the two were merged into `integration/m9r
   rebuilt, not migrated, because its migration numbers changed.
 - **Numbers.** Migrations 45 to 53 and 60 are 80 to 89; this ADR was ADR036. `00080` keeps every schema version that the remediation
   migrations 00045 and 00052 admit (`1.3.0`, `1.4.0`) and adds `1.5.0`.
+
+## Amendment I2: independent red team of the tools and the sandbox (2026-11-03)
+
+The red team of M10 and M11 ([report](../verification/TOOLS_SANDBOX_REDTEAM.md), pinned at `11a4ee4`) judged the gateway PASS WITH FINDINGS and the runtime
+protocol and the freeze PASS WITH FINDINGS (static only): TS-01 and TS-02 MEDIUM, TS-03 to TS-05 LOW, no HIGH. What it changed:
+
+- **The compiler checks the tenant allowlist (TS-02; makes decision 2 true).** Decision 2 said the compiler "checks tenant allowlist"; the code resolved
+  the tool with no tenant ("Tenant allowlists are checked at execution") and the compile of a document that pins a tool restricted to other tenants
+  was valid, so a tenant could tell that the tool exists and received its definition hash (a commitment to the host, the secret reference name and the
+  allowlisted tenant ids) and its contract in the IR. `compiler.Catalog` has a `Tenant` (not serialised, not part of `CatalogHash`: no IR hash moves).
+  When it is set, a tool that does not allow the tenant is reported exactly like one that is not registered (`unknown_tool`, same path and message,
+  compared field for field with the answer of an empty catalog). The platform sets it per request (`API.catalogFor`) in the metadata compile route, the
+  preview, the candidate builder and the AI builder's compile; the stored-program provenance check of dataset admission keeps the platform view because
+  it answers nothing to the caller. The execution check and the risk assessment's `BLOCK.tool_unresolved` stay behind it as defence in depth; the
+  allowlist is part of the pinned definition hash, so the execution branch for an unlicensed tenant cannot be reached through the API any more
+  (`TestM10CatalogTenantPinAndNetworkPolicyFailClosedWithoutIO` lost its first case for that reason). A tenant that is removed from a tool's list
+  after it built a candidate reads `TOOL_CHANGED`, as before. Operational consequence: when an operator narrows a tool's list, the previews and the
+  compile of every revision that pins it fail with `unknown_tool` for the tenants removed, until the document is edited; their running instances fail
+  closed at execution as they did. Evidence: `internal/compiler/workflow_tools_tenant_test.go`,
+  `TestM13ToolPinTenantListIsPartOfThePinAndOfTheBuildCheck` (preview, compile route and builder refuse; no tenant id or tool hash in the answer;
+  the answer equals the empty catalog's), and its negative control (with the three call sites on the platform view, the preview answers 200 with the IR of
+  the other tenant's tool).
+- **Valid UTF-8 only (TS-04; extends decision 6).** A provider answer that is not valid UTF-8 is `UNKNOWN invalid_response` (it was decoded with
+  U+FFFD substituted and stored as a SUCCESS), and a catalog file that is not valid UTF-8 is `ErrCatalog` (a SIMULATE fixture value loaded).
+  Evidence: `TestResponseBodyLimitsAndValidation` (five sequences) and `TestLoadCatalogRefusesInvalidUTF8`, both failing without the check.
+- **Open, MEDIUM (TS-01): a workflow that becomes terminal while its tool ledger is `SENDING` or `UNKNOWN` can never be reconciled.** The report
+  found it by reading; it was **reproduced on the database on 3 November** (a throwaway test, not kept): a NATIVE_KEY write whose provider answers 500
+  ends `UNKNOWN`, the instance waits in `RETRY_WAIT`; a `cancel` signal makes it `CANCELLED` and the ledger stays `UNKNOWN`
+  (`SELECT count(*) ... state IN ('SENDING','UNKNOWN')` is 1 for the instance); a `reconcile` signal on it answers 409 `workflow_conflict`
+  (`signals.go` requires status `RECONCILE`). The deadline path (`execution.go`, the workflow deadline is tested before any ledger logic) was not
+  executed. A sandbox that holds such a row cannot be frozen (`runtime.freeze_sandbox` refuses while any invocation of the dataset is `SENDING`
+  or `UNKNOWN`, migration 00086; read, not executed), so it can never become evidence for M12; only a new sandbox helps. Amendment A3 says that
+  unknowns never die; this path lets one die. **Not fixed**, because every fix changes the state machine of the shared workflow runtime and needs a migration:
+  (1) make the settlement of a ledger row independent of the instance (`reconcile` accepted on a terminal instance whose invocation is still
+  `SENDING` or `UNKNOWN`, `control.tool_reconcile` without the status condition; a new migration, `00093` under the proposed numbering rule), or
+  (2) park the instance in `RECONCILE` instead of terminating when `cancel` or the deadline finds an outstanding outcome (then the continuation after the
+  operator's decision must be defined for a cancelled instance). Direction (1) is the smaller change. Nobody should repair such a row by hand.
+- **Open, LOW.** TS-03: the rate budget of a tool is shared by all tenants allowed on it (and multiplied by the number of workers); TS-05: any 2xx,
+  202, 203, 206 and 226 included, is SUCCESS for a WRITE (decision 6 says so; a per-tool `success_statuses` would let a catalog say otherwise).

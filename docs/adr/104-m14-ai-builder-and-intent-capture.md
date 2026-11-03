@@ -689,6 +689,64 @@ without the change; the reviewers' own probes were run against the fixed code by
    reaches the provider), and `TestVerifyRemainingReportsTheRestOfTheLifetime`. A client that treats every 401 as "sign out" will ask for a new sign-in up to
    70 seconds early; there is no release-AI user interface in this build that does.
 
+8. **The redactor after the red team (RT-01 to RT-05 and RT-08, 2026-11-03; extends item 6).** The independent red team of the redactor
+   ([report](../verification/REDACTION_REDTEAM.md), pinned at `11a4ee4`; FAIL for the claim that it catches the accidental pastes of common credentials: five
+   MEDIUM, four LOW) was reproduced with values derived at run time. The assignment rule now reads a key that is quoted or subscripted
+   (`"password": "..."`, `os.environ["DB_PASSWORD"] = "..."`, `define('DB_PASSWORD', '...')`, RT-01), a name that ends a longer word (`secret_key_base`,
+   `client-secret`, a camel-cased `dbPassword`, RT-02), a name followed by neither `=` nor `:` (`the admin password is ...`, `name', 'value`, RT-08), and keeps
+   a sentence that says what a credential is instead of being one ("The token is 64-character hex.", "HS256-signed", RT-05). A key that a line break cut
+   before its first part was long enough for any rule is read across up to three following key-shaped lines (RT-03). The `api_key` rule names ten more vendor
+   families (Google OAuth client secrets, Docker Hub tokens, Shopify, HashiCorp Vault, GitLab, Square, New Relic, Telegram bot tokens, Discord bot tokens and
+   Azure AD client secrets, RT-04), and a password given as an argument or a quoted literal after the word is redacted (`curl -u user:SECRET`, `mysql -pSECRET`,
+   `sshpass -p`, `docker login -p`, `redis-cli -a`, `IDENTIFIED BY`, a `.netrc` `password`, SQL `PASSWORD '...'`). Evidence: `redact_shapes_test.go`,
+   `redact_surfaces_test.go` and the near-miss lists they hold. **Not fixed, documented:** RT-06 (a string shaped like an identifier skips the generic rules
+   on purpose: ids and references are structure, the prefix rules still apply), RT-07 (hex glued to a word character), RT-09 (delimiters inside the secret).
+   The filter stays mechanical, not a guarantee (§15).
+
+9. **The card rule looks at every window (PF-09, 2026-11-03; extends item 6).** The card rule was one regular expression that takes the longest match from the
+   left and a check that refuses it, so "Order 99871 4111 ..." or "... 1111 12/27" (the card after or before another number) returned unchanged. It is now a
+   scan over the chains of digit groups (digits, one space or hyphen between groups): from every group that a word boundary precedes, the windows of 13 to 19
+   digits that end at a group are tried, the longest first, and the first with a card network prefix, length and check digit is replaced. Definition and
+   boundaries are those of the old rule; the windows it hid are found. Random digits pass both checks about once in 40 windows of 16 digits and once in 400
+   of 14, so a long list of short numbers separated by single spaces or hyphens can lose a number to the marker (accepted: the cheaper error for a safety net).
+   Evidence: `redact_cards_test.go` (the review's five inputs and seven more; the old rule on the same inputs; numbers that are not cards; 4,000 random texts
+   against an independent definition; linear time on chains of 100,000 groups) and the negative control with the old rule behind it.
+
+10. **Asking for a proposal and reading one need `metadata.read` (AO-02, 2026-11-03; extends A6).** A6 composed the writes (`ai.apply` needs `metadata.write`,
+    confirm needs `requirements.decide`) and nothing composed the reads, so a stored role that held only `ai.read` read the full definition of every definition
+    a proposal changes (403 on the metadata routes, 200 here) and a role with `ai.read` and `ai.propose` had the whole draft sent to the operator's provider and
+    returned again in the READY proposal. The two creation routes and the read of one proposal now also require `metadata.read`, evaluated before anything is
+    reserved or sent; a refusal is audited as `ai.propose.rejected` or `ai.read.rejected` with the decision id. The list holds hashes and states only and keeps
+    `ai.read` alone. A veto still needs only `ai.apply` and now answers with the summary of the proposal (`Store.Summary`), not its body. The built-in roles hold
+    `metadata.read` and are unchanged; a custom role built for the AI builder must be granted it. Evidence: `TestM14APIPolicyMatrix` (the list and the body are
+    separate columns) and `TestM14APIAskingAndReadingNeedMetadataRead`, both failing without the composition.
+
+11. **A refused creation stops at the cap (PF-11, 2026-11-03; extends A5).** `BuildContext` redacted every string of every editable definition before it checked the
+    64 KiB limit; a draft may hold 256 KiB, and a refusal (`422 ai_context_too_large`, nothing reserved or charged) cost four times the work of an accepted
+    creation inside the admission slot and the transaction. It now returns `ErrContextTooLarge` as soon as the redacted bodies pass the cap, so a refusal costs what a
+    context that just fits costs. **Not done:** no limit on how often a member may ask (a refusal charges nothing, so neither the in-flight limit nor the daily budget
+    fires, and the traffic gate allows 300 requests a second per peer), and `Prepare` still runs inside the transaction. A per-member limit on refused
+    creations, or moving `Prepare` out of the transaction, would close it.
+
+12. **The result exchange waits for a full admission queue (ER-04, 2026-11-03; extends A8 and item 3).** The exchange that stores a paid answer takes a slot of the
+    same 4 + 128 admission as every other request and was repeated only after a known abort; with the queue full it ended in a bare 503, the proposal stayed
+    PENDING and the sweep charged the whole reservation (8 of 8 answers lost under a burst of reads in the edge rehearsal). It is now repeated after a full queue too,
+    with waits of 100 ms to 1.5 s (`postgres.RetryPaced`), inside the same 6 s budget and the 8 s context. **Not tested** at the burst size of the rehearsal (more than
+    132 database requests at one moment); the mechanism is tested against a real `Admission` that drains after 250 ms.
+
+13. **A stopping API waits for its paid phases (ER-03, 2026-11-03; extends A5).** The API gave its running requests 10 s after SIGTERM; a creation holds its request up
+    to 70 s. A routine restart abandoned every running phase, left the proposals PENDING, charged each its whole reservation (about 31% of the default daily budget per
+    request) and held the tenant's slot for 80 s. `Config.ShutdownTimeout` is 10 s, 80 s when `AI_PROVIDER_FILE` is set, and `SHUTDOWN_TIMEOUT` (1 s to 5 min)
+    overrides both. **Deployment constraints that follow** (edge rehearsal ER-01 to ER-03, [report](../verification/EDGE_REHEARSAL.md)): the termination grace of the
+    orchestrator must be longer than the value in force; a proxy in front of the API needs a response and idle timeout of at least 75 s (90 s recommended) on the two
+    creation routes, because a cut at T costs a FAILED/INTERNAL row charged 22.6% of the reservation or a READY proposal the client never saw; nothing may repeat
+    a `POST .../patch-proposals` or `.../requirement-proposals` automatically (each repetition is a second paid run: the creations are not idempotent); all replicas need
+    the same `in_flight_per_tenant` and `daily_token_budget` (the limits are arguments of the database port, not database state).
+
+14. **A token that no longer verifies at the pre-admission check is refused (PF-03, 2026-11-03; extends item 7).** `aiTokenOutlivesTheRun` let a request through when the
+    second verification of the token failed (a token that verified at the front door and ended in between); it is now answered `401 unauthenticated` at once, as any
+    other would be, because letting it through pays for an answer the result exchange cannot deliver. Evidence: `TestTokenCheckBeforeAdmission`.
+
 **Residuals after Amendment C, stated plainly.**
 
 - A bearer token that expires during the provider phase lost the result: the result exchange re-verifies it (A8). About 6.7% of the full-length requests with a
@@ -701,3 +759,9 @@ without the change; the reviewers' own probes were run against the fixed code by
 - M14R-05 (a narrow exemption band between the probe amounts passed `verifier-v2`) is fixed by `verifier-v3` (ADR102 amendment 13) and M14R-08 (10 of 28
   secret shapes survived, B.4) by item 6 above, both after the third independent review and neither re-verified by a reviewer; the verifier stays a
   mechanical floor and the redactor a mechanical filter.
+- Found by the AI-output red team and not fixed ([report](../verification/AI_OUTPUT_REDTEAM.md), all LOW): AO-01 (`holdsRedaction` refuses only the exact bytes
+  `[REDACTED:`, so a differently cased, spaced or invisible-character spelling of the placeholder can be written into a label), AO-03 (a NEEDS_HUMAN proposal reports
+  `derived.sensitive: []` and `aspects: []` for changes that were never classified), AO-04 (326 invisible or format characters still pass the rule for model text, the
+  supplement variation selectors among them) and AO-05 (the model's free text is stored and returned to every `ai.read` holder unredacted; the document states that output
+  is not filtered, this names the consequence).
+- Items 8 to 14 above, like items 6 and 7 before them, have not been seen by an independent reviewer. The red-team reports judge the tree they were pinned to (`11a4ee4`).
