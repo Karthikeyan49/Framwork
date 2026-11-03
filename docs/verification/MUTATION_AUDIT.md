@@ -14,7 +14,7 @@ Status at this commit: PARTIAL. The run was cut off once by an account limit and
 
 - Target 1 (M13): policy (U), promotion (D, T, R, B), handler authority helpers (AU, 9), SQL mutant S01 (finding MA-01). NOT REACHED: the end-to-end mutants H01 (`holdingApprovers` narrowing), U010i (selector entity) and the SQL mutants S02 to S08: the run of H01 was queued on `it-run fix` for 15 minutes behind seven other agents for the global heavy lock (`/tmp/framework-heavy.lock`) and never started; the other ones were never submitted.
 - Target 2 (M12 verifier and oracle): done (V, O); findings MA-03 (verifier) and, through the runtime components, MA-02.
-- Target 3 (M14): gateway, repair loop, patch, kinds, schema (A, G, P, K, SC) done; the service helpers SV were reached up to the id shown in the table; SQL mutant X06 done (killed); X01 to X05 NOT RUN (same lock queue).
+- Target 3 (M14): gateway, repair loop, patch, kinds, schema (A, G, P, K, SC) done; the service helpers SV were reached up to SV14; SQL mutant X06 done (killed); X01 to X05 NOT RUN (same lock queue).
 - Target 4 (front door, traffic): body budget (F), traffic gate (TR), `AcceptsPOST`, `enforce`, route to action mapping (AC) at unit level; the route table needs the integration suite (NOT RUN).
 - Target 5 (tools gateway, network policy, sandbox context): done (TL, N, SB); the freeze/evidence manifest is SQL (`runtime.freeze_sandbox`) and was NOT RUN.
 
@@ -29,16 +29,35 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
 | 1d | Target 1 - M13 handlers (holdingApprovers end to end; authority helpers, unit; internal/platform/access/promote.go) | 0 | 8 | 1 | 0% (0/8) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 43 | 29 | 4 | 60% (43/72) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 43 | 31 | 4 | 58% (43/74) |
 | 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
 | 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 4 | 25 | 0 | 14% (4/29) |
 | 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
 | 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
-| all | all targets reached | 171 | 132 | 16 | 56% (171/303) |
+| all | all targets reached | 171 | 134 | 16 | 56% (171/305) |
 
 Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, AC32.
 
 ## Findings
+
+| id | severity | unprotected behaviour | surviving mutants | killing test (verified) |
+|---|---|---|---|---|
+| MA-01 | MEDIUM | `activate_release` does not have to hold its approvers' memberships until commit (concurrent demotion) | S01 (all 60 M13/F05 integration tests pass) | integration, below |
+| MA-02 | MEDIUM | the runtime components hash can stop covering any of 12 pinned versions, the verifier's among them | R01, R02, R04 to R13 | unit, `internal/promotion` |
+| MA-03 | MEDIUM | an approval gate that names a subset of the required roles verifies as the required gate | V23 | unit, `internal/verification` |
+| MA-09 | MEDIUM (AU01, AU02) / LOW | the stricter-than-floor quorum and excluded roles of a bundle are enforced by Go alone and untested; no test of the handlers' separation helpers | AU01, AU02, AU04 to AU09 | unit, `internal/platform/access` |
+| MA-04 | LOW | one provider call can start with a budget below the reserved output | A12 | unit, `internal/ai` |
+| MA-05 | LOW | the admission bucket can refill past its burst | TR06 | unit, `internal/platform/traffic` |
+| MA-06 | LOW (unit-only) | built-in role matrix gaps: roles.write/assign, commands.reconcile, workflows.reconcile/recover | U027, U028, U031 | unit, `internal/policy` |
+| MA-07 | LOW | rollback class ranking, bounds, token rounding, body budget total and default share | D20 to D23, A20, F02, F11 | unit, three packages |
+| MA-08 | LOW | `tools.AddressGuard` (second layer of the AI provider egress check) has no test | N14, N15 | unit, `internal/tools` |
+| MA-10 | LOW | `cleanText` misses word joiner, bidi isolates, C1 controls, Mongolian vowel separator | SC02, SC03, SC05, SC06 | unit, `internal/ai` |
+| MA-11 | LOW | three of four `ServiceLimits.Effective` ceilings untested | SV01 to SV04 | unit, `internal/ai` |
+| MA-12 | LOW | admission reservation formula untested | SV05, SV06 | unit, `internal/ai` |
+| MA-13 | LOW | request text hygiene untested | SV07 to SV10 | unit, `internal/ai` |
+| MA-14 | LOW (unit-only) | `compileVersion`: inactive head, forged bootstrap version | U033, U034 | unit, `internal/policy` |
+
+Verdict for the scope reached: PASS WITH FINDINGS (partial, see Progress and NOT RUN). The suites killed most mutants that the builders had targeted: the floors, quorum and status precedence of the promotion package, its staleness reasons and restore gate, the pinned probe set and the oracle truth tables of the verifier, the usage caps, cancel charge and abandoned-call bound of the gateway, the per-target expected-hash check and the allowlist of the patch applier, the network policy classifier and the dial controls of the tool gateway, and the strict decoders. The survivors are the findings above. Two end-to-end database mutants ran (S01 survived: MA-01; X06 was killed); nothing else could be run end to end within the heavy-lock queue.
 
 ### MA-01 (MEDIUM) - the membership lock of `activate_release` is not tested
 
@@ -603,6 +622,7 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 
 - Integration or SQL mutants that were planned and never ran: H01 (`holdingApprovers` narrowing, `promote.go:270`), U010i (selector entity ignored, end to end), S02 to S08 (M13 ports: CRITICAL quorum, approve pointer lock and fence, approval-count exclusions, rollback fence and span), X01 to X05 (M14 ports: pending reservations in the budget, decide ownership, finish charge and requester, in-flight limit). Reason: after S01 and X06 (about 20 minutes each under the load of the host) the `it-run fix` run of H01 waited more than 15 minutes for the global heavy lock behind seven other agents and did not start; it could not be cancelled from this session, so a log `/home/user/logs/ma-H01.log` may appear later: it is NOT a valid result (the mutation is reverted).
 - Integration cover of the unit-surviving mutants of `internal/policy` (U001 to U003, U009 to U022, U033 to U036), of the route table (AC rows) and of the handlers' Go-side pre-checks (AC19 to AC25) was NOT RUN end to end; the rows say "unit-only".
+- Mutants not reached: SV15, SV16, SV17 (`Admit` request validation, `Ready`, `Execute` budget of `internal/ai/service.go`).
 - Mutants whose edit did not compile or apply and were not redone: B09, AC17, AC18, AC21, AC25, AC32 (handler details covered only by integration tests anyway).
 - M11 freeze and evidence manifest (SQL), M10 `Execute`/gateway outcome paths beyond the network policy and the catalog, redaction (excluded by the brief).
 
@@ -619,19 +639,19 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | U007 | internal/policy/holds.go:58 | Defined.holds: a DENY after an ALLOW no longer wins (order dependent) | go test ./internal/policy (whole package) | KILLED | TestDefinedHoldsFollowsTheGrants |
 | U008 | internal/policy/holds.go:55 | Defined.holds: drop the action membership test | go test ./internal/policy (whole package) | KILLED | TestDefinedHoldsFollowsTheGrants |
 | U009 | internal/policy/holds.go:26 | RoleStore.Holds: drop the resource tenant equality (needs DB to observe) | go test ./internal/policy (whole package) | SURVIVED | needs a database to observe; TestM13R03HoldsMatchesDecide uses the same tenant only; the caller always passes the access tenant |
-| U010 | internal/policy/definition.go:239 | selectorMatches: entity selector ignored | go test ./internal/policy (whole package) | SURVIVED |  |
-| U011 | internal/policy/definition.go:239 | selectorMatches: field selector ignored | go test ./internal/policy (whole package) | SURVIVED |  |
-| U012 | internal/policy/definition.go:242 | validSubject: the subject need not hold the role the definition names | go test ./internal/policy (whole package) | SURVIVED |  |
-| U013 | internal/policy/definition.go:242 | validSubject: user need not be the access actor | go test ./internal/policy (whole package) | SURVIVED |  |
-| U014 | internal/policy/definition.go:242 | validSubject: resource tenant may differ from the access tenant | go test ./internal/policy (whole package) | SURVIVED |  |
-| U015 | internal/policy/definition.go:282 | Defined.Decide: drop validSubject | go test ./internal/policy (whole package) | SURVIVED |  |
-| U016 | internal/policy/definition.go:301 | Defined.Decide: DENY after ALLOW does not win | go test ./internal/policy (whole package) | SURVIVED |  |
-| U017 | internal/policy/definition.go:290 | Defined.Decide: drop validResource | go test ./internal/policy (whole package) | SURVIVED |  |
-| U018 | internal/policy/definition.go:360 | Defined.DataScope: no scope at all no longer denies | go test ./internal/policy (whole package) | SURVIVED |  |
-| U019 | internal/policy/definition.go:353 | Defined.DataScope: DENY only wins if it comes before every ALLOW | go test ./internal/policy (whole package) | SURVIVED |  |
-| U020 | internal/policy/definition.go:334 | Defined.DataScope: drop validSubject | go test ./internal/policy (whole package) | SURVIVED |  |
-| U021 | internal/policy/policy.go:52 | Native.Decide: a cancelled context may still allow | go test ./internal/policy (whole package) | SURVIVED |  |
-| U022 | internal/policy/policy.go:51 | Native.Decide: user id need not equal the access actor | go test ./internal/policy (whole package) | SURVIVED |  |
+| U010 | internal/policy/definition.go:239 | selectorMatches: entity selector ignored | go test ./internal/policy (whole package) | SURVIVED | unit-only (no unit test can build a Subject, see Structural gap); a grant on one entity applying to every entity is the widening to check end to end: NOT RUN |
+| U011 | internal/policy/definition.go:239 | selectorMatches: field selector ignored | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); a field-level grant applying to every field: NOT RUN end to end |
+| U012 | internal/policy/definition.go:242 | validSubject: the subject need not hold the role the definition names | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); NOT RUN end to end |
+| U013 | internal/policy/definition.go:242 | validSubject: user need not be the access actor | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); NOT RUN end to end |
+| U014 | internal/policy/definition.go:242 | validSubject: resource tenant may differ from the access tenant | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); NOT RUN end to end |
+| U015 | internal/policy/definition.go:282 | Defined.Decide: drop validSubject | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); TestM9RStoredRoleEngineBindsTenantAndActor covers part of validSubject, NOT RUN |
+| U016 | internal/policy/definition.go:301 | Defined.Decide: DENY after ALLOW does not win | go test ./internal/policy (whole package) | SURVIVED | unit-only; TestM13R03HoldsMatchesDecide ("holds_but_denied_here") is expected to see it through the route, NOT RUN |
+| U017 | internal/policy/definition.go:290 | Defined.Decide: drop validResource | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); NOT RUN end to end |
+| U018 | internal/policy/definition.go:360 | Defined.DataScope: no scope at all no longer denies | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); NOT RUN end to end |
+| U019 | internal/policy/definition.go:353 | Defined.DataScope: DENY only wins if it comes before every ALLOW | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); NOT RUN end to end |
+| U020 | internal/policy/definition.go:334 | Defined.DataScope: drop validSubject | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); NOT RUN end to end |
+| U021 | internal/policy/policy.go:52 | Native.Decide: a cancelled context may still allow | go test ./internal/policy (whole package) | SURVIVED | LOW, unit-only: decisions are taken inside a request; NOT RUN end to end |
+| U022 | internal/policy/policy.go:51 | Native.Decide: user id need not equal the access actor | go test ./internal/policy (whole package) | SURVIVED | unit-only (see Structural gap); TestM9RStoredRoleEngineBindsTenantAndActor is expected to see part of it, NOT RUN |
 | U023 | internal/policy/policy.go:83 | permits: members (not viewers) hold the release authorities | go test ./internal/policy (whole package) | KILLED | TestNativeHolds |
 | U024 | internal/policy/policy.go:63 | permits: drop tenant equality | go test ./internal/policy (whole package) | KILLED | TestNativeHolds |
 | U025 | internal/policy/policy.go:67 | permits: unknown roles are treated as built-in | go test ./internal/policy (whole package) | KILLED | TestPolicyMatrix |
@@ -644,8 +664,8 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | U032 | internal/policy/policy.go:165 | permits: profile.read of another user | go test ./internal/policy (whole package) | KILLED | TestPolicyMatrix |
 | U033 | internal/policy/store.go:133 | compileVersion: an inactive role head still compiles | go test ./internal/policy (whole package) | SURVIVED | MA-14 (unit-only; the integration suite is expected to see an inactive head, NOT RUN) |
 | U034 | internal/policy/store.go:137 | compileVersion: a bootstrap version may carry grants | go test ./internal/policy (whole package) | SURVIVED | MA-14 (unit-only) |
-| U035 | internal/policy/store.go:148 | RoleStore.Load: several roles use the first one | go test ./internal/policy (whole package) | SURVIVED |  |
-| U036 | internal/policy/store.go:172 | LoadWorker: worker actor binding not compared | go test ./internal/policy (whole package) | SURVIVED |  |
+| U035 | internal/policy/store.go:148 | RoleStore.Load: several roles use the first one | go test ./internal/policy (whole package) | SURVIVED | needs a database (RoleStore.Load); NOT RUN end to end |
+| U036 | internal/policy/store.go:172 | LoadWorker: worker actor binding not compared | go test ./internal/policy (whole package) | SURVIVED | needs a database (RoleStore.LoadWorker); TestM9RWorkerCapabilityDefinitionConfinementAndLiveRevocation is expected to see it, NOT RUN |
 | D01 | internal/promotion/decisions.go:472 | RequiredApprovals: an unknown level fails open to quorum 1 | go test ./internal/promotion (whole package) | KILLED | TestDatabaseFloorsMirrorAndNeverExceedThePolicy |
 | D02 | internal/promotion/decisions.go:485 | FloorRoles HIGH: the acceptance author may approve | go test ./internal/promotion (whole package) | KILLED | TestHeaderAndDatabaseFloorsOfABuiltCandidate |
 | D03 | internal/promotion/decisions.go:488 | FloorRoles CRITICAL/unknown: the sandbox freezer may approve | go test ./internal/promotion (whole package) | KILLED | TestDatabaseFloorsMirrorAndNeverExceedThePolicy |
@@ -765,7 +785,7 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | V43 | internal/verification/verifier.go:688 | migration: TRANSFORM allowed under a COMPATIBLE maximum | go test ./internal/verification (whole package) | KILLED | TestMigrationRequirements |
 | V44 | internal/verification/verifier.go:602 | gate: reaching completion is not a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
 | V45 | internal/verification/verifier.go:604 | gate: a failed end counts as a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
-| V46 | internal/verification/verifier.go:301 | threshold: human cases of other requirements are evaluated | go test ./internal/verification (whole package) | SURVIVED |  |
+| V46 | internal/verification/verifier.go:301 | threshold: human cases of other requirements are evaluated | go test ./internal/verification (whole package) | SURVIVED | LOW: human cases of other requirements are evaluated against this one, which can only add spurious FAILs, never hide one |
 | F01 | internal/platform/access/bodybudget.go:68 | BodyHold.Add: the share of one identity is exclusive | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
 | F02 | internal/platform/access/bodybudget.go:71 | BodyHold.Add: the total is exclusive | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | MA-07 (unit) |
 | F03 | internal/platform/access/bodybudget.go:68 | BodyHold.Add: no per-identity share | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
@@ -854,9 +874,9 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | AC07 | internal/platform/access/ai.go:84 | aiCreateBody 32 KiB -> 64 KiB | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the body caps are tested by the integration suite only |
 | AC08 | internal/platform/access/ai.go:87 | aiRejectBody 4 KiB -> 64 KiB | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the body caps are tested by the integration suite only |
 | AC09 | internal/platform/access/ai.go:107 | aiBody: a body of exactly the limit is too large | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: boundary of the body cap |
-| AC10 | internal/platform/access/ai.go:119 | aiBody: unknown keys are admitted | go test ./internal/platform/access (whole package) | SURVIVED |  |
+| AC10 | internal/platform/access/ai.go:119 | aiBody: unknown keys are admitted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the strict bodies are tested by the integration suite (m14_api_bodies_test.go), NOT RUN |
 | AC11 | internal/platform/access/ai.go:124 | aiBody: required keys may be absent | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: required keys of the AI bodies |
-| AC12 | internal/platform/access/ai.go:100 | aiBody: any content type | go test ./internal/platform/access (whole package) | SURVIVED |  |
+| AC12 | internal/platform/access/ai.go:100 | aiBody: any content type | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the strict bodies are tested by the integration suite (m14_api_bodies_test.go), NOT RUN |
 | P01 | internal/ai/patch.go:109 | apply: replacing an existing definition of a forbidden kind | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalRefusesToReplaceAnExistingToolUnderAnAllowedId |
 | AC13 | internal/platform/access/ai.go:450 | aiTokenOutlivesTheRun: a token that ends exactly with the run is refused | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: token-expiry boundary is tested by the integration suite (m14r_ai_route_test.go) |
 | AC14 | internal/platform/access/ai.go:450 | aiTokenOutlivesTheRun: any unexpired token is accepted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: token-expiry check is tested by the integration suite (m14r_ai_route_test.go) |
@@ -932,4 +952,6 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | SV09 | internal/ai/service.go:163 | validRequestText: bound off by one | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
 | SV10 | internal/ai/service.go:157 | validRequestText: blank requests accepted | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
 | SV11 | internal/ai/service.go:363 | apiLabel: bound off by one | go test ./internal/ai -run 'Label' | KILLED | TestAPILabelKeepsLabelsReadableAndIsIdempotent |
-| SV12 | internal/ai/service.go:396 | attemptRecord: unknown outcome stored verbatim | go test ./internal/ai -run 'Attempt\|Outcome\|Service\|Record' ; widened: ./internal/ai | SURVIVED |  |
+| SV12 | internal/ai/service.go:396 | attemptRecord: unknown outcome stored verbatim | go test ./internal/ai -run 'Attempt\|Outcome\|Service\|Record' ; widened: ./internal/ai | SURVIVED | LOW: an outcome outside the contract would be sent to ai_record_attempt, whose closed list refuses it (the finish then fails instead of recording PROVIDER_ERROR); NOT RUN end to end |
+| SV13 | internal/ai/service.go:552 | plan: a READY run whose hash does not match its body is stored READY | go test ./internal/ai -run 'Plan\|Finish\|Service\|Proposal' ; widened: ./internal/ai | SURVIVED | LOW: ai_finish repeats the body hash check (00089:210), so a READY run whose hash does not match its body is still refused by the port; NOT RUN end to end |
+| SV14 | internal/ai/service.go:510 | failureOf: a budget failure reported as internal | go test ./internal/ai -run 'Plan\|Finish\|Service\|Failure\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: a budget failure would be recorded as INTERNAL instead of BUDGET |
