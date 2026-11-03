@@ -9,12 +9,13 @@ Stack lock caveat found during the run: `it-run` releases the stack lock between
 
 ## Progress
 
-Status at this commit: PARTIAL, in progress (the run was interrupted once by an account limit and resumed; nothing is lost, the table below is regenerated from the run log).
+Status at this commit: PARTIAL, in progress. The run was cut off once by an account limit and resumed; everything below is regenerated from the run log.
 
-- Target 1 (M13 approval and promotion): unit mutants of `internal/policy` (U), `internal/promotion` (D, T, R, B) done; SQL port mutant S01 done, further SQL mutants pending.
-- Target 2 (M12 verifier): mutants prepared, not yet run.
-- Target 3 (M14 pipeline and route): mutants prepared, not yet run.
-- Targets 4 and 5: not reached yet.
+- Target 1 (M13): unit mutants of `internal/policy` (U), `internal/promotion` (D, T, R, B) done; SQL mutant S01 done (MA-01); further M13 SQL mutants pending.
+- Target 2 (M12 verifier and oracle): done (V, O); findings MA-02 (promotion, runtime components) and MA-03 (verifier, sameRoles) have verified killing tests.
+- Target 3 (M14): gateway/repair/patch/schema/service unit mutants (A, G, P, K, SV, SC) in progress; SQL mutants of migration 00089 (X) pending.
+- Target 4 (front door, traffic): body budget (F) and traffic gate (TR) in progress.
+- Target 5: not reached.
 
 ## Mutation score per target
 
@@ -23,16 +24,16 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | key | target | killed | survived | equivalent | score |
 |---|---|---|---|---|---|
 | 1a | Target 1 - M13 policy (Holds / NativeHolds / Decide / permits / RoleStore) | 12 | 23 | 1 | 34% (12/35) |
-| 1b | Target 1 - M13 promotion package (counting, floors, staleness, runtime components, restore gate) | 36 | 21 | 1 | 63% (36/57) |
+| 1b | Target 1 - M13 promotion package (counting, floors, staleness, runtime components, restore gate) | 36 | 19 | 3 | 65% (36/55) |
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
-| 2 | Target 2 - M12 verifier and oracle | 0 | 0 | 0 | not reached |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 0 | 0 | 0 | not reached |
+| 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 8 | 2 | 0 | 80% (8/10) |
 | 3b | Target 3 - M14 route and SQL (internal/platform/access/ai.go, migration 00089) | 0 | 0 | 0 | not reached |
-| 4 | Target 4 - platform front door and traffic | 0 | 0 | 0 | not reached |
+| 4 | Target 4 - platform front door and traffic | 17 | 9 | 1 | 65% (17/26) |
 | 5 | Target 5 - M10 tools gateway and M11 sandbox | 0 | 0 | 0 | not reached |
-| all | all targets reached | 48 | 45 | 2 | 52% (48/93) |
+| all | all targets reached | 109 | 64 | 10 | 63% (109/173) |
 
-Discarded (did not compile or the edit did not apply, redone or dropped): B09.
+Discarded (did not compile or the edit did not apply, redone or dropped): B09, TR07.
 
 ## Findings
 
@@ -81,6 +82,68 @@ func TestActivationHoldsTheApproversMemberships(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+```
+
+
+### MA-02 (MEDIUM) - nothing tests that the recorded runtime components carry the live versions (12 surviving mutants)
+
+`promotion.runtimeComponents` (`internal/promotion/dependencies.go:130-136`) builds the document whose hash makes older candidates stale (RUNTIME_CHANGED, ADR102). Mutants R01, R02, R04 to R13 replace the version of one component by the empty string (the version constant stays referenced, `[:0]`): StorageContract, Evolution, the tool DSL version, RuleDSL, ToolCatalog, Diff, RiskPolicies, **Verifier** (`verification.VerifierVersion`, line 134), AcceptanceVocab, RequirementPolicy, RequirementSetSpec, AcceptanceSpec. All of them pass the whole `internal/promotion` package: `TestRuntimeComponentsHashCoversEveryComponent` (`staleness_test.go:152-170`) edits the document AFTER `runtimeComponents` built it, so it cannot see a constructor that stopped reading a version; only `SupportedIR` (R03) is caught. What is unprotected: bumping `VerifierVersion` (or any of the twelve versions) would no longer make a candidate verified by the older procedure stale, and the candidate would be activated on evidence from a verifier the binary no longer runs.
+Killing test, verified (passes on the original; fails on all 13 mutants R01 to R13, run in an untracked copy of the tree, `kill_results.tsv`: every `K-R*` row KILLED by this test):
+
+```go
+package promotion
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/Karthikeyan49/Framwork/internal/compiler"
+	"github.com/Karthikeyan49/Framwork/internal/intent"
+	"github.com/Karthikeyan49/Framwork/internal/risk"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
+	"github.com/Karthikeyan49/Framwork/internal/verification"
+)
+
+func TestRuntimeComponentsRecordTheLiveVersions(t *testing.T) {
+	want := RuntimeComponentsDoc{
+		StorageContract: compiler.StorageContractVersion, Evolution: compiler.EvolutionVersion, SupportedIR: compiler.SupportedIRVersions(),
+		WorkflowDSL: []string{workflow.Version, workflow.TenantRoleVersion, workflow.ToolDSLVersion}, RuleDSL: rules.Version, ToolCatalog: tools.CatalogVersion,
+		Diff: compiler.DiffVersion, RiskPolicies: risk.Versions(), Verifier: verification.VerifierVersion, AcceptanceVocab: intent.VocabularyVersion,
+		RequirementPolicy: intent.RequirementPolicyVersion, RequirementSetSpec: intent.RequirementSetVersion, AcceptanceSpec: intent.AcceptanceSpecVersion,
+	}
+	got, hash := RuntimeComponents()
+	if !reflect.DeepEqual(got, want) || hash != hashComponents(want) {
+		t.Fatalf("the recorded components are not the live versions:\n got %+v\nwant %+v", got, want)
+	}
+}
+```
+
+### MA-03 (MEDIUM) - a gate whose approval states name only some of the required roles passes (`sameRoles`, mutant V23)
+
+`internal/verification/verifier.go:631-643`: `sameRoles` compares the sorted role lists. Deleting `len(x) == len(y) &&` (V23) leaves every `internal/verification` test green, yet the comparison then accepts a prefix of the required list (and indexes past the end of `y` when the plan names more roles). With `approver_roles: ["admin","owner"]` required, a plan whose approval state lists only `["admin"]` passes the approval-gate requirement: the weaker gate is verified as the required one. The existing gate tests use a wrong role (`member`) and an equal two-role list, never a subset.
+Killing test, verified (passes on the original, fails on V23: `a gate with only the admin role passed for admin+owner: PASS`):
+
+```go
+package verification
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/Karthikeyan49/Framwork/internal/intent"
+)
+
+func TestGateWithFewerRolesThanRequiredFails(t *testing.T) {
+	gate := requirement("po-gate", intent.CategoryApprovalGate, json.RawMessage(`{"workflow_id":"workflow.order.approve","approver_roles":["admin","owner"]}`))
+	set := requirementSet(gate)
+	spec := intent.AcceptanceSpec{SchemaVersion: intent.AcceptanceSpecVersion, RequirementsHash: set.Hash(), Cases: []intent.AcceptanceCase{{ID: "gate", RequirementID: "po-gate", Expect: intent.Expectation{Outcome: intent.OutcomeHolds}}}}
+	r := mustVerify(t, input(orderProgram(t, orderOptions{gate: true, roles: []string{"admin"}}), set, spec))
+	if r.Outcome != Fail || !hasFinding(r, CodeGateRolesMismatch, "") {
+		t.Fatalf("a gate with only the admin role passed for admin+owner: %s %+v", r.Outcome, r.Findings)
 	}
 }
 ```
@@ -164,7 +227,7 @@ func TestActivationHoldsTheApproversMemberships(t *testing.T) {
 | T02 | internal/promotion/staleness.go:111 | Staleness: evidence hash not compared | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
 | T03 | internal/promotion/staleness.go:111 | Staleness: unfrozen evidence accepted | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
 | T04 | internal/promotion/staleness.go:108 | Staleness: unchanged risk level counts as escalated | go test ./internal/promotion (whole package) | KILLED | TestSecondReleaseBindsAndVerifiesAgainstItsBase |
-| T05 | internal/promotion/staleness.go:108 | Staleness: a blocked assessment is not an escalation | go test ./internal/promotion (whole package) | SURVIVED |  |
+| T05 | internal/promotion/staleness.go:108 | Staleness: a blocked assessment is not an escalation | go test ./internal/promotion (whole package) | EQUIVALENT | assessment.Blocked cannot become true in Staleness: the blocking rules read facts a built candidate cannot have (release_risk_v1.go:58-60) and only the BREAKING storage row blocks by volume (release_risk_v1.go:84), which Restore refuses (bundle2.go:541) |
 | T06 | internal/promotion/staleness.go:126 | Staleness: empty components hashes match | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
 | T07 | internal/promotion/staleness.go:92 | Staleness: nil tool resolver treated as OK | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
 | T08 | internal/promotion/staleness.go:102 | Staleness: unknown tool status treated as OK | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
@@ -172,25 +235,113 @@ func TestActivationHoldsTheApproversMemberships(t *testing.T) {
 | T10 | internal/promotion/staleness.go:85 | Staleness: schema change ignored | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
 | T11 | internal/promotion/staleness.go:133 | Staleness: reasons not sorted ascending | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
 | T12 | internal/promotion/staleness.go:80 | Staleness: base release change ignored | go test ./internal/promotion (whole package) | KILLED | TestStalenessReasons |
-| R01 | internal/promotion/dependencies.go:132 | runtimeComponents: StorageContract not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R02 | internal/promotion/dependencies.go:132 | runtimeComponents: Evolution not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
+| R01 | internal/promotion/dependencies.go:132 | runtimeComponents: StorageContract not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R02 | internal/promotion/dependencies.go:132 | runtimeComponents: Evolution not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
 | R03 | internal/promotion/dependencies.go:132 | runtimeComponents: SupportedIR not recorded | go test ./internal/promotion (whole package) | KILLED | TestRuntimeComponentsHashCoversEveryComponent |
-| R04 | internal/promotion/dependencies.go:133 | runtimeComponents: tool DSL version not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R05 | internal/promotion/dependencies.go:133 | runtimeComponents: RuleDSL not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R06 | internal/promotion/dependencies.go:133 | runtimeComponents: ToolCatalog not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R07 | internal/promotion/dependencies.go:134 | runtimeComponents: Diff not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R08 | internal/promotion/dependencies.go:134 | runtimeComponents: RiskPolicies not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R09 | internal/promotion/dependencies.go:134 | runtimeComponents: Verifier not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R10 | internal/promotion/dependencies.go:134 | runtimeComponents: AcceptanceVocab not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R11 | internal/promotion/dependencies.go:135 | runtimeComponents: RequirementPolicy not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R12 | internal/promotion/dependencies.go:135 | runtimeComponents: RequirementSetSpec not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| R13 | internal/promotion/dependencies.go:135 | runtimeComponents: AcceptanceSpec not recorded | go test ./internal/promotion (whole package) | SURVIVED |  |
-| B01 | internal/promotion/bundle2.go:599 | restore: requirement set of another app | go test ./internal/promotion (whole package) | SURVIVED |  |
-| B02 | internal/promotion/bundle2.go:599 | restore: requirement version < 1 | go test ./internal/promotion (whole package) | SURVIVED |  |
+| R04 | internal/promotion/dependencies.go:133 | runtimeComponents: tool DSL version not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R05 | internal/promotion/dependencies.go:133 | runtimeComponents: RuleDSL not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R06 | internal/promotion/dependencies.go:133 | runtimeComponents: ToolCatalog not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R07 | internal/promotion/dependencies.go:134 | runtimeComponents: Diff not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R08 | internal/promotion/dependencies.go:134 | runtimeComponents: RiskPolicies not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R09 | internal/promotion/dependencies.go:134 | runtimeComponents: Verifier not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 (the verifier version the brief names) |
+| R10 | internal/promotion/dependencies.go:134 | runtimeComponents: AcceptanceVocab not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R11 | internal/promotion/dependencies.go:135 | runtimeComponents: RequirementPolicy not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R12 | internal/promotion/dependencies.go:135 | runtimeComponents: RequirementSetSpec not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| R13 | internal/promotion/dependencies.go:135 | runtimeComponents: AcceptanceSpec not recorded | go test ./internal/promotion (whole package) | SURVIVED | MA-02 |
+| B01 | internal/promotion/bundle2.go:599 | restore: requirement set of another app | go test ./internal/promotion (whole package) | SURVIVED | LOW: a requirement set of another application is refused by the staging port only; a coordinated forgery would have to recompute the report; no killing test written |
+| B02 | internal/promotion/bundle2.go:599 | restore: requirement version < 1 | go test ./internal/promotion (whole package) | SURVIVED | LOW: version < 1 of the requirement set; no killing test written |
 | B03 | internal/promotion/bundle2.go:599 | restore: requirement policy version not compared | go test ./internal/promotion (whole package) | KILLED | TestEveryTamperedFieldIsRejectedOnRestore |
 | B04 | internal/promotion/bundle2.go:606 | restore: acceptance binding recorded in the body not compared | go test ./internal/promotion (whole package) | KILLED | TestEveryTamperedFieldIsRejectedOnRestore |
 | B05 | internal/promotion/bundle2.go:630 | restore: HighRisk flag not compared | go test ./internal/promotion (whole package) | KILLED | TestEveryTamperedFieldIsRejectedOnRestore |
 | B06 | internal/promotion/bundle2.go:635 | restore: a non-PASS verification claim is accepted | go test ./internal/promotion (whole package) | KILLED | TestEveryTamperedFieldIsRejectedOnRestore |
 | B07 | internal/promotion/bundle2.go:635 | restore: verifier version not compared | go test ./internal/promotion (whole package) | KILLED | TestEveryTamperedFieldIsRejectedOnRestore |
-| B08 | internal/promotion/bundle2.go:642 | restore: bundle hash not compared | go test ./internal/promotion (whole package) | SURVIVED |  |
+| B08 | internal/promotion/bundle2.go:642 | restore: bundle hash not compared | go test ./internal/promotion (whole package) | EQUIVALENT | the same condition Hash(raw) != hash is checked first at bundle.go:107 and tested by bundle2_test.go:294 |
 | S01 | db/migrations/00088_m13_review_fixes.sql:79 | activate_release: drop FOR SHARE OF m (approvers memberships not locked until commit) | it-run fix 'TestM13\|TestF05' (60 tests, canary proved the mutant live) | SURVIVED |  |
+| V01 | internal/verification/literals.go:34 | literalAmounts: a condition reading any field counts as reading the threshold field | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V02 | internal/verification/literals.go:37 | literalAmounts: money literals of another currency are probed | go test ./internal/verification (whole package) | SURVIVED | LOW: extra probes only (an amount of another currency is probed against the threshold currency) |
+| V03 | internal/verification/literals.go:52 | literalAmounts: amounts of conditions that do not read the field are probed | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V04 | internal/verification/literals.go:17 | MaxLiteralAmounts 32 -> 33 | go test ./internal/verification (whole package) | SURVIVED | LOW: the tests derive the bound from the constant itself |
+| V05 | internal/verification/literals.go:90 | literalProbes: "below" probes above | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V06 | internal/verification/literals.go:90 | literalProbes: "above" probes below | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V07 | internal/verification/literals.go:92 | literalProbes: midpoints ignore the threshold | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V08 | internal/verification/literals.go:102 | literalProbes: amounts already probed are probed again | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V09 | internal/verification/literals.go:96 | literalProbes: midpoint replaced by the lower neighbour | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V10 | internal/verification/literals.go:94 | literalProbes: the last midpoint is dropped | go test ./internal/verification (whole package) | KILLED | TestLiteralProbesFollowTheAmountsOfThePlan |
+| V11 | internal/verification/verifier.go:243 | threshold: the amount bound is exclusive | go test ./internal/verification (whole package) | KILLED | TestAPlanWithTooManyAmountsIsBlocked |
+| V12 | internal/verification/verifier.go:230 | threshold: non-money field accepted | go test ./internal/verification (whole package) | KILLED | TestBlockedStates |
+| V13 | internal/verification/verifier.go:230 | threshold: workflow of another entity accepted | go test ./internal/verification (whole package) | SURVIVED | LOW/MEDIUM: a threshold requirement whose workflow belongs to another entity is no longer BLOCKED up front; the probes then fail or block on missing fields; no killing test written |
+| V14 | internal/verification/verifier.go:250 | threshold: amounts of the wrong-currency probe count as probed | go test ./internal/verification (whole package) | EQUIVALENT | the wrong-currency probe has the same amount text as the "at" probe (oracle.go:163,167), which is already taken |
+| V15 | internal/verification/verifier.go:322 | observe: an unevaluable mined variant blocks | go test ./internal/verification (whole package) | SURVIVED | LOW: an unevaluable mined variant blocks instead of being skipped |
+| V16 | internal/verification/verifier.go:327 | threshold: a wrong observation never fails | go test ./internal/verification (whole package) | KILLED | TestMutantsFailOrBlockWithSpecificCodes |
+| V17 | internal/verification/verifier.go:349 | observe: currency mismatch not rejected | go test ./internal/verification (whole package) | KILLED | TestControlFixturePasses |
+| V18 | internal/verification/verifier.go:372 | observe: a rejection that completes goes unnoticed | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
+| V19 | internal/verification/verifier.go:379 | observe: a failed state is never an expectation | go test ./internal/verification (whole package) | SURVIVED | LOW: a failed state on a fixed probe is BLOCKED instead of FAIL, still not PASS |
+| V20 | internal/verification/verifier.go:429 | rejectionCompletes: approved edges count as rejection edges | go test ./internal/verification (whole package) | KILLED | TestControlFixturePasses |
+| V21 | internal/verification/verifier.go:597 | gate: the approved edge of a gating state counts as a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
+| V22 | internal/verification/verifier.go:573 | gate: wrong roles never recorded | go test ./internal/verification (whole package) | KILLED | TestApprovalGateRequirements |
+| V23 | internal/verification/verifier.go:635 | sameRoles: a role subset equals the required set | go test ./internal/verification (whole package) | SURVIVED | MA-03 |
+| V24 | internal/verification/verifier.go:661 | toolEffect: a tool at the maximum effect fails | go test ./internal/verification (whole package) | KILLED | TestToolEffectRequirements |
+| V25 | internal/verification/verifier.go:664 | toolEffect: approval NEVER/OPTIONAL accepted when approval is required | go test ./internal/verification (whole package) | KILLED | TestToolEffectRequirements |
+| V26 | internal/verification/verifier.go:667 | toolEffect: unknown sandbox mode accepted | go test ./internal/verification (whole package) | EQUIVALENT | tools.NewCatalog rejects an unknown sandbox mode (catalog.go:355-381, default branch), so rank -1 is unreachable |
+| V27 | internal/verification/verifier.go:658 | toolEffect: tool not allowed for the tenant accepted | go test ./internal/verification (whole package) | KILLED | TestToolEffectRequirements |
+| V28 | internal/verification/verifier.go:687 | migration: TRANSFORM allowed under an ADDITIVE maximum | go test ./internal/verification (whole package) | EQUIVALENT | intent.classBounds is COMPATIBLE and TRANSFORM (requirements.go:112), so the added ADDITIVE alternative is unreachable; the real variant is V43 (killed) |
+| V29 | internal/verification/verifier.go:685 | migration: BREAKING allowed | go test ./internal/verification (whole package) | KILLED | TestMigrationRequirements |
+| V30 | internal/verification/verifier.go:745 | completeness: storage evolution needs no requirement | go test ./internal/verification (whole package) | KILLED | TestCompletenessRequiresResolvedMatchingRequirements |
+| V31 | internal/verification/verifier.go:711 | completeness: an unresolved requirement covers a changed surface | go test ./internal/verification (whole package) | KILLED | TestCompletenessRequiresResolvedMatchingRequirements |
+| V32 | internal/verification/verifier.go:68 | validate: acceptance bound to another requirement set | go test ./internal/verification (whole package) | EQUIVALENT | intent.ValidateAcceptance repeats the binding (acceptance.go:163), called two statements later |
+| V33 | internal/verification/verifier.go:124 | Verify: optional requirements are verified like mandatory ones | go test ./internal/verification (whole package) | KILLED | TestNonMandatoryRequirementsAreSkippedAndReported |
+| V34 | internal/verification/verifier.go:126 | Verify: an open mandatory requirement is verified | go test ./internal/verification (whole package) | KILLED | TestBlockedStates |
+| V35 | internal/verification/verifier.go:129 | Verify: an unknown category is verified | go test ./internal/verification (whole package) | KILLED | TestBlockedStates |
+| V36 | internal/verification/verifier.go:113 | Verify: floor violations are not blocked | go test ./internal/verification (whole package) | KILLED | TestBlockedStates |
+| V37 | internal/verification/verifier.go:31 | MaxWork 50000 -> 500000 | go test ./internal/verification (whole package) | SURVIVED | LOW: the work bound constant |
+| V38 | internal/verification/verifier.go:443 | maxMinedFields 8 -> 9 | go test ./internal/verification (whole package) | SURVIVED | LOW: the mining bound constant |
+| V39 | internal/verification/verifier.go:444 | maxMinedPerField 6 -> 7 | go test ./internal/verification (whole package) | SURVIVED | LOW: the mining bound constant |
+| V40 | internal/verification/verifier.go:492 | minedValues: pinned fields are mined as well | go test ./internal/verification (whole package) | KILLED | TestPinnedContextScopesTheRequirement |
+| V41 | internal/verification/verifier.go:489 | minedValues: the threshold field is mined as well | go test ./internal/verification (whole package) | EQUIVALENT | the threshold field is money-typed (verifier.go:230) and the mining switch skips every kind but string, enum, bool, integer |
+| V42 | internal/verification/verifier.go:287 | threshold: every probe is repeated for every mined value | go test ./internal/verification (whole package) | KILLED | TestProbeSetIsPinnedToTheVerifierVersion |
+| O01 | internal/intent/oracle.go:108 | oracle: GT includes equality | go test ./internal/intent (whole package) | KILLED | TestOracleTruthTables |
+| O02 | internal/intent/oracle.go:112 | oracle: LT includes equality | go test ./internal/intent (whole package) | KILLED | TestOracleTruthTables |
+| O03 | internal/intent/oracle.go:95 | oracle: another currency compared as the threshold currency | go test ./internal/intent (whole package) | KILLED | TestOracleTruthTables |
+| O04 | internal/intent/oracle.go:126 | oracle: approver roles not expected | go test ./internal/intent (whole package) | KILLED | TestOracleTruthTables |
+| O05 | internal/intent/oracle.go:98 | oracle: invalid money amounts not rejected | go test ./internal/intent (whole package) | KILLED | TestOracleTruthTables |
+| A01 | internal/ai/repair.go:77 | chargeUsage: input cap 2x+1024 -> 2x+1025 | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestChargeUsageIsCappedNearTheSizeOfTheRequest |
+| A02 | internal/ai/repair.go:77 | chargeUsage: input cap 4x (review F-08) | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestChargeUsageIsCappedNearTheSizeOfTheRequest |
+| A03 | internal/ai/repair.go:78 | chargeUsage: the byte estimate of a large answer no longer wins over the cap | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestChargeUsageIsCappedNearTheSizeOfTheRequest |
+| A04 | internal/ai/repair.go:78 | chargeUsage: output not raised to the byte estimate | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestChargeUsageIsCappedNearTheSizeOfTheRequest |
+| A05 | internal/ai/repair.go:221 | cancel charge: the reserved output is not charged (M14R-02) | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestACanceledCallIsChargedTheReservedOutput |
+| A06 | internal/ai/repair.go:233 | timeout charge: the input estimate is not charged | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestAnAdapterThatIgnoresItsContextCannotHoldTheRun |
+| A07 | internal/ai/repair.go:235 | provider error: the run budget is not reduced | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| A08 | internal/ai/repair.go:251 | answer: the output is not taken off the run budget | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | KILLED | TestPropertiesOfEveryRun (widened) |
+| A09 | internal/ai/repair.go:115 | abandoned bound: off by one | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestAbandonedProviderCallsAreBounded |
+| A10 | internal/ai/repair.go:152 | abandoned bound 16 -> 17 | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| V43 | internal/verification/verifier.go:688 | migration: TRANSFORM allowed under a COMPATIBLE maximum | go test ./internal/verification (whole package) | KILLED | TestMigrationRequirements |
+| V44 | internal/verification/verifier.go:602 | gate: reaching completion is not a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
+| V45 | internal/verification/verifier.go:604 | gate: a failed end counts as a bypass | go test ./internal/verification (whole package) | KILLED | TestRejectedApprovalThatCompletesFails |
+| V46 | internal/verification/verifier.go:301 | threshold: human cases of other requirements are evaluated | go test ./internal/verification (whole package) | SURVIVED |  |
+| F01 | internal/platform/access/bodybudget.go:68 | BodyHold.Add: the share of one identity is exclusive | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
+| F02 | internal/platform/access/bodybudget.go:71 | BodyHold.Add: the total is exclusive | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | LOW: the total bound is exclusive at exactly total bytes; no test books exactly the total |
+| F03 | internal/platform/access/bodybudget.go:68 | BodyHold.Add: no per-identity share | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
+| F04 | internal/platform/access/bodybudget.go:71 | BodyHold.Add: no total bound | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
+| F05 | internal/platform/access/bodybudget.go:89 | Release: the total is never given back | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
+| F06 | internal/platform/access/bodybudget.go:90 | Release: an identity with nothing left stays listed | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldReleaseIsIdempotentAndForgetsIdentities |
+| F07 | internal/platform/access/bodybudget.go:62 | Add: a released hold books again | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldReleaseIsIdempotentAndForgetsIdentities |
+| F08 | internal/platform/access/bodybudget.go:76 | Add: the hold forgets what it booked | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBodyHoldBooksPerIdentityAndInAll |
+| F09 | internal/platform/access/bodybudget.go:81 | Release: a second release gives the bytes back twice | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | EQUIVALENT | Release zeroes h.n, so a second release subtracts 0 whatever the guard says; the released flag is still tested through F07 |
+| F10 | internal/platform/access/bodybudget.go:130 | bookedBody: the bytes that did not fit are reported to the caller | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' | KILLED | TestBookedBodyStopsTheReadThatDoesNotFit |
+| F11 | internal/platform/access/bodybudget.go:33 | default identity share below the largest admitted body | go test ./internal/platform/access -run 'Budget\|Body\|Replay\|Deadline' ; widened: ./internal/platform/access | SURVIVED | LOW: a default identity share below 1 MiB would refuse honest uploads; no test pins the default |
+| TR01 | internal/platform/traffic/gate.go:29 | Validate: a peer rate above the global rate is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR02 | internal/platform/traffic/gate.go:29 | Validate: a peer burst above the global burst is valid | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR03 | internal/platform/traffic/gate.go:29 | Validate: peer rate ceiling 10000 -> 100000 | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR04 | internal/platform/traffic/gate.go:29 | Validate: burst may be three times the rate | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR05 | internal/platform/traffic/gate.go:62 | bucket: a credit of exactly one token is not enough | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR06 | internal/platform/traffic/gate.go:58 | bucket: refill without the burst ceiling | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR08 | internal/platform/traffic/gate.go:171 | Peer: the global bucket is never checked | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
+| TR09 | internal/platform/traffic/gate.go:100 | pool: one key above the bound | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
+| TR10 | internal/platform/traffic/gate.go:197 | Invalid: no global bound on invalid credentials | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
+| TR11 | internal/platform/traffic/gate.go:149 | decide: a clock that goes backwards is used as is | go test ./internal/platform/traffic (whole package) | KILLED | TestRefillFractionalCreditRetryAndClockRegression |
+| TR12 | internal/platform/traffic/gate.go:210 | Subject: no length prefix (issuer, subject) pairs can collide | go test ./internal/platform/traffic (whole package) | KILLED | TestSubjectKeyIsSignedIdentityTupleAndNotPeerOrConcatenation |
+| TR13 | internal/platform/traffic/gate.go:142 | peerKey: IPv4-mapped IPv6 addresses get their own bucket | go test ./internal/platform/traffic (whole package) | KILLED | TestRefillFractionalCreditRetryAndClockRegression |
+| TR14 | internal/platform/traffic/gate.go:142 | peerKey: IPv6 zones multiply the buckets of one host | go test ./internal/platform/traffic (whole package) ; widened: ./internal/platform/traffic | SURVIVED |  |
+| TR15 | internal/platform/traffic/gate.go:42 | RetrySeconds: rounds down to zero | go test ./internal/platform/traffic (whole package) | KILLED | TestRefillFractionalCreditRetryAndClockRegression |
+| TR16 | internal/platform/traffic/gate.go:194 | Invalid: no per-peer bound on invalid credentials | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
+| TR17 | internal/platform/traffic/gate.go:214 | Subject: the key keeps one byte of the digest | go test ./internal/platform/traffic (whole package) | KILLED | TestReviewAllRejectionMetricsUseOnlyClosedReasonAndPolicy |
