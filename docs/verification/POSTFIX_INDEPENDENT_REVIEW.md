@@ -10,9 +10,9 @@ Result words: PASS / FAIL / NOT RUN only. Every "held" names the attack that was
 |---|---|---|
 | 1 | 62cc527 expiring-token admission check | attacked (integration probes, unit edge probes); one LOW |
 | 2 | 3c27378 verifier-v3 | attacked (unit probes, two mutations); PF-01 MEDIUM, PF-02 LOW |
-| 3 | bca9d98 operator credentials refused at start | not started |
+| 3 | bca9d98 operator credentials refused at start | attacked: real binaries, launcher, tree comparison; no finding |
 | 4 | db9c2fa F-05 residual test | not started |
-| 5 | b88a465 version-gate scan | not started |
+| 5 | b88a465 version-gate scan | attacked: scratch migrations, mutations of every enumerated place; PF-04, PF-05 (LOW) |
 | 6 | 294e597 migrate status | not started |
 | 7 | 80a582f body-budget benchmarks | not started |
 | 8 | regression subset | not started |
@@ -60,6 +60,28 @@ that passed `Verify` in `serve` (`access.go:351`; the pre-verification is `acces
 milliseconds left. The comment says this is intended ("a token that does not verify is left to the exchange"). Direction: answer `401 unauthenticated` when
 the check's own verification fails. Not exploitable beyond the caller's own tenant budget.
 
+### PF-04 (LOW) the version-gate scan is still blind to valid spellings of a partial gate
+
+`internal/metadata/version_family.go:24` (`sqlVersionToken = ['"$^{,]1\\?\.([0-9]+)`) needs one of five characters directly before the `1`. A function that gates
+on `1.4.0` only passes `TestSQLFunctionsNameWholeSchemaVersionFamilies` when it is written as (scratch migration `00091_zz_review_scratch.sql` with
+`CREATE OR REPLACE FUNCTION runtime.zz_review_gate(doc jsonb) ... SELECT doc->>'schema_version' <spelling>`; control `= ANY('{1.4.0}'::text[])` fails the test as it should):
+`= ANY('{ 1.4.0 }'::text[])` (a space inside the braces), a multi-line array literal (`'{` newline `1.4.0` newline `}'`), `~ '^(1\.4\.0)$'` (a group), `LIKE '%1.4.0'`. All
+four: `ok`. Also blind in `AuthoringVersionsNamed` (probe over 48 spellings): `~ '^1\.(4|5)\.0$'`, `string_to_array('x 1.4.0',' ')`, `';'`- and `'|'`-separated lists,
+`SIMILAR TO`, `'1.' || '4.0'`. The comment in `version_family.go` lists `LIKE '1_4%'`, `'^1[.]4[.]'` and `SIMILAR TO` as the known blind spots and says "an honest author writes one of
+the spellings above"; a spaced or multi-line array literal is valid PostgreSQL and is what a formatter produces. The live-catalog scan
+(`tests/integration/m9r_catalog_version_gate_test.go`) reads the same text with the same function, so it is blind to the same spellings. No real place in
+`db/migrations` is blind today (every `1.N` token in the migrations is on the scan's list: 00005, 00009, 00017, 00018/28/37 (event envelope, unrelated), 00020, 00045, 00052, 00080, 00090).
+Direction: read only the string literals of the body (single, escape and dollar quoted) and match `(^|[^0-9.])1\.([0-9]+)` inside them.
+
+### PF-05 (LOW) test gap: the web renderer's list of versions that may carry `unique` is not tested for 1.5.0
+
+`apps/web/src/preview/contracts.ts:146`: `(ir.ir_version !== "1.4.0" && ir.ir_version !== "1.5.0")`. Removing the `1.5.0` member (the IR-01 class of defect, in TypeScript) leaves
+`vitest run src/preview` at 26 of 26 passed; the test at `Workspace.test.tsx:491` decodes a 1.5.0 IR without a unique field. (The full suite had one timing failure in
+`CommandRecovery.test.tsx`, 5,061 ms, that I did not attribute; the confirming re-run was cut off.) The same mutation of line 100 (the accepted `ir_version` chain) is caught. The SQL, Go and
+`internal/ai/schema_text.go` lists are all caught: removing `1.5.0` from the `00080` CHECK, from the function in `00090`, from `metadataSchemaFiles`, from `IntegritySchema`
+and from `WorkflowSchema` each fails a named test (`TestMetadataVersionsCheckListsEveryKnownVersion`, `TestSQLFunctionsNameWholeSchemaVersionFamilies`, `TestAdversarialCorpus` and two more in `internal/ai`,
+`TestIRRestoreKeepsTheExactCompilerIdentityOfEveryIntegrityCapableContract`, `TestWorkflowSchemaVersions`).
+
 ## Attacks that held
 
 | claim | executed attack | result |
@@ -75,6 +97,12 @@ the check's own verification fails. Not exploitable beyond the caller's own tena
 | 2: other currencies | JPY window 62600..74900 and 62600.5..74900.5, KWD 626..749 | held: found by `lit-` probes |
 | 2: hostile literals | `1e999999999`, `0x1p100000000`, `1/0`, `1e5`, `+5`, `.5`, `5.`, Arabic digits, `1_000`, `00500`, 19 decimals, 65 digits in a money literal | held: the metadata validator refuses them before the compiler (only `-0` compiles, and it is zero) |
 | 2: downgrade | `Recompute` of (a) a v2-style PASS report (window probes removed, outcome re-settled) labelled `verifier-v3`, (b) the same labelled `verifier-v2`, (c) an honest plan's report labelled `verifier-v2` | held: `ErrReportMismatch` each time; the version is not the only evidence, the bytes are recomputed |
+| 3: the daemon refuses | built `bin` copies of `cmd/api`, `cmd/worker`, `cmd/dispatcher`; ran each under `env -i` with one operator variable at a time (a random value generated at run time), all six together, empty, one space, lower case | held: exit 1 and `"variables":[<name>]` for each of the 18 combinations; the random value and a `db.internal` host never appear in the output (0 matching lines); an empty value passes the check and fails later in `Run` ("service failed"), one space is refused, a lower-case name is not matched (nothing reads it); a clean environment reaches `Run` |
+| 3: the list is complete | compared with every credential-like name in `.env.example`, `infra/compose/*.yaml`, `scripts/*.mjs`, `Makefile`, `.github`, AGENTS.md: the operator-level ones are exactly `MIGRATION_DATABASE_URL`, `MIGRATOR_PASSWORD`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `EVENT_OPERATOR_REDIS_URL`, `EVENT_OPERATOR_PASSWORD`; `REDISCLI_AUTH` exists only in the environment of one `docker compose exec` (`signin-roles.mjs`); `runtimeEnv()` computed over the real `.env`: no backend kind receives any of the six, the API receives `DATABASE_URL`, `REDIS_URL`, `SIGNIN_REDIS_URL`, the worker `DATABASE_URL`, `REDIS_URL`, `WORKER_DATABASE_URL`, the dispatcher `DATABASE_URL`, `DISPATCHER_DATABASE_URL`, `REDIS_URL` | held (names only were printed) |
+| 3: entry points | `grep app.Main` : `cmd/api`, `cmd/worker`, `cmd/dispatcher` only; `migrate`, `iam`, `worker-admin`, `event-replay`, `release-check` hold operator credentials by design and do not call `Main`; `Run` is exported and bypasses the check but is called only by tests | held |
+| 3: launcher | `node --test scripts/*.test.mjs` (13 of 13); `node scripts/with-env.mjs <dir>/pf-bin/api` (an unrecognised spelling) with the real `.env`; `node scripts/with-env.mjs <dir>/bin/api` (recognised); `runtimeKindOf` over `sh -c`, `bash -c`, `env`, `nice`, `time`, `go run .`, `./API` | held: the unrecognised spelling exits 1 naming exactly the six variables; the recognised one starts and answers `/healthz` 200 and `/readyz` 200; `go run .` and `./API` are not recognised (fail closed at the daemon) |
+| 5: SQL places that list 1.5.0 | removed `1.5.0` from the `00080` CHECK and from the function of `00090` (scratch), ran `go test ./internal/metadata` | held: `TestMetadataVersionsCheckListsEveryKnownVersion` and `TestSQLFunctionsNameWholeSchemaVersionFamilies` fail |
+| 5: array literal and list spellings of b88a465 | scratch migration with `= ANY('{1.4.0}'::text[])` | held: reported (gap 1.5.0) |
 
 ## Gate subset
 
