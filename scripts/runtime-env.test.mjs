@@ -131,3 +131,16 @@ test('the launcher gives every spelling of a backend command only that backend\'
   assert.equal(migrate.MIGRATION_DATABASE_URL,'operator-credential')
  }finally{fs.rmSync(temp,{recursive:true,force:true})}
 })
+
+test('provisioning tightens an existing .env that other users can read (IS-03)',()=>{
+ for(const [name,body] of [['m6r-env.mjs','APP_ENV=development\n'],['m8-env.mjs',`APP_ENV=development\nREDIS_PASSWORD=${'b'.repeat(64)}\n`]]){
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'env-mode-'));try{
+   const file=path.join(temp,'.env');fs.writeFileSync(file,body);fs.chmodSync(file,0o644)
+   const env={...process.env};delete env.APP_ENV
+   const result=spawnSync(process.execPath,[fileURLToPath(new URL('./'+name,import.meta.url))],{cwd:temp,env,encoding:'utf8'})
+   assert.equal(result.status,0,name+': '+result.stderr)
+   assert.ok(fs.readFileSync(file,'utf8').length>body.length,name+' appended no credentials, so the test proves nothing')
+   assert.equal(fs.statSync(file).mode&0o077,0,name+' left group or other bits on a .env that now holds credentials')
+  }finally{fs.rmSync(temp,{recursive:true,force:true})}
+ }
+})

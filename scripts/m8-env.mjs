@@ -18,6 +18,7 @@ const passwords=[parsed.REDIS_PASSWORD,...Object.values(credentials)]
 if(new Set(passwords).size!==passwords.length)throw new Error('Cache, event and sign-in credentials must be distinct')
 if(parsed.EVENTS_ENABLED===undefined)additions.push('EVENTS_ENABLED=true')
 if(additions.length)fs.appendFileSync('.env','\n# M8 local broker bindings (preserve secrets).\n'+additions.join('\n')+'\n',{mode:0o600})
+fs.chmodSync('.env',0o600) // the mode of appendFileSync applies only when it creates the file; an existing .env keeps whatever it had (IS-03)
 fs.mkdirSync('.local/m8',{recursive:true})
 const digest=s=>crypto.createHash('sha256').update(s).digest('hex')
 fs.writeFileSync('.local/m8/users.acl',`user default on #${digest(parsed.REDIS_PASSWORD)} ~framework:cache:* -@all +ping +get +set +del +expire +ttl\nuser framework_signin on #${digest(credentials.framework_signin)} ~framework:signin:v1:* -@all +ping +get +set +ttl +eval +getdel\nuser event_operator on #${digest(credentials.event_operator)} ~* &* +@all\nuser event_dispatcher on #${digest(credentials.event_dispatcher)} ~framework:events:preview:v1:* -@all +ping +xadd\nuser event_worker on #${digest(credentials.event_worker)} ~framework:events:preview:v1:framework_worker -@all +ping +xgroup|create +xreadgroup +xautoclaim +xack\n`,{mode:0o600})

@@ -17,4 +17,5 @@ for(const [prefix,user]of [['WORKER','framework_worker'],['DISPATCHER','framewor
  if(parsed[url]===undefined)additions.push(`${url}=postgres://${user}:${password}@127.0.0.1:5432/framework?sslmode=disable`)
 }
 if(additions.length)fs.appendFileSync('.env','\n# V3 local dedicated role bindings; preserve existing secrets.\n'+additions.join('\n')+'\n',{mode:0o600})
+fs.chmodSync('.env',0o600) // the mode of appendFileSync applies only when it creates the file; an existing .env keeps whatever it had (IS-03)
 console.log('V3 local bindings ready; existing credentials preserved.')
