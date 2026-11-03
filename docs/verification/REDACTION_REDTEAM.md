@@ -13,7 +13,8 @@ Verdicts are PASS / FAIL / NOT RUN only.
 | done | brief and code read; Part A matrix (about 3,000 cells x 6 samples); RT-01, RT-02 and RT-03 minimised, patched, verified; Part C integration probes on the `fix` stack; false-positive corpus (389 inputs); timing at 4 KB to 1 MiB; 5 `holdsRedaction` bypass variants |
 | interrupted | the run was cut by the account limit once and resumed; nothing was lost (the report and the branch are the record) |
 | done (later) | Part A matrix section, Part B false-positive and timing tables, Part C path table with two integration probes |
-| next | mutation table (90 mutations running), 5-minute fuzz under `hv`, the smaller Part A findings, appendix, verdict |
+| done (later) | findings RT-04 to RT-09, appendices A and B (generators, repro tests, four verified patches) |
+| next | mutation table (90 mutations still running), 5-minute fuzz of the pinned code (queued on the heavy lock), verdict |
 
 ## Findings
 
@@ -22,6 +23,12 @@ Verdicts are PASS / FAIL / NOT RUN only.
 | RT-01 | MEDIUM | a quoted key defeats the `name = value` rule: `"password": "..."`, `'password': '...'`, `os.environ["DB_PASSWORD"] = "..."`, `define('DB_PASSWORD', '...')` survive in full |
 | RT-02 | MEDIUM | compound names without `_` or `-` are not names: `PGPASSWORD=...`, `dbPassword=...`, `apiSecret=...`, `postgresPassword: ...`, `SECRET_KEY_BASE=...` survive in full |
 | RT-03 | MEDIUM | a key hard-wrapped so that its first line is shorter than the minimum of its rule leaves both halves: 44 of 69 wrapped keys keep 12 or more consecutive characters at each of the widths 60, 64, 72, 76 |
+| RT-04 | MEDIUM | twelve well-known vendor token formats have no rule and survive in every carrier: `GOCSPX-`, `dckr_pat_`, `shpat_`/`shpss_`, `hvs.`, `glrt-`/`gldt-`, `sq0atp-`, `NRAK-`, Telegram and Discord bot tokens, Azure AD client secrets |
+| RT-05 | LOW | the "name is value" prose rule destroys sentences about token and password formats (`The token is 64-character hex.`): 7 of 47 connector sentences, 1.8 % of the corpus |
+| RT-06 | LOW | a string that is entirely identifier-shaped skips the generic rules, so a 40+ character lower-case token typed alone (a request, a label, an enum value, a field id) reaches the provider |
+| RT-07 | LOW | hex runs of 32 to 128 characters survive when glued to `0x`, `_` or a letter (`0x` + 64 hex, `key_` + 32 hex): the `\b` fails and hex entropy never reaches 4.0 |
+| RT-08 | MEDIUM | command-line, SQL and `.netrc` forms whose name is not followed by `=` or `:` survive: `curl -u user:SECRET`, `mysql -pSECRET`, `sshpass -p`, `docker login -p`, `PASSWORD 'SECRET'`, `IDENTIFIED BY`: 17 of 17 forms |
+| RT-09 | LOW | delimiters inside the secret: a raw `#`, `?`, `/`, `\`, quote or space in a URL password defeats the DSN rule (27 of 99 cases); `& ; , ' "` cut an unquoted `name=value` value and leave its tail |
 
 ### RT-01 MEDIUM - a quoted key defeats the assignment rule (`internal/ai/redact.go:69`, the `assignment` pattern)
 
@@ -93,6 +100,59 @@ the next lines (at most three) as one word and redacts the lines when that word 
 | Part A matrix | 0 cells worse |
 | time | worst 1 MiB input of many key-shaped lines 6.2 s (linear, 4 x size is about 4.5 x time); 16 KB, the largest string the route accepts, 117 ms |
 | residual of the patch | a head glued to prose (`usedAKIA...`), a tail followed by prose, and a break inside the prefix rule's own token class stay as documented |
+
+### RT-04 MEDIUM - vendor token formats that no rule names (`internal/ai/redact.go:50`, the `api_key` alternation; the generic rules start at 40 characters)
+
+Twelve formats, each in all four carriers tried (bare, in a sentence, as a JSON value, as `VALUE=...`): `GOCSPX-` + 28 (Google OAuth client secret), `dckr_pat_` + 27 (Docker Hub),
+`shpat_` or `shpss_` + 32 hex (Shopify; the `_` also defeats the hex rule), `hvs.` + 24 (Vault), `glrt-` and `gldt-` + 20 (GitLab runner and deploy tokens; only `glpat-` has a rule),
+`sq0atp-` + 22 (Square), `NRAK-` + 27 (New Relic), `<10 digits>:A` + 34 (Telegram bot), `M` + 23 `.` 6 `.` 27 (Discord bot; the dots split the runs, PARTIAL), `xxx8Q~` + 34 (Azure AD secret;
+`~` splits the run). Part A matrix: 20 classes with 89 to 100 % bad samples. Repro: `TestRTReproVendorFormats` (Appendix A), 12 of 12 formats fail on the pinned code.
+
+Patch (11-line diff, one alternation extended; scratch copy, then discarded): add the prefixes to `api_key`: `GOCSPX-[A-Za-z0-9_-]{24,}`, `dckr_pat_[A-Za-z0-9_-]{20,}`, `shp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32}`,
+`hvs\.[A-Za-z0-9_-]{20,}`, `gl(?:rt|dt|ptt|ft|imt|oas|soat|cbt)-[A-Za-z0-9_-]{16,}`, `sq0(?:atp|csp)-[A-Za-z0-9_-]{22,}`, `NRAK-[A-Z0-9]{27}`, `\d{8,10}:A[A-Za-z0-9_-]{34}`,
+`[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}`, `[A-Za-z0-9_.-]{3}\dQ~[A-Za-z0-9_.~-]{31,34}` (Appendix B). Verified: repro PASS, `-run Redact` PASS, false-positive corpus
+identical (389 inputs), Part A matrix **279 cells improve, 0 get worse, bad samples 5,657 -> 3,985**.
+
+### RT-05 LOW - the connector rule destroys sentences about token and password formats
+
+See Part B.1. `redact.go:92-97`. Seven sentences of the form "The token|secret|password|credentials is|was|are <word with a digit>" lose their subject. No patch proposed (the choice of what to
+keep is a product trade-off, see Part B.1).
+
+### RT-06 LOW - an identifier-shaped string is never run through the generic rules (`redact.go:391-433`, `identifierLike`, `redactStructural`)
+
+`redactString` and `redactTree` treat any string matching `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$` as structure and apply only the prefix table and the hex rule. The comment gives the reason
+(a long id must not break its references) but the exemption also covers free text: a request, a label, an enum value (128 characters), a rule literal that consists of one lower-case token.
+Executed on the `fix` stack: a request that is a 48-character lower-case alphanumeric token, and a field id of 47 such characters, reached the provider verbatim (segments `request` and
+`application`), and the id was also stored in the proposal body the model copied it into. The same token with one space before it is redacted (`token` class). Bare, the classes `nuget`
+(`oy2` + 43), `rubygems_` + 48 hex, a 52-character Azure DevOps PAT (5 of 6) and `dop_v1_` + 64 hex were not redacted when typed alone. A fix needs the callers to say which fields are references
+(the context builder knows: `ID`, `Kind`, the ref fields); not proposed here.
+
+### RT-07 LOW - hex glued to a word character (`redact.go:72` `longHex`, `redact.go:279` `entropy(m) < 4.0`)
+
+Probe: hex runs of 32, 40, 64 and 128 characters with 19 left neighbours and 8 right neighbours (608 cases): **288 are not redacted**. A run survives when the character before it is `_`, `x`
+(so `0x` + 64 hex, a wallet private key) or a letter after `f`, or when the character after it is `_` or a letter after `f`; digits and `a`-`f` simply extend the run. Examples: `key_` + 32 hex,
+`sk_` + 64 hex, `token` + 40 hex, a hex run followed by `_backup`. `\b` is a boundary only between a word and a non-word character, `_` is a
+word character, and `longBase64` cannot save it because the entropy of a hex string is at most 4.0 bits and `entropy(m) < 4.0` rejects almost every such run. Rare as a credential format
+(wallet keys, `prefix_hex` tokens with no rule); no patch.
+
+### RT-08 MEDIUM - the name is not followed by `=` or `:` (`redact.go:69`, the separator group)
+
+`curl -u admin:SECRET`, `curl --user "admin:SECRET"`, `mysql -uroot -pSECRET`, `mysqldump ... -pSECRET`, `sshpass -p 'SECRET'` and `sshpass -p SECRET`, `docker login -u bob -p SECRET` and
+`--password SECRET`, `CREATE USER bob WITH PASSWORD 'SECRET'`, `ALTER ROLE app WITH LOGIN PASSWORD 'SECRET'`, `... IDENTIFIED BY 'SECRET'` and bare, a `.netrc` `machine ... password SECRET`,
+`redis-cli -a SECRET`, `mongo -p SECRET`, `wget --http-password SECRET`, `zip -P SECRET`: the secret (12 alphanumerics, no symbol) survives in **17 of 17** forms on the pinned code. These
+are the terminal and SQL pastes the brief lists; the matrix shows the same for 33 of 41 command-line templates and 8 of 10 SQL templates. Repro: `TestRTReproCommandAndSQLForms` (Appendix A).
+
+Patch (12-line diff; scratch copy, then discarded): one more entry in `redactRules`, class `password_arg`, that matches the command words with their password option and the SQL
+`PASSWORD '...'` / `IDENTIFIED BY ...` forms (Appendix B). The match replaces the option as well as the value (`[REDACTED:password_arg] https://...`). Verified: repro 17 of 17 PASS,
+`-run Redact` PASS, false-positive corpus identical, Part A matrix 22 cells improve, 0 get worse.
+
+### RT-09 LOW - delimiters inside the secret
+
+- URL password: a raw `#`, `?`, `/`, `\`, `'`, `"`, `<`, `>` or space in the userinfo ends the `url_credentials` pattern before the `@`, so `postgres://app:<6>#<6>@db...` is not redacted at all (the user name and
+  both halves of the password stay). 9 of the 33 characters tried, in 3 schemes: 27 of 99 cases. `@` itself is fine (the pattern takes the last `@`).
+- Unquoted `name=value`: the value stops at `,` `;` `&` `'` `"` or a space, so `DB_PASSWORD=<6>&<6>` leaves the tail after the delimiter (here 6 characters; a long generated password
+  leaves more); the colon form (`password: <6>&<6>`, value must be 8+ characters) leaves the whole value.
+No patch proposed.
 ## Part A - secret shapes that survive (results matrix)
 
 Corpus: 3020 class/carrier/form cells, 6 samples each (18120 redactions attempted), 298 credential and paste classes in 12 groups, run on the pinned code. Each sample is drawn at run time from the alphabet and length of its class. REDACTED = no run of 12 or more consecutive secret characters left; PARTIAL = such a run left; SURVIVES = the whole secret left. 28 carriers per single-token class (bare, sentence, after a label, JSON value and JSON key, YAML, `.env`, CRLF paste, indented, double/single quotes, backticks, markdown fence, URL path/query/fragment, trailing dot, parentheses, between two other secrets, hard wrap at 60/64/72/76 columns, followed by a camelCase line or a hex-looking word); structured classes use their own forms (a PEM block, a header, a command line, a SQL statement, a file).
@@ -352,3 +412,626 @@ Growth is linear (four times the size takes 3 to 4.5 times as long); no input is
 large; the size check comes after the redaction); 100,000 matching 8-byte strings take 1.96 s (about 20 microseconds each). `redactTree` over 100,000 strings took 7.0 s, which no
 accepted document can reach (256 KiB holds under 30,000 strings); depth 9,000 took 0.9 ms. Invalid UTF-8, NUL, lone surrogates (decoded to U+FFFD by `encoding/json`), 4-byte runes and
 long combining sequences: no panic. **No input takes over 2 s on an accepted size: PASS.** With the RT-01/02 patch the `assign_*` inputs are 10 to 30 % slower at 1 MiB (still linear).
+## Appendix A - generators, corpus builder and repro tests (Go; no secret literal: values are drawn at run time)
+
+All code is package `ai` test code (`zz_review_*_test.go`), deleted from the worktree before every commit. The full tables are about 105 classes and 170 templates in the same shape; the 28 carriers of Part A are listed in its text.
+
+### A.1 helpers and class generators
+```go
+// RED TEAM PROBE (temporary, never committed): generators of secret-shaped inputs. Every value is drawn at run time from the alphabet
+// and length of its credential class; the source holds prefixes only.
+
+
+const (
+	aAlnum    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	aLower    = "abcdefghijklmnopqrstuvwxyz0123456789"
+	aUpperNum = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	aHex      = "0123456789abcdef"
+	aHexU     = "0123456789ABCDEF"
+	aB64      = aAlnum + "+/"
+	aB64u     = aAlnum + "-_"
+	aB32      = "abcdefghijklmnopqrstuvwxyz234567"
+	aDigits   = "0123456789"
+	aPwd      = aAlnum + "!#$%&*+-=?@^_"
+	aAzure    = aAlnum + "_.~-"
+)
+
+func rs(r *rand.Rand, alphabet string, n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = alphabet[r.Intn(len(alphabet))]
+	}
+	return string(b)
+}
+
+// rsMixed is rs but guarantees at least one digit and one upper and one lower letter when the alphabet allows (real tokens have them; a
+// test of the shape must not depend on luck).
+func rsMixed(r *rand.Rand, alphabet string, n int) string {
+	for {
+		s := rs(r, alphabet, n)
+		d, u, l := false, false, false
+		for _, c := range s {
+			switch {
+			case c >= '0' && c <= '9':
+				d = true
+			case c >= 'A' && c <= 'Z':
+				u = true
+			case c >= 'a' && c <= 'z':
+				l = true
+			}
+		}
+		if (d || !strings.ContainsAny(alphabet, aDigits)) && (u || !strings.ContainsAny(alphabet, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")) && (l || !strings.ContainsAny(alphabet, "abcdefghijklmnopqrstuvwxyz")) {
+			return s
+		}
+	}
+}
+
+func rtLuhn(r *rand.Rand, prefix string, length int) string {
+	digits := []byte(prefix)
+	for len(digits) < length-1 {
+		digits = append(digits, byte('0'+r.Intn(10)))
+	}
+	sum := 0
+	for i, double := len(digits)-1, true; i >= 0; i, double = i-1, !double {
+		d := int(digits[i] - '0')
+		if double {
+			if d *= 2; d > 9 {
+				d -= 9
+			}
+		}
+		sum += d
+	}
+	return string(digits) + string(rune('0'+(10-sum%10)%10))
+}
+
+func rtUUID(r *rand.Rand) string {
+	return rs(r, aHex, 8) + "-" + rs(r, aHex, 4) + "-" + rs(r, aHex, 4) + "-" + rs(r, aHex, 4) + "-" + rs(r, aHex, 12)
+}
+
+func rtWrap64(s string, n int) string {
+	var parts []string
+	for len(s) > n {
+		parts = append(parts, s[:n])
+		s = s[n:]
+	}
+	return strings.Join(append(parts, s), "\n")
+}
+
+// rtSample is one generated credential: token is what the author pastes, core is the part that must not survive, forms are class-specific
+// texts (a PEM block, a header, a command line); when forms is empty the generic carriers are applied to token.
+type rtSample struct {
+	token string
+	core  string
+	forms []rtForm
+}
+
+type rtForm struct{ name, text string }
+
+type rtClass struct {
+	group string
+	name  string
+	gen   func(r *rand.Rand) rtSample
+	note  string // what the redactor is expected to do, for the report
+}
+
+func tok(prefix string, core string) rtSample { return rtSample{token: prefix + core, core: core} }
+
+func pemBlock(label string, bodyBytes int, r *rand.Rand) (string, string) {
+	body := rs(r, aB64, bodyBytes)
+	return "-----" + "BEGIN " + label + "-----\n" + rtWrap64(body, 64) + "\n-----" + "END " + label + "-----", body
+}
+
+var rtClasses = []rtClass{ // subset; the same shape for all classes
+	{"cloud", "aws_access_key_id", func(r *rand.Rand) rtSample { return tok("AKIA", rs(r, aUpperNum, 16)) }, ""},
+	{"cloud", "aws_secret_access_key", func(r *rand.Rand) rtSample { return tok("", rsMixed(r, aB64, 40)) }, ""},
+	{"cloud", "gcp_api_key", func(r *rand.Rand) rtSample { return tok("AIza", rs(r, aB64u, 35)) }, ""},
+	{"cloud", "digitalocean_pat", func(r *rand.Rand) rtSample { return tok("dop_v1_", rs(r, aHex, 64)) }, ""},
+	{"scm", "github_pat_classic", func(r *rand.Rand) rtSample { return tok("ghp_", rsMixed(r, aAlnum, 36)) }, ""},
+	{"scm", "github_fine_grained", func(r *rand.Rand) rtSample { return tok("github_pat_", rs(r, aAlnum, 22)+"_"+rs(r, aAlnum, 59)) }, ""},
+	{"scm", "npm_token", func(r *rand.Rand) rtSample { return tok("npm_", rs(r, aAlnum, 36)) }, ""},
+	{"pay", "stripe_sk_live", func(r *rand.Rand) rtSample { return tok("sk_live_", rs(r, aAlnum, 24)) }, ""},
+	{"saas", "openai_sk", func(r *rand.Rand) rtSample { return tok("sk-", rs(r, aAlnum, 48)) }, ""},
+	{"saas", "anthropic_sk_ant", func(r *rand.Rand) rtSample { return tok("sk-ant-api03-", rs(r, aB64u, 93)+"AA") }, ""},
+	{"saas", "huggingface_hf", func(r *rand.Rand) rtSample { return tok("hf_", rs(r, aAlnum, 34)) }, ""},
+	{"saas", "shopify_shpat", func(r *rand.Rand) rtSample { return tok("shpat_", rs(r, aHex, 32)) }, ""},
+	{"generic", "hex_64_sha256", func(r *rand.Rand) rtSample { return tok("", rs(r, aHex, 64)) }, ""},
+	{"generic", "random_32_alnum", func(r *rand.Rand) rtSample { return tok("", rsMixed(r, aAlnum, 32)) }, ""},
+}
+```
+
+### A.2 paste templates (`{S}` is the run-time secret) and outcome classification
+```go
+// RED TEAM PROBE (temporary, never committed): templates of the accidental pastes (connection strings, headers, command lines, SQL, files).
+// {S} is replaced by a secret generated at run time; nothing here is a secret.
+
+
+type rtTpl struct {
+	group string
+	name  string
+	kind  string // generator of {S}
+	tpl   string
+}
+
+// rtSecretFor draws the secret of one template.
+func rtSecretFor(r *rand.Rand, kind string) string {
+	words := []string{"Winter", "Summer", "Dragon", "Monkey", "Purple", "Tiger", "Orange", "Falcon", "Shadow", "Rocket"}
+	switch kind {
+	case "pwd": // generated, symbols included
+		return rsMixed(r, aAlnum+"!#$%&*+-=?@^_", 12)
+	case "pwdh": // human: Word + digits + symbol
+		return words[r.Intn(len(words))] + rs(r, aDigits, 4) + string("!#$%&*"[r.Intn(6)])
+	case "pwdnosym": // human: Word + digits, no symbol
+		return words[r.Intn(len(words))] + rs(r, aDigits, 4)
+	case "pwd8": // short random
+		return rsMixed(r, aAlnum, 8)
+	case "alnum16":
+		return rsMixed(r, aAlnum, 16)
+	case "alnum20":
+		return rsMixed(r, aAlnum, 20)
+	case "alnum32":
+		return rsMixed(r, aAlnum, 32)
+	case "alnum36":
+		return rsMixed(r, aAlnum, 36)
+	case "hex32":
+		return rs(r, aHex, 32)
+	case "hex40":
+		return rs(r, aHex, 40)
+	case "b64_44":
+		return rs(r, aB64, 43) + "="
+	case "b64_88":
+		return rs(r, aB64, 86) + "=="
+	case "uuid":
+		return rtUUID(r)
+	case "basic": // base64 of user:password
+		return base64.StdEncoding.EncodeToString([]byte("svc-user:" + rsMixed(r, aAlnum+"!#$%", 14)))
+	case "basicshort":
+		return base64.StdEncoding.EncodeToString([]byte("bob:" + rs(r, aLower, 6)))
+	case "jwt":
+		return "eyJhbGciOiJIUzI1NiJ9" + ".eyJ" + rs(r, aB64u, 50) + "." + rs(r, aB64u, 43)
+	case "ghp":
+		return "ghp_" + rsMixed(r, aAlnum, 36)
+	case "awssec":
+		return rsMixed(r, aB64, 40)
+	case "digits9":
+		return rs(r, aDigits, 9)
+	}
+	return rs(r, aAlnum, 16)
+}
+
+var rtTemplates = []rtTpl{ // subset
+	{"conn", "postgres_url", "pwd", `postgresql://app:{S}@db.internal:5432/prod?sslmode=require`},
+	{"conn", "mongodb_srv", "pwd", `mongodb+srv://admin:{S}@cluster0.abcde.mongodb.net/test?retryWrites=true&w=majority`},
+	{"conn", "sentry_dsn_style", "hex32", `https://{S}@o123456.ingest.sentry.io/7654321`},
+	{"header", "authorization_basic", "basic", `Authorization: Basic {S}`},
+	{"header", "x_api_key", "alnum32", `X-Api-Key: {S}`},
+	{"header", "cookie_session", "alnum32", `Cookie: _ga=GA1.2.123; session={S}; theme=dark`},
+	{"query", "access_token_query", "alnum32", `https://api.example.com/v1/me?access_token={S}`},
+	{"cmd", "curl_u", "pwd", `curl -u admin:{S} https://api.example.com/v1/items`},
+	{"cmd", "mysql_pSECRET", "pwd", `mysql -uroot -p{S} -h db shop`},
+	{"cmd", "pgpassword_env", "pwd", `PGPASSWORD={S} psql -h db -U app -d prod`},
+	{"cmd", "docker_login_p", "pwd", `docker login -u bob -p {S} registry.example.com`},
+	{"sql", "create_user_with_password", "pwd", `CREATE USER bob WITH PASSWORD '{S}';`},
+	{"file", "env_file_named", "pwd", "APP_ENV=prod\nDB_HOST=db.internal\nDB_PASSWORD={S}\nLOG_LEVEL=info\n"},
+	{"file", "env_file_camel_dbPassword", "pwd", "dbHost=db.internal\ndbPassword={S}\n"},
+	{"file", "netrc", "pwd", "machine api.example.com login bob password {S}\n"},
+	{"file", "kubeconfig_token_opaque", "alnum36", "users:\n- name: admin\n  user:\n    token: {S}\n"},
+	{"file", "xml_password_element", "pwd", "<server><id>nexus</id><username>deploy</username><password>{S}</password></server>"},
+	{"file", "yaml_password_colon", "pwd", "database:\n  host: db\n  password: {S}\n"},
+	{"file", "json_password", "pwd", `{"user":"bob","password":"{S}"}`},
+	{"file", "python_environ", "pwd", `os.environ["DB_PASSWORD"] = "{S}"`},
+}
+
+// rtLCS is the length and end index (in out) of the longest common substring of core and out.
+func rtLCS(core, out string) (int, int) {
+	best, end := 0, 0
+	prev := make([]int, len(out)+1)
+	cur := make([]int, len(out)+1)
+	for i := 1; i <= len(core); i++ {
+		for j := 1; j <= len(out); j++ {
+			if core[i-1] == out[j-1] {
+				cur[j] = prev[j-1] + 1
+				if cur[j] > best {
+					best, end = cur[j], j
+				}
+			} else {
+				cur[j] = 0
+			}
+		}
+		prev, cur = cur, prev
+	}
+	return best, end
+}
+
+// rtOutcome classifies out against the secret core: SURVIVES (all of it), PARTIAL (12 or more consecutive characters), REDACTED.
+func rtOutcome(out, core string) (string, int) {
+	if core == "" {
+		return "n/a", 0
+	}
+	if strings.Contains(out, core) {
+		return "SURVIVES", len(core)
+	}
+	best, _ := rtLCS(core, out)
+	min := 12
+	if len(core) < min {
+		min = len(core)
+	}
+	if best >= min {
+		if len(core) < 12 {
+			return "SURVIVES", best
+		}
+		return "PARTIAL", best
+	}
+	return "REDACTED", best
+}
+
+// rtElide hides the surviving parts of the secret in out, so that a report can quote the observed output.
+func rtElide(out, core string) string {
+	for i := 0; i < 6; i++ {
+		best, end := rtLCS(core, out)
+		if best < 6 {
+			break
+		}
+		out = out[:end-best] + fmt.Sprintf("<%dc>", best) + out[end:]
+	}
+	return out
+}
+```
+### A.3 repro tests of RT-01 to RT-04 and RT-08
+```go
+// RED TEAM REPRO (temporary; the appendix of the report carries it): RT-01 quoted keys, RT-02 compound names, RT-03 wrapped keys.
+// Every secret is drawn at run time; the file holds no secret-shaped literal.
+
+
+func rtSecretsFor(r *rand.Rand) (pw, long string) {
+	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	pick := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = alnum[r.Intn(len(alnum))]
+		}
+		return string(b)
+	}
+	return "Xq7" + pick(9), "Zk4" + pick(29)
+}
+
+// cases: {name, template with %P (12 characters) or %L (32 characters)}
+var rtReproQuoted = [][2]string{
+	{"json password", `{"user":"bob","password": "%P"}`},
+	{"json client_secret", `{"client_secret":"%L"}`},
+	{"json apiKey", `{"apiKey": "%L"}`},
+	{"json token", `{"token":"%L"}`},
+	{"python dict", `config = {'host': 'db', 'password': '%P'}`},
+	{"python environ", `os.environ["DB_PASSWORD"] = "%P"`},
+	{"python index", `config['password'] = '%P'`},
+	{"php define", `define('DB_PASSWORD', '%P');`},
+	{"java setProperty", `props.setProperty("password", "%P");`},
+	{"toml quoted key", `"password" = "%P"`},
+}
+
+var rtReproCompound = [][2]string{
+	{"PGPASSWORD env", `PGPASSWORD=%P psql -h db -U app -d prod`},
+	{"camel dbPassword", `dbPassword=%P`},
+	{"camel apiSecret", `apiSecret=%L`},
+	{"camel jwtSecret", `jwtSecret: %L`},
+	{"helm postgresPassword", `--set auth.postgresPassword=%P`},
+	{"yaml adminPassword", "admin:\n  adminPassword: %P"},
+	{"SECRET_KEY_BASE", `SECRET_KEY_BASE=%L`},
+}
+
+// must stay as written
+var rtReproKeep = []string{
+	`MAX_TOKENS=4096`, `max_tokens=4096`, `token_limit: 2000`, `{"role":"viewer","can_edit":false}`, `{"password": "required"}`, `{"password": ""}`,
+	`{"password_policy": {"min_length": 12}}`, `The password is required.`, `props.setProperty("password", "required");`, `{"secret": false, "token": null}`,
+	`"token_type": "bearer"`, `db.password_min_length = 12`, `keyword=value`, `{"tokens": 5, "keys": 3}`, `["password", "username", "email"]`,
+}
+
+func rtFill(tpl string, pw, long string) string {
+	return strings.NewReplacer("%P", pw, "%L", long).Replace(tpl)
+}
+
+func TestRTReproQuotedKeysAndCompoundNames(t *testing.T) {
+	r := rand.New(rand.NewSource(20261103))
+	for _, group := range []struct {
+		id    string
+		cases [][2]string
+	}{{"RT-01 quoted key", rtReproQuoted}, {"RT-02 compound name", rtReproCompound}} {
+		for _, c := range group.cases {
+			pw, long := rtSecretsFor(r)
+			text := rtFill(c[1], pw, long)
+			out := redactString(text)
+			secret := pw
+			if strings.Contains(c[1], "%L") {
+				secret = long
+			}
+			if strings.Contains(out, secret) {
+				t.Errorf("%s / %s: the secret survives: %q", group.id, c[0], strings.ReplaceAll(out, secret, "<"+group.id+" secret>"))
+			}
+		}
+	}
+	for _, keep := range rtReproKeep {
+		if out := redactString(keep); out != keep {
+			t.Errorf("false positive: %q -> %q", keep, out)
+		}
+	}
+}
+
+// RED TEAM REPRO RT-03 (temporary; Appendix A of the report carries it): a key hard-wrapped at a column whose first line is too short for any rule.
+
+
+// maxRun is the length of the longest run of secret characters that out still holds.
+func maxRun(secret, out string) int {
+	best := 0
+	for i := range secret {
+		for j := i + best + 1; j <= len(secret) && strings.Contains(out, secret[i:j]); j++ {
+			best = j - i
+		}
+	}
+	return best
+}
+
+func TestRTReproWrappedKeyHeadTooShort(t *testing.T) {
+	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	r := rand.New(rand.NewSource(20261103))
+	pick := func(alphabet string, n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = alphabet[r.Intn(len(alphabet))]
+		}
+		return string(b)
+	}
+	classes := []struct {
+		name, prefix, alphabet string
+		n                      int
+	}{{"github token (ghp_ + 36)", "ghp_", alnum, 36}, {"openai style (sk- + 48)", "sk-", alnum, 48}, {"aws key id (AKIA + 16)", "AKIA", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 16},
+		{"aws secret key (40 base64)", "", alnum + "+/", 40}, {"stripe live (sk_live_ + 24)", "sk_live_", alnum, 24}}
+	for _, width := range []int{60, 64, 72, 76} {
+		leaks, cases := 0, 0
+		first := ""
+		for _, c := range classes {
+			for head := 2; head <= 30; head += 2 { // characters of the key that stay on the first line
+				body := pick(c.alphabet, c.n)
+				key := c.prefix + body
+				if head >= len(key) {
+					continue
+				}
+				padding := strings.Repeat("x", 0) + "Please keep this credential for the deployment job, it is the one used by the"
+				line1 := strings.TrimRight(padding[:width-head-1], " ") + strings.Repeat(" ", 1)
+				for len(line1) < width-head {
+					line1 += " "
+				}
+				text := line1 + key[:head] + "\n" + key[head:] + "\nthanks"
+				out := redactString(text)
+				cases++
+				if run := maxRun(body, out); run >= 12 {
+					leaks++
+					if first == "" {
+						first = fmt.Sprintf("%s wrap %d head %d: %d consecutive secret characters remain", c.name, width, head, run)
+					}
+				}
+			}
+		}
+		if leaks > 0 {
+			t.Errorf("wrap at %d columns: %d of %d wrapped keys keep 12 or more consecutive characters (first: %s)", width, leaks, cases, first)
+		}
+	}
+}
+
+// RED TEAM REPRO RT-04 (temporary; Appendix A carries it): well-known vendor token formats that no rule names. Secrets drawn at run time.
+
+
+func TestRTReproVendorFormats(t *testing.T) {
+	const (
+		alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+		url   = alnum + "-_"
+		hex   = "0123456789abcdef"
+		up    = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		az    = alnum + "_.~-"
+		dig   = "0123456789"
+	)
+	r := rand.New(rand.NewSource(20261103))
+	pick := func(a string, n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = a[r.Intn(len(a))]
+		}
+		return string(b)
+	}
+	formats := []struct{ name, prefix, body string }{
+		{"Google OAuth client secret (GOCSPX- + 28)", "GOCSPX-", pick(url, 28)},
+		{"Docker Hub access token (dckr_pat_ + 27)", "dckr_pat_", pick(url, 27)},
+		{"Shopify access token (shpat_ + 32 hex)", "shpat_", pick(hex, 32)},
+		{"Shopify shared secret (shpss_ + 32 hex)", "shpss_", pick(hex, 32)},
+		{"HashiCorp Vault token (hvs. + 24)", "hvs.", pick(url, 24)},
+		{"GitLab runner token (glrt- + 20)", "glrt-", pick(url, 20)},
+		{"GitLab deploy token (gldt- + 20)", "gldt-", pick(url, 20)},
+		{"Square OAuth token (sq0atp- + 22)", "sq0atp-", pick(url, 22)},
+		{"New Relic user key (NRAK- + 27)", "NRAK-", pick(up, 27)},
+		{"Telegram bot token (10 digits : A + 34)", pick(dig, 10) + ":", "A" + pick(url, 34)},
+		{"Discord bot token (M + 23 . 6 . 27)", "", "M" + pick(alnum, 23) + "." + pick(url, 6) + "." + pick(url, 27)},
+		{"Azure AD client secret (3 chars 8Q~ + 34)", pick(alnum, 3) + "8Q~", pick(az, 34)},
+	}
+	for _, f := range formats {
+		for _, carrier := range []string{"%s", "Please use %s for the integration.", "{\"value\":\"%s\"}", "VALUE=%s"} {
+			text := strings.Replace(carrier, "%s", f.prefix+f.body, 1)
+			if out := redactString(text); strings.Contains(out, f.body[len(f.body)/2:]) {
+				t.Errorf("%s survives in %q -> %q", f.name, strings.Replace(carrier, "%s", f.prefix+"<body>", 1), strings.Replace(out, f.body, "<body>", 1))
+				break
+			}
+		}
+	}
+}
+
+// RED TEAM REPRO RT-08 (temporary; Appendix A carries it): command-line, SQL and file forms whose name is not followed by "=" or ":".
+
+
+func TestRTReproCommandAndSQLForms(t *testing.T) {
+	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	r := rand.New(rand.NewSource(20261103))
+	forms := []struct{ name, tpl string }{
+		{"curl -u", `curl -u admin:%S https://api.example.com/v1/items`},
+		{"curl --user quoted", `curl --user "admin:%S" https://api.example.com/`},
+		{"mysql -pSECRET", `mysql -uroot -p%S -h db shop`},
+		{"mysqldump -pSECRET", `mysqldump -h db -u root -p%S shop > shop.sql`},
+		{"sshpass -p quoted", `sshpass -p '%S' ssh deploy@10.0.0.5`},
+		{"sshpass -p", `sshpass -p %S ssh deploy@10.0.0.5`},
+		{"docker login -p", `docker login -u bob -p %S registry.example.com`},
+		{"docker login --password", `docker login --username bob --password %S`},
+		{"CREATE USER ... PASSWORD", `CREATE USER bob WITH PASSWORD '%S';`},
+		{"ALTER ROLE ... PASSWORD", `ALTER ROLE app WITH LOGIN PASSWORD '%S';`},
+		{"IDENTIFIED BY quoted", `CREATE USER 'bob'@'%%' IDENTIFIED BY '%S';`},
+		{"IDENTIFIED BY bare", `ALTER USER scott IDENTIFIED BY %S;`},
+		{".netrc", "machine api.example.com login bob password %S\n"},
+		{"redis-cli -a", `redis-cli -h cache -a %S ping`},
+		{"mongo -p", `mongo --host db -u admin -p %S --authenticationDatabase admin`},
+		{"wget --http-password", `wget --http-user bob --http-password %S https://example.com/f`},
+		{"zip -P", `zip -P %S secure.zip docs/*`},
+	}
+	for _, f := range forms {
+		b := make([]byte, 12)
+		for i := range b {
+			b[i] = alnum[r.Intn(len(alnum))]
+		}
+		secret := "Xq7" + string(b[:9])
+		text := strings.ReplaceAll(f.tpl, "%S", secret)
+		text = strings.ReplaceAll(text, "%%", "%")
+		if out := redactString(text); strings.Contains(out, secret) {
+			t.Errorf("%s: the secret survives: %q", f.name, strings.ReplaceAll(out, secret, "<secret>"))
+		}
+	}
+}
+```
+
+## Appendix B - proposed patches (each verified in a scratch copy of the pinned tree, then discarded; the worktree product files are unchanged)
+
+The scratch copies applied them to `internal/ai/redact.go` of `11a4ee4`. Applied together (RT-01/02, RT-03, RT-04, RT-08) the whole `gt test -count=1 ./internal/ai` package passed (RT-01/02 + RT-03: 30.8 s; the four together were run with `-run Redact` and the probes). A 40-second fuzz of the four patches together (35,690 executions, determinism, idempotence, length bound, no change without a count) found no failure.
+
+### RT-01 and RT-02 (13 lines)
+```diff
+diff --git a/internal/ai/redact.go b/internal/ai/redact.go
+index 3472a18..933cc6e 100644
+--- a/internal/ai/redact.go
++++ b/internal/ai/redact.go
+@@ -66,7 +66,7 @@ var redactRules = []redactRule{
+ // STRIPE_SECRET_KEY). The "=" form is redacted for any value of four or more characters; the ":" form (ordinary prose such as
+ // "Password: required") only when the value looks like a credential; "name is value" (the admin password is ...) only when the
+ // value has a digit or a symbol and so is not a word like "required".
+-var assignment = regexp.MustCompile(`(?i)\b(?:[a-z0-9]+[_-])*(api[_-]?key|apikey|secret(?:[_-]?(?:access[_-]?)?key)?|client[_-]?secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|token|password|passwd|pwd|passphrase|private[_-]?key|account[_-]?key|(?:shared[_-]?)?access[_-]?key|credentials?)\b(\s*[:=]\s*|\s+(?:is|was|are)\s+)("[^"\n]{1,200}"|'[^'\n]{1,200}'|[^\s,;&"']{1,200})`)
++var assignment = regexp.MustCompile(`(?i)\b[a-z0-9_-]*(api[_-]?key|apikey|secret(?:[_-]?(?:access[_-]?)?key)?(?:[_-]base)?|client[_-]?secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|token|password|passwd|pwd|passphrase|private[_-]?key|account[_-]?key|(?:shared[_-]?)?access[_-]?key|credentials?)\b(["'\x60\]]*\s*[:=]\s*|["']\s*,\s*|\s+(?:is|was|are)\s+)("[^"\n]{1,200}"|'[^'\n]{1,200}'|[^\s,;&"']{1,200})`)
+ 
+ var (
+ 	longHex    = regexp.MustCompile(`\b[0-9A-Fa-f]{32,}\b`)
+```
+
+### RT-03 (79 lines)
+```diff
+diff --git a/internal/ai/redact.go b/internal/ai/redact.go
+index 3472a18..c539a12 100644
+--- a/internal/ai/redact.go
++++ b/internal/ai/redact.go
+@@ -333,7 +333,73 @@ func redactPlain(s string) (string, int) {
+ 		}
+ 		return out
+ 	})
+-	return redactWrappedTails(s, &n), n
++	return redactWrappedTails(redactSplitKeys(s, &n), &n), n
++}
++
++// keyPart reports whether w is made of the characters of a key and is not empty.
++func keyPart(w string) bool {
++	return w != "" && strings.IndexFunc(w, func(c rune) bool {
++		return !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || strings.ContainsRune("+/_=-.", c))
++	}) < 0
++}
++
++// wholeToken returns the class of w when all of it is one secret: a prefix rule, a hex run or, for a wrapped paragraph, a long entropic run.
++func wholeToken(w string, wrapped bool) (string, bool) {
++	var n int
++	out := w
++	for _, r := range redactRules {
++		out = r.apply(out, &n)
++	}
++	if class, ok := strings.CutPrefix(out, redactionPrefix); ok && n > 0 && strings.HasSuffix(class, "]") && !strings.ContainsAny(class[:len(class)-1], "[]") {
++		return class[:len(class)-1], true
++	}
++	switch {
++	case longHex.FindString(w) == w:
++		return "hex", true
++	case wrapped && longBase64.FindString(w) == w && base64Replace(w) != w:
++		return "token", true
++	}
++	return "", false
++}
++
++// redactSplitKeys redacts a key that a line break cut before its first part was long enough for its rule: the last word of a line plus
++// the next lines that hold one key-shaped word each (three at most) is read as one word. A run without a prefix needs a first line of 48+ columns.
++func redactSplitKeys(s string, n *int) string {
++	if !strings.Contains(s, "\n") {
++		return s
++	}
++	lines := strings.Split(s, "\n")
++	changed := false
++	for i := 0; i+1 < len(lines); i++ {
++		head := strings.TrimRight(lines[i], " \t\r")
++		cut := strings.LastIndexAny(head, " \t") + 1
++		if len(head)-cut < 2 || !keyPart(head[cut:]) {
++			continue
++		}
++		joined := head[cut:]
++		for j := i + 1; j < len(lines) && j <= i+3; j++ {
++			tail := strings.TrimSpace(lines[j])
++			if !keyPart(tail) {
++				break
++			}
++			if joined += tail; len(joined) < 19 {
++				continue
++			}
++			if class, ok := wholeToken(joined, len(head) >= 48); ok {
++				lines[i] = head[:cut] + marker(class)
++				for k := i + 1; k <= j; k++ {
++					lines[k] = lines[k][:len(lines[k])-len(strings.TrimLeft(lines[k], " \t"))] + marker(class)
++				}
++				*n += j - i + 1
++				changed, i = true, j
++				break
++			}
++		}
++	}
++	if !changed {
++		return s
++	}
++	return strings.Join(lines, "\n")
+ }
+ 
+ // redactStructural is the part of the redactor that also applies to identifier-shaped
+```
+
+### RT-04 (11 lines)
+```diff
+--- a/internal/ai/redact.go
++++ b/internal/ai/redact.go	2026-11-03 06:33:17.125450665 +0000
+@@ -47,7 +47,7 @@
+ 	{"pem", regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)`), nil},
+ 	{"url_credentials", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/?#@"'<>\\]*@[^\s"'<>\\]+`), nil},
+ 	{"jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*`), nil},
+-	{"api_key", regexp.MustCompile(`\b(?:(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|api_org_[A-Za-z0-9]{30,}|whsec_[A-Za-z0-9]{16,})`), nil},
++	{"api_key", regexp.MustCompile(`\b(?:(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|api_org_[A-Za-z0-9]{30,}|whsec_[A-Za-z0-9]{16,}|GOCSPX-[A-Za-z0-9_-]{24,}|dckr_pat_[A-Za-z0-9_-]{20,}|shp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32}|hvs\.[A-Za-z0-9_-]{20,}|gl(?:rt|dt|ptt|ft|imt|oas|soat|cbt)-[A-Za-z0-9_-]{16,}|sq0(?:atp|csp)-[A-Za-z0-9_-]{22,}|NRAK-[A-Z0-9]{27}|\d{8,10}:A[A-Za-z0-9_-]{34}|[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}|[A-Za-z0-9_.-]{3}\dQ~[A-Za-z0-9_.~-]{31,34})`), nil},
+ 	{"aws_key_id", regexp.MustCompile(`\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[0-9A-Z]{16}\b`), nil},
+ 	{"bearer", regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}`), nil},
+ 	{"authorization", regexp.MustCompile(`(?i)\bauthorization\s*[:=]\s*(?:bearer\s+|basic\s+|token\s+)?[^\s,;"']{8,}`), nil},
+```
+
+### RT-08 (12 lines)
+```diff
+--- a/internal/ai/redact.go
++++ b/internal/ai/redact.go	2026-11-03 06:37:15.921941559 +0000
+@@ -60,6 +60,9 @@
+ 	{"cookie", regexp.MustCompile(`(?i)\b(?:set-)?cookie[ \t]*:[^\r\n]*?[A-Za-z0-9_.%-]+=[^\s;]{8,}[^\r\n]*`), nil},
+ 	// A payment card number: 13 to 19 digits, alone or in groups, with a known issuer prefix and a valid check digit.
+ 	{"card", regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`), cardNumber},
++	// A password given as an argument or as a quoted literal after the word: curl -u user:SECRET, mysql -pSECRET, sshpass -p SECRET, docker login -p SECRET,
++	// IDENTIFIED BY SECRET, a .netrc "password SECRET", SQL PASSWORD 'SECRET'.
++	{"password_arg", regexp.MustCompile(`(?i)(?:(?:\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?[^\s:"']+:|\b(?:sshpass|redis-cli|mongo(?:sh)?|docker\s+login|zip)\b[^\n]*?\s(?:-p|-a|--password)\s*|\bwget\b[^\n]*?--(?:http-|ftp-)?password[\s=]+|\bmysql(?:dump|admin)?\b[^\n]*?\s-p|\bidentified\s+by\s+|\bmachine\b[^\n]*?\bpassword\s+)["']?[^\s"';]{4,}["']?|\bpassword\s+["'][^"'\n]{4,200}["'])`), nil},
+ }
+ 
+ // assignment finds "name = value" pairs with a secret-like name, also behind other words of a variable name (DB_PASSWORD,
+```
