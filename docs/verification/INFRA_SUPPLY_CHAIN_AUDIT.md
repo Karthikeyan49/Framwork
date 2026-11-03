@@ -15,6 +15,7 @@ Report-only: no product file was changed. Probe files live in the session scratc
 | 06:49 | executed Redis ACL matrix (36 commands), linked-binary reachability of the x/net advisories, full `npm audit`, history re-scan; IS-02/IS-06 revised; pushed (`e732532`) |
 | 06:53 | tamper test of the bootstrap checksum gate, env generator run, Go module currency (retraction, deprecation, updates), browser-download note, launcher tests (13 pass); final push |
 | 07:00 | IS-10 rewritten after executing the role bootstrap and drift attacks on a throwaway PostgreSQL 16.15 cluster; govulncheck built and run in binary mode (confirms IS-01); source mode queued behind the heavy-run lock |
+| 07:04 | final: source-mode govulncheck still waiting for the lock behind several integration runs after 6 minutes; NOT RUN (my queued job was left in the queue, not bypassed); report complete |
 
 ## Verdict
 
@@ -201,7 +202,7 @@ behind) and eleven LOW findings. The refs scanned grew from 88 to 89 while I wor
 
 | Item | Reason |
 |---|---|
-| govulncheck source mode (call graph) | `govulncheck ./cmd/... ./internal/... ./db/... ./contracts/...` was queued behind the shared heavy-run lock from 06:57 (see the last Progress row for the outcome). The tool itself was built (`go install ...@latest` waited 17 minutes for the lock, then 1 minute to build) and run in binary mode (IS-01, IS-02); source mode would settle whether `x/net/http2` is called. Substitutes (executed): module/version matching against `vuln.go.dev` and the linked-symbol analysis in IS-02. |
+| govulncheck source mode (call graph) | `govulncheck ./cmd/... ./internal/... ./db/... ./contracts/...` was submitted through `hv` at 06:57 and had not obtained the shared heavy-run lock by 07:04 (several integration runs were ahead of it); no result exists. Running it unlocked would break the host rule for heavy runs. The tool itself was built (`go install ...@latest` waited 17 minutes for the lock, then 1 minute to build) and run in binary mode (IS-01, IS-02); source mode would settle whether `x/net/http2` is called. Substitutes (executed): module/version matching against `vuln.go.dev` and the linked-symbol analysis in IS-02. |
 | `go mod tidy -diff` | needs modules (testify, sqlite, ...) that are not in the module cache; `GOPROXY=off` fails ("module lookup disabled"). |
 | `docker inspect` / image digests / running as which user (other than the process listing above) | `docker` other than `compose config` is forbidden for this task. |
 | Actions behaviour on a GitHub runner (fork PR token scope, `/usr/bin/chromium` presence, setup-go download integrity) | no runner access; statements about them are from reading `ci.yml` only. |
