@@ -48,7 +48,7 @@ Non-test Go files in `cmd/` and `internal/`: 187. Counted with ripgrep on the pi
   `otelhttp` sees, and `internal/observability/observability.go:28` samples with `ParentBased(TraceIDRatioBased(0.1))`.
 - Consequences, both before any authentication: (1) the sampled flag of the caller's `traceparent` wins over the 10 % ratio; (2) a valid
   W3C `tracestate` (32 members of 250 characters, 8,159 bytes in the probe) is kept in the span context and exported with the server span and with
-  every child span of the request (database transaction spans among them). The comment at httpserver.go:117-119 says that "arbitrary headers never
+  every child span of the request (database transaction spans among them). The comment at httpserver.go:103-105 says that "arbitrary headers never
   become telemetry attributes"; the trace state is not an attribute, and is not mentioned.
 - Repro (executed): `internal/platform/httpserver` temporary probe `TestZZTraceStateAmplification`, production sampler configuration:
   200 `GET /healthz` with `traceparent` flags `01`: 200 spans exported; 200 with flags `00`: 0 spans; 50 requests with flags `01` and a
@@ -68,11 +68,11 @@ Non-test Go files in `cmd/` and `internal/`: 187. Counted with ripgrep on the pi
   process output contains, between two JSON lines,
   `redis: 2026/11/03 06:39:10 pool.go:770: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:1: connect: connection refused`
   (library source `github.com/redis/go-redis/v9@v9.23.0/internal/pool/pool.go:770`, `internal.Logger.Printf(... "%v", lastErr)`). `/readyz` is public
-  (`httpserver.go:51-90`) and probes Redis through `cache.Client.Ping` (`internal/platform/cache/cache.go:24`).
+  (`httpserver.go:53`) and probes Redis through `cache.Client.Ping` (`internal/platform/cache/cache.go:26`, wired at `platform/app/app.go:288`).
 - What it carries: the dial target (host and port, or the resolver's address for a name failure) and the library's file and line. No credential was in the
   line (the password is an option field, not part of the address). So the exposure is internal host names and unstructured text in the log stream, not a
   secret; the breach is of the stated rule, which is why this is MEDIUM and not HIGH.
-- Same library, same default, in `internal/events/redis.go` (`OpenRedis`) and the sign-in store (`cache.Open(c.SignInRedisURL)`, `app.go`).
+- Same library, same default, in `internal/events/redis.go` (`OpenRedis`, started at `platform/app/app.go:198`) and the sign-in store (`cache.Open(c.SignInRedisURL)`, `platform/app/app.go:274`).
 - Not found: the same kind of output from pgx (`database/sql` path), from the OpenTelemetry exporters (executed: `OTEL_EXPORTER_OTLP_ENDPOINT` unreachable plus
   `OTEL_EXPORTER_OTLP_HEADERS` carrying a canary: only `telemetry export unavailable` appears), or from `net/http` (no TLS listener; the recorder guards
   double `WriteHeader`).
