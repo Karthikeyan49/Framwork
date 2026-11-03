@@ -15,7 +15,7 @@ ADR039. Not rediscovered: `M9R_R5C_UI_INDEPENDENT_REVIEW.md` (R5C-UI-01..03) and
 | --- | --- |
 | Static review of every file in `apps/web/src`, `vite.config.ts`, `index.html`, lockfile, `signin.go`, `login.go`, `cache/login.go`, `httpserver.go`, config validation | done |
 | Server-side sign-in attack probe (real `signin.API` behind real `httpserver.Handler`, fake IdP with PKCE) | done, PASS (see "Attacks that held") |
-| Frontend lint, typecheck, unit tests, production build, hostile-data jsdom probe | queued behind the shared heavy lock; see "NOT RUN" until filled |
+| Frontend lint, typecheck, unit tests, production build, dev-server headers, hostile-data jsdom probe, lint-guard probe, `npm audit` | one combined `hv` job queued at 06:36 (log in the auditor's scratchpad); not started at the time of this commit |
 
 ## Findings
 
@@ -55,7 +55,58 @@ an "evidence pending" mark until the queued frontend run completes; they are sta
   dev tooling. Development only.
 * Fix: `loadEnv(mode, root, ['HTTP_ADDR', 'VITE_'])`.
 
-(FS-01, FS-02 and FS-05 follow once their evidence is in.)
+### FS-01 LOW: no browser-security header contract (CSP, framing, HSTS, Permissions-Policy, COOP) in the repository or in the deployment runbook
+
+* The repository never serves the SPA in production (no `FileServer`/`embed` in `cmd` or `internal`;
+  `README.md:173-176` and the runbook say a gateway does). Headers actually set: the Go middleware sets only
+  `X-Content-Type-Options: nosniff` and `Cache-Control: no-store` (`internal/platform/httpserver/httpserver.go:146-147`),
+  plus `Referrer-Policy: no-referrer` on the completion reply (`signin.go:130`); the dev server sets only
+  `Referrer-Policy` (`apps/web/vite.config.ts:17`); `apps/web/index.html` has a `referrer` meta and nothing else.
+  The runbook "Gateway contract" (`docs/operations/R5_IDENTITY_DEPLOYMENT_RUNBOOK.md:52-60`) demands HTTPS, the same
+  origin, log redaction and `Referrer-Policy: no-referrer`; the evidence template (`R5_IDENTITY_DEPLOYMENT_EVIDENCE_TEMPLATE.md:15`)
+  checks "cookie security, no-referrer, callback canary". A search of `docs` for content-security, frame-ancestors,
+  X-Frame, HSTS, Strict-Transport and Permissions-Policy finds nothing outside the test IdP fixture's own CSP
+  (`apps/web/e2e/oidc-provider.ts:41`).
+* Executed: the completion response of the real handler carries `CSP=""` and `XFO=""` (probe line "complete headers").
+  Dev-server capture: see "Queued run" below.
+* Impact: the SPA keeps the bearer token in memory and performs role, ownership and team administration. No XSS sink
+  exists today (see "Attacks that held"), so a CSP is defence in depth; the missing `frame-ancestors`/`X-Frame-Options`
+  leaves the Sign in and administration buttons frameable (practical only if the IdP allows framing); no HSTS or
+  `Permissions-Policy` is part of the contract anywhere.
+* Fix: add to the runbook and to the evidence template a required header set for the SPA host, for example
+  `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'`
+  (candidate; not browser-tested here, and the built `index.html` must be checked for inline scripts), `X-Content-Type-Options: nosniff`,
+  `Strict-Transport-Security`, `Permissions-Policy` with the unused features denied, `Cross-Origin-Opener-Policy: same-origin`;
+  and add `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` to the API middleware (JSON only).
+
+### FS-02 LOW: the lint configuration does not forbid the sinks the code base avoids (evidence pending)
+
+* `apps/web/eslint.config.js:6-9` is `js.configs.recommended` + `typescript-eslint` recommended + the `react-hooks` rules.
+  None of `no-eval`, `no-implied-eval`, `no-new-func`, `no-script-url`, a ban on `localStorage`/`sessionStorage`/`document.write`/`window.open`,
+  or a `dangerouslySetInnerHTML` rule is in force; `eslint-plugin-react` is not installed. "No HTML injection sink,
+  no web storage" is therefore a property of today's code, not of the gate.
+* Repro (queued, see below): a file with `dangerouslySetInnerHTML`, `eval`, `setTimeout('...')`, `location.href = 'javascript:...'`,
+  `window.open`, `document.write`, `localStorage.setItem('token', ...)` and `<a href="javascript:..." target="_blank">`
+  linted with the repository configuration.
+* Fix (core ESLint, no new dependency): `no-eval`, `no-implied-eval`, `no-new-func`, `no-script-url`,
+  `no-restricted-globals`/`no-restricted-properties` for the storage and `document.write` APIs, and
+  `no-restricted-syntax` with `JSXAttribute[name.name='dangerouslySetInnerHTML']`.
+
+### FS-05 LOW: names and labels are rendered without neutralising bidirectional or zero-width characters (evidence pending)
+
+* `apps/web/src/administration/contracts.ts:13` rejects only `\p{Cc}` in team names; the SQL function rejects only
+  `[[:cntrl:]]` (`db/migrations/00043_m9r_team_admin.sql:39-40`) and team names are not unique
+  (`db/migrations/00010_v3_roles_and_teams.sql:6-9`); application labels are 1..200 characters of anything
+  (`contracts/jsonschema/application-v1.5.schema.json`, `label`); record strings are only length and UTF-8 checked
+  (`internal/runtime/data/values.go:52`). The parent-team `<select>` in `TeamsPanel.tsx` lists names without IDs.
+  The project rejects these character classes elsewhere (`internal/promotion/decisions.go:186-190`,
+  `internal/ai/service.go:425`), so the gap is an inconsistency.
+* Impact: all of it renders as text (no injection), but two teams or labels can look identical or reversed to an
+  administrator choosing a parent team or reading a table; hierarchy changes affect record access (the panel says so).
+* Repro: jsdom probe with `U+202E`, `U+2066`, `U+200B`, `U+FEFF` in team names and record values (queued, see below);
+  SQL acceptance not run (no database stack). Fix: apply the promotion-note rule to team names, show the team ID next to
+  the name in selects, isolate user text with `unicode-bidi: isolate`.
+
 
 ## Attacks that held
 
