@@ -14,8 +14,22 @@ Verdicts are PASS / FAIL / NOT RUN only.
 | interrupted | the run was cut by the account limit once and resumed; nothing was lost (the report and the branch are the record) |
 | done (later) | Part A matrix section, Part B false-positive and timing tables, Part C path table with two integration probes |
 | done (later) | findings RT-04 to RT-09, appendices A and B (generators, repro tests, four verified patches) |
-| next | mutation table (90 mutations still running), 5-minute fuzz of the pinned code (queued on the heavy lock), verdict |
+| done (final) | 90 mutations, 5-minute fuzz of the pinned code under `hv` (402,055 executions, PASS), obfuscation tier, verdict |
 
+
+## Verdict
+
+**FAIL for the claim that the redactor catches the accidental pastes of common credentials: 5 MEDIUM (RT-01, RT-02, RT-03, RT-04, RT-08) and 4 LOW (RT-05, RT-06, RT-07, RT-09) findings, no HIGH.
+Each MEDIUM has a repro generated at run time and a patch of at most 80 diff lines that was verified in a scratch copy of the pinned tree (shipped tests, false-positive corpus of 389 inputs, Part A matrix).**
+**PASS for Part C: no path carries author text to a provider, a stored row, an audit row, a log line or a response without the redactor, except the model's own answer, which the code and the corpus
+state is not redacted.** Timing: PASS (no accepted input over 0.4 s, all growth linear). The 25 mutation checks of the ADR are not re-run; my own 90 are in the mutation section.
+
+What held (executed attacks): the 60 prefix-rule classes in 24 neutral carriers (8,640 samples, 0 failures); the fold against fullwidth, circled, mathematical and Cyrillic look-alikes and soft-hyphen/joiner
+insertions (shipped cases re-run, plus 4 own look-alike carriers inside RT corpus forms); `holdsRedaction` against `[`/`:` escapes in typed strings and raw messages; tail rule against prose and
+the typed-marker variants; 389 realistic inputs with no change in the requirement, role, code, markdown, non-English and ticket categories; 42 adversarial inputs per size from 4 KB to 1 MiB; 100,000-string and
+9,000-deep JSON trees; invalid UTF-8, NUL, lone surrogates; determinism and idempotence under fuzz (27,776 and 35,690 executions, below).
+
+Not covered: see the last section.
 ## Findings
 
 | id | severity | one line |
@@ -315,6 +329,26 @@ Every class with a prefix rule is REDACTED in all 24 neutral carriers (bare, sen
 | yaml_password_colon (file) | 5 | 1 |  |
 | password_query (query) | 5 | 1 |  |
 
+### Second tier: obfuscation and encodings (outside the stated threat model; LOW or INFO)
+
+Each transform was applied to three keys (`ghp_` + 36, `sk-` + 48, `AKIA` + 16) inside "Use ... for the job." (`marker` = a redaction marker appeared; `unchanged` = the sentence came back byte for byte).
+
+| transform | ghp_ | sk- | AKIA |
+|---|---|---|---|
+| plain (control) | marker | marker | marker |
+| `%67hp_` / `%61KIA` (first character URL-encoded) | marker | marker | **unchanged** |
+| `&#103;hp_` / `&#65;KIA` (HTML entity) | **unchanged** | marker | **unchanged** |
+| `\u0067hp_` / `\u0041KIA` written as literal text | marker | marker | **unchanged** |
+| base64 of the whole key | marker | marker | **unchanged** (28 characters) |
+| reversed key | marker | marker | **unchanged** |
+| characters separated by spaces, or by hyphens | **unchanged** | **unchanged** | **unchanged** |
+| braille blank (U+2800) every 6 characters | **unchanged** | **unchanged** | **unchanged** |
+| combining acute (U+0301) after every 6th character | **unchanged** | **unchanged** | **unchanged** |
+| URL-encoded whole key, hex of the key, upper case, Armenian o, zero-width space, ZWNJ, LRM, CGJ, Hangul filler, soft hyphen, RLO, Cyrillic and Greek look-alikes, fullwidth | marker | marker | marker |
+
+INFO/LOW: the short fixed-length formats (AKIA) and any key split by spaces, hyphens, U+2800 or combining marks come back unchanged; everything the fold table covers is found. The combining-mark
+and U+2800 survivals are the documented "table is short on purpose" residuals; the encodings are outside the threat model. Not measured: whether a marker in the "marker" rows left a run of 12 characters.
+
 ## Part C - is the redactor applied everywhere
 
 Method: read `context.go`, `repair.go`, `service.go`, `store.go`, `gateway.go`, `provider_http.go`, `internal/platform/access/ai.go`, `ai_decide.go`, then proved it on the `fix`
@@ -329,12 +363,12 @@ label and field id carry run-time secrets, sends a request with six more, script
 | 1 | `ProposeInput.Request` | provider segment `request` | `validRequestText` (service.go:156), `validateRequest` + `sanitizeText` (context.go:120), `redactString(request)` (context.go:255) | PASS for card in groups, AKIA id, JWT, Slack webhook secret, `password=`: absent; `{"client_secret":"<32>"}` present (RT-01) |
 | 2 | draft definition id, kind, label | `application.definitions[]` | `redactString(clip())` (context.go:163) | PASS: ghp token in a label absent; a 47-character lower-case token used as a field id present (RT-06) |
 | 3 | whole definition body: enum values, component labels, rule literals, calendars | `application.definitions[].definition` | `redactRaw` -> `redactTree` (context.go:169, redact.go:395); JSON object keys are skipped by design (the only author-chosen keys are `Activity.Inputs`, pattern `^[a-z][a-z0-9_]{0,63}$`) | PASS: AWS secret key as an enum value, DSN password in a component label, `sk-` key in a rule literal: absent; `{"password": "<12>"}` in a field label present (RT-01) |
-| 4 | namespace, app id, schema version | `application` | `redactString(clip())` (context.go:179-180) | code read; mutations M72-M73 |
-| 5 | release-diff ids, kinds, aspects | `release_diff` | context.go:191-193 | code read; mutation M77 |
-| 6 | tool catalog summary | `tools` | `cleanTool` (context.go:283-296); operator-authored, no endpoint or credential field exists in `ToolSummary` | code read; mutation M74 |
-| 7 | role names | `roles` | context.go:219 | code read; mutation M75 |
-| 8 | requirement ids, categories, statuses | `requirements` | context.go:239; statements and semantics are not sent at all | code read; mutation M76 |
-| 9 | repair problems | `diagnostics` segment of attempts 2 and 3 | `capDiagnostics` (repair.go:295-307): `redactString(clip())` on path, code, message | PASS: a model answer with an unknown key shaped like a token produced `{"path":"","code":"unknown_field","message":"a key is not part of the closed schema"}`, the key never reaches the next prompt; mutations M78-M80 |
+| 4 | namespace, app id, schema version | `application` | `redactString(clip())` (context.go:179-180) | code read; mutation M72 (label) killed, M73 (app id) **survives** the shipped tests |
+| 5 | release-diff ids, kinds, aspects | `release_diff` | context.go:191-193 | code read; mutation M77 **survives** |
+| 6 | tool catalog summary | `tools` | `cleanTool` (context.go:283-296); operator-authored, no endpoint or credential field exists in `ToolSummary` | code read; mutation M74 **survives** |
+| 7 | role names | `roles` | context.go:219 | code read; mutation M75 killed |
+| 8 | requirement ids, categories, statuses | `requirements` | context.go:239; statements and semantics are not sent at all | code read; mutation M76 **survives** |
+| 9 | repair problems | `diagnostics` segment of attempts 2 and 3 | `capDiagnostics` (repair.go:295-307): `redactString(clip())` on path, code, message | PASS: a model answer with an unknown key shaped like a token produced `{"path":"","code":"unknown_field","message":"a key is not part of the closed schema"}`, the key never reaches the next prompt; mutations M78-M80 (remove the redaction of path or message, remove the cap) **survive** the whole shipped package |
 | 10 | output schema, templates | `output_schema`, instructions | static embedded contract files and constants (`schema_text.go:90-`, `template.go`) | code read: no author text |
 | 11 | the model's answer | `ai_proposals.body`, create and GET responses | **not redacted** (documented: `internal/ai/corpus/check.go:183`, "ADR104 redacts the context, not the output") | PASS as documented: the three echoed shapes (ghp, AKIA, sk-) are stored and returned verbatim; after apply they sit in the draft and are redacted again in the next prompt (request 2: absent) |
 | 12 | stored rows | `ai_proposals`, `ai_invocations`, `ai_usage` | the request text is never stored (SHA-256 only, service.go:276); diagnostics are `capDiagnostics` output; provider and model labels go through `apiLabel` (alphabet `[A-Za-z0-9._:/@+-]`, 64 and 128 bytes, repair.go:249) | PASS: no secret in `ai_invocations`, `ai_usage`, `diagnostics`; `body` holds model output only (row 11) |
@@ -412,6 +446,82 @@ Growth is linear (four times the size takes 3 to 4.5 times as long); no input is
 large; the size check comes after the redaction); 100,000 matching 8-byte strings take 1.96 s (about 20 microseconds each). `redactTree` over 100,000 strings took 7.0 s, which no
 accepted document can reach (256 KiB holds under 30,000 strings); depth 9,000 took 0.9 ms. Invalid UTF-8, NUL, lone surrogates (decoded to U+FFFD by `encoding/json`), 4-byte runes and
 long combining sequences: no panic. **No input takes over 2 s on an accepted size: PASS.** With the RT-01/02 patch the `assign_*` inputs are 10 to 30 % slower at 1 MiB (still linear).
+
+### B.3 Properties and fuzz
+
+My own native fuzz target `FuzzRTRedact` (seeded with 105 class tokens and their forms, 170 paste templates and the 389 false-positive inputs; asserts per input: two calls give the same output; applying the redactor
+to its own output changes nothing; no change without a counted replacement; the output is valid UTF-8; the output is at most 4 x input + 64 bytes):
+
+| run | code | executions | result |
+|---|---|---|---|
+| 5 min under `hv` (`-fuzztime 300s -parallel 2`) | pinned | 402,055, 122 new interesting inputs | **PASS**, no failure |
+| 25 s, no lock (under the 30 s rule) | pinned | 27,776 | PASS |
+| 40 s, no lock (over the 30 s rule: my mistake) | all four patches | 35,690 | PASS |
+
+The `hv` run waited about 40 minutes for the lock. Measured expansion on the 42 adversarial families at 16 KB: worst **2.71 x** (a key followed by 7-byte camelCase lines, each replaced by an 18-byte marker), then 1.93 x
+(`http://u:p@h/ ` x n); the 64 KiB context cap is applied after redaction. Shipped properties re-run on the pinned code: `TestRedactionIsIdempotentOnMixedFragments`, `TestRedactionSettlesToAFixedPoint`,
+`TestRedactionFoldsLookalikesOnlyToExposeASecret` and the seed corpus of `FuzzRedactText` PASS. Strings without a secret come back byte for byte in every script tried (25 sentences in 17 scripts, emoji sequences,
+accented Latin, plus the fuzz assertion "no change without a count"). A marker typed by a user acts like a real one for the tail rule (B.1).
+
+## Mutation table (my own 90 mutations; test adequacy)
+
+Method: my own driver (`mutate.py`, not the integrator's) applies one exact-string mutation to a product file of the worktree, runs `gt test -count=1 -run Redact ./internal/ai` (the whole package, about 30 s, for the 15 mutations of `context.go`, `repair.go`, `patch.go` and `holdsRedaction`; the sanitizer mutations M51-M53 with `-run Redact|Sanitize`), records KILLED (a shipped test fails) or SURVIVED, and reverts with `git checkout`. Mutants that did not compile were corrected and re-run. `git status` was clean after the last mutation.
+
+Result: **53 killed, 37 survived (2 of them equivalent), 0 skipped.** Killed: M03, M04, M05, M07, M09, M12, M14, M15, M16, M17, M18, M23, M24, M25, M26, M27, M28, M29, M30, M31, M34, M39, M41, M42, M43, M44, M46, M47, M48, M49, M51, M52, M54, M55, M56, M57, M59, M62, M63, M64, M67, M69, M70, M71, M72, M75, M81, M82, M83, M86, M87, M88, M90.
+
+| survivor | mutation | why the shipped tests do not catch it |
+|---|---|---|
+| M01 | pem rule loses DOTALL | masked for long bodies by the base64 rule; a short body or the header line leaks - gap |
+| M02 | jwt segments need 50 chars | masked by the base64 rule on the 43-character signature; the other two segments would leak - gap |
+| M06 | api_key loses github_pat_ | masked by the base64 rule (the token is 82 characters) - gap |
+| M08 | api_key loses SG. | masked on the 43-character part only; the first part would leak - gap |
+| M10 | bearer needs 32 chars | the shipped bearer token is longer than 32 - no near-miss at 16-31 - gap |
+| M11 | authorization needs 80 chars | masked by the bearer rule for `Authorization: Bearer`; `Token`/`Basic` forms would leak - gap |
+| M13 | basic decode check drops the colon test | the colon test is the only thing that keeps `Basic information` out of basic_auth - false-positive guard untested |
+| M19 | card: visa 13 digits not accepted | no 13-digit Visa case - gap |
+| M20 | card: 19-digit window shortened to 16 | no 17-19 digit card case - gap |
+| M21 | assignment loses passphrase | no `passphrase=` case - gap |
+| M22 | assignment loses credentials | no `credentials=` case - gap |
+| M32 | longBase64 needs 48 | every shipped base64 case is 56 or more characters - no 40-47 case - gap |
+| M33 | entropy floor removed | no 40+ character low-entropy near-miss - the entropy floor is untested |
+| M35 | digit requirement removed | no 40+ character all-letter near-miss |
+| M36 | letter requirement removed | no 40+ character all-digit near-miss |
+| M37 | tail: marker class jwt dropped | tail after a jwt marker untested |
+| M38 | tail: marker class hex dropped | tail after a hex marker untested |
+| M40 | tail: credentialShaped mixed-case branch only | tail word without digit but with mixed case untested |
+| M45 | settled repeats once | only one counterexample needs a second pass; two extra passes are not pinned |
+| M50 | identifierLike accepts every lower-case token | identifier-shaped near-miss with spaces untested |
+| M53 | sanitizeText: invalid UTF-8 kept | input that is only invalid UTF-8 (no other dirty rune) untested; json.Marshal repairs it later, low impact |
+| M58 | fold: only Cf dropped (no default ignorable, no variation selector) | default-ignorable and variation-selector characters inside a key untested |
+| M60 | fold: mathematical digits dropped | mathematical digits untested |
+| M61 | fold: circled capitals dropped | circled capitals untested |
+| M65 | fold: Cyrillic a removed | Cyrillic a untested |
+| M66 | fold: Greek omicron removed | Greek omicron untested |
+| M68 | holdsRedaction ignores marshal errors | equivalent: json.Marshal of a Definition cannot fail |
+| M73 | context: app id not redacted | **no test pins the redaction of `app_id`** |
+| M74 | context: tool refs not redacted | **no test pins the redaction of tool refs** |
+| M76 | context: requirement ids not redacted | **no test pins the redaction of requirement ids** |
+| M77 | context: diff ids not redacted | **no test pins the redaction of release-diff ids** |
+| M78 | repair: diagnostic message not redacted | **no test pins the redaction of a diagnostic message in the repair loop** |
+| M79 | repair: diagnostic path not redacted | **no test pins the redaction of a diagnostic path** |
+| M80 | repair: feedback diagnostics not capped | **the repair loop can feed uncapped, unredacted diagnostics back and no test notices** |
+| M84 | clip: no sanitize | equivalent: `redactString` sanitizes again |
+| M85 | url_credentials needs a password colon | URL userinfo without a password colon untested |
+| M89 | slack token class shrunk | only `xoxb-` tested of the Slack classes |
+
+Caveat: the 28 survivors of the `-run Redact` scope were not re-run against the whole package except M51-M53 (M53 still survives); other tests (for example `TestBuildContext*`, which killed M34, M82, M86-M88) may catch some of them. The seven mutations of `context.go` and `repair.go` (M73, M74, M76-M80) were run against the whole package and survive: that is the finding for the integrator - the redaction of those fields is untested, although Part C shows it is applied.
+
+
+## What I did not cover
+
+- The author's 300,000-run property (`REDACT_PROPERTY_RUNS`) and the integrator's 25-mutation driver were not run; my 90 mutations and 402,055 fuzz executions replace them.
+- Part C was executed through the scripted provider only (no real model, no real HTTP adapter); the HTTP adapter's request body is `json.Marshal(ProviderRequest)` of the same segments (read, not executed against a server).
+- The requirement `confirm` route was exercised once and answered 400 (my request shape); what a confirmed requirement set stores of a model statement was therefore not shown by execution (the proposal body was).
+- Metric labels: read (grep), not executed.
+- The remaining matrix classes outside the 105 + 170 + 12 x 9 forms (gRPC metadata, GraphQL variables, SAML assertions, kubeconfig exec plugins, Terraform state, Jupyter outputs, OCR text with line noise) and the card number as a JSON integer.
+- Patches 3 and 4 widen the table (regex additions) and were checked against 389 false-positive inputs only; a 1,000-sentence corpus of ERP prose would be the next check. Patch 2 (split keys) was checked on one hard-wrapped family; a key broken inside a table cell or a YAML block scalar was not tried.
+- A 5-minute fuzz of the patched code under `hv` (only 40 s without the lock).
+- The Unicode confusables beyond the table, precomposed accents and other scripts, a password that is a plain word, a key broken in the middle of a paragraph (tail shares its line with prose): documented residuals, quantified only for the wrap (RT-03) and the obfuscation tier.
 ## Appendix A - generators, corpus builder and repro tests (Go; no secret literal: values are drawn at run time)
 
 All code is package `ai` test code (`zz_review_*_test.go`), deleted from the worktree before every commit. The full tables are about 105 classes and 170 templates in the same shape; the 28 carriers of Part A are listed in its text.
@@ -903,7 +1013,7 @@ func TestRTReproCommandAndSQLForms(t *testing.T) {
 
 ## Appendix B - proposed patches (each verified in a scratch copy of the pinned tree, then discarded; the worktree product files are unchanged)
 
-The scratch copies applied them to `internal/ai/redact.go` of `11a4ee4`. Applied together (RT-01/02, RT-03, RT-04, RT-08) the whole `gt test -count=1 ./internal/ai` package passed (RT-01/02 + RT-03: 30.8 s; the four together were run with `-run Redact` and the probes). A 40-second fuzz of the four patches together (35,690 executions, determinism, idempotence, length bound, no change without a count) found no failure.
+The scratch copies applied them to `internal/ai/redact.go` of `11a4ee4`. Applied together (RT-01/02, RT-03, RT-04, RT-08) in one scratch copy: the whole shipped `gt test -count=1 ./internal/ai` package PASSED (92.8 s on a loaded host) and the four repro tests PASSED. A 40-second fuzz of the four patches together (35,690 executions; determinism, idempotence, output at most 4 x input + 64 bytes, no change without a count) found no failure; that run did not go through `hv` although it lasted over 30 s (my mistake, noted in the final message).
 
 ### RT-01 and RT-02 (13 lines)
 ```diff
