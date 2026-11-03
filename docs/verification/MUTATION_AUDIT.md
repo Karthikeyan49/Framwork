@@ -6,12 +6,13 @@ Branch: `review/mutation-audit`. Product code is changed only as one temporary m
 Method. For every mutant: one exact text replacement in one product file, then the narrowest tests that should fail (`/home/user/bin/gt test -count=1 -run '<regex>' ./<pkg>`), widened to the whole package when the narrow run passed; SQL mutants through `/home/user/bin/it-run fix` with the M13 test group. Results: KILLED (name of the first failing test), SURVIVED (everything listed passed), EQUIVALENT (argued below). A mutant that did not compile or whose edit did not apply is discarded and listed.
 Unit mutants are measured against the unit tests of their package only unless the row says otherwise: a unit survivor in a function that the integration suite covers is reported as SURVIVED with the note "unit-only" and is NOT claimed to be unprotected. Every survivor that concerns an authority, tenant, integrity or exactly-once invariant is analysed in Findings with a killing test that was run on the mutant (fails) and on the original (passes).
 Stack lock caveat found during the run: `it-run` releases the stack lock between its reset phase and its test phase, so another agent using the same stack can rebuild it in between. Every SQL mutant is therefore run with a canary test (`TestZZCanary`, in the same `go test` invocation, reading `pg_get_functiondef`) that fails when the stack does not run the mutant. A first S01 run without the canary reported SURVIVED against a stack that had been rebuilt from the original migrations; it was discarded and redone.
+Reading the scores. A unit score below the integration reality is expected for code that only the integration suite can call (`policy.Decide`, `validSubject`, `Defined.DataScope`, `RoleStore.*`, the handlers of `internal/platform/access`, all SQL ports): their survivors say "no unit test", not "no test". The scores of targets 1a, 1d and 3c therefore measure the unit tests only; the integration suite was run against two SQL mutants (S01, X06) only. The scores of the pure packages (promotion, verifier, oracle, ai, traffic, tools) are the ones that measure the tests of the logic itself.
 
 ## Progress
 
 Status at this commit: PARTIAL. The run was cut off once by an account limit and resumed; everything below is regenerated from the run log (`results.tsv` of the auditor, rows below).
 
-- Target 1 (M13): policy (U, 38 mutants), promotion (D, T, R, B, 59), handler authority helpers (AU, 9), SQL mutant S01 (finding MA-01). NOT REACHED: the end-to-end mutants H01 (`holdingApprovers` narrowing), U010i (selector entity) and the SQL mutants S02 to S08: the run of H01 was queued on `it-run fix` for 15 minutes behind seven other agents for the global heavy lock (`/tmp/framework-heavy.lock`) and never started; the other ones were never submitted.
+- Target 1 (M13): policy (U), promotion (D, T, R, B), handler authority helpers (AU, 9), SQL mutant S01 (finding MA-01). NOT REACHED: the end-to-end mutants H01 (`holdingApprovers` narrowing), U010i (selector entity) and the SQL mutants S02 to S08: the run of H01 was queued on `it-run fix` for 15 minutes behind seven other agents for the global heavy lock (`/tmp/framework-heavy.lock`) and never started; the other ones were never submitted.
 - Target 2 (M12 verifier and oracle): done (V, O); findings MA-03 (verifier) and, through the runtime components, MA-02.
 - Target 3 (M14): gateway, repair loop, patch, kinds, schema (A, G, P, K, SC) done; the service helpers SV were reached up to the id shown in the table; SQL mutant X06 done (killed); X01 to X05 NOT RUN (same lock queue).
 - Target 4 (front door, traffic): body budget (F), traffic gate (TR), `AcceptsPOST`, `enforce`, route to action mapping (AC) at unit level; the route table needs the integration suite (NOT RUN).
@@ -28,12 +29,12 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
 | 1d | Target 1 - M13 handlers (holdingApprovers end to end; authority helpers, unit; internal/platform/access/promote.go) | 0 | 8 | 1 | 0% (0/8) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 20 | 4 | 68% (42/62) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 23 | 4 | 65% (42/65) |
 | 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
 | 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 4 | 25 | 0 | 14% (4/29) |
 | 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
 | 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
-| all | all targets reached | 170 | 123 | 16 | 58% (170/293) |
+| all | all targets reached | 170 | 126 | 16 | 57% (170/296) |
 
 Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, AC32.
 
@@ -432,6 +433,31 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 }
 ```
 
+### MA-11 (LOW) - only the wall-clock ceiling of `ServiceLimits.Effective` is tested (mutants SV01 to SV04)
+
+`internal/ai/service.go:56-82`: "configuration may lower a ceiling and never raise it". `service_limits_test.go` pins the wall clock only; dropping the ceiling of the attempts (SV01), the output tokens (SV02), the in-flight requests per tenant (SV03) or the daily tokens (SV04) passes the whole package. The values come from trusted configuration (`config.go` validates them as well), so this is a hardening gap. Killing test, verified (passes on the original; fails on SV01, SV02, SV03 and SV04):
+
+```go
+package ai
+
+import "testing"
+
+func TestEffectiveLimitsNeverRaiseACeiling(t *testing.T) {
+	got := (ServiceLimits{MaxAttempts: MaxAttempts + 5, MaxOutputTokens: MaxOutputTokensCeiling + 1, InFlightPerTenant: MaxInFlightPerTenant + 1, DailyTokens: maxDBTokens + 1}).Effective()
+	if got.MaxAttempts != MaxAttempts || got.MaxOutputTokens != MaxOutputTokensCeiling || got.InFlightPerTenant != MaxInFlightPerTenant || got.DailyTokens != maxDBTokens {
+		t.Fatalf("a ceiling was raised: %+v", got)
+	}
+	low := (ServiceLimits{MaxAttempts: 1, MaxOutputTokens: 7, InFlightPerTenant: 1, DailyTokens: 9}).Effective()
+	if low.MaxAttempts != 1 || low.MaxOutputTokens != 7 || low.InFlightPerTenant != 1 || low.DailyTokens != 9 {
+		t.Fatalf("a lower value was not kept: %+v", low)
+	}
+	zero := (ServiceLimits{}).Effective()
+	if zero.MaxAttempts != MaxAttempts || zero.MaxOutputTokens != DefaultMaxOutputTokens || zero.InFlightPerTenant != DefaultInFlightPerTenant || zero.DailyTokens != DefaultDailyToken {
+		t.Fatalf("defaults: %+v", zero)
+	}
+}
+```
+
 ## Equivalent mutants
 
 - D25 (`internal/promotion/decisions.go:551`): the dedupe key `lower(actor)+actor` is injective in the actor id, so `CountEligible` counts the same set.
@@ -767,5 +793,8 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 | SC12 | internal/ai/schema.go:326 | textOK: bound off by one | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestAdversarialCorpus |
 | SC13 | internal/ai/schema.go:109 | decodeStrict: text hygiene not applied to the tree | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
 | SC14 | internal/ai/schema.go:106 | decodeStrict: required keys not required | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
-| SV01 | internal/ai/service.go:57 | Effective: attempts ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | LOW: ServiceLimits.Effective attempts ceiling; configuration path, trusted |
-| SV02 | internal/ai/service.go:63 | Effective: output token ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED |  |
+| SV01 | internal/ai/service.go:57 | Effective: attempts ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
+| SV02 | internal/ai/service.go:63 | Effective: output token ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
+| SV03 | internal/ai/service.go:69 | Effective: in-flight ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
+| SV04 | internal/ai/service.go:75 | Effective: daily token ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
+| SV05 | internal/ai/service.go:231 | reserveFor: the output is not reserved | go test ./internal/ai -run 'Limits\|Effective\|Service\|Reserve\|Config' ; widened: ./internal/ai | SURVIVED |  |
