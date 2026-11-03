@@ -140,7 +140,9 @@ type digitGroup struct{ start, end int }
 func digit(c byte) bool { return c >= '0' && c <= '9' }
 
 // wordByte is the \w of a regular expression: a word boundary lies between it and any other byte.
-func wordByte(c byte) bool { return digit(c) || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
+func wordByte(c byte) bool {
+	return digit(c) || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
+}
 
 // digitChain reads the groups of digits that begin at s[i], a digit: each group is followed by one space or hyphen and a digit of the
 // next group, or the chain ends. It returns the groups and the offset after the last one.
