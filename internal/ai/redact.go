@@ -318,11 +318,13 @@ func cardWindow(s string, groups []digitGroup, a int) (int, bool) {
 }
 
 // redactCards redacts the payment card numbers of s: 13 to 19 digits, alone or in groups separated by one space or hyphen, with a known
-// issuer prefix and a valid check digit. Every window of a chain of digit groups is tried, the longest first, so that a card number that
-// follows another number ("Order 99871 4111 ..."), is followed by one (the expiry date: "... 1111 12/27") or lies inside a longer run of
-// groups is found (PF-09); one regular expression takes the longest match from the left, and when the check refuses that match the card
-// that starts inside it is never looked at. A window of numbers that passes both checks by chance is redacted as well (about one window
-// in two hundred): a marker for a number is the cheaper error.
+// issuer prefix and a valid check digit. Every window of a chain of digit groups is tried, so that a card number that follows another
+// number ("Order 99871 4111 ..."), is followed by one (the expiry date: "... 1111 12/27") or lies inside a longer run of groups is found
+// (PF-09); one regular expression takes the longest match from the left, and when the check refuses that match the card that starts inside
+// it is never looked at. The windows that overlap are one span, so no digit of any valid window stays: a window of numbers that passes both
+// checks by chance (about one in a hundred, one in forty of 16 digits) is redacted as well, and when it overlaps a real card the card goes
+// with it (independent review TF-06: taking the first window found left the other three groups of a card visible). A marker for a number
+// is the cheaper error. Windows that only touch are two spans.
 func redactCards(s string, n *int) string {
 	var out strings.Builder
 	last := 0 // s[:last] is in out
@@ -332,17 +334,28 @@ func redactCards(s string, n *int) string {
 			continue
 		}
 		groups, next := digitChain(s, i)
-		for a := 0; a < len(groups); {
-			b, found := cardWindow(s, groups, a)
-			if !found {
-				a++
-				continue
-			}
-			out.WriteString(s[last:groups[a].start])
+		flush := func(first, end int) { // the span of groups[first..end]
+			out.WriteString(s[last:groups[first].start])
 			out.WriteString(marker("card"))
-			last = groups[b].end
+			last = groups[end].end
 			*n++
-			a = b + 1
+		}
+		first, end := -1, -1
+		for a := range groups {
+			b, found := cardWindow(s, groups, a)
+			switch {
+			case !found:
+			case first >= 0 && a <= end:
+				end = max(end, b)
+			default:
+				if first >= 0 {
+					flush(first, end)
+				}
+				first, end = a, b
+			}
+		}
+		if first >= 0 {
+			flush(first, end)
 		}
 		i = next
 	}
