@@ -5,7 +5,7 @@
 - Pin `11a4ee4` (code head `585499d`), branch `review/tools-sandbox-redteam`, worktree `/home/user/review-tools`.
 - Read: ADR100, ADR101, every non-test file of `internal/tools`, `internal/runtime/workflow/{tool_step,execution,signals}.go`, migrations 00080, 00081, 00085, 00086, `internal/platform/access/sandboxes.go`, the policy actions, `internal/compiler/workflow_tools.go`, the gateway wiring in `internal/platform/app/app.go` and `internal/config/config.go`, and the three earlier reviews (gateway F1-F9, M10R-01..05, M11 R01-R07: not rediscovered; their fixes were re-attacked).
 - No database stack in this round: every executed probe is a unit test with loopback httptest/TLS listeners, run through `/home/user/bin/gt`. Everything that needs PostgreSQL is a static reading and is labelled NOT RUN.
-- Status: COMPLETE.
+- Status: COMPLETE (the `-race` run never got the heavy-run lock: NOT RUN).
 
 ## Verdict
 
@@ -117,7 +117,7 @@ Impact: any tenant that can compile metadata learns whether `tool.<name>@<versio
 - Every PostgreSQL-backed claim (no database stack in this round): approval gate at `control.tool_begin` (TL001/TL002), lease fencing of `tool_finish`, exactly-once of the ledger under concurrent leases, ledger and sandbox tenant isolation, `freeze_sandbox` quiescence and READ COMMITTED serialisation, fence triggers on a frozen sandbox, evidence body hash binding and M12 verification of it, `control.worker_environment()` derivation. Static reading found no defect beyond TS-01.
 - HTTP routes (`sandbox.read`, `sandbox.manage`, worker decision for `tools.invoke`) against a live API; custom-role holders of `sandbox.manage` (only `policy.go:91-94` and `definition.go:164-170` were read: owner/admin only).
 - Real DNS behaviour (search domains, `/etc/hosts`, `*.localhost` resolution) and any non-loopback destination: the dial decision for a public address was only exercised with the fake resolver.
-- `-race`: only the gateway concurrency tests listed under Commands.
+- `-race`: no run completed (see Commands); the existing `TestConcurrentExecutionIsRaceFree` and `TestRateLimiterIsExactUnderConcurrency` passed only without the race detector, in the package run.
 - TLS certificate-name mismatch, expired chain and SNI: existing tests only (package PASS), no new probe.
 
 ## Commands
@@ -130,6 +130,4 @@ Impact: any tenant that can compile metadata learns whether `tool.<name>@<versio
 | `gt test -count=1 -v -run 'TestZZReview(ResponseMatrix\|RateLimiterSharedAcrossTenants\|SlowAndEndless\|LeakStorm\|CredentialMatrix\|FileSecretsSwapRace\|CatalogFoldingAndRefs)' ./internal/tools` | PASS as probes (the response and rate probes log TS-03/04/05) |
 | `gt test -count=1 -v -run TestZZReviewCompileIgnoresTenantAllowlist ./internal/compiler` | PASS as probe (logs TS-02) |
 | two temporary mutations of `executor.go` | both probes FAIL as expected; file restored, `git diff` empty |
-| `hv nice -n 10 gt test -race -count=1 -run 'TestConcurrentExecutionIsRaceFree\|TestZZReviewLeakStorm\|TestZZReviewResponseMatrix\|TestRateLimiterIsExactUnderConcurrency\|TestZZReviewSlowAndEndless' ./internal/tools` | see the line below |
-
-Race run result: PENDING (queued behind the heavy-run lock when this report was written).
+| `hv nice -n 10 gt test -race -count=1 -run 'TestConcurrentExecutionIsRaceFree\|TestZZReviewLeakStorm\|TestZZReviewResponseMatrix\|TestRateLimiterIsExactUnderConcurrency\|TestZZReviewSlowAndEndless' ./internal/tools` | NOT RUN: it stayed queued behind other agents' runs on the heavy-run lock (about 23 waiting) for the whole review and was cancelled; no `-race` evidence exists for the probes |
