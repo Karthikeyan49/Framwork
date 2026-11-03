@@ -21,14 +21,14 @@ Items run through `corpus.Library.Expand` + `scriptedRun` + `Case.Check` (the bu
 
 | class | items | READY (stored) | refused at parse | refused later (conflict/compile) | panics | max per item |
 |---|---|---|---|---|---|---|
-| 1 authority | 135 | 3 (advisory text only) | 132 | 0 | 0 | 52 ms |
-| 2 forbidden targets and ids | 122 | 0 | 119 | 3 | 0 | 10 ms |
-| 3 strict decoding | 124 | 21 (valid by design) | 98 | 5 | 0 | 30 ms |
-| 5 sensitivity (hand-written) | 40 | 33 | 1 | 6 | 0 | 53 ms |
-| 6 requirement proposals | 96 | 18 | 78 | 0 | 0 | 4 ms |
-| 7 free text | 104 | 87 | 11 | 6 | 0 | 27 ms |
-| 9 resource | 24 | 13 | 6 | 5 | 0 | 154 ms |
-| total | 645 | 175 | 445 | 25 | 0 | 154 ms |
+| 1 authority | 135 | 3 (advisory text only) | 132 | 0 | 0 | 125 ms |
+| 2 forbidden targets and ids | 122 | 0 | 119 | 3 | 0 | 13 ms |
+| 3 strict decoding | 124 | 25 (valid by design) | 95 | 4 | 0 | 43 ms |
+| 5 sensitivity (hand-written) | 40 | 33 | 1 | 6 | 0 | 87 ms |
+| 6 requirement proposals | 96 | 18 | 78 | 0 | 0 | 12 ms |
+| 7 free text | 104 | 87 | 11 | 6 | 0 | 66 ms |
+| 9 resource | 24 | 13 | 6 | 5 | 0 | 226 ms |
+| total | 645 | 179 | 442 | 24 | 0 | 226 ms |
 
 Class 4 (canonical form) is the 45-payload differential below; class 5 additionally has the 3,202-mutant sweep.
 
