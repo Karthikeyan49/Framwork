@@ -10,6 +10,8 @@ below). No credential, token, DSN, request body, SQL text, driver message, const
 label or a startup message in any executed attack (about 330 canary-bearing requests and 38 program starts; canaries listed per sink below). The stack-level probe on the
 shared m13 database (real RLS, cross-tenant existence oracles, AI request text through the real routes) did NOT run: see "Real-stack probe".
 
+Temporary probe sources (never committed; the `zz_review_*` files named in the repros): `/home/user/audit-leaks-probes/`, same relative paths as in the tree.
+
 ## Progress
 
 - [x] Brief read; worktree on the pinned commit.
@@ -93,8 +95,8 @@ Non-test Go files in `cmd/` and `internal/`: 187. Counted with ripgrep on the pi
 - Impact now: the panic texts that can reach this path in the current tree are runtime-error texts and the re-panics of `runtime/data/aggregate.go:121-124` and
   `access/preview.go:109-111`; none of the seven `panic(` sites carries request or record data. So the exposure is an unplanned channel, not an observed
   secret. It becomes a leak the day a panic value carries data. The export is gated by sampling, which an anonymous caller can force (LE-01).
-- Suggested direction (not applied): end these spans through a helper that recovers, records a fixed event and re-panics, or use
-  `trace.WithAttributes`-free span options; add a regression test that panics with a canary and scans the exported spans.
+- Suggested direction (not applied): the SDK records the exception only because `End` itself recovers the panic; end these spans from a deferred function
+  that recovers first, sets the fixed status, ends the span and re-panics; add a regression test that panics with a canary and scans the exported spans.
 - Related, already documented (AGENTS.md "Injected driver/tracer panic is an unresolved R7 recovery limitation"): a panic raised inside a `database/sql` call
   leaves the deferred `tx.Rollback()` (`transaction.go:132`) blocked on `database/sql.(*closingMutex).Lock`. Observed here as well (goroutine dump of a 15 s
   run: `database/sql.(*Tx).rollback` waiting in `closemu.go:79`); the handler goroutine and its admission slot are lost. Not reported as new.
