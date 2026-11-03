@@ -9,8 +9,9 @@ Branch `review/ai-output-redteam`, from `11a4ee40a12e0301472b275203ac10d8347eaad
 | Part A items (classes 1-3, 5-7, 9) run | 645 items through the builder's expander/checker, the scripted gateway and the pure functions: 0 panics, no hostile answer caught later than its declared layer; one family of expectation failures (36 items, AO-01). |
 | Part A class 4 run | 45 payloads in 6 equivalence groups plus requirement semantics: one canonical form per meaning, no collision. |
 | Part A class 5 sweep run | 3,202 single-definition mutants over 7 drafts; 677 compile; 304 change the executed IR; 0 under-reported, 0 over-reported. |
-| Part A classes 8 and 10 | in preparation |
-| Part B, Part C | in preparation |
+| Part A class 8 run | 12 loop scenarios, 3 diagnostic floods, 300 cancel-during-call races, 1 budget case: all held. |
+| Part A class 10 run | 38 hostile HTTP provider responses (gzip bomb, truncation, chunked without end, slow drip, 20 KB header, redirects, Content-Length lies, envelope variants, 13 status codes) plus 2 label cases: all held. |
+| Part B/C | `TestZZB1` ran: AO-02 confirmed. B2..B5, C1, C2 queued behind the shared lock (log `zzaiout-2`). |
 
 ## Verdict
 
@@ -35,7 +36,17 @@ Class 4 (canonical form) is the 45-payload differential below; class 5 additiona
 
 ## Findings
 
-(filled as confirmed)
+### AO-01 LOW: `holdsRedaction` refuses only the exact placeholder bytes
+
+`internal/ai/redact.go:460-463` (`holdsRedaction`, used at `internal/ai/patch.go:124`) is `strings.Contains(json.Marshal(definition), "[REDACTED:")`. ADR104 B.4 states that a placeholder "the model echoes back can never be written into the draft". Only the byte-exact prefix is refused. Executed (`zz-a7-placeholder-{label,component,enum}-*`, 12 spellings at 3 positions = 36 items, all stored `READY`): `[redacted:secret]`, `[Redacted:secret]`, `[REDACTED :secret]`, `[ REDACTED:secret]`, `[REDACT<U+200C>ED:secret]`, `[REDACTED<U+200D>:secret]`, `[REDAC<U+00AD>TED:secret]`, fullwidth brackets and colon, a Cyrillic E, `[REDACTED` without the colon, `&#91;REDACTED:secret]` and the escape `\u005bREDACTED:secret]` all pass; the exact `[REDACTED:secret]` and `see [REDACTED:pem] above` are refused. Repro: `gt test -count=1 -run TestZZReviewA567 ./internal/ai` with the probe in the appendix (any `update` of `page.order.list` whose label is `[Redacted:secret]`).
+Breaks: a model (or a prompt-injected one) can overwrite a label, a component label or an enum value with text that a reviewer reads as the server's placeholder; the original text is lost from the draft revision and nothing marks the lookalike. No secret is exposed and a human still applies, so LOW. Zero-width and soft-hyphen variants are invisible in a review UI.
+
+### AO-02 MEDIUM: `ai.read` and `ai.propose` reach draft definitions that `metadata.read` protects (no composition rule for reads)
+
+`internal/platform/access/ai.go:266-310` authorises the read and propose routes with `ai.read` / `ai.propose` alone; the composition rule of ADR104 A6 exists only for the writes (`ai_decide.go:39` `metadata.write` for apply, `ai_decide.go:79` `requirements.decide` for confirm). `Service.Admit`/`Prepare` (`internal/ai/service.go:242-309`) builds the context from the whole draft inside the caller's scope, and a proposal view returns the full definition of every definition it updates.
+Executed (`TestZZB1CustomRolesReachTheDraftThroughTheAISurface`, `it-run m12db`, tenant A): a stored role holding only `ai.read`: `GET .../metadata/{app}/versions/1` answers 403, yet `GET .../preview/{app}/ai/proposals/{id}` of a proposal created by the owner answers 200 with the full `workflow.order.approve` definition (states, approval roles; 1,172 body bytes). A stored role holding `ai.read` + `ai.propose` (no `metadata.read`): the request sent to the provider contains the whole draft (`workflow.order.approve`, `field.order.amount` present in the segments), and the READY proposal it created returns the whole `entity.order` field list; by choosing which definition to relabel it can read any definition back.
+Breaks: default-deny at the capability level. A custom role created to audit or to ask the model (a plausible role) reads, and has sent to the operator's provider, metadata it cannot read through the metadata routes. Default roles are unaffected (`ai.propose` is owner/admin only, who hold `metadata.read`; viewers hold both reads). The ADR states the composition for writes only, so this is a gap in the stated contract rather than a defect against it.
+Fix direction (not applied): require `metadata.read` for the list/get/propose routes, as apply requires `metadata.write`, or document that granting `ai.read`/`ai.propose` grants read of draft definitions.
 
 ## Attacks that held
 
