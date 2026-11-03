@@ -19,7 +19,43 @@ ADR039. Not rediscovered: `M9R_R5C_UI_INDEPENDENT_REVIEW.md` (R5C-UI-01..03) and
 
 ## Findings
 
-(filled below as they are confirmed)
+Severity scale of the brief. No HIGH and no MEDIUM finding was confirmed in scope. FS-01, FS-02 and FS-05 carry
+an "evidence pending" mark until the queued frontend run completes; they are stated now so that they are not lost.
+
+### FS-03 LOW (quantifies a documented residual): behind the documented same-origin gateway the sign-in quota has one per-remote bucket
+
+* `internal/platform/signin/signin.go:71` keys the admission quota on `net.SplitHostPort(r.RemoteAddr)` and
+  `internal/platform/cache/login.go:24` refuses at `p>=20` (per remote) or `g>=120` (global) within a 60 s window.
+  `docs/operations/R5_IDENTITY_DEPLOYMENT_RUNBOOK.md:52-58` puts every browser behind one gateway address, so the API
+  sees one remote for all users. The runbook (lines 71-74) says the quotas "do not certify a production abuse envelope"
+  but not that sign-in capacity is 20 starts per minute for the whole deployment, nor that any anonymous caller
+  (forged `Origin` header, no cookie, no token) can spend it.
+* Repro (executed, `zz_review_attack_test.go` `TestZZQuotaKey`, not committed): 4 starts from one TCP peer with four
+  different `X-Forwarded-For` values reach the store with 1 distinct per-remote key; an anonymous client with only
+  `Origin` and `Content-Type: application/json` receives 200 and takes a slot. The Redis script itself was not
+  executed (NOT RUN, no database stack); the limit is read from the quoted line.
+* The SPA reduces every start failure, including `429` with `Retry-After: 60`, to "Sign-in could not start"
+  (`apps/web/src/auth/SignIn.tsx:19-20`), so users get no wait guidance and retry.
+* Fix: document the single-bucket consequence, or key the per-remote bucket on a client address asserted by a
+  gateway that the API trusts only from a configured proxy address; show a busy state in the SPA.
+
+### FS-04 LOW: `vite.config.ts` loads the whole repository `.env` into the web process
+
+* `apps/web/vite.config.ts:10` is `{ ...loadEnv(mode, root, ''), ...process.env }` with `envDir: root`. ADR039
+  (`docs/adr/039-m9r-oidc-browser-sign-in.md:37-39`, "Runtime child filtering excludes this credential from workers,
+  dispatchers and the web process") and `scripts/runtime-env.mjs:26` (web child receives only `VITE_API_BASE_URL`
+  and `APP_ENV` besides the shared list; tested in `scripts/runtime-env.test.mjs:10`) isolate the web process, but
+  the config re-reads every variable of the root `.env` (database, operator, event and sign-in Redis credentials,
+  see the names in `.env.example`) into the dev-server process. Only `HTTP_ADDR` is used.
+* Repro (executed, synthetic values): a temporary `.env` holding `MIGRATION_DATABASE_URL=synthetic-<hex>` and
+  `SIGNIN_PASSWORD=synthetic-<hex>`; `loadEnv('development', dir, '')` returns both, while
+  `loadEnv('development', dir, ['HTTP_ADDR','VITE_'])` returns neither (`HTTP_ADDR` and `VITE_API_BASE_URL` still load).
+* Impact: no leak today (the object is local to the config function and Vite exposes only `VITE_*` to the client);
+  it contradicts the isolation the ADR states and puts the values in the memory of the process that runs third-party
+  dev tooling. Development only.
+* Fix: `loadEnv(mode, root, ['HTTP_ADDR', 'VITE_'])`.
+
+(FS-01, FS-02 and FS-05 follow once their evidence is in.)
 
 ## Attacks that held
 
