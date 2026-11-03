@@ -62,11 +62,13 @@ var redactRules = []redactRule{
 	{"card", regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`), cardNumber},
 }
 
-// assignment finds "name = value" pairs with a secret-like name, also behind other words of a variable name (DB_PASSWORD,
-// STRIPE_SECRET_KEY). The "=" form is redacted for any value of four or more characters; the ":" form (ordinary prose such as
-// "Password: required") only when the value looks like a credential; "name is value" (the admin password is ...) only when the
-// value has a digit or a symbol and so is not a word like "required".
-var assignment = regexp.MustCompile(`(?i)\b(?:[a-z0-9]+[_-])*(api[_-]?key|apikey|secret(?:[_-]?(?:access[_-]?)?key)?|client[_-]?secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|token|password|passwd|pwd|passphrase|private[_-]?key|account[_-]?key|(?:shared[_-]?)?access[_-]?key|credentials?)\b(\s*[:=]\s*|\s+(?:is|was|are)\s+)("[^"\n]{1,200}"|'[^'\n]{1,200}'|[^\s,;&"']{1,200})`)
+// assignment finds "name = value" pairs with a secret-like name, also at the end of a longer variable name (DB_PASSWORD, PGPASSWORD,
+// dbPassword, STRIPE_SECRET_KEY, SECRET_KEY_BASE) and also when the name is quoted or subscripted ("password": "...",
+// os.environ["DB_PASSWORD"] = "...", define('DB_PASSWORD', '...')). The "=" form is redacted for any value of four or more
+// characters; the ":" form (ordinary prose such as "Password: required") only when the value looks like a credential; "name is
+// value" (the admin password is ...) and "name', 'value" (a call that passes the name and the value) only when the value has a digit or a
+// symbol and so is not a word like "required" (independent red team RT-01, RT-02).
+var assignment = regexp.MustCompile(`(?i)\b[a-z0-9_-]*(api[_-]?key|apikey|secret(?:[_-]?(?:access[_-]?)?key)?(?:[_-]base)?|client[_-]?secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|token|password|passwd|pwd|passphrase|private[_-]?key|account[_-]?key|(?:shared[_-]?)?access[_-]?key|credentials?)\b(["'\x60\]]*\s*[:=]\s*|["']\s*,\s*|\s+(?:is|was|are)\s+)("[^"\n]{1,200}"|'[^'\n]{1,200}'|[^\s,;&"']{1,200})`)
 
 var (
 	longHex    = regexp.MustCompile(`\b[0-9A-Fa-f]{32,}\b`)

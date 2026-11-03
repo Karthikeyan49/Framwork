@@ -349,3 +349,48 @@ func TestRedactionSettlesToAFixedPoint(t *testing.T) {
 		t.Fatalf("%d replacements, %q", n, out)
 	}
 }
+
+// Independent red team RT-01 and RT-02: a name and a value pasted in a form other than NAME=value. A quoted key (a JSON or Python
+// dictionary, a subscript, a call that passes the name and the value) and a name glued to another word (PGPASSWORD, dbPassword,
+// SECRET_KEY_BASE) were not names for the assignment rule, so a credential of fewer than 40 characters and no known prefix reached the
+// provider whole. The secrets are drawn at run time.
+func TestRedactionOfQuotedKeysAndCompoundNames(t *testing.T) {
+	short, long := alnum("rt/short", 12), alnum("rt/long", 32)
+	for _, c := range []struct{ name, text, secret string }{
+		{"json password", `{"user":"bob","password": "` + short + `"}`, short},
+		{"json client_secret", `{"client_secret":"` + long + `"}`, long},
+		{"json camelCase apiKey", `{"apiKey": "` + long + `"}`, long},
+		{"json token", `{"token":"` + long + `"}`, long},
+		{"python dictionary", `{'password': '` + short + `'}`, short},
+		{"os.environ subscript", `os.environ["DB_PASSWORD"] = "` + short + `"`, short},
+		{"config subscript", `config['password'] = '` + short + `'`, short},
+		{"toml", `"password" = "` + short + `"`, short},
+		{"php define", `define('DB_PASSWORD', '` + short + `');`, short},
+		{"java properties", `props.setProperty("password", "` + short + `");`, short},
+		{"PGPASSWORD before a command", `PGPASSWORD=` + short + ` psql -h db -U app -d prod`, short},
+		{"dbPassword", `dbPassword=` + short, short},
+		{"apiSecret", `apiSecret=` + long, long},
+		{"jwtSecret with a colon", `jwtSecret: ` + long, long},
+		{"helm --set", `--set auth.postgresPassword=` + short, short},
+		{"yaml adminPassword", "admin:\n  adminPassword: " + short + "\n", short},
+		{"SECRET_KEY_BASE", `SECRET_KEY_BASE=` + long, long},
+	} {
+		out, n := redactText(c.text)
+		if n == 0 || strings.Contains(out, c.secret) {
+			t.Errorf("%s: the value survives (%d replaced): %s", c.name, n, strings.ReplaceAll(out, c.secret, "<SECRET>"))
+		}
+		if again, _ := redactText(out); again != out {
+			t.Errorf("%s: not a fixed point", c.name)
+		}
+	}
+	// Text that mentions the names without handing over a value stays as written, before and after the change.
+	for _, keep := range []string{
+		`MAX_TOKENS=4096`, `{"password": "required"}`, `{"password_policy": {"min": 12}}`, `["password", "username", "email"]`,
+		`Password: required`, `token_limit=5000`, `access_token_ttl=3600`, `passwordless=true`, `tokenizer=bpe`, `the password must have 12 characters`,
+		`"secret_santa": "enabled"`, `{"keyboard": "us", "monkey": "banana"}`,
+	} {
+		if out, n := redactText(keep); out != keep || n != 0 {
+			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+}
