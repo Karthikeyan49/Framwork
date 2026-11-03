@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
@@ -25,6 +26,9 @@ type Providers struct {
 }
 
 func Start(ctx context.Context, service, environment, endpoint string, logger *slog.Logger) (*Providers, error) {
+	// The OpenTelemetry libraries log on their own, to standard error, and the exporters hand that logger the raw value of a malformed
+	// OTEL_EXPORTER_OTLP_* variable when they are made (TF-08): the logger is replaced before the first exporter exists.
+	otel.SetLogger(logr.New(&otelLogSink{logger: logger}))
 	res := resource.NewSchemaless(semconv.ServiceName(service), semconv.DeploymentEnvironmentName(environment))
 	traces := []trace.TracerProviderOption{trace.WithResource(res), trace.WithSampler(trace.ParentBased(trace.TraceIDRatioBased(0.1)))}
 	metrics := []metric.Option{metric.WithResource(res)}
