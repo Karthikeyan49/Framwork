@@ -29,12 +29,12 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
 | 1d | Target 1 - M13 handlers (holdingApprovers end to end; authority helpers, unit; internal/platform/access/promote.go) | 0 | 8 | 1 | 0% (0/8) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 23 | 4 | 65% (42/65) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 24 | 4 | 64% (42/66) |
 | 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
 | 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 4 | 25 | 0 | 14% (4/29) |
 | 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
 | 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
-| all | all targets reached | 170 | 126 | 16 | 57% (170/296) |
+| all | all targets reached | 170 | 127 | 16 | 57% (170/297) |
 
 Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, AC32.
 
@@ -93,7 +93,7 @@ func TestActivationHoldsTheApproversMemberships(t *testing.T) {
 ### MA-02 (MEDIUM) - nothing tests that the recorded runtime components carry the live versions (12 surviving mutants)
 
 `promotion.runtimeComponents` (`internal/promotion/dependencies.go:130-136`) builds the document whose hash makes older candidates stale (RUNTIME_CHANGED, ADR102). Mutants R01, R02, R04 to R13 replace the version of one component by the empty string (the version constant stays referenced, `[:0]`): StorageContract, Evolution, the tool DSL version, RuleDSL, ToolCatalog, Diff, RiskPolicies, **Verifier** (`verification.VerifierVersion`, line 134), AcceptanceVocab, RequirementPolicy, RequirementSetSpec, AcceptanceSpec. All of them pass the whole `internal/promotion` package: `TestRuntimeComponentsHashCoversEveryComponent` (`staleness_test.go:152-170`) edits the document AFTER `runtimeComponents` built it, so it cannot see a constructor that stopped reading a version; only `SupportedIR` (R03) is caught. What is unprotected: bumping `VerifierVersion` (or any of the twelve versions) would no longer make a candidate verified by the older procedure stale, and the candidate would be activated on evidence from a verifier the binary no longer runs.
-Killing test, verified (passes on the original; fails on all 13 mutants R01 to R13, run in an untracked copy of the tree, `kill_results.tsv`: every `K-R*` row KILLED by this test):
+Killing test, verified (passes on the original; fails on all 13 mutants R01 to R13, run in a scratch copy of the tree: see the section "Killing tests, run on the original and on the mutants"):
 
 ```go
 package promotion
@@ -217,7 +217,7 @@ func TestRefillNeverExceedsTheBurst(t *testing.T) {
 
 ### MA-06 (LOW, unit-only) - the built-in role matrix does not pin roles.write/assign, commands.reconcile and workflows.reconcile/recover (mutants U027, U028, U031)
 
-`permits` (`internal/policy/policy.go:62-171`): making viewers hold `commands.reconcile` (U027, line 105), members hold `workflows.reconcile` (U028, line 114) or admins hold `roles.write` and `roles.assign` (U031, line 75) leaves every test of `internal/policy` green: `TestPolicyMatrix` (`policy_test.go:12-56`) names none of these actions. The integration suite (role administration, workflow tests) is expected to see them; that was NOT RUN. Killing test, verified (passes on the original; fails on U027, U028 and U031, `kill_results.tsv`):
+`permits` (`internal/policy/policy.go:62-171`): making viewers hold `commands.reconcile` (U027, line 105), members hold `workflows.reconcile` (U028, line 114) or admins hold `roles.write` and `roles.assign` (U031, line 75) leaves every test of `internal/policy` green: `TestPolicyMatrix` (`policy_test.go:12-56`) names none of these actions. The integration suite (role administration, workflow tests) is expected to see them; that was NOT RUN. Killing test, verified (passes on the original; fails on U027, U028 and U031, see the section "Killing tests, run on the original and on the mutants"):
 
 ```go
 package policy
@@ -253,7 +253,7 @@ func TestBuiltInRolesAndTheLessCommonActions(t *testing.T) {
 
 ### MA-07 (LOW, unit gaps with verified killing tests) - helpers and bounds that no unit test pins
 
-Each of these mutants passes every unit test of its package; each killing test below passes on the original and fails on the mutants named (`kill_results.tsv`).
+Each of these mutants passes every unit test of its package; each killing test below passes on the original and fails on the mutants named (see the section "Killing tests, run on the original and on the mutants").
 - `promotion.WorseRollbackClass` / `rollbackRank` (`decisions.go:410-430`, mutants D20, D21) and the bounds `MaxNoteRunes` (`decisions.go:92`, D23: the SQL bound is `char_length <= 280`) and `MaxRollbackSpan` (D22): the worst class of a rollback span decides whether an acknowledged plan is required (M13R-02); only the integration test `TestM13R02*` can see the ranking (NOT RUN against D20/D21).
 - `ai.estimateTokens` (`repair.go:53`, A20): rounding down under-charges every call by up to 3 bytes' worth of tokens; every test uses multiples of four bytes.
 - `access.BodyHold.Add` (`bodybudget.go:71`, F02: the total reached exactly) and `DefaultBodyBudgetPerUser` (`bodybudget.go:33`, F11: a default share below the 1 MiB body the front door admits would refuse honest uploads).
@@ -457,6 +457,28 @@ func TestEffectiveLimitsNeverRaiseACeiling(t *testing.T) {
 	}
 }
 ```
+
+## Killing tests, run on the original and on the mutants
+
+Every killing test was written as a temporary `zz_review_*_test.go` in a scratch copy of the tree (never in the audited worktree), run on the original code (passed, "ok") and then against each mutant it targets. The test names below carry the temporary prefix `TestZZReview`; the texts in Findings drop it. MA-01 is an integration test (its runs are the logs named there); all others are unit tests.
+
+| failing test on the mutant | package | passes on the original | mutants it kills |
+|---|---|---|---|
+| TestZZReviewRuntimeComponentsRecordTheLiveVersions | `./internal/promotion` | yes | R01, R02, R03, R04, R05, R06, R07, R08, R09, R10, R11, R12, R13 |
+| TestZZReviewGateWithFewerRolesThanRequiredFails | `./internal/verification` | yes | V23 |
+| TestZZReviewRefillNeverExceedsTheBurst | `./internal/platform/traffic` | yes | TR06 |
+| TestZZReviewNoCallWithoutTheOutputReservation | `./internal/ai` | yes | A12 |
+| TestZZReviewBuiltInRolesAndTheLessCommonActions | `./internal/policy` | yes | U027, U028, U031 |
+| TestZZReviewWorseRollbackClassAndTheBoundsThatMirrorTheDatabase | `./internal/promotion` | yes | D20, D21, D22, D23 |
+| TestZZReviewEstimateTokensRoundsUp | `./internal/ai` | yes | A20 |
+| TestZZReviewBodyBudgetReachesItsTotalExactlyAndTheDefaultShareFitsAMegabyte | `./internal/platform/access` | yes | F02, F11 |
+| TestZZReviewAddressGuardRefusesDeniedAddressesOtherPortsAndGarbage | `./internal/tools` | yes | N14, N15 |
+| TestZZReviewAuthorityQuorumExcludedRolesBarredActorsAndEligibleApprovers | `./internal/platform/access` | yes | AU01, AU02, AU04, AU05, AU06, AU07, AU09, AU08 |
+| (no failing test) | `./internal/platform/access` | yes | AU03 (survived), AU08 (survived) |
+| TestZZReviewCleanTextRefusesEveryInvisibleOrReorderingCharacter | `./internal/ai` | yes | SC02, SC03, SC04, SC05, SC06 |
+| TestZZReviewEffectiveLimitsNeverRaiseACeiling | `./internal/ai` | yes | SV01, SV02, SV03, SV04 |
+
+AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of the test (no exact duplicate approver) and is killed by the final one (`K2-AU08`).
 
 ## Equivalent mutants
 
@@ -798,3 +820,4 @@ func TestEffectiveLimitsNeverRaiseACeiling(t *testing.T) {
 | SV03 | internal/ai/service.go:69 | Effective: in-flight ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
 | SV04 | internal/ai/service.go:75 | Effective: daily token ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
 | SV05 | internal/ai/service.go:231 | reserveFor: the output is not reserved | go test ./internal/ai -run 'Limits\|Effective\|Service\|Reserve\|Config' ; widened: ./internal/ai | SURVIVED |  |
+| SV06 | internal/ai/service.go:232 | reserveFor: one attempt reserved for several | go test ./internal/ai -run 'Limits\|Effective\|Service\|Reserve\|Config' ; widened: ./internal/ai | SURVIVED |  |
