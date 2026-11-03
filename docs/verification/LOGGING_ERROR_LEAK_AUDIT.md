@@ -187,3 +187,50 @@ with: a `pgconn.PgError` whose message, detail, hint, schema, table, column, con
 
 Observation (not a leak): a 503 caused by a database or audit failure leaves no log line beyond the access line, so an operator cannot tell the causes apart
 from the log alone; the closed-vocabulary error class that would help is absent. The price of that silence is zero leakage.
+
+## Consolidated canary matrix (planted where -> looked for where -> found?)
+
+Canaries are generated at run time (prefix plus 10 random bytes in hex, or `ghp_`-style shapes from the system random source); none is in a file.
+"found" means found outside the place the contract allows. Sinks: R = response body and headers, L = slog output, S = span names, attributes, events,
+status and trace state, M = metric data point attributes, A = audit row, P = provider-bound request, O = program output (stdout and stderr).
+
+| planted in | R | L | S | M | A | P / O |
+|---|---|---|---|---|---|---|
+| request path segment, query string, `User-Agent`, `Referer`, `Cookie`, `Authorization`, `X-Forwarded-For`, client `X-Request-ID`, `Host`, `Origin`, body, `Baggage`, custom header (front door, 9 requests) | no | no | no | no | not run (see Real-stack probe) | - |
+| `Tracestate` header | no | no | YES (LE-01, by design of W3C propagation, unbounded by the code) | no | - | - |
+| panic value of a handler (front door, recovered by `recoverer`) | no | no | no | no | - | - |
+| panic value of the policy engine or the audit writer (under `postgres.transaction`) | no | no | YES (LE-03) | no | - | - |
+| driver error text, all `PgError` fields, plain error with host and password (224 injections over 3 routes) | no | no | no | no | - | - |
+| bearer secret, tool arguments, provider error body, headers and cookie (tool gateway, 12 executions) | no | - | no | - | - | - |
+| authorization code, state, issuer, cookie, provider error description, provider tokens (sign-in, 13 requests) | no | no | - | - | - | - |
+| passwords in `DATABASE_URL`, `REDIS_URL`, `EVENT_REDIS_URL`, `SIGNIN_REDIS_URL`, `MIGRATION_DATABASE_URL`, `AUTH_ISSUER`; canary values for 12 other variables; operator flags (38 starts) | no | no (but the go-redis line of LE-02) | - | - | - | no (one echo of an operator's own numeric flag) |
+| role text in a rejected role assignment (body) | no | no | - | - | YES (LE-04) | - |
+| dataset path text in a rejected evolution read | no | no | - | - | YES (LE-04) | - |
+| `OTEL_EXPORTER_OTLP_HEADERS` value with an unreachable collector | - | no | - | - | - | no |
+
+## Mutation check of the probes
+
+A probe that cannot fail proves nothing. With `internal/platform/access/access.go:423` temporarily changed to append `err.Error()` to the 503 message, the
+failing-executor probe failed with `response ... contains a canary`, `contains marker "db.internal"` and `contains marker "password="` (executed, then reverted with
+`git checkout -- internal/platform/access/access.go`). The span probes found the two real exceptions (tracestate, exception events) and the audit probes found the
+two stored texts, so each of the span and audit sinks has a positive control; the slog sink has one in the CLI case (`event-replay` echo) and the mutation above.
+
+## Observations (not findings)
+
+- `GET /readyz` is public and lists twelve dependency names with `ok` or `unavailable` (`postgres`, `redis`, `workflows`, `signin`, `policy`, `events`, `identity`,
+  `tenant`, `audit`, `data`, `metadata`, `ai`); text of the failure is never included (`httpserver.go:53-95`, executed: `{"status":"not_ready","dependencies":{...}}`).
+  Unconfigured `signin` and `ai` report `ok`, so the list does not reveal configuration.
+- An anonymous caller can tell a development or test deployment from production by `POST` with a body to a preview or AI route: `401 unauthenticated` when preview
+  is enabled, `413 body_not_allowed` when it is not (`AcceptsPOST` allowlist, executed with `PreviewEnabled` true and false). It reveals the mode and which route
+  groups are registered, not a tenant, user or record.
+- Server spans carry `network.peer.address`, `network.peer.port` and `client.address` (the TCP peer; behind a proxy that is the proxy). Not secrets; not in the
+  list of excluded attributes in the comment at `httpserver.go:103-105`.
+- Tenant resolution answers `403 forbidden "Access is denied"` for a random UUID, a UUID of an existing tenant the caller does not belong to, and a malformed
+  identifier alike (`tenant/tenant.go:80-101`: `ValidID` failure, no row and scope mismatch all return `ErrDenied`); verified by code reading, executed in the
+  real-stack probe only if that section says so.
+- The access log line carries the `trace_id` of the caller's `traceparent` when one is sent (32 hex characters, validated by the parser): a caller can choose the
+  value of that field, but only from the hex alphabet.
+- `validRequestText` (`ai/service.go`) states that an AI request text is never stored, only its hash; the existing M14 test
+  `TestM14APIAuditCoversEveryOutcomeAndLeaksNoText` (`tests/integration/m14_api_audit_test.go:18`) scans audit rows and AI tables for a request canary. I read it and did
+  not re-run it.
+- The redactor (`internal/ai/redact.go`) is a documented mechanical filter (ADR104 residuals); its coverage was not part of this audit.
