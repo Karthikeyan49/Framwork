@@ -54,6 +54,33 @@ func TestHealthAndReadiness(t *testing.T) {
 		})
 	}
 }
+
+// RB-01 (independent robustness audit): the probes run in goroutines of their own and had no recover, so one panic inside a driver or a
+// client ended the process, and /readyz is anonymous. A panic fails that probe only, and its value is never logged or answered.
+func TestReadinessProbePanicFailsOnlyThatProbe(t *testing.T) {
+	var logs strings.Builder
+	opts := options()
+	opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	opts.ProbeTimeout = time.Second
+	opts.Probes["redis"] = func(context.Context) error { panic("canary-from-a-driver") }
+	w := httptest.NewRecorder()
+	Handler(opts).ServeHTTP(w, httptest.NewRequest("GET", "/readyz", nil))
+	if w.Code != 503 {
+		t.Fatalf("status %d, want 503: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Dependencies["redis"] != "unavailable" || body.Dependencies["postgres"] != "ok" {
+		t.Fatalf("one probe must fail and the other keep its answer: %v %s", err, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "canary") || strings.Contains(logs.String(), "canary") {
+		t.Fatalf("the panic value was answered or logged:\n%s\n%s", w.Body.String(), logs.String())
+	}
+	if !strings.Contains(logs.String(), "readiness probe panicked") {
+		t.Fatalf("the panic left no trace for the operator: %s", logs.String())
+	}
+}
 func TestReadinessDeadline(t *testing.T) {
 	opts := options()
 	opts.Probes["redis"] = func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -63,7 +64,17 @@ func Handler(opts Options) http.Handler {
 		}
 		results := make(chan result, len(opts.Probes))
 		for name, probe := range opts.Probes {
-			go func() { results <- result{name, probe(ctx)} }()
+			go func() {
+				// A probe is code of a driver or a client. A panic in it fails that probe: in a goroutine of its own it would end the
+				// whole process, and /readyz is public (independent robustness audit RB-01). The panic value is never logged.
+				defer func() {
+					if recover() != nil {
+						opts.Logger.Error("readiness probe panicked", "probe", name)
+						results <- result{name, errors.New("probe panicked")}
+					}
+				}()
+				results <- result{name, probe(ctx)}
+			}()
 		}
 		for range len(opts.Probes) {
 			select {
