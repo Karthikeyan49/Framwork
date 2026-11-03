@@ -29,12 +29,12 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
 | 1d | Target 1 - M13 handlers (holdingApprovers end to end; authority helpers, unit; internal/platform/access/promote.go) | 0 | 8 | 1 | 0% (0/8) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 27 | 4 | 61% (42/69) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 43 | 29 | 4 | 60% (43/72) |
 | 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
 | 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 4 | 25 | 0 | 14% (4/29) |
 | 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
 | 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
-| all | all targets reached | 170 | 130 | 16 | 57% (170/300) |
+| all | all targets reached | 171 | 132 | 16 | 56% (171/303) |
 
 Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, AC32.
 
@@ -517,6 +517,49 @@ func TestRequestTextRefusesInvisibleAndControlCharactersAndBlank(t *testing.T) {
 }
 ```
 
+### MA-14 (LOW, unit-only) - `compileVersion`, the gate of every stored role head, is not unit tested (mutants U033, U034)
+
+`internal/policy/store.go:131-143` decides whether a stored head grants anything: the body must hash to the stored hash, the head must be active, and a bootstrap version must be one of the four built-in names with no grants. Both `RoleStore.Load` (the request path) and `RoleStore.Holds` (the recount of approvers, M13R-03) go through it. Accepting an inactive head (U033) or a bootstrap version that carries grants (U034) passes the whole `internal/policy` package; the integration suite (role administration) is expected to see an inactive head, that was NOT RUN. Killing test, verified (passes on the original; fails on U033 and U034):
+
+```go
+package policy
+
+import "testing"
+
+func TestCompileVersionRefusesInactiveHeadsAndForgedBootstrapVersions(t *testing.T) {
+	grants := `"grants":[{"effect":"ALLOW","actions":["releases.approve"],"resource":{"app_id":"*","entity_id":"*","field_id":"*"}}]`
+	version := func(name, body string, active, bootstrap bool) RoleVersion {
+		d, err := CompileDefinition([]byte(body), "")
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		return RoleVersion{Name: name, Version: 1, Hash: d.Hash(), Active: active, Bootstrap: bootstrap, Definition: []byte(body)}
+	}
+	custom := `{"schema_version":"tenant-capabilities-v1","name":"release_approver",` + grants + `}`
+	if _, err := compileVersion(version("release_approver", custom, true, false)); err != nil {
+		t.Fatal("an active custom role was refused:", err)
+	}
+	if _, err := compileVersion(version("release_approver", custom, false, false)); err == nil {
+		t.Fatal("an inactive head compiled")
+	}
+	if _, err := compileVersion(version("release_approver", custom, true, true)); err == nil {
+		t.Fatal("a custom name was accepted as a bootstrap version")
+	}
+	bootstrap := `{"schema_version":"tenant-capabilities-v1","name":"admin","grants":[]}`
+	if d, err := compileVersion(version("admin", bootstrap, true, true)); err != nil || !d.legacy {
+		t.Fatalf("the bootstrap admin: %v legacy=%v", err, d.legacy)
+	}
+	if _, err := compileVersion(version("admin", `{"schema_version":"tenant-capabilities-v1","name":"admin",`+grants+`}`, true, true)); err == nil {
+		t.Fatal("a bootstrap version with grants compiled")
+	}
+	forged := version("admin", bootstrap, true, true)
+	forged.Hash = version("release_approver", custom, true, false).Hash
+	if _, err := compileVersion(forged); err == nil {
+		t.Fatal("a body that does not hash to the stored hash compiled")
+	}
+}
+```
+
 ## Killing tests, run on the original and on the mutants
 
 Every killing test was written as a temporary `zz_review_*_test.go` in a scratch copy of the tree (never in the audited worktree), run on the original code (passed, "ok") and then against each mutant it targets. The test names below carry the temporary prefix `TestZZReview`; the texts in Findings drop it. MA-01 is an integration test (its runs are the logs named there); all others are unit tests.
@@ -539,6 +582,7 @@ Every killing test was written as a temporary `zz_review_*_test.go` in a scratch
 | TestZZReviewReserveCoversEveryAttemptAndItsOutput | `./internal/ai` | yes | SV05, SV06 |
 | (no failing test) | `./internal/ai` | yes | SV07 (survived), SV08 (survived), SV09 (survived), SV10 (survived) |
 | TestZZReviewRequestTextRefusesInvisibleAndControlCharactersAndBlank | `./internal/ai` | yes | SV07, SV08, SV09, SV10 |
+| TestZZReviewCompileVersionRefusesInactiveHeadsAndForgedBootstrapVersions | `./internal/policy` | yes | U033, U034 |
 
 AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of the test (no exact duplicate approver) and is killed by the final one (`K2-AU08`).
 
@@ -598,8 +642,8 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | U030 | internal/policy/policy.go:160 | permits: members write metadata | go test ./internal/policy (whole package) | KILLED | TestPolicyMatrix |
 | U031 | internal/policy/policy.go:75 | permits: admins write and assign roles | go test ./internal/policy (whole package) | SURVIVED | MA-06 (unit); integration NOT RUN |
 | U032 | internal/policy/policy.go:165 | permits: profile.read of another user | go test ./internal/policy (whole package) | KILLED | TestPolicyMatrix |
-| U033 | internal/policy/store.go:133 | compileVersion: an inactive role head still compiles | go test ./internal/policy (whole package) | SURVIVED |  |
-| U034 | internal/policy/store.go:137 | compileVersion: a bootstrap version may carry grants | go test ./internal/policy (whole package) | SURVIVED |  |
+| U033 | internal/policy/store.go:133 | compileVersion: an inactive role head still compiles | go test ./internal/policy (whole package) | SURVIVED | MA-14 (unit-only; the integration suite is expected to see an inactive head, NOT RUN) |
+| U034 | internal/policy/store.go:137 | compileVersion: a bootstrap version may carry grants | go test ./internal/policy (whole package) | SURVIVED | MA-14 (unit-only) |
 | U035 | internal/policy/store.go:148 | RoleStore.Load: several roles use the first one | go test ./internal/policy (whole package) | SURVIVED |  |
 | U036 | internal/policy/store.go:172 | LoadWorker: worker actor binding not compared | go test ./internal/policy (whole package) | SURVIVED |  |
 | D01 | internal/promotion/decisions.go:472 | RequiredApprovals: an unknown level fails open to quorum 1 | go test ./internal/promotion (whole package) | KILLED | TestDatabaseFloorsMirrorAndNeverExceedThePolicy |
@@ -886,3 +930,6 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | SV07 | internal/ai/service.go:170 | validRequestText: bidi isolates accepted | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
 | SV08 | internal/ai/service.go:168 | validRequestText: control characters accepted | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
 | SV09 | internal/ai/service.go:163 | validRequestText: bound off by one | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
+| SV10 | internal/ai/service.go:157 | validRequestText: blank requests accepted | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
+| SV11 | internal/ai/service.go:363 | apiLabel: bound off by one | go test ./internal/ai -run 'Label' | KILLED | TestAPILabelKeepsLabelsReadableAndIsIdempotent |
+| SV12 | internal/ai/service.go:396 | attemptRecord: unknown outcome stored verbatim | go test ./internal/ai -run 'Attempt\|Outcome\|Service\|Record' ; widened: ./internal/ai | SURVIVED |  |
