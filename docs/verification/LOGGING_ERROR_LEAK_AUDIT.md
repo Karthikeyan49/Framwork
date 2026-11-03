@@ -1,21 +1,44 @@
 # Logging, error and telemetry leak audit (final verification round)
 
-Pinned commit: 11a4ee40a12e0301472b275203ac10d8347eaad9 (code head 585499d). Branch: audit/logging-error-leaks.
+Pinned commit: 11a4ee40a12e0301472b275203ac10d8347eaad9 (code head 585499d). Branch: audit/logging-error-leaks. Auditor: independent, report-only.
 Scope: secret and internal-detail leakage through logs, errors, audit rows, traces and metrics in `cmd/` and `internal/`.
-Status of this file: work in progress (see Progress); findings so far are below.
+
+## Verdict
+
+PASS WITH FINDINGS for the executed scope: no HIGH. One MEDIUM (LE-02, a third-party raw driver error in the log stream), four LOW (LE-01, LE-03, LE-04, LE-05
+below). No credential, token, DSN, request body, SQL text, driver message, constraint or table name reached a response, a slog line, a span attribute, a metric
+label or a startup message in any executed attack (about 320 canary-bearing requests and 38 program starts; canaries listed per sink below). The stack-level probe on the
+shared m13 database (real handlers, real RLS, audit rows, cross-tenant existence oracle, AI request text) is reported in its own section: see "Real-stack probe".
 
 ## Progress
 
 - [x] Brief read; worktree on the pinned commit.
-- [x] Static inventory of log, print, panic, error and telemetry sites (summary in "Site inventory").
+- [x] Static inventory of log, print, panic, error and telemetry sites (next section).
+- [x] Static review of every place a Go error becomes a response (`httpserver`, `access`, `signin`, `identity`): all refusals are fixed text or closed codes.
 - [x] Front-door canary probe (executed, unit level): PASS except LE-01.
 - [x] Startup and CLI probes with the built binaries (38 cases): PASS except LE-02.
 - [x] Tool gateway and sign-in canary probes (executed, unit level): PASS.
-- [x] Failing executors at every statement of three routes of the real `access.API` over a fake `database/sql` driver (224 injected failures, 9 kinds,
-      plus policy panic, audit error, audit panic): PASS for responses and slog; LE-03 for spans.
-- [ ] HTTP error mapping and audit-row probe with the real stack (integration, m13 stack; queued behind other agents at the time of writing).
-- [ ] Audit-row vocabulary probe with canaries in paths and bodies (integration).
-- [ ] Final write-up.
+- [x] Failing executors at every statement of three routes of the real `access.API` over a fake `database/sql` driver (224 injected failures, 9 kinds, plus
+      policy panic, audit error, audit panic): PASS for responses and slog; LE-03 for spans.
+- [x] Audit state: two executed repros of client text stored before validation (LE-04).
+- [ ] Real-stack probe (integration, m13): see its section for the state at the time of the last commit.
+
+## Site inventory
+
+Non-test Go files in `cmd/` and `internal/`: 187. Counted with ripgrep on the pinned tree.
+
+| class | sites | where | data each can carry |
+|---|---|---|---|
+| `slog` calls | 22 | httpserver 3, platform/app 11 (app.go 9, ai.go 1, operator_env.go 1), observability 4, events 2, jobs 1, runtime/workflow 1 | fixed message plus: `request_id` (server-generated hex), `trace_id` (hex, may come from the caller's `traceparent`), method, status, duration, `rejected_requests` count, service, environment, bound listen address, AI kind / model label / config SHA-256, the NAMES of operator credentials found in the environment, tool count. No error value is ever passed to a logger, except `app.go:331` (`config.Load` errors, which name a variable and never its value) |
+| writes to stdout / stderr | 11 in `cmd/` | migrate (3), iam (2), worker-admin (2), event-replay (2), release-check (2) | fixed success lines; `fmt.Fprintln(os.Stderr, err)` of errors that are all fixed text (see "Startup" matrix); `migrate status` prints migration file paths from the embedded set |
+| `panic(` | 7 | risk/registry.go (2, init, text of a built-in validation error), ai/schema_text.go:260 (static structure), access/access.go:80 (fixed text), re-panics at runtime/data/aggregate.go:124, access/preview.go:111, postgres/transaction.go:94 | no request or record data |
+| `recover()` | 12 | httpserver (logs request id only), traffic, tools (3), ai (3), workflow, access/preview, postgres/transaction, runtime/data | the value is dropped everywhere except the re-panics |
+| `errors.New` / `fmt.Errorf` | 448 | ai 145, config 47, platform 43, runtime 23, compiler 20, risk 19, intent 18, audit 17, identity 16, metadata 12, promotion 11, tools 10, cmd 26 | internal only. Reaching a client: none by text, every refusal is a typed value mapped to a fixed message |
+| `.Error()` | 19 | cmd/migrate (3: version numbers by regexp), app.go:331, tools/secrets.go:21 (fixed reason), events/redis.go:77 (prefix test), risk/registry.go (init panics), ai (config 5, errors 2, service, store), promotion/decisions.go, metadata/validation.go | none logged or returned except app.go:331 |
+| HTTP refusals (`denied`, `aiDeny`, `aiRejection`, `httpserver.Error/JSON`) | 138 + 21 | platform/access, signin, httpserver | all literal messages and codes, two concatenations of a closed code (`releases.go:122` `violation.Code`, `promote.go:505` closed role name) |
+| span attribute calls | 62 on 27 source lines | access, runtime/data, runtime/workflow, events, tools, postgres, traffic | actor / tenant / decision / policy / dataset / workflow / event ids, hashes, compiler version, fixed labels, `tool_*` labels validated by `spanLabel`; `entity_id` only after the entity was found in the compiled program (`data/query.go:205`, `store.go:156`) |
+| metric instruments | 1 custom (`framework.api.admission.rejected`: labels `reason` from a closed list of 7, `policy` constant) + otelhttp's 3 histograms (method, status, protocol, constant `server.address`, scheme) + Go runtime metrics | traffic, httpserver, observability | none |
+| audit evidence sites (`audit.Entry{` and `.State.X =`) | 172 lines (175 matches) | platform/access 138 (15 files), runtime/workflow 30, events 2, cmd 2 (operator-typed reference) | ids, hashes, closed codes, counts; see LE-04 for the client text that gets through |
 
 ## Findings
 
@@ -67,13 +90,34 @@ Status of this file: work in progress (see Progress); findings so far are below.
   `postgres.transaction` each carry `exception.message = "policy engine panic <canary>"` and `exception.type`. The SDK adds no stack trace in this version
   (v1.47.0). The same for an audit writer that panics. No canary reached the response or the slog output.
 - Impact now: the panic texts that can reach this path in the current tree are runtime-error texts and the re-panics of `runtime/data/aggregate.go:121-124` and
-  `access/preview.go:109-111`; none of the six `panic(` sites carries request or record data. So the exposure is an unplanned channel, not an observed
+  `access/preview.go:109-111`; none of the seven `panic(` sites carries request or record data. So the exposure is an unplanned channel, not an observed
   secret. It becomes a leak the day a panic value carries data. The export is gated by sampling, which an anonymous caller can force (LE-01).
 - Suggested direction (not applied): end these spans through a helper that recovers, records a fixed event and re-panics, or use
   `trace.WithAttributes`-free span options; add a regression test that panics with a canary and scans the exported spans.
 - Related, already documented (AGENTS.md "Injected driver/tracer panic is an unresolved R7 recovery limitation"): a panic raised inside a `database/sql` call
-  leaves `Conn.Close` blocked on the leaked read lock. Observed here as well: the first run of the fake-driver probe with a driver-level panic did not finish in
-  6 minutes (killed); the handler goroutine and its admission slot are lost. Not reported as new.
+  leaves the deferred `tx.Rollback()` (`transaction.go:132`) blocked on `database/sql.(*closingMutex).Lock`. Observed here as well (goroutine dump of a 15 s
+  run: `database/sql.(*Tx).rollback` waiting in `closemu.go:79`); the handler goroutine and its admission slot are lost. Not reported as new.
+
+### LE-04 (LOW) Client text is copied into audit state before it is validated; only its length is bounded
+
+- `internal/audit/audit.go:1` calls the package "bounded, secret-free security evidence" and the AI and promotion fields are closed codes, hashes and labels
+  (`validPromotionEvidence` `audit.go:195`, `validAIEvidence` `audit.go:216`). Most of the other string fields are bounded by length only (`encodeEntry`, `audit.go:143-192`), and
+  several are filled from the request before the object is looked up:
+  `state.role` <- body `role` of the role-assignment route (`access/roles.go:82`, before `store.Assign` validates the name, and kept on the rejection path);
+  `state.dataset_id` <- path (`access/evolutions.go:54`); `state.workflow_id` <- path (`access/workflows.go:291`, after a length test only);
+  `state.entity_id` and `state.field_id` <- path of the GET index routes and `entity_id` of the GET record-access route (`access/preview.go:154-155`, `:225-226`, `:232`;
+  `access/records.go:60`); `state.operator_ref` <- body of a workflow signal, charset-checked only for `recover` and `reconcile` (`runtime/workflow/signals.go:16-18` against `:188`).
+  POST routes are protected by the allowlist regexes of `AcceptsPOST` (identifier-shaped app, entity, rule and workflow segments); GET routes and body fields are not.
+- Repro (executed, no database; fake driver, real `access.API`): `POST /v1/tenants/{t}/members/{m}/role` with `{"role":"Not A Role <canary>","expected_role":"viewer"}`
+  answers `400 invalid_role` (fixed text) and appends the audit row `roles.assign.rejected` with `state = {"policy_subject":"...","role":"Not A Role <canary>"}`.
+  `GET /v1/tenants/{t}/preview/app.x/datasets/<canary>/evolutions/<uuid>` answers `400 invalid_evolution` and appends `datasets.evolve.rejected` with
+  `state = {"dataset_id":"<canary>","metadata_app":"app.x"}`. Not executed (needs the registry and the database): the `entity_id`, `field_id`, `workflow_id`
+  and `operator_ref` paths above, which are read from the code; the stack-level probe plants them (see "Real-stack probe").
+- Impact: audit rows are insert-only and no API route reads them, so the text reaches only whoever queries the table. A pasted secret in a `role` field of a
+  failed assignment, or in a GET path, is stored for good in an immutable table (up to 64 or 160 bytes). A value longer than the bound makes `Append` fail and the
+  request answers `503 service_unavailable` instead of the typed 4xx (an availability quirk of the same cause; no leak).
+- Suggested direction (not applied): copy a path or body value into the state only after the lookup succeeded, or store its SHA-256 for the rejected case; give
+  `Role`, `OperatorRef`, `EntityID`, `FieldID`, `WorkflowID` and `DatasetID` the identifier charset check that the AI labels already have.
 
 ## Canary matrix (front door, executed)
 
