@@ -5,10 +5,10 @@ Scope: secret and internal-detail leakage through logs, errors, audit rows, trac
 
 ## Verdict
 
-PASS WITH FINDINGS for the executed scope: no HIGH. One MEDIUM (LE-02, a third-party raw driver error in the log stream), four LOW (LE-01, LE-03, LE-04, LE-05
+PASS WITH FINDINGS for the executed scope: no HIGH. One MEDIUM (LE-02, a third-party raw driver error in the log stream), three LOW (LE-01, LE-03, LE-04
 below). No credential, token, DSN, request body, SQL text, driver message, constraint or table name reached a response, a slog line, a span attribute, a metric
-label or a startup message in any executed attack (about 320 canary-bearing requests and 38 program starts; canaries listed per sink below). The stack-level probe on the
-shared m13 database (real handlers, real RLS, audit rows, cross-tenant existence oracle, AI request text) is reported in its own section: see "Real-stack probe".
+label or a startup message in any executed attack (about 330 canary-bearing requests and 38 program starts; canaries listed per sink below). The stack-level probe on the
+shared m13 database (real RLS, cross-tenant existence oracles, AI request text through the real routes) did NOT run: see "Real-stack probe".
 
 ## Progress
 
@@ -18,10 +18,11 @@ shared m13 database (real handlers, real RLS, audit rows, cross-tenant existence
 - [x] Front-door canary probe (executed, unit level): PASS except LE-01.
 - [x] Startup and CLI probes with the built binaries (38 cases): PASS except LE-02.
 - [x] Tool gateway and sign-in canary probes (executed, unit level): PASS.
-- [x] Failing executors at every statement of three routes of the real `access.API` over a fake `database/sql` driver (224 injected failures, 9 kinds, plus
+- [x] Failing executors at every statement of three routes of the real `access.API` over a fake `database/sql` driver (224 injected failures, 8 kinds, plus
       policy panic, audit error, audit panic): PASS for responses and slog; LE-03 for spans.
-- [x] Audit state: two executed repros of client text stored before validation (LE-04).
-- [ ] Real-stack probe (integration, m13): see its section for the state at the time of the last commit.
+- [x] Audit state: executed repros of client text stored before validation for five fields (LE-04).
+- [x] Bodies of the data, metadata, release, role and team planes with canaries over the fake driver (16 requests): PASS.
+- [ ] Real-stack probe (integration, m13): NOT RUN (stack lock queue), see its section.
 
 ## Site inventory
 
@@ -238,3 +239,41 @@ two stored texts, so each of the span and audit sinks has a positive control; th
   `TestM14APIAuditCoversEveryOutcomeAndLeaksNoText` (`tests/integration/m14_api_audit_test.go:18`) scans audit rows and AI tables for a request canary. I read it and did
   not re-run it.
 - The redactor (`internal/ai/redact.go`) is a documented mechanical filter (ADR104 residuals); its coverage was not part of this audit.
+
+## Bodies of the other planes (executed over the fake driver, real `access.API`, real registry and compiler)
+
+16 requests as an owner with the stored contacts example as revision 1: data create with a canary value and an unknown field name, unknown operation, query with
+unknown projection, sort and filter fields, malformed JSON, duplicate keys, wrong content type; metadata append with an invalid document, YAML with an alias,
+malformed JSON; release candidate, acceptance spec and requirements with garbage; role publish with a garbage definition; team create with garbage; role contract with
+a canary query; metadata list with a canary cursor. Every request answered a fixed typed refusal (`invalid_query_or_command`, `invalid_metadata`,
+`invalid_release_request`, `invalid_role`, `invalid_team`, `invalid_cursor`). Ten canaries (value, unknown field, key, operation, sort, filter, document key,
+definition, note, spec) were looked for in the responses, the slog output, every span and the 17 audit rows these requests appended (closed action names such
+as `preview.write.rejected`, `metadata.write.rejected`, `roles.write.rejected`): none found anywhere.
+
+## Real-stack probe (m13 database stack)
+
+NOT RUN. Reason: the shared m13 stack lock and the global heavy lock were held by other agents' integration runs for the whole session (one run had waited more than
+30 minutes when I stopped); a queued `it-run` of my probe never reached its compile step and I cancelled it so that it would not start unattended later. What this leaves
+unchecked (everything else in this report was executed without a database): row-level-security behaviour behind the tenant, user and record existence answers
+(read from the code only: `tenant/tenant.go:80-101` returns `ErrDenied` alike for a malformed id, an unknown id and a foreign tenant; `member_not_found` and
+`not_found` are produced after the RLS-scoped lookup), the AI request-text shapes through the real creation route and the provider-bound request, and the audit rows
+of the 8 routes under real database failures.
+The probe is written and type-checked (`go vet -tags=integration ./tests/integration`); it is NOT in the commit. Copy of the temporary files:
+`/home/user/audit-leaks-probes/` (same relative paths). To run it: copy `tests/integration/zz_review_leaks_test.go` back into the tree and run
+`RESET=0 /home/user/bin/it-run m13 <worktree> <log> '^TestZZLeakMatrix$' -v -timeout 14m`; it prints `CANARY <name> found in: [...]`, the oracle comparisons and
+the distinct log lines, and finishes within 5 minutes (its failure-injection loop stops at 4 minutes). It deliberately has no driver-panic kind: a panic inside a
+`database/sql` call blocks the request forever (documented R7 limitation, observed in LE-03).
+
+## NOT RUN
+
+- The real-stack probe above.
+- A production-mode start (`APP_ENV=production`): needs HTTPS issuer, verified TLS URLs and a key set; only its configuration refusals were executed.
+- A live OTLP collector (only an unreachable one), a live identity provider (a fake one was used), a real AI provider (the HTTP adapter is covered by the builder's
+  own tests `provider_http_test.go`, which I ran: `TestHTTPProviderStatusMapping`, `...CredentialIsReadPerCallAndNeverRetained`, `...ConnectionFailureIsTransient`,
+  `...BehindTheGatewayMatchesTheScriptedProvider` all PASS).
+- Tool arguments through a workflow tool step with a catalog; only `tools.Gateway.Execute` was exercised (the step stores `outcome/class` in the audit state,
+  `runtime/workflow/tool_step.go:350`, closed values).
+- `cmd/migrate up|status` against a reachable database (forbidden: no `make migrate`, no other stack), so goose's own output was not observed.
+- Timing and size oracles.
+- The same go-redis log line for the events transport and the sign-in store (same library and default; executed only for the main Redis client through `/readyz`).
+- `operator_ref` in a workflow signal (read from the code).
