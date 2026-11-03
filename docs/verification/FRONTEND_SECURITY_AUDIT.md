@@ -22,7 +22,7 @@ was executed; what could not be executed is listed under "NOT RUN".
 | --- | --- |
 | Static review of every file in `apps/web/src`, `vite.config.ts`, `index.html`, lockfile, `signin.go`, `login.go`, `cache/login.go`, `httpserver.go`, config validation, ADR039/ADR061, runbook | done |
 | Server-side sign-in attack probe (real `signin.API` behind real `httpserver.Handler`, fake IdP with PKCE) and three mutation checks | done |
-| Frontend lint, typecheck, unit tests, production build, dev-server header capture, hostile-data jsdom probe, mutation check, `npm audit` | done (one `hv` job, 06:54:30 to 06:55:41, after a 19 minute wait for the lock) |
+| Frontend lint, typecheck, unit tests, production build, dev-server header capture, hostile-data jsdom probe, mutation check, `npm audit` | done (one `hv` job, 06:54:30 to 06:55:41, after an 18 minute wait for the lock) |
 | Second short `hv` job: probe detail lines, lint-guard probe in a component and in a plain module, `.env` fallback check, `npm audit` including dev dependencies | queued; results are added under "Second job" when it has run |
 
 ## Executed commands
@@ -174,8 +174,9 @@ store with atomic take, and a fake IdP that enforces S256 PKCE, the exact `redir
 | Cookie attributes | start in the dev profile with an https redirect and in the production profile | `__Host-framework_login=<43 chars>; Path=/; Max-Age=300; HttpOnly; Secure; SameSite=Lax`, no `Domain` |
 | Completion response | headers | `Cache-Control: no-store`, `Pragma: no-cache`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, JSON, no `Set-Cookie` |
 | Error and redirect pages that echo input | `//evil.example/x`, `/a/../b`, `/v1/auth//provider`, encoded and CRLF paths | mux cleaning answers 307 with a relative `Location` (`/evil.example/x`) and an HTML-escaped body; other paths get the static JSON 404. No open redirect, no header injection |
+| Redirect URI and endpoint configuration | `identity.ValidateProvider` matrix of 23 cases (`gt test -run TestZZValidateProviderMatrix`, probe not committed): trailing slash, query, fragment, userinfo, encoded path, double slash, backslash host, http in production, http non-loopback in development, `localhost.evil.example` and `127.0.0.1.evil.example` look-alikes, `javascript:` authorization endpoint, authorization query, userinfo in the token URL, `offline_access`, quote and space in a scope, no `openid`, CRLF in the client ID | all rejected as expected; the valid case and the two loopback development cases accepted. An operator cannot configure an open redirect or an unbound callback |
 | Return-to / open redirect | `grep -rniE "return_to\|returnTo\|redirect_to\|next=" cmd internal apps/web/src` outside tests | no such parameter exists; the SPA always navigates to the constant `/access` (`SignIn.tsx:39`) |
-| Business-route CSRF | `access.go:250-254` | business routes authenticate only `Authorization: Bearer`; cookies are read only by `login/complete`; SPA fetches use `credentials: 'omit'` except the two sign-in POSTs |
+| Business-route CSRF | `access.go:250-254` | business routes authenticate only `Authorization: Bearer`; cookies are read only by `login/complete`; SPA fetches use `credentials: 'omit'` except the two sign-in POSTs (`same-origin`) and `GET /readyz` |
 | Logout | design | client-side memory clearing only (`Session.tsx:34-37`); the signed token stays valid up to its one-hour lifetime and no IdP logout exists. The runbook and ADR039 state this; not a finding |
 
 ### Frontend source and build
@@ -211,6 +212,15 @@ is outside it; the second job adds the full audit.
 ## Second job
 
 Queued behind the heavy lock; this section is filled when it has run.
+
+## Observations (not findings)
+
+* `GET /readyz` is unauthenticated and lists the internal dependency names and their state; the Service status page
+  consumes it. Restrict it at the gateway if that is not wanted.
+* The binding cookie is `SameSite=Lax` (ADR039 chose it); it is only needed by a same-origin `fetch` POST, so `Strict`
+  would also work. Hardening only.
+* `APP_ENV` defaults to `development` (`internal/config/config.go:57`) and the runbook table requires `production`;
+  a deployment that forgets it gets `manual_token: true`, the preview routes and the looser transport rules at once.
 
 ## NOT RUN
 
