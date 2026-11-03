@@ -10,16 +10,17 @@ Report-only: no product file was changed. Probe files live in the session scratc
 
 | time (UTC) | state |
 |---|---|
-| 06:41 | static review of every in-scope file, history scan, Go/npm advisory matching done; IS-01..IS-10 written and pushed (`c342c59`) |
-| 06:55 | IS-11 (`.gitignore` coverage) and IS-12 (CI trigger) added after reading the live Actions runs; lockfile-injection check added |
-| pending | govulncheck (still queued behind the shared heavy-run lock), full `npm audit` incl. dev dependencies (slow through the proxy), final history re-scan |
+| 06:41 | static review of every in-scope file, history scan, Go/npm advisory matching done; IS-01..IS-10 pushed (`c342c59`) |
+| 06:45 | IS-11 (`.gitignore`) and IS-12 (CI trigger) added after reading the live Actions runs; lockfile-injection check; pushed (`ae5ae9f`) |
+| 06:56 | executed Redis ACL matrix (36 commands), linked-binary reachability of the x/net advisories, full `npm audit`, history re-scan; IS-02/IS-06 revised |
+| pending | `govulncheck` itself is still queued behind another agent's run of the shared heavy-run lock (started 06:36); NOT RUN unless it finishes before the final message |
 
 ## Verdict
 
 **PASS WITH FINDINGS** for the infrastructure scope. No HIGH finding. No secret, key, `.env` or credential-bearing DSN exists
 anywhere in the history of the refs of this clone (first scan: 88 refs, 455 non-merge commits, 206,578 added lines; re-scanned at the end, see row 14). The bootstrap download,
 the Action pins, the npm lockfile and the Go module sums all verify. One MEDIUM (the pinned Go toolchain is one security patch
-behind) and eleven LOW findings.
+behind) and eleven LOW findings. The refs scanned grew from 88 to 89 while I worked (other agents commit to the same repository).
 
 ## Findings
 
@@ -42,18 +43,22 @@ behind) and eleven LOW findings.
   `curl -s 'https://go.dev/dl/?mode=json&include=all'` (newest stable `go1.27.3`).
 - Fix direction: bump `go.mod`, `scripts/go.sh`, `scripts/bootstrap.sh` (URL and checksum from go.dev), re-run the gates.
 
-### IS-02 LOW - `golang.org/x/net v0.59.0` carries seven published advisories (fixed in 0.60.0 and 0.62.0); reachability not proven either way
+### IS-02 LOW - `golang.org/x/net v0.59.0` carries seven published advisories (fixed in 0.60.0 and 0.62.0); executed analysis says linked, not called
 
-- `go.mod:44`. Method: the 43 modules linked into `./cmd/...` (`go list -deps`) were matched against every
-  `vuln.go.dev` record of the 15 of them that appear in the index (75 records fetched, semver ranges evaluated). Only x/net matches:
-  `GO-2026-6603`, `6610`, `6611`, `6612`, `6617` (x/net/http2, fixed 0.60.0) and `GO-2026-6860`, `6866` (x/net/html, fixed 0.62.0).
-- `golang.org/x/net/http2`, `hpack`, `trace`, `idna` are linked into `api`, `worker`, `dispatcher` (not `migrate`) only through
-  `google.golang.org/grpc/internal/transport`; `x/net/html` is not linked. No repository package imports x/net directly
-  (`go.mod` lists it as indirect), and the API server uses the standard library's HTTP/2, which `1.27.2` already patched.
-  I therefore expect the five http2 advisories to be "linked, not called", but this is an inference: see the govulncheck row
-  under "Not run" for whether the symbol-level tool could be run.
-- Repro: `/home/user/bin/gt list -deps -f '{{with .Module}}{{.Path}}@{{.Version}}{{end}}' ./cmd/api | grep x/net` and the
-  record ids above at `https://vuln.go.dev/ID/<id>.json`.
+- `go.mod:44`. Method: the 43 modules linked into `./cmd/...` (`go list -deps`) were matched against every `vuln.go.dev` record of the 15 of them
+  that appear in the index (75 records fetched, semver ranges evaluated). Only x/net matches: `GO-2026-6603`, `6610`, `6611`, `6612`, `6617`
+  (x/net/http2, fixed 0.60.0) and `GO-2026-6860`, `6866` (x/net/html, fixed 0.62.0). Every other linked module (pgx, go-redis, grpc, protobuf,
+  go-jose, OpenTelemetry, oauth2, go-oidc, goose) has no record that covers its pinned version.
+- Reachability, executed: `gt build -o a ./cmd/api` then `go tool nm`: the binary holds 226 `x/net/http2` symbols, but none of the
+  `Transport`, `ClientConn`, `Server`, `ConfigureServer`, `ConfigureTransport` entry points; of each record's listed symbols the linked binary contains
+  0 (6610, 6860, 6866) or about 30 of 80-100 (6603, 6611, 6612, 6617; all `Framer`/frame/`hpack` helpers). `x/net/html` is not linked at all.
+  `grpc.NewClient`, `grpc.Dial`, `grpc.NewServer` are absent from the binary and no repository package imports grpc (it arrives through the
+  OpenTelemetry exporter configuration packages and generated OTLP stubs), so no code path of the product can open an HTTP/2 gRPC connection.
+  The API's own HTTP/2 is the standard library's, which `1.27.2` already patched. Verdict: linked, not called. This is a method substitute for
+  `govulncheck` (Not run), not a proof.
+- Repro: `/home/user/bin/gt list -deps -f '{{with .Module}}{{.Path}}@{{.Version}}{{end}}' ./cmd/api | grep x/net`,
+  `/home/user/bin/gt build -o /tmp/a ./cmd/api && /home/user/bin/gt tool nm /tmp/a | grep -c ' [Tt] golang.org/x/net/http2'`, and the record ids above at
+  `https://vuln.go.dev/ID/<id>.json`. Fix direction: `go get golang.org/x/net@v0.62.0` (or later) with the Go bump of IS-01.
 
 ### IS-03 LOW - pre-existing `.env` keeps its mode while new credentials are appended to it
 
@@ -96,6 +101,11 @@ behind) and eleven LOW findings.
 - `.github/workflows/ci.yml` has no `govulncheck` step and no Dependabot/Renovate configuration exists (`.github` holds only `workflows/ci.yml`).
   `npm audit --omit=dev --audit-level=high` (`ci.yml:42`) runs last, after about two hours of work, only for production dependencies (7 packages),
   and is skipped whenever an earlier step fails. SHA-pinned Actions (held, see table) never update without automation.
+- Executed full audit (production and development, committed lock): 13 advisories, 0 critical, 2 high, 11 moderate, all in development tooling:
+  `undici 8.11.2` (range 8.0.0 - 8.12.1; via `jsdom`; EventSource parser memory DoS and a subresource-integrity bypass), `zod 4.6.5` (< 4.6.6; via
+  `eslint-plugin-react-hooks`; memory exhaustion on oversized collections), and `minimatch 10.2.6` (GHSA-g3hv-75wg-m249) with the nine ESLint /
+  typescript-eslint packages that depend on it. The two highs have `fixAvailable: true`. None ships in the production bundle (production audit: 0), so
+  the effect is on developer and CI machines only; the CI gate `--omit=dev` cannot show them.
 - Concrete effect: IS-01 and IS-02 were visible on public advisory feeds for two weeks and nothing in the gates could have noticed.
 - Cosmetic: `ci.yml:16,20` comment the pins `# v5` and `# v4`; the SHAs are the exact tags `v5.5.0` and `v4.4.0` (verified, see table).
 
@@ -133,8 +143,8 @@ behind) and eleven LOW findings.
 ### IS-10 LOW - Redis cache user and the Postgres role-drift check are broader than they need to be
 
 - `scripts/m8-env.mjs:23`: `user default ... ~framework:cache:* -@all +ping +get +set +del +expire +ttl`. The only code that connects with this
-  credential is `internal/platform/cache/cache.go:26-32` (`Ping`, `Close`). Five of six granted commands are unused. They are confined to the
-  `framework:cache:*` prefix, so the exposure is small.
+  credential is `internal/platform/cache/cache.go:26-32` (`Ping`, `Close`). Five of six granted commands are unused (executed on a throwaway Redis: the `default` user can `SET framework:cache:k` and is
+  denied everything else, see row 12). They are confined to the `framework:cache:*` prefix, so the exposure is small.
 - `infra/compose/v3-role-bootstrap.sql:10` rejects a runtime role that is a member of a named deny-list (the project roles,
   `pg_read_all_data`, `pg_write_all_data`, and any role with a dangerous attribute). A membership of `pg_execute_server_program`,
   `pg_read_server_files`, `pg_write_server_files` or `pg_signal_backend` is not named and passes. An allow-list (the runtime role has no
@@ -168,7 +178,7 @@ behind) and eleven LOW findings.
 |---|---|---|---|
 | 1 | Go toolchain download is pinned, hashed, TLS-only | PASS | `scripts/bootstrap.sh:10` `--proto '=https' --tlsv1.2 --fail --location`; executed against a local HTTPS server that answers 302 to a plain-HTTP URL: with these flags curl exits 1 (`Protocol "http" not supported or disabled`) and the HTTP listener is never hit, while the same request without `--proto` follows it; `:11` `sha256sum -c` before `tar`; compared with `go.dev/dl/?mode=json`: the pinned SHA-256 equals the published one for `go1.27.2.linux-amd64.tar.gz` (stable). Written to `.local/toolchains` (repo-local, `mktemp` 0600, trap removes), run as the invoking user, no sudo. (Version currency: IS-01.) |
 | 2 | npm install path | PASS | `bootstrap.sh:19` `npm ci --ignore-scripts`; lockfile v3, 264 entries, all `https://registry.npmjs.org`, all have `integrity`; no git/file/http dependency, no link; only `fsevents@2.3.3` has an install script (macOS optional, skipped by `--ignore-scripts`); `npm ci --dry-run --offline` of a scratch copy exits 0 (package.json and lock in sync); no `.npmrc` anywhere; dependencies pinned to exact versions (no `^`/`~`). |
-| 3 | npm advisories | PASS (production) | `npm audit --omit=dev --audit-level=high` on the committed lock: "found 0 vulnerabilities". Full audit incl. dev: see Not run. |
+| 3 | npm advisories | PASS (production), see IS-06 (development) | `npm audit --omit=dev --audit-level=high` on a scratch copy of the committed lock: "found 0 vulnerabilities". Full `npm audit --json`: 13 advisories, all development tooling (IS-06). |
 | 4 | Go module integrity | PASS | `gt mod verify` (GOPROXY=off): "all modules verified"; `go list -m all` 168 modules (15 direct, 43 linked); no `replace`, `exclude`, `retract`, `toolchain` directive; no retracted or deprecated module; pseudo-versions in `go.mod` are only `pgservicefile` and the two `genproto` modules (standard for pgx and grpc). `go mod tidy -diff` could not be evaluated offline (NOT RUN, needs test-only modules from the network). |
 | 5 | GitHub Actions pins | PASS | `git ls-remote` of the three upstream repositories: `11bd7190...` = `actions/checkout` tag `v4.2.2`; `d35c59ab...` = `actions/setup-go` tag `v5.5.0`; `49933ea5...` = `actions/setup-node` tag `v4.4.0`. All three `uses:` are full SHAs. `runs-on: ubuntu-24.04` (not `latest`). |
 | 6 | CI permissions, triggers, secrets | PASS | `ci.yml:5-6` `permissions: contents: read` at workflow level; triggers `push` and `pull_request` only (no `pull_request_target`, no `workflow_run`); no `secrets.` or `${{ github.event.* }}` reaches a `run:` (only `github.workspace` in `env:` and `github.ref` in the concurrency group); no `upload-artifact`, no `actions/cache` and `setup-go` has `cache: false`, so there is no artifact to hold `.env` and no cache to poison. The `.env` the job uses is generated per run by `make env` (random). |
@@ -177,9 +187,9 @@ behind) and eleven LOW findings.
 | 9 | Healthchecks | PASS | present on postgres (`compose.yaml:15-19`) and redis (`:31-35`); `infra-up` uses `up -d --wait --wait-timeout 90`. The collector has none in Compose; CI polls port 13133 (`ci.yml:38-39`). |
 | 10 | Role bootstrap, passwords from env only | PASS | `infra/compose/postgres-init.sh:5-7` uses `psql --set` + `:'var'` literal quoting; roles `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`; `REVOKE ALL ... FROM PUBLIC`; `v3-role-bootstrap.sql` creates `NOLOGIN` roles, raises on superuser/bypassrls/createdb/createrole/replication drift and on login for the owner/audit/maintenance roles; `scripts/m6r-roles.mjs:8` accepts only `^[a-f0-9]{64}$`, sends SQL on stdin (never argv), and `:13` scrubs the passwords from its log (written 0600). No application path uses `POSTGRES_PASSWORD`: `rg` finds it only in `infra/compose/compose.yaml`, `scripts/env.mjs`, the refusal list `internal/platform/app/operator_env.go` and tests. |
 | 11 | No operator credential reaches a backend | PASS | `scripts/runtime-env.mjs:20-29` allow-lists per kind; `internal/platform/app/operator_env.go:11-14` refuses `MIGRATION_DATABASE_URL`, `MIGRATOR_PASSWORD`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `EVENT_OPERATOR_*` at start (IR-07 was in scope of other reviewers; here only read). |
-| 12 | Redis ACL vs code needs (events, sign-in) | PASS | `internal/events/redis.go:68,76,92,104,124` use `XADD`, `XGROUP CREATE ... MKSTREAM`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`, `PING`: exactly the dispatcher (`+ping +xadd`, prefix keys) and worker (`+ping +xgroup|create +xreadgroup +xautoclaim +xack`, one stream key) grants in `m8-env.mjs:23`. `internal/platform/cache/login.go:20-30,57,83` use `EVAL` with `GET/SET/TTL` inside, `GETDEL`: exactly the `framework_signin` grant (`+ping +get +set +ttl +eval +getdel`, `~framework:signin:v1:*`), the same string as `scripts/signin-roles.mjs:14`. `ReadyLoginFlows` (`login.go:77-80`) fails closed if the sign-in user can `GET framework:cache:*` or `ACL CAT`. Passwords are stored as `#<sha256>`; none in argv (`signin-roles.mjs` pipes the hash on stdin and passes the operator password through `REDISCLI_AUTH`). Over-grant of `default`: IS-10. |
+| 12 | Redis ACL vs code needs (events, sign-in) | PASS | `internal/events/redis.go:68,76,92,104,124` use `XADD`, `XGROUP CREATE ... MKSTREAM`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`, `PING`: exactly the dispatcher (`+ping +xadd`, prefix keys) and worker (`+ping +xgroup|create +xreadgroup +xautoclaim +xack`, one stream key) grants in `m8-env.mjs:23`. `internal/platform/cache/login.go:20-30,57,83` use `EVAL` with `GET/SET/TTL` inside, `GETDEL`: exactly the `framework_signin` grant (`+ping +get +set +ttl +eval +getdel`, `~framework:signin:v1:*`), the same string as `scripts/signin-roles.mjs:14`. `ReadyLoginFlows` (`login.go:77-80`) fails closed if the sign-in user can `GET framework:cache:*` or `ACL CAT`. Passwords are stored as `#<sha256>`; none in argv (`signin-roles.mjs` pipes the hash on stdin and passes the operator password through `REDISCLI_AUTH`). Over-grant of `default`: IS-10. **Executed**: the ACL file written by the repo's own `scripts/m8-env.mjs` (random run-time passwords, scratch directory) was loaded into a throwaway `redis-server` (host binary 7.0.15, 127.0.0.1:16399, stopped afterwards; the Compose image 8.2.3 was not run) and 36 commands were issued per user with `redis-cli --user`: 36 of 36 as expected. Allowed: `default` PING and SET/GET under `framework:cache:`; `framework_signin` the saveLogin-shaped EVAL and GETDEL on `framework:signin:v1:*`; `event_dispatcher` `XADD ... MAXLEN ~ 10000`; `event_worker` `XGROUP CREATE ... MKSTREAM`, `XREADGROUP`, `XAUTOCLAIM`, `XACK` on its own stream. Denied (NOPERM, or Redis's script-level "user executing the script can't access/run"): `default` outside its prefix, EVAL, KEYS, XADD, ACL LIST, CONFIG, FLUSHALL; `framework_signin` GET on `framework:cache:*`, `ACL CAT`, SCRIPT/FUNCTION LOAD, XADD, and from inside Lua a cache-key read, FLUSHALL and CONFIG; `event_dispatcher` XREADGROUP, XLEN, XDEL, GET, writes outside the prefix; `event_worker` XADD, any other stream, XGROUP DESTROY/SETID, XDEL, XINFO. The operator is a full administrator by design. |
 | 13 | `.env` generation | PASS (fresh) | `scripts/env.mjs:8,25`: `crypto.randomBytes(32)` hex per secret, `wx`, mode 0600, refuses to overwrite; `m8-env.mjs:17-18` rejects reused or duplicate credentials. `.gitignore` ignores `.env`, `.env.*` (not `.env.example`), `.local/`, `bin/`, `node_modules/`. Pre-existing file: IS-03. |
-| 14 | Committed secrets, all refs | PASS | `git log --all --no-merges -p -U0` over the refs of this clone (88 at the first scan: 56 branches, 28 remote-tracking, 4 tags; the set grows while other agents commit): 455 commits, 206,578 added lines, scanned by my own pattern classes (PEM private-key headers, `ghp_`/`github_pat_`, `AKIA`/`ASIA`, `xox*`, `AIza`, Stripe live keys, `sk-`/`sk-ant-`, JWTs, DSNs with a password, `Bearer`, `_authToken`, password/secret/api-key literals, 64-hex assigned to key-like names). No `.env`, `*.pem`, `*.key`, `*.p12`, `.npmrc`, `.netrc`, ACL file or database dump was ever added (942 distinct paths ever added listed and filtered by name and extension; only `zoneinfo.zip` is binary). 76 pattern hits, all synthetic: `internal/ai/redact_test.go:10-30,79,103`, `internal/ai/context_test.go:221-228`, `internal/ai/corpus/corpus.go:424-435` (redactor corpus; documented example keys such as the vendor-published `...EXAMPLE` AWS pair, sequential-alphabet GitHub token, 27-character PEM header stub), `internal/ai/provider_http_test.go:325`, `internal/tools/fixtures_test.go:8` (test key, `_test.go`), `internal/platform/app/operator_env_test.go:50`, `internal/config/*_test.go`, `scripts/runtime-env.test.mjs`, `apps/web/src/auth/*.test.*`, plus template lines `scripts/env.mjs:18-19`, `scripts/m6r-env.mjs:17`, `scripts/m8-env.mjs:14`, `infra/compose/postgres-init.sh:5-7` (variable interpolation, not values). No hit has a real-token shape (every literal is low-variety, a documented example, or contains `example`/`test`/`fake` context). Values were never printed; only file, line, class, length and alphabet. |
+| 14 | Committed secrets, all refs | PASS | `git log --all --no-merges -p -U0` over the refs of this clone (88 at the first scan, 89 at the re-scan: about 56 branches, 28 remote-tracking, 4 tags; the set grows while other agents commit): re-scan 06:50 = 534 commits of which 484 non-merge, 209,234 added lines; first scan 455 non-merge, 206,578 lines, scanned by my own pattern classes (PEM private-key headers, `ghp_`/`github_pat_`, `AKIA`/`ASIA`, `xox*`, `AIza`, Stripe live keys, `sk-`/`sk-ant-`, JWTs, DSNs with a password, `Bearer`, `_authToken`, password/secret/api-key literals, 64-hex assigned to key-like names). No `.env`, `*.pem`, `*.key`, `*.p12`, `.npmrc`, `.netrc`, ACL file or database dump was ever added (942 distinct paths ever added listed and filtered by name and extension; only `zoneinfo.zip` is binary). 79 pattern hits at the re-scan (76 at the first), all synthetic or placeholder: `internal/ai/redact_test.go:10-30,79,103`, `internal/ai/context_test.go:221-228`, `internal/ai/corpus/corpus.go:424-435` (redactor corpus; documented example keys such as the vendor-published `...EXAMPLE` AWS pair, sequential-alphabet GitHub token, 27-character PEM header stub), `internal/ai/provider_http_test.go:325`, `internal/tools/fixtures_test.go:8` (test key, `_test.go`), `internal/platform/app/operator_env_test.go:50`, `internal/config/*_test.go`, `scripts/runtime-env.test.mjs`, `apps/web/src/auth/*.test.*`, plus three DSN-shaped lines in another agent's in-progress report on `review/redaction-redteam` (`docs/verification/REDACTION_REDTEAM.md:151,602,603`; 3-character passwords such as `pwd`), `docs/verification/GATEWAY_INDEPENDENT_REVIEW.md:117` (a 26-character placeholder after `Bearer`), plus template lines `scripts/env.mjs:18-19`, `scripts/m6r-env.mjs:17`, `scripts/m8-env.mjs:14`, `infra/compose/postgres-init.sh:5-7` (variable interpolation, not values). No hit has a real-token shape (every literal is low-variety, a documented example, or contains `example`/`test`/`fake` context). Values were never printed; only file, line, class, length and alphabet. |
 | 15 | Git objects | PASS | largest blobs: `zoneinfo.zip` 408 KB and the AI corpus JSON 357 KB; no archive, dump or key store. |
 | 16 | TLS verification never disabled in tooling | PASS | `rg` for `GOFLAGS`, `GONOSUMDB`, `GOINSECURE`, `GOPROXY`, `NODE_TLS_REJECT_UNAUTHORIZED`, `--insecure`, `curl -k`, `strict-ssl` in `scripts`, `Makefile`, `.github`, `infra`, web configs: no match. `InsecureSkipVerify: true` appears nowhere in non-test Go (only read in production validators `config.go:96,186,312,320`, `login.go:21`). No `curl | sh`, no `sudo`, no `chmod 777`. Production config demands HTTPS issuer, `sslmode=verify-full`, `rediss` with verified TLS, HTTPS CORS and telemetry (`config.go:96,141,171-187,201,211,296-320`). |
 | 17 | Dev servers bind loopback | PASS | `vite.config.ts:16` `host: '127.0.0.1'`, `package.json` `vite --host 127.0.0.1`, `e2e/oidc-provider.ts:67` `listen(8090, "127.0.0.1")`, default `HTTP_ADDR=127.0.0.1:8080`. |
@@ -193,9 +203,8 @@ behind) and eleven LOW findings.
 
 | Item | Reason |
 |---|---|
-| govulncheck (symbol-level) | `go install golang.org/x/vuln/cmd/govulncheck@latest` was queued behind the shared heavy-run lock; see the final line of this section for its outcome. The module-level matching in IS-02 and the std record in IS-01 replace it only partly. |
+| govulncheck (symbol-level) | `go install golang.org/x/vuln/cmd/govulncheck@latest` under `hv` has waited for the shared heavy-run lock since 06:36 (another agent's run holds it); never started. Substitutes (executed): the module/version matching against `vuln.go.dev` and the linked-symbol analysis in IS-02, and the standard-library record in IS-01. Partial only: no call-graph analysis of the repository's own code. |
 | `go mod tidy -diff` | needs modules (testify, sqlite, ...) that are not in the module cache; `GOPROXY=off` fails ("module lookup disabled"). |
-| Full `npm audit` incl. dev dependencies | first attempt hit my 90 s timeout through the proxy; CI audits production only (IS-06). |
 | `docker inspect` / image digests / running as which user (other than the process listing above) | `docker` other than `compose config` is forbidden for this task. |
 | Actions behaviour on a GitHub runner (fork PR token scope, `/usr/bin/chromium` presence, setup-go download integrity) | no runner access; statements about them are from reading `ci.yml` only. |
 | PostgreSQL role bootstrap executed against a database | the brief gives no database stack; static reading only (IS-10). Database function and grant correctness belongs to the SQL-catalog audit. |
