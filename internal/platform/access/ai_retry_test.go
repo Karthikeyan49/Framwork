@@ -98,14 +98,14 @@ func TestAIResultExchangeRepeatsOnlyWhatLeavesNothingBehind(t *testing.T) {
 			t.Errorf("%s is repeated", name)
 		}
 	}
-	// A conflict is over in milliseconds; a queue drains in seconds, and the six tries span about three of the six allowed.
+	// A conflict is over in milliseconds; a queue drains in seconds, and the six tries span about three of the six allowed, at worst a quarter more.
 	if d, ok := aiResultPause(1, &pgconn.PgError{Code: "40001"}); !ok || d < 5*time.Millisecond || d > 25*time.Millisecond {
 		t.Errorf("pause after a conflict: %v %v", d, ok)
 	}
 	var total time.Duration
 	for attempt := 1; attempt < aiResultAttempts; attempt++ {
 		d, ok := aiResultPause(attempt, postgres.ErrAdmissionFull)
-		if !ok || d < 100*time.Millisecond || d > 1500*time.Millisecond {
+		if !ok || d < 75*time.Millisecond || d > 1875*time.Millisecond {
 			t.Errorf("pause %d after a full queue: %v %v", attempt, d, ok)
 		}
 		total += d
@@ -115,8 +115,17 @@ func TestAIResultExchangeRepeatsOnlyWhatLeavesNothingBehind(t *testing.T) {
 	}
 	// The pause is a function of any try number: no shift can overflow or go negative.
 	for _, attempt := range []int{-3, 0, 1, 5, 6, 37, 38, 64, 1 << 20} {
-		if d, ok := aiResultPause(attempt, postgres.ErrAdmissionFull); !ok || d < 100*time.Millisecond || d > 1500*time.Millisecond {
+		if d, ok := aiResultPause(attempt, postgres.ErrAdmissionFull); !ok || d < 75*time.Millisecond || d > 1875*time.Millisecond {
 			t.Errorf("pause for try %d after a full queue: %v %v", attempt, d, ok)
 		}
+	}
+	// The pauses of answers that failed at the same moment are not equal (independent review TF-11: they all came back together).
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 200; i++ {
+		d, _ := aiResultPause(3, postgres.ErrAdmissionFull)
+		seen[d] = true
+	}
+	if len(seen) < 100 {
+		t.Errorf("200 pauses of the same try took %d distinct values: no spread", len(seen))
 	}
 }

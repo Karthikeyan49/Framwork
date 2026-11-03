@@ -138,7 +138,7 @@ func Load(getenv func(string) string) (Config, error) {
 	if raw := getenv("SHUTDOWN_TIMEOUT"); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil || d < time.Second || d > 5*time.Minute {
-			return c, fmt.Errorf("SHUTDOWN_TIMEOUT must be a duration from 1s to 5m")
+			return c, fmt.Errorf("SHUTDOWN_TIMEOUT must be a duration with a unit (for example 30s) from 1s to 5m")
 		}
 		c.ShutdownTimeout = d
 	}

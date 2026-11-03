@@ -9,6 +9,7 @@ if ! ./scripts/go.sh version >/dev/null 2>&1; then
   trap 'rm -f "$archive"' EXIT INT TERM
   curl --fail --show-error --location --proto '=https' --tlsv1.2 https://go.dev/dl/go1.27.3.linux-amd64.tar.gz -o "$archive"
   printf '%s  %s\n' 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 "$archive" | sha256sum -c -
+  rm -rf .local/toolchains/go # an older release unpacked over a newer or older one would leave the files of both
   tar -xzf "$archive" -C .local/toolchains
   rm -f "$archive"
   trap - EXIT INT TERM

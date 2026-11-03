@@ -139,3 +139,22 @@ func TestRetryPacedRidesOutAFullAdmissionQueue(t *testing.T) {
 		t.Fatalf("RetryPaced did not get through a queue that drained after 250 ms: %v", err)
 	}
 }
+
+// Jittered keeps every value within a quarter of the base and spreads them over that range.
+func TestJitteredStaysWithinAQuarterAndSpreads(t *testing.T) {
+	base := 800 * time.Millisecond
+	low, high := base, base
+	for i := 0; i < 2000; i++ {
+		d, ok := Jittered(base)
+		if !ok || d < base-base/4 || d > base+base/4 {
+			t.Fatalf("Jittered(%v) = %v, %v", base, d, ok)
+		}
+		low, high = min(low, d), max(high, d)
+	}
+	if low > base-base/5 || high < base+base/5 {
+		t.Errorf("2000 draws covered only %v to %v of %v to %v", low, high, base-base/4, base+base/4)
+	}
+	if d, ok := Jittered(0); !ok || d != 0 {
+		t.Errorf("Jittered(0) = %v, %v", d, ok)
+	}
+}

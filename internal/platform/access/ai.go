@@ -582,10 +582,11 @@ func aiResultRetriable(err error) bool {
 }
 
 // aiResultPause is the wait before the next try: a conflict of rows is over in a few milliseconds, a full queue drains at the speed of
-// the database, so the waits grow, 100 ms to 1.5 s, and the six tries fit the budget.
+// the database, so the waits grow, 100 ms to 1.5 s, each spread by a quarter either way so that the answers that waited for the same
+// moment do not come back at the same moment, and the six tries fit the budget.
 func aiResultPause(attempt int, err error) (time.Duration, bool) {
 	if errors.Is(err, postgres.ErrAdmissionFull) {
-		return min(1500*time.Millisecond, 100*time.Millisecond<<max(0, min(attempt-1, 4))), true
+		return postgres.Jittered(min(1500*time.Millisecond, 100*time.Millisecond<<max(0, min(attempt-1, 4))))
 	}
 	return postgres.ConflictPause(attempt, err)
 }

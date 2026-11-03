@@ -59,6 +59,16 @@ func ConflictPause(int, error) (time.Duration, bool) {
 	return time.Duration(5+n.Int64()) * time.Millisecond, true
 }
 
+// Jittered is d spread by a quarter either way, from 0.75 d to 1.25 d: waits that are equal send every request that waited for the same moment
+// back at that same moment (independent review TF-11). It reports false when no random value can be drawn, as ConflictPause does.
+func Jittered(d time.Duration) (time.Duration, bool) {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(d)/2+1))
+	if err != nil {
+		return 0, false
+	}
+	return d - d/4 + time.Duration(n.Int64()), true
+}
+
 // RetryPaced is RetryWithin with the caller's pause before the next try, for a failure that a few milliseconds do not resolve: a full
 // admission queue drains at the speed of the database, so the tries of a paid answer that waits for a slot must be spaced over
 // seconds, not over a few dozen milliseconds (independent edge rehearsal ER-04). pause receives the number of the try that just failed
