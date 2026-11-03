@@ -88,7 +88,7 @@ Result counts are from the m12db dump unless stated. Queries are summarised in a
   `control.event_quarantine` (insert-only in practice, `control.quarantine_event`) has no immutability trigger at all.
 - Impact: runtime roles hold no TRUNCATE (checked), so only the owner/migrator (operator) can erase these tables, for example the inbox that
   `AGENTS.md` says is never erased to retry. An operator mistake or a stolen migrator credential removes the evidence silently, where the newer tables refuse.
-- Repro (catalog): `SELECT c.oid::regclass FROM pg_class c WHERE c.relnamespace IN ('runtime'::regnamespace,'control'::regnamespace) AND c.relkind='r' AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND NOT t.tgisinternal AND t.tgfoid='control.immutable_artifact'::regproc AND (t.tgtype & 8)=8) AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND NOT t.tgisinternal AND t.tgfoid='control.immutable_artifact'::regproc AND (t.tgtype & 32)=32);` -> the 10 tables. Executed probe P1.
+- Repro (catalog): `SELECT c.oid::regclass FROM pg_class c WHERE c.relnamespace IN ('runtime'::regnamespace,'control'::regnamespace) AND c.relkind='r' AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND NOT t.tgisinternal AND t.tgfoid='control.immutable_artifact'::regproc AND (t.tgtype & 8)=8) AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND NOT t.tgisinternal AND t.tgfoid='control.immutable_artifact'::regproc AND (t.tgtype & 32)=32);` -> the 10 tables. Executed probe P1 (private cluster): the operator's plain `TRUNCATE` succeeds on 7 of them (`event_replays`, `workflow_attempts`, `event_inbox`, `workflow_history`, `workflow_outbox`, `workflow_receipts`, `workflow_signals`) and on `event_quarantine`; the other three (`event_envelopes`, `outbox_intents`, `workflow_bindings`) are stopped only by FK RESTRICT and, with `CASCADE`, by the guarded tables they drag in (`event_data_sources`, `tool_invocations`).
 
 ### SC-03 LOW - closed vocabularies and id formats are left to Go on evidence columns
 
@@ -114,7 +114,19 @@ Result counts are from the m12db dump unless stated. Queries are summarised in a
 
 ## Executed probes (private disposable cluster only; no shared stack was written)
 
-PROBES_PLACEHOLDER
+Cluster: PostgreSQL 16, unix socket in the worktree's git-ignored `.local/zz_pg16`, database `framework`, built from the 70 migration files by
+applying each Up section as `framework_migrator` after the role bootstrap of `infra/compose` (same grants, same ACLs; catalog equal to m12db, see Progress).
+Roles were switched with `SET SESSION AUTHORIZATION`; every GRANT used as an experiment was revoked afterwards.
+
+| Probe | Input | Observed | Supports |
+|---|---|---|---|
+| P1 | as `framework_migrator` (operator), `BEGIN; TRUNCATE <t>; ROLLBACK;` for each table | accepted on `control.event_replays`, `control.workflow_attempts`, `runtime.event_inbox`, `runtime.workflow_history`, `runtime.workflow_outbox`, `runtime.workflow_receipts`, `runtime.workflow_signals` and the unguarded `control.event_quarantine`; `runtime.event_envelopes`, `runtime.outbox_intents`, `runtime.workflow_bindings` stopped only by FK RESTRICT, and `TRUNCATE ... CASCADE` on them reaches guarded tables (`event_data_sources`, `tool_invocations`) and fails with `immutable artifact`; controls `runtime.command_receipts`, `control.ai_invocations` fail with `immutable artifact`, `audit.entries` with `audit evidence is append-only` | SC-02 |
+| P1b | catalog: runtime roles' TRUNCATE privilege on the ten unguarded tables; `framework_app` runs `TRUNCATE runtime.workflow_history` | 0 grants; `permission denied for table workflow_history` | SC-02 (operator only) |
+| P2 | as `framework_worker`, `SELECT control.worker_grants_safe()` after each experiment | baseline `t`; after `GRANT SELECT ON control.release_candidates` `f` (guard works for tables); after `GRANT EXECUTE ON FUNCTION control.approve_release(text,text)` still `t` with `has_function_privilege` = `t`; after `GRANT TEMPORARY ON DATABASE framework` still `t`; restored `t` | SC-04 |
+| P2b | worker session calls `control.approve_release('x','y')` with that EXECUTE grant | `ERROR: tenant release approver required` (in-body gate refuses) | SC-04 (defence in depth holds) |
+| P3 | `framework_audit_writer` inserts a denial entry into `audit.entries`; control: `framework_app` inserts the same row shape | writer: `new row violates row-level security policy for table "entries"`; app: `INSERT 0 1` | SC-04 |
+| P4 | tenants A and B, users u1 (member of A) and u2 (member of B), a team per tenant; `framework_app` reads `iam.teams`, `iam.tenants`, `iam.memberships`, `iam.users` | no `app.*` settings: 0/0/0/0 rows; u1 + tenant A: `teamA` only, 1 tenant, 1 membership; u1 claims tenant B: 0; `app.tenant_id` = `not-a-uuid`, empty, or upper-case UUID: 0; valid tenant with unknown actor: 0; u2 (member of B) claims tenant A: 0; app `INSERT`/`UPDATE`/`DELETE` on `iam.teams`/`iam.memberships`/`iam.tenants`: `permission denied` | checks 2d, 2e (held) |
+| P5 | generic `SECURITY DEFINER` function over `pg_roles` with `search_path=pg_catalog` and a twin with `pg_catalog,pg_temp`; dispatcher role granted TEMP inside the private cluster creates `TEMP TABLE pg_roles` | before: both `false`; after the temp table: `pg_catalog` version returns `true` (shadowed), `pg_catalog,pg_temp` version returns `false`; after `REVOKE TEMPORARY`, `CREATE TEMP TABLE` fails with `permission denied for schema pg_temp_3` | SC-01 (mechanism; the real functions were not driven) |
 
 ## NOT RUN
 
