@@ -11,7 +11,9 @@ Status of this file: work in progress (see Progress); findings so far are below.
 - [x] Front-door canary probe (executed, unit level): PASS except LE-01.
 - [x] Startup and CLI probes with the built binaries (38 cases): PASS except LE-02.
 - [x] Tool gateway and sign-in canary probes (executed, unit level): PASS.
-- [ ] HTTP error mapping with the real stack and injected executor failures (integration, m13 stack; queued behind other agents).
+- [x] Failing executors at every statement of three routes of the real `access.API` over a fake `database/sql` driver (224 injected failures, 9 kinds,
+      plus policy panic, audit error, audit panic): PASS for responses and slog; LE-03 for spans.
+- [ ] HTTP error mapping and audit-row probe with the real stack (integration, m13 stack; queued behind other agents at the time of writing).
 - [ ] Audit-row vocabulary probe with canaries in paths and bodies (integration).
 - [ ] Final write-up.
 
@@ -52,6 +54,26 @@ Status of this file: work in progress (see Progress); findings so far are below.
   `OTEL_EXPORTER_OTLP_HEADERS` carrying a canary: only `telemetry export unavailable` appears), or from `net/http` (no TLS listener; the recorder guards
   double `WriteHeader`).
 - Suggested direction (not applied): `redis.SetLogger` with a discard or a static-message logger at start-up, next to `otel.SetErrorHandler`.
+
+### LE-03 (LOW) A panic that unwinds through a span exports the panic value on the span (OpenTelemetry SDK `End()` records it)
+
+- `internal/platform/postgres/transaction.go:90` (`defer span.End()` of `postgres.transaction`) and `:139-140` (`defer bodySpan.End()` of
+  `postgres.transaction.body`) wrap every handler body. The SDK's `End()` recovers a panic in flight, adds an `exception` event with `exception.type` and
+  `exception.message` (`fmt.Sprint` of the panic value) to the span, and re-panics. The code's own intent is the opposite: `transaction.go:93` sets the fixed
+  status "transaction panicked", `httpserver.go:194` logs only the request id, and ADR014 (docs/adr/014-m1-identity-policy-audit.md:57) says spans carry trusted
+  actor/tenant/decision/policy ids.
+- Repro (executed, no database needed): `internal/platform/access` temporary probe over a fake `database/sql` driver; the real `access.API` with a policy engine
+  that panics with a run-time canary. Response: `500 internal_error "An internal error occurred"` (correct). Exported spans: `postgres.transaction.body` and
+  `postgres.transaction` each carry `exception.message = "policy engine panic <canary>"` and `exception.type`. The SDK adds no stack trace in this version
+  (v1.47.0). The same for an audit writer that panics. No canary reached the response or the slog output.
+- Impact now: the panic texts that can reach this path in the current tree are runtime-error texts and the re-panics of `runtime/data/aggregate.go:121-124` and
+  `access/preview.go:109-111`; none of the six `panic(` sites carries request or record data. So the exposure is an unplanned channel, not an observed
+  secret. It becomes a leak the day a panic value carries data. The export is gated by sampling, which an anonymous caller can force (LE-01).
+- Suggested direction (not applied): end these spans through a helper that recovers, records a fixed event and re-panics, or use
+  `trace.WithAttributes`-free span options; add a regression test that panics with a canary and scans the exported spans.
+- Related, already documented (AGENTS.md "Injected driver/tracer panic is an unresolved R7 recovery limitation"): a panic raised inside a `database/sql` call
+  leaves `Conn.Close` blocked on the leaked read lock. Observed here as well: the first run of the fake-driver probe with a driver-level panic did not finish in
+  6 minutes (killed); the handler goroutine and its admission slot are lost. Not reported as new.
 
 ## Canary matrix (front door, executed)
 
@@ -105,3 +127,19 @@ Planted: authorization code, state, issuer, cookie, unknown JSON field, malforme
 (400 error body with `error_description`, 500 with a body, 200 with a canary access token and ID token, 200 with token type `mac`). Every failure
 answered one of four fixed bodies (`sign_in_unavailable` 503, `sign_in_rejected` 401, `invalid_sign_in` 400, `origin_denied` 403); no canary in any response
 or in the captured log.
+
+## Canary matrix (failing executors, executed over a fake driver, real `access.API`)
+
+Routes: `GET /v1/session`, `GET /v1/tenants/{t}/access`, `GET /v1/tenants/{t}/members` with a valid RS256 token whose subject and query string carry canaries.
+The fake driver completes each flow (baseline 200 for all three), then fails the n-th statement of the transaction (n = 1 until the flow has no n-th statement)
+with: a `pgconn.PgError` whose message, detail, hint, schema, table, column, constraint, where and internal query all carry a canary, for codes `XX000`,
+`23505`, `23503`, `55000`, `42501`, `40001`, `22023`; or a plain error naming an internal host and `password=<canary>`.
+| failure | injected | response | slog | spans |
+|---|---|---|---|---|
+| driver error, 8 kinds, every statement | 224 | all 224: `503 service_unavailable "A required service or security transaction is unavailable"`; no canary, no marker (`SQLSTATE`, `pgconn`, `violates`, `constraint`, `iam.`, `.go:`, `goroutine`, `password=`) | only the access line (`http request`, status 503); no error line at all | status description "transaction failed" only |
+| policy engine panics | 3 | `500 internal_error` | `request panic recovered` + request id | canary in `exception.message` of two spans (LE-03) |
+| audit writer returns an error with a canary | 3 | `503 service_unavailable` | none | none |
+| audit writer panics | 3 | `500 internal_error` | `request panic recovered` | canary in `exception.message` (LE-03) |
+
+Observation (not a leak): a 503 caused by a database or audit failure leaves no log line beyond the access line, so an operator cannot tell the causes apart
+from the log alone; the closed-vocabulary error class that would help is absent. The price of that silence is zero leakage.
