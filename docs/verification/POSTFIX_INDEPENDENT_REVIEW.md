@@ -15,10 +15,10 @@ Updated 3 November 2026 after the interruption (the host rebooted; the stacks we
 | 3 | bca9d98 operator credentials refused at start | done; PASS; PF-10 (LOW, test gap) |
 | 4 | db9c2fa F-05 residual test | done; PF-07 (LOW) |
 | 5 | b88a465 version-gate scan | done; PF-04 and PF-05 (LOW) |
-| 6 | 294e597 migrate status | unit mutation done; the run against a disposable database is queued (run A) |
+| 6 | 294e597 migrate status | done; PASS (populated disposable database, 15 scenarios) |
 | 7 | 80a582f body-budget benchmarks | done; PASS; PF-08 (LOW, comment) |
-| 8 | regression subset | `make check` PASS; unit packages with `-race` and the integration groups queued (see Gate subset) |
-| 0 | redactor code defects | done for panics, fixed point and latency; PF-09 (MEDIUM); the cost of a refused creation with a large draft is queued (run A) |
+| 8 | regression subset | `make check` PASS; unit packages `-race` PASS; integration `TestF05\|TestM14R\|TestM13R` PASS; `TestM14API\|Adv\|Ports` queued (see Gate subset) |
+| 0 | redactor code defects | done; PF-09 (MEDIUM, card rule) and PF-11 (MEDIUM, cost of a refused creation with a large draft) |
 
 ## Verdict
 
@@ -79,7 +79,7 @@ Direction: read only the string literals of the body (single, escape and dollar 
 
 `apps/web/src/preview/contracts.ts:146`: `(ir.ir_version !== "1.4.0" && ir.ir_version !== "1.5.0")`. Removing the `1.5.0` member (the IR-01 class of defect, in TypeScript) leaves
 `vitest run src/preview` at 26 of 26 passed; the test at `Workspace.test.tsx:491` decodes a 1.5.0 IR without a unique field. (The full suite had one timing failure in
-`CommandRecovery.test.tsx`, 5,061 ms, that I did not attribute; the confirming re-run was cut off.) The same mutation of line 100 (the accepted `ir_version` chain) is caught. The SQL, Go and
+`CommandRecovery.test.tsx`, 5,061 ms, a 5 s limit on a loaded host; the test passes alone.) The same mutation of line 100 (the accepted `ir_version` chain) is caught. The SQL, Go and
 `internal/ai/schema_text.go` lists are all caught: removing `1.5.0` from the `00080` CHECK, from the function in `00090`, from `metadataSchemaFiles`, from `IntegritySchema`
 and from `WorkflowSchema` each fails a named test (`TestMetadataVersionsCheckListsEveryKnownVersion`, `TestSQLFunctionsNameWholeSchemaVersionFamilies`, `TestAdversarialCorpus` and two more in `internal/ai`,
 `TestIRRestoreKeepsTheExactCompilerIdentityOfEveryIntegrityCapableContract`, `TestWorkflowSchemaVersions`).
@@ -128,6 +128,20 @@ position of the span (re-run the match from the character after the refused star
 `POSTGRES_PASSWORD` are pinned (`operator_env_test.go:41`). The other two tests and the position test fail for their mutations (call removed from `Main`: `TestMainRefusesOperatorCredentialsBeforeRunning`; values logged:
 `TestOperatorCredentialRefusalNamesAndNeverShows`). Direction: assert the literal list of six.
 
+### PF-11 (MEDIUM) a refused AI creation with a large draft costs seconds of CPU inside the admission slot and the transaction, and nothing limits how often it can be repeated
+
+`internal/platform/access/ai.go:408-420` (`aiPropose` runs `svc.Admit`, `aiPlatform` and `svc.Prepare` inside the request transaction, which holds one of the `API_DB_CONCURRENCY` slots, default 4) and `internal/ai/context.go:160-180`
+(`BuildContext` redacts every string of every editable definition BEFORE the 64 KiB bundle limit is checked). A draft may be up to 256 KiB and 500 definitions
+(`metadata.MaxBytes`, schema `maxItems`); the redactor costs about 3.5 us per byte on adversarial text (PF-09's measurement), so the refusal `422 ai_context_too_large` is reached after the whole draft was redacted.
+The refusal reserves nothing and charges nothing, so neither the per-tenant in-flight limit (`ai_busy`) nor the daily budget ever fires, and the traffic gate allows 300 requests per second per peer (`traffic.DefaultLimits`).
+Measured (no mutation; `m14Setup` handler, `-race` binary, host load average ~30, so absolute times are inflated several times; the ratio is the finding): a member of tenant A with a registered
+draft of 251,162 bytes (490 definitions, valid) sends `POST .../ai/patch-proposals` with a 4,000-character request: HTTP 422 after **9.57 s** (without `-race`, `BuildContext` alone takes 1.0 s on the same host: `TestZZBuildContextLatency`, `Prepare`
+adds parse 65 ms and compile 8 ms). A second member's `GET /v1/tenants/{tenant}/access`: p50 15 ms, p95 35 ms. While the first member loops 6 such requests: the second member's read p50 **4.58 s**,
+p95 10.3 s, max 12.5 s (30 of 30 answered 200); the looping member saw 32 x 422, 14 x 409 `ai_conflict` and 29 x 503 `service_unavailable`. Repro: `zz_review_pf0_test.go` (not committed): register the draft
+with 49 entities of 9 enum fields each (label of 200 characters, two enum values of 58 characters), then `e.propose(e.alice, strings.Repeat("password=hunter2xx; ", 200))` in 6 goroutines and time `GET /access` by another member.
+Direction: refuse before doing the work (the stored document size is known: a draft whose definitions cannot fit 64 KiB after clipping can be refused from its size, or the redaction can stop as soon as the running size passes the cap), and
+count refused creations against the member (a 429 after a few context refusals), or move `Prepare` out of the transaction.
+
 ## Attacks that held
 
 | claim | executed attack | result |
@@ -152,6 +166,9 @@ position of the span (re-run the match from the character after the refused star
 | 7: benchmarks | `nice gt test -run '^$' -bench BodyBudget -benchtime 1s -count 3 -benchmem ./internal/platform/access`, load average 11.7 on 4 cores (other agents running) | held: hold+add+release 102-110 ns/op, 0 B, 0 allocs (document: 59 ns idle); parallel 121-125 ns (document: 188 ns idle, four goroutines on one identity); 64 KiB booked read 2.16-2.51 us with 80 B/op and 2 allocs/op against 1.36-1.60 us plain (document: 1.35 against 0.95 us, "two allocations of 80 bytes"): the same order of magnitude and the same allocations, about 1.7x slower here because of the load; the extra cost per request stays below 1 us |
 | 0: redactor, odd inputs | `redactText` over `""`, `" "`, newlines only, NUL, `\xff`, a lone surrogate, `sk-`, a bare `[REDACTED:`, a marker at the end of a line followed by tail-shaped lines with CRLF and trailing blanks | held: no panic, each result is a fixed point (`TestZZRedactOddInputs`) |
 | 0: redactor, latency | 26 adversarial shapes (one token, key per line, wrapped tails, assignments, `a_` chains, cards, digit pairs, PEM prefixes, cookie pairs, credentials in URLs, Cyrillic and fullwidth look-alikes, invalid UTF-8, hex runs, glued card+key chains) at 16 KiB, 64 KiB, 256 KiB and 1 MiB through `redactText` | held with a cost: linear, worst 49 ms at 16 KiB (the 4,000-rune request limit), 187 ms at 64 KiB, 0.99 s at 256 KiB and 3.65 s at 1 MiB (shape: one key then 150,000 one-word lines; the output is 2.7 times the input), measured on a host with load average 11; the cost inside the admission slot is PF-11 |
+| 6: `migrate status` against a populated disposable database | built `cmd/migrate`, created a database `zz_pf6_<random>` owned by the migrator (verified `current_database()` and the effective pgx target), ran the binary through `exec` for: empty, migrated (70 files), two versions deleted from `goose_db_version`, the last file pending, a row recorded `is_applied=false`, a version without a file (99999), a version recorded twice, version 80 removed (foreign numbering), a wrong password, a malformed port, a nonsense `sslmode`, an unreachable port, an empty URL, `down`, no argument | held: empty: status exit 0 with 70 pending, `up` applied 70 in 0.81 s, repeat applied 0; file 50 pending below 92: status marks it `(refused by up: numbered below the highest applied version 92)` and exits 1, `up` exits 1 naming version 50; file 92 pending above 91: status exit 0, plain `pending`; `is_applied=false`, a DB-only version and a duplicate row: status and `up` both exit 0 and agree (goose's `Status` ignores `is_applied`; `cmd/migrate` never runs `down`); foreign numbering: status and `up` exit 1 with the lineage message; every error line is generic ("migration database unavailable", "invalid PostgreSQL configuration", "MIGRATION_DATABASE_URL must be a valid PostgreSQL URL", usage) and neither the real password, the wrong-password marker, a `postgres://` string nor `127.0.0.1` appears in any output |
+| 6: the tests fail without the fix | `TestStatusMarksThePendingMigrationsThatUpRefuses` with the marking disabled (`false` in place of the comparison) | held: fails (`0 refused`); the mutation `<` to `<=` is an equivalent mutant (a pending file cannot equal the highest applied version) |
+| 3: the tests fail without the fix | `TestMainRefusesOperatorCredentialsBeforeRunning` with the call removed from `Main`; `TestOperatorCredentialRefusalNamesAndNeverShows` with the values logged | held: both fail; the list itself is not pinned (PF-10) |
 
 ## Fixes re-verified (a4379a8 verifier-v4, 55ee30e token check; read-only, not on the pin)
 
@@ -167,7 +184,17 @@ The tree of `55ee30e` was exported (`git archive`) to a scratch directory and th
 
 ## Gate subset
 
-None run yet.
+Pinned tree `11a4ee4`, no product file mutated (every mutation was reverted with `git checkout --` before these runs; the probe files were outside the packages run).
+
+| command | result |
+|---|---|
+| `hv nice -n 10 ./scripts/go.sh test -race -count=1 ./internal/ai/...` | PASS: `internal/ai` 311.8 s, `internal/ai/corpus` 5.6 s |
+| `hv nice -n 10 ./scripts/go.sh test -race -count=1 ./internal/verification/... ./internal/identity/... ./internal/metadata/... ./internal/platform/... ./cmd/migrate/...` | PASS, 10 packages ok (`verification` 17.5 s, `identity` 4.2 s, `metadata` 8.1 s, `platform/access` 3.5 s, `platform/app` 1.3 s, `httpserver` 1.3 s, `postgres` 1.4 s, `signin` 1.4 s, `traffic` 2.9 s, `cmd/migrate` 1.0 s); two packages have no test files |
+| `hv nice -n 10 make check` (docs-verify, gofmt, `go vet` of all packages and of the integration packages, `go mod verify`, `eslint --max-warnings 0`, `tsc --noEmit`) | PASS, rc 0 (the 935 s of wall time in the log are the wait for the lock) |
+| `node --test scripts/*.test.mjs` | PASS, 13 of 13 |
+| `vitest run src/preview` (unmutated) and `vitest run src/CommandRecovery.test.tsx` (unmutated) | PASS (26 of 26; 2 of 2 in 6.7 s). The full suite was run once, under the PF-05 mutation: 125 of 126 passed, the failure was `CommandRecovery.test.tsx` at 5,061 ms (its 5 s limit) on a host with load average ~30; it passes alone. The full frontend suite was not run unmutated (NOT RUN) |
+| `it-run m14` (stack rebuilt from this tree's 70 migrations) `TestZZReviewPF6\|TestZZReviewPF0\|TestF05\|TestM14R\|TestM13R` | PASS (`ok` 350.1 s Go time, rc 0): 28 regression tests (`TestF05*` 6, `TestM13R*` 15, `TestM14R*` 7, including `TestM14R03ATokenThatEndsBeforeTheRunCanFinishIsRefusedBeforeAnythingIsSpent` 3.3 s and `TestF05ApprovalOvertakenByAFirstActivationCannotTakeEffect`) and my two probes; 0 failures. The F-05 residual test logs `err=<nil>, 1 approval(s) recorded` on the unmutated tree, as it did under both mutations |
+| `it-run m14` (RESET=0) `TestM14API\|TestM14Adv\|TestM14Ports\|TestM14Pre\|TestM14Slow\|TestZZReviewPF2` | pending (queued behind run A) |
 
 ## NOT RUN
 
