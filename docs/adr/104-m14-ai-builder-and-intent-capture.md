@@ -765,7 +765,7 @@ without the change; the reviewers' own probes were run against the fixed code by
     `password` (`Show a password "hint" field`) and the value after a `-p` of `zip`, `redis-cli` or `mysql` ("zip codes with -plus4", `redis-cli -p 6379`, `mysql -P3306`,
     `docker login --password-stdin`); the request the model read lost its meaning, and a definition whose label held such words could not be updated by the AI builder (the
     placeholder is refused when written back). Every form now needs the command or the statement around it. The flag of each command is its own (`-p` is the port of
-    redis-cli, `-P` that of mysql; the case of a flag counts). A `.netrc` entry needs `machine HOST login USER password`, `default login USER password` or a host with a dot.
+    redis-cli, `-P` that of mysql; the case of a flag counts). A `.netrc` entry needs `machine HOST login USER password`, a host with a dot, or `default login USER password` at the start of a line ("the default login admin password rotation" is a sentence).
     The SQL forms are read as a statement that starts with `CREATE|ALTER USER|ROLE` or `GRANT ... ON ... TO` and ends at `;` or after 1,000 bytes: every
     `IDENTIFIED [WITH plugin] BY` clause in it (so several users), and the quoted `PASSWORD` of a role that only the option words of `CREATE ROLE` precede; the words of the
     statement stay, the clause is replaced. A quoted literal is a password; a bare word after `IDENTIFIED BY` only when it has a digit or a symbol. Added in the same pass:
