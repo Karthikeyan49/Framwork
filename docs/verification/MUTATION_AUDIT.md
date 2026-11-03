@@ -26,16 +26,16 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1a | Target 1 - M13 policy (Holds / NativeHolds / Decide / permits / RoleStore), unit and end to end | 12 | 23 | 1 | 34% (12/35) |
 | 1b | Target 1 - M13 promotion package (counting, floors, staleness, runtime components, restore gate) | 36 | 19 | 3 | 65% (36/55) |
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
-| 1d | Target 1 - M13 handlers (holdingApprovers, internal/platform/access/promote.go), end to end | 0 | 0 | 0 | not reached |
+| 1d | Target 1 - M13 handlers (holdingApprovers end to end; authority helpers, unit; internal/platform/access/promote.go) | 0 | 8 | 1 | 0% (0/8) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 25 | 12 | 3 | 68% (25/37) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 39 | 18 | 3 | 68% (39/57) |
 | 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
-| 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 3 | 18 | 0 | 14% (3/21) |
+| 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 4 | 25 | 0 | 14% (4/29) |
 | 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
 | 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
-| all | all targets reached | 152 | 100 | 14 | 60% (152/252) |
+| all | all targets reached | 167 | 121 | 15 | 58% (167/288) |
 
-Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, P08, P09, P10.
+Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, AC32.
 
 ## Findings
 
@@ -349,6 +349,89 @@ func TestAddressGuardRefusesDeniedAddressesOtherPortsAndGarbage(t *testing.T) {
 }
 ```
 
+### MA-09 (MEDIUM for AU01 and AU02, LOW for the rest) - the separation-of-duties helpers of the approval handlers have no unit test, and "the stricter of the bundle and the database floor" is exercised by nothing
+
+`internal/platform/access/promote.go:150-232` (`authority.required`, `excluded`, `party`, `bars`, `eligible`) decide, in Go and before the port is called, the quorum, the excluded roles, the barred actor and the distinct eligible approvers; the comment at line 150 says "the stricter of the bundle's separation and the database floor applies". Mutants AU01 (the bundle can no longer raise the quorum above the floor), AU02 (the roles a bundle excludes beyond the floor are ignored), AU04 (an unknown party no longer bars everyone), AU05 (a malformed actor id is not barred), AU06/AU07 (the acceptance author or freezer is read from another party), AU09 (barred approvers become eligible) and AU08 (a repeated approver counts twice) all pass every unit test of `internal/platform/access` (package has no test of these helpers) and the shipped risk policy equals the database floor at every level (`release_risk_v1.go:62-67`), so no integration test can distinguish AU01 or AU02 either: the stricter-than-floor behaviour is enforced by Go alone (the database floor is `RequiredApprovals`/`FloorRoles`) and is unprotected. AU03 is EQUIVALENT (`tenant.ValidID` already refuses an upper-case actor, party ids are canonical).
+Killing test, verified (passes on the original; fails on AU01, AU02, AU04, AU05, AU06, AU07, AU08, AU09 and passes on the equivalent AU03):
+
+```go
+package access
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/promotion"
+	"github.com/Karthikeyan49/Framwork/internal/risk"
+)
+
+func TestAuthorityQuorumExcludedRolesBarredActorsAndEligibleApprovers(t *testing.T) {
+	const requester, author, freezer, other, second = "aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000002", "aaaaaaaa-0000-4000-8000-000000000003", "aaaaaaaa-0000-4000-8000-000000000004", "aaaaaaaa-0000-4000-8000-000000000005"
+	parties := risk.Parties{Requester: requester, AcceptanceAuthor: author, SandboxFreezer: freezer}
+	high := authority{level: "HIGH", separation: risk.Separation{Approvals: 1, Excluded: []string{risk.RoleRequester, risk.RoleAcceptanceAuthor}}, parties: parties}
+	critical := authority{level: "CRITICAL", separation: risk.Separation{Approvals: 2, Excluded: []string{risk.RoleRequester, risk.RoleAcceptanceAuthor, risk.RoleSandboxFreezer}}, parties: parties}
+	stricter := authority{level: "LOW", separation: risk.Separation{Approvals: 3, Excluded: []string{risk.RoleSandboxFreezer}}, parties: parties}
+	if high.required() != 1 || critical.required() != 2 || stricter.required() != 3 || (authority{level: "LOW", separation: risk.Separation{Approvals: 1}}).required() != 1 {
+		t.Fatal("required quorum", high.required(), critical.required(), stricter.required())
+	}
+	if got := stricter.excluded(); !reflect.DeepEqual(got, []string{risk.RoleSandboxFreezer}) {
+		t.Fatalf("a bundle that excludes the freezer at LOW: %v", got)
+	}
+	if got := high.excluded(); !reflect.DeepEqual(got, []string{risk.RoleRequester, risk.RoleAcceptanceAuthor}) {
+		t.Fatalf("HIGH excludes %v", got)
+	}
+	for _, tc := range []struct {
+		au     authority
+		actor  string
+		role   string
+		barred bool
+	}{
+		{high, requester, risk.RoleRequester, true}, {high, author, risk.RoleAcceptanceAuthor, true}, {high, freezer, "", false}, {high, other, "", false},
+		{critical, freezer, risk.RoleSandboxFreezer, true}, {critical, other, "", false}, {high, strings.ToUpper(requester), "", true}, {high, "not-an-id", "", true},
+		{authority{level: "HIGH", separation: high.separation, parties: risk.Parties{Requester: requester}}, other, risk.RoleAcceptanceAuthor, true}, // an unknown party bars everyone
+	} {
+		if role, barred := tc.au.bars(tc.actor); role != tc.role || barred != tc.barred {
+			t.Errorf("bars(%s) = %q, %v; want %q, %v", tc.actor, role, barred, tc.role, tc.barred)
+		}
+	}
+	approvals := []promotion.Decision{{ActorID: other, At: time.Unix(1, 0)}, {ActorID: requester}, {ActorID: strings.ToUpper(other)}, {ActorID: second}, {ActorID: other}, {ActorID: author}}
+	if got := high.eligible(approvals); !reflect.DeepEqual(got, []string{other, second}) {
+		t.Fatalf("eligible approvers %v", got)
+	}
+}
+```
+
+### MA-10 (LOW) - `cleanText` is only partly pinned (mutants SC02, SC03, SC05, SC06)
+
+`internal/ai/schema.go:304-319` keeps invisible and direction-changing characters out of the text of a model proposal that a human reviews and approves (the "invisible-instruction smuggling channel"). Removing the word joiner U+2060 (SC02), the Mongolian vowel separator U+180E (SC03), the bidi isolates U+2066 to U+2069 (SC05) or the C1 controls U+0080 to U+009F (SC06) passes the whole `internal/ai` package; the tests name the embeddings U+202A to U+202E, the tag characters and a few others. Killing test, verified (passes on the original; fails on SC02, SC03, SC04, SC05 and SC06):
+
+```go
+package ai
+
+import "testing"
+
+func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
+	for _, ok := range []string{"plain text", "line one\nline two\ttabbed", "é ü 日本語 🚀"} {
+		if !cleanText(ok) {
+			t.Errorf("%q refused", ok)
+		}
+	}
+	bad := map[string]rune{
+		"NUL": 0x00, "BEL": 0x07, "ESC": 0x1b, "DEL": 0x7f, "C1 start": 0x80, "NEL": 0x85, "C1 end": 0x9f,
+		"LRE": 0x202a, "RLO": 0x202e, "LRI": 0x2066, "FSI": 0x2068, "PDI": 0x2069,
+		"line separator": 0x2028, "paragraph separator": 0x2029, "BOM": 0xfeff, "zero width space": 0x200b, "word joiner": 0x2060, "mongolian vowel separator": 0x180e,
+		"tag start": 0xe0000, "tag end": 0xe007f,
+	}
+	for name, r := range bad {
+		if cleanText("a" + string(r) + "b") {
+			t.Errorf("%s (U+%04X) accepted", name, r)
+		}
+	}
+}
+```
+
 ## Equivalent mutants
 
 - D25 (`internal/promotion/decisions.go:551`): the dedupe key `lower(actor)+actor` is injective in the actor id, so `CountEligible` counts the same set.
@@ -629,7 +712,44 @@ func TestAddressGuardRefusesDeniedAddressesOtherPortsAndGarbage(t *testing.T) {
 | N14b | internal/tools/netpolicy.go:296 | AddressGuard: the denied predicate is not consulted (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | MA-08 |
 | P06 | internal/ai/patch.go:127 | apply: schema version mismatch accepted | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalValidatesDefinitionsWithTheMetadataSchema |
 | P07 | internal/ai/patch.go:130 | apply: namespace mismatch accepted | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| P08 | internal/ai/patch.go:150 | apply: an add may carry an expected hash | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED |  |
+| P09 | internal/ai/patch.go:152 | apply: an add over an existing id | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| P10 | internal/ai/patch.go:157 | apply: update/delete of a missing definition | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
 | N15b | internal/tools/netpolicy.go:296 | AddressGuard: any port (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | MA-08 |
 | P11 | internal/ai/patch.go:159 | apply: the per-target expected-hash compare-and-set is skipped | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
 | P12 | internal/ai/patch.go:99 | apply: two operations on one target | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalDuplicateTargets |
 | P13 | internal/ai/patch.go:60 | apply: operation bound is exclusive | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| P14 | internal/ai/patch.go:104 | apply: any target kind | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalRefusesEveryNonAllowlistedKind |
+| P15 | internal/ai/patch.go:280 | sensitive aspects: financial rule changes need no acknowledgement | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| P16 | internal/ai/patch.go:280 | sensitive aspects: unclassified changes need no acknowledgement | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestSensitiveAspectVocabulary |
+| P17 | internal/ai/patch.go:94 | apply: a delete carrying a definition | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalMalformedProposalsAreErrors |
+| K01 | internal/ai/kinds.go:11 | allowlist: workflow dropped (neutral, tightening) | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| K02 | internal/ai/kinds.go:11 | allowlist: tool added | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
+| AC26 | internal/platform/access/access.go:184 | extendWriteDeadline: the extension is a hundredth of the asked time | go test ./internal/platform/access (whole package) | KILLED | TestExtendWriteDeadlineLetsASlowResponseFinish |
+| AC27 | internal/platform/access/access.go:427 | serve: the write deadline of an AI creation is never extended | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the integration deadline tests (m14_api_deadline_test.go) are expected to see it; NOT RUN |
+| AC28 | internal/platform/access/access.go:276 | serve: an AI creation is never repeated after a known abort | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the retry of an AI creation after a known abort is seen by the integration suite only; NOT RUN |
+| K03 | internal/ai/kinds.go:11 | allowlist: role added | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAllowlistCoversEveryDefinitionKind |
+| AC29 | internal/platform/access/access.go:723 | enforce: an unknown obligation does not deny | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: enforce() fail-closed on unknown obligations is covered by TestM1AuditAndObligationsFailClosed (integration); NOT RUN |
+| AC30 | internal/platform/access/access.go:727 | enforce: a decision without id or version still allows | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: enforce() fail-closed on a decision without id/version is covered by TestM1AuditAndObligationsFailClosed (integration); NOT RUN |
+| AC31 | internal/platform/access/access.go:548 | perform: a metadata POST is authorized as a read | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the metadata route to action mapping is covered by the integration suite; NOT RUN |
+| SC01 | internal/ai/schema.go:64 | serverField: no key normalisation | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalNamesServerDerivedFields |
+| AC33 | internal/platform/access/access.go:582 | perform: the AI routes are authorized as preview reads | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the AI route to action mapping; NOT RUN end to end |
+| AC34 | internal/platform/access/access.go:579 | perform: the release routes are authorized as preview reads | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the release route to action mapping; NOT RUN end to end |
+| SC02 | internal/ai/schema.go:312 | cleanText: word joiner accepted | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' ; widened: ./internal/ai | SURVIVED | MA-10 |
+| SC03 | internal/ai/schema.go:312 | cleanText: mongolian vowel separator accepted | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' ; widened: ./internal/ai | SURVIVED | MA-10 |
+| AU01 | internal/platform/access/promote.go:162 | authority.required: the bundle may not raise the quorum above the database floor | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 (MEDIUM): the stricter-than-floor quorum is enforced by Go alone and untested |
+| SC04 | internal/ai/schema.go:314 | cleanText: tag characters accepted | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
+| AU02 | internal/platform/access/promote.go:170 | authority.excluded: the roles the bundle excludes are ignored (floor roles only) | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 (MEDIUM): the roles a bundle excludes beyond the floor are enforced by Go alone and untested |
+| AU03 | internal/platform/access/promote.go:207 | authority.bars: party ids compared case-sensitively | go test ./internal/platform/access (whole package) | EQUIVALENT | tenant.ValidID refuses an upper-case actor before the comparison and party ids are canonical, so == and EqualFold agree |
+| AU04 | internal/platform/access/promote.go:207 | authority.bars: an unknown party no longer bars everyone | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 |
+| AU05 | internal/platform/access/promote.go:202 | authority.bars: a malformed actor id is not barred | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 |
+| AU06 | internal/platform/access/promote.go:191 | authority.party: the acceptance author is the requester | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 |
+| AU07 | internal/platform/access/promote.go:193 | authority.party: the sandbox freezer is the acceptance author | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 |
+| AU08 | internal/platform/access/promote.go:222 | authority.eligible: a repeated approver counts twice | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 (LOW): the approvals primary key already forbids a repeated approver |
+| AU09 | internal/platform/access/promote.go:226 | authority.eligible: barred approvers are eligible | go test ./internal/platform/access (whole package) | SURVIVED | MA-09 |
+| SC05 | internal/ai/schema.go:310 | cleanText: bidi isolates accepted | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' ; widened: ./internal/ai | SURVIVED | MA-10 |
+| SC06 | internal/ai/schema.go:308 | cleanText: C1 controls accepted | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' ; widened: ./internal/ai | SURVIVED | MA-10 |
+| SC07 | internal/ai/schema.go:289 | checkText: keys of free-form maps are not checked | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' ; widened: ./internal/ai | SURVIVED | LOW: the keys of free-form maps; no killing test written |
+| SC08 | internal/ai/schema.go:476 | validateOperation: a tool payload under another kind | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
+| SC09 | internal/ai/schema.go:464 | validateOperation: update/delete without an expected hash | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
+| SC10 | internal/ai/schema.go:395 | validatePatchProposal: an empty proposal | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestAdversarialCorpus |
