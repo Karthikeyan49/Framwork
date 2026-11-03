@@ -29,12 +29,12 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
 | 1d | Target 1 - M13 handlers (holdingApprovers end to end; authority helpers, unit; internal/platform/access/promote.go) | 0 | 8 | 1 | 0% (0/8) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 24 | 4 | 64% (42/66) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 27 | 4 | 61% (42/69) |
 | 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
 | 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 4 | 25 | 0 | 14% (4/29) |
 | 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
 | 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
-| all | all targets reached | 170 | 127 | 16 | 57% (170/297) |
+| all | all targets reached | 170 | 130 | 16 | 57% (170/300) |
 
 Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, AC32.
 
@@ -458,6 +458,65 @@ func TestEffectiveLimitsNeverRaiseACeiling(t *testing.T) {
 }
 ```
 
+### MA-12 (LOW) - the admission reservation formula `reserveFor` has no unit test (mutants SV05, SV06)
+
+`internal/ai/service.go:225-237`: the pessimistic reservation of one run is `attempts x (input/4 + output tokens)`, capped at the database ceiling; the daily budget check of `ai_begin` and the run budget of the loop (`TokensRemaining: adm.Reserve`) are built on it. Dropping the output tokens from the reservation (SV05) or reserving one attempt instead of all (SV06) passes the whole `internal/ai` package. The integration suite may see them (`TestM14APIAdmissionBudgetsAndLimits` uses real numbers); that was NOT RUN against these mutants. Killing test, verified (passes on the original; fails on SV05 and SV06):
+
+```go
+package ai
+
+import "testing"
+
+func TestReserveCoversEveryAttemptAndItsOutput(t *testing.T) {
+	limits := func(attempts, output int) ServiceLimits { return ServiceLimits{MaxAttempts: attempts, MaxOutputTokens: output} }
+	one := reserveFor(limits(1, 1000), 1000, 200, 500)
+	small, large := reserveFor(limits(3, 1000), 1000, 200, 500), reserveFor(limits(3, 2000), 1000, 200, 500)
+	if small != 3*one {
+		t.Fatalf("three attempts reserve %d, one attempt reserves %d", small, one)
+	}
+	if large-small != 3*1000 {
+		t.Fatalf("1000 more output tokens per attempt reserve %d more tokens, want 3000", large-small)
+	}
+	if got := reserveFor(limits(16, 1_000_000), MaxContextBytes, 0, 1<<20); got != maxReserve {
+		t.Fatalf("a huge reservation is %d, the database ceiling is %d", got, maxReserve)
+	}
+}
+```
+
+### MA-13 (LOW) - `validRequestText` is pinned by no unit test (mutants SV07 to SV10)
+
+`internal/ai/service.go:156-175`: the request text of the human is untrusted model input (hashed, never stored) and must carry no control, invisible or direction-changing character and 1..`MaxRequestRunes` runes. Accepting the bidi isolates (SV07), control characters (SV08), one rune more than the bound (SV09) or a blank text (SV10) passes the whole `internal/ai` package; the integration suite (`m14_api_bodies_test.go`) may see some of them (NOT RUN against these mutants). Killing test, verified (passes on the original; fails on SV07, SV08, SV09 and SV10):
+
+```go
+package ai
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestRequestTextRefusesInvisibleAndControlCharactersAndBlank(t *testing.T) {
+	for _, ok := range []string{"add a field", "two\nlines\tand\rreturns", "é 日本語 🚀", strings.Repeat("x", MaxRequestRunes)} {
+		if !validRequestText(ok) {
+			t.Errorf("%.20q refused", ok)
+		}
+	}
+	around := func(r rune) string { return "a" + string(r) + "b" }
+	bad := map[string]string{"empty": "", "blank": " \t\n", "invalid utf8": "a\xffb", "too long": strings.Repeat("x", MaxRequestRunes+1)}
+	for name, r := range map[string]rune{
+		"NUL": 0x00, "ESC": 0x1b, "DEL": 0x7f, "C1": 0x85, "ALM": 0x061c, "LRM": 0x200e, "RLM": 0x200f, "RLO": 0x202e, "LRI": 0x2066, "PDI": 0x2069,
+		"line separator": 0x2028, "paragraph separator": 0x2029, "BOM": 0xfeff, "zero width space": 0x200b, "word joiner": 0x2060, "invisible times": 0x2062, "annotation anchor": 0xfff9,
+	} {
+		bad[name] = around(r)
+	}
+	for name, s := range bad {
+		if validRequestText(s) {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+```
+
 ## Killing tests, run on the original and on the mutants
 
 Every killing test was written as a temporary `zz_review_*_test.go` in a scratch copy of the tree (never in the audited worktree), run on the original code (passed, "ok") and then against each mutant it targets. The test names below carry the temporary prefix `TestZZReview`; the texts in Findings drop it. MA-01 is an integration test (its runs are the logs named there); all others are unit tests.
@@ -477,6 +536,9 @@ Every killing test was written as a temporary `zz_review_*_test.go` in a scratch
 | (no failing test) | `./internal/platform/access` | yes | AU03 (survived), AU08 (survived) |
 | TestZZReviewCleanTextRefusesEveryInvisibleOrReorderingCharacter | `./internal/ai` | yes | SC02, SC03, SC04, SC05, SC06 |
 | TestZZReviewEffectiveLimitsNeverRaiseACeiling | `./internal/ai` | yes | SV01, SV02, SV03, SV04 |
+| TestZZReviewReserveCoversEveryAttemptAndItsOutput | `./internal/ai` | yes | SV05, SV06 |
+| (no failing test) | `./internal/ai` | yes | SV07 (survived), SV08 (survived), SV09 (survived), SV10 (survived) |
+| TestZZReviewRequestTextRefusesInvisibleAndControlCharactersAndBlank | `./internal/ai` | yes | SV07, SV08, SV09, SV10 |
 
 AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of the test (no exact duplicate approver) and is killed by the final one (`K2-AU08`).
 
@@ -819,5 +881,8 @@ AU03 is EQUIVALENT (see Equivalent mutants); AU08 survived the first version of 
 | SV02 | internal/ai/service.go:63 | Effective: output token ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
 | SV03 | internal/ai/service.go:69 | Effective: in-flight ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
 | SV04 | internal/ai/service.go:75 | Effective: daily token ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | MA-11 |
-| SV05 | internal/ai/service.go:231 | reserveFor: the output is not reserved | go test ./internal/ai -run 'Limits\|Effective\|Service\|Reserve\|Config' ; widened: ./internal/ai | SURVIVED |  |
-| SV06 | internal/ai/service.go:232 | reserveFor: one attempt reserved for several | go test ./internal/ai -run 'Limits\|Effective\|Service\|Reserve\|Config' ; widened: ./internal/ai | SURVIVED |  |
+| SV05 | internal/ai/service.go:231 | reserveFor: the output is not reserved | go test ./internal/ai -run 'Limits\|Effective\|Service\|Reserve\|Config' ; widened: ./internal/ai | SURVIVED | MA-12 |
+| SV06 | internal/ai/service.go:232 | reserveFor: one attempt reserved for several | go test ./internal/ai -run 'Limits\|Effective\|Service\|Reserve\|Config' ; widened: ./internal/ai | SURVIVED | MA-12 |
+| SV07 | internal/ai/service.go:170 | validRequestText: bidi isolates accepted | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
+| SV08 | internal/ai/service.go:168 | validRequestText: control characters accepted | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
+| SV09 | internal/ai/service.go:163 | validRequestText: bound off by one | go test ./internal/ai -run 'Request\|Text\|Valid\|Context\|Adversarial\|Hostile' ; widened: ./internal/ai | SURVIVED | MA-13 |
