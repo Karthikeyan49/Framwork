@@ -6,21 +6,23 @@ Result words: PASS / FAIL / NOT RUN only. Every "held" names the attack that was
 
 ## Progress
 
+Updated 3 November 2026 after the interruption (the host rebooted; the stacks were restarted). The heavy lock was contended by four other agents, so the integration runs below were queued for more than 20 minutes.
+
 | # | scope | state |
 |---|---|---|
-| 1 | 62cc527 expiring-token admission check | attacked (integration probes, unit edge probes); one LOW |
-| 2 | 3c27378 verifier-v3 | attacked (unit probes, two mutations); PF-01 MEDIUM, PF-02 LOW |
-| 3 | bca9d98 operator credentials refused at start | attacked: real binaries, launcher, tree comparison; no finding |
-| 4 | db9c2fa F-05 residual test | mutated 00092 and `activate_release`: PF-07 (LOW) |
-| 5 | b88a465 version-gate scan | attacked: scratch migrations, mutations of every enumerated place; PF-04, PF-05 (LOW) |
-| 6 | 294e597 migrate status | not started |
-| 7 | 80a582f body-budget benchmarks | run; PF-08 (LOW, comment) |
-| 8 | regression subset | not started |
-| 0 | redactor code defects (panics, complexity, latency at the largest input) | not started |
+| 1 | 62cc527 expiring-token admission check | done; PF-03 (LOW, fixed in 55ee30e and re-verified); no other finding |
+| 2 | 3c27378 verifier-v3 | done; PF-01 (MEDIUM) and PF-02 (LOW), both fixed in a4379a8 and re-verified; PF-06 (LOW) survives the fix |
+| 3 | bca9d98 operator credentials refused at start | done; PASS; PF-10 (LOW, test gap) |
+| 4 | db9c2fa F-05 residual test | done; PF-07 (LOW) |
+| 5 | b88a465 version-gate scan | done; PF-04 and PF-05 (LOW) |
+| 6 | 294e597 migrate status | unit mutation done; the run against a disposable database is queued (run A) |
+| 7 | 80a582f body-budget benchmarks | done; PASS; PF-08 (LOW, comment) |
+| 8 | regression subset | `make check` PASS; unit packages with `-race` and the integration groups queued (see Gate subset) |
+| 0 | redactor code defects | done for panics, fixed point and latency; PF-09 (MEDIUM); the cost of a refused creation with a large draft is queued (run A) |
 
 ## Verdict
 
-Interim: PASS WITH FINDINGS (sections 3-8 still open).
+Interim: PASS WITH FINDINGS. No HIGH finding. One MEDIUM against the pinned tree that is fixed on the integration branch (PF-01) and one MEDIUM that is not (PF-09, the card rule).
 
 ## Findings
 
