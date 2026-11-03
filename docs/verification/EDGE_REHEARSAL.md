@@ -225,21 +225,30 @@ done here): retry `ErrAdmissionFull` for the result exchange inside its 8 s cont
 
 (Further findings are added below as the scenarios finish.)
 
-## Deployment constraints that follow (so far)
+## Deployment constraints that follow
 
-1. Response and idle timeout of every proxy or load balancer in front of the API: at least 75 s (recommended 90 s) for the two AI creation routes; a client-facing write timeout of 60 s
-   makes the client see EOF instead of the API's own 503 at 60.2 s.
-2. No automatic POST retry on the creation routes (proxy `retry` on 5xx/reset, client libraries, service-mesh defaults).
-3. Capacity: a phase costs the server about 1 descriptor, 3 goroutines and under 0.1 MiB; 400 at once did not move the other tenants' reads beyond p99 150 ms on a loaded host. The limits that
-   bite first are the per-tenant ones: 61,470 tokens are reserved per run, so with the default daily budget of 200,000 a tenant can have 3 runs in flight whatever its in-flight limit, and the
-   4 + 128 admission queue, which must not fill while results arrive (ER-04).
-3b. Rolling restarts: until ER-03 is addressed, drain a replica of AI traffic (and wait 80 s) before stopping it, or accept the loss of every running proposal and its 61,467-token charge.
-4. Body-carrying requests are the exposed surface: put connection and bandwidth limits per source (and per account) at the edge; the API's own protection is the 32 MiB budget, which 16 accounts can hold.
-5. All replicas need identical `in_flight_per_tenant` and `daily_token_budget` (the limits are arguments of the database port, not database state).
-6. TLS and HTTP/2, if wanted, are terminated in front of the API: the API cannot do either. Behind a proxy all users share one peer bucket (300/s, burst 600) and one 4+128 admission queue. The traffic gate, the body budget and the AI in-flight cap are per process (replicas multiply them).
+1. **Proxy or load balancer timeouts.** Response and idle timeout of at least 75 s (recommended 90 s) on the two AI creation routes, and a client-facing write timeout of the same size. At 60 s the client sees
+   EOF instead of the API's own 503 (60.2 s); below 60 s a cut costs 13,866 tokens (22.6% of the reservation) and the answer, or leaves a READY proposal the client never saw.
+2. **No automatic retry of `POST .../patch-proposals` and `.../requirement-proposals`** at any layer (proxy `retry` on 5xx or reset, client libraries, service-mesh defaults): each retry is a new paid run
+   (3 retries = 41,598 tokens, no result); the creations are not idempotent.
+3. **Restarts (until ER-03 is addressed).** The process ends itself 10 s after SIGTERM whatever the orchestrator allows. Drain a replica of AI traffic and wait for the phases (up to 70 s) before stopping it,
+   or accept that every running proposal is lost, left PENDING for the 80 s lease, holding its slot, and charged its whole reservation (61,467 tokens, about 31% of the default daily budget) at the next admission.
+4. **Capacity.** A phase costs the server about 1 descriptor, 3 goroutines and under 0.1 MiB; 400 at once did not move another tenant's reads beyond p99 150 ms on a loaded host and held no database connection.
+   What bites first are per-tenant numbers and the queue: 61,470 tokens are reserved per run, so with the default daily budget of 200,000 a tenant can have 3 runs in flight whatever its in-flight limit
+   (arithmetic from the measured reservation), and the 4 + 128 database admission must not fill while results arrive (ER-04).
+5. **Replicas.** Identical `in_flight_per_tenant` and `daily_token_budget` on all of them (the limits are arguments of the database port, not database state; measured in 4c). The in-flight limit, the daily budget
+   and the pessimistic sweep are global and exact across processes; the traffic gate, the body budget and the peer table are per process (replicas multiply them).
+6. **Body-carrying requests are the exposed surface.** Put per-source connection and bandwidth limits (and per-account limits) at the edge: the API's own protection is the 32 MiB budget, which 16 accounts
+   can hold with 3.2 MiB/s, and the 8,192-key peer table, which 8,192 source addresses (one IPv6 /64) can fill.
+7. **TLS and HTTP/2** are terminated in front of the API; the API speaks neither. Behind one proxy all users share one peer bucket (300/s, burst 600) and one 4 + 128 admission queue; the headers
+   `X-Forwarded-For`, `Forwarded` and `X-Real-IP` are deliberately not used.
 
 ## NOT RUN
 
-- nginx, haproxy, caddy: no image or binary present, `docker pull` forbidden.
-- Scenario 7 (rollover): see the table. Code reading only, not executed: the proposal pins `usage_day` at admission (`00089:142`), finish and sweep charge that day, the reservation
-  check sums all PENDING rows regardless of day.
+- **nginx, haproxy, caddy:** no image or binary on the host (`docker images`: postgres, redis, the OpenTelemetry collector); `docker pull` is forbidden. Only the Go reverse proxy stood in.
+- **Scenario 7, UTC day rollover:** `ai_begin` takes the day from `clock_timestamp()` inside the database (`00089:142`); the clock cannot be injected, the usage table accepts writes only through the
+  port (`ai_port_write` trigger, `00089:94`) so a "yesterday" row cannot be seeded, and the UTC day boundary was not reachable within the session. Reading, not execution: the proposal pins `usage_day` at admission, finish and
+  sweep charge that stored day, and the in-flight and reservation sums are not day-scoped.
+- **Real provider, real model, real IdP, TLS on the API** (it has none), and a run of the whole matrix on a quiet host: the host load average was 3.6 to 14 while the probes ran.
+- **The race detector:** the probes ran with `-race=false` (the integration suite normally runs with it); goroutine, descriptor and RSS numbers are those of an ordinary build.
+- **pg_stat_activity as proof of idleness:** the migrator cannot see the `state` of the application role's sessions (NULL); the application pool's `InUse` counter was used instead (0 during every phase).
