@@ -8,7 +8,7 @@ Branch `review/ai-output-redteam`, from `11a4ee40a12e0301472b275203ac10d8347eaad
 |---|---|
 | Part A (no database) done | 645 corpus-format items through the builder's expander/checker, the scripted gateway and the pure functions; 45 canonical-form payloads; a 3,202-mutant sensitivity sweep against an independent IR oracle; 12 repair-loop scenarios, 3 diagnostic floods, 300 cancel races; 38 hostile HTTP provider responses; 158 aliasing checks. 0 panics. |
 | Part B/C run 1 and 2 (`it-run m12db`, `zzaiout-1`, `zzaiout-2`, rc=0) | B1 (AO-02), B2 decision races, B3 ids/oracles/routes, B4 bound and secret (AO-05), B5 acknowledge variants, C1 fifty parallel admissions, C2 binding/ACL. |
-| Part B/C run 3 (`zzaiout-3`) | B4 amplification at the route, B6 wire-level games, C3 accounting under expiry races: result in the Part B/C table below. |
+| Part B/C run 3 (`zzaiout-3`) | aborted after 2.9 s by an index error in my own probe (`TrimSpace` before slicing; not a product defect) after the 21-minute wait for the lock; B4's first half ran (exact bound READY). Remaining B4 amplification, B6 wire-level games, C3 accounting under expiry races requeued as run 4 (`zzaiout-4`). |
 | Findings | AO-02 MEDIUM; AO-01, AO-03, AO-04, AO-05 LOW. No HIGH. |
 
 ## Verdict
@@ -146,12 +146,12 @@ func TestReproAO05(t *testing.T) {
 | B policy and information flow (B1) | 2 custom roles, 4 reads, 1 proposal | AO-02: `ai.read` and `ai.propose` reach draft definitions without `metadata.read` |
 | B decision races (B2) | 54 concurrent decisions in 6 rounds | one winner per round, no double decision, no 5xx |
 | B ids, oracles, query parameters, route confusion (B3) | 12 id probes, 1 tenant denial, 10 list spellings, 26 route variants, 100 timed requests | identical 404s, no state change, no 5xx |
-| B size bound and secret in output (B4) | 2 answers (exact bound; secret token), amplification in run 3 | exact bound READY; AO-05 |
+| B size bound and secret in output (B4) | 2 answers (exact bound; secret token); amplification at the route in run 4 | exact bound READY; AO-05; the amplification case is established at the pipeline (`CanonicalPatch` refuses an answer whose HTML-escaped form exceeds 262,144 bytes as `too_large`, so no READY body can exceed the database cap) |
 | B acknowledgement (B5) | 11 applies + 1 replay | 10 refused, 1 accepted once |
-| B wire-level games (B6) | run 3 | @@B6@@ |
+| B wire-level games (B6) | run 4 | NOT RUN when this was written (queued behind the shared lock, `zzaiout-4`) |
 | C parallel admissions (C1) | 2 x 50 `ai_begin` | exact budget and in-flight bounds |
 | C binding, ACL, writers, worker guard (C2) | 3 cross-application calls, 7 functions, 1 catalogue scan, 1 guard | as documented |
-| C accounting under expiry races (C3) | run 3 | @@C3@@ |
+| C accounting under expiry races (C3) | run 4 | NOT RUN when this was written (queued, `zzaiout-4`) |
 
 Attacks the builder's own port tests already cover were not repeated (actor and tenant forgery of the session settings, malformed arguments, the state machine, append-only tables as operator and runtime role, hash mismatch between finish and body): `tests/integration/m14_ports_test.go`.
 
