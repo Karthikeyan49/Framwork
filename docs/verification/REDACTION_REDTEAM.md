@@ -10,9 +10,9 @@ Verdicts are PASS / FAIL / NOT RUN only.
 
 | state | detail |
 |---|---|
-| done | brief and code read; Part A matrix (about 3,000 cells x 6 samples); RT-01 and RT-02 minimised, patched, verified; Part C integration probes on the `fix` stack; false-positive corpus (389 inputs); timing at 4 KB to 1 MiB; 5 `holdsRedaction` bypass variants |
+| done | brief and code read; Part A matrix (about 3,000 cells x 6 samples); RT-01, RT-02 and RT-03 minimised, patched, verified; Part C integration probes on the `fix` stack; false-positive corpus (389 inputs); timing at 4 KB to 1 MiB; 5 `holdsRedaction` bypass variants |
 | interrupted | the run was cut by the account limit once and resumed; nothing was lost (the report and the branch are the record) |
-| next | wrapped-key finding (RT-03) and its patch; mutations (90 planned); 5-minute fuzz under `hv`; Part C path table; Part B tables |
+| next | mutations (90 planned); 5-minute fuzz under `hv`; Part C path table; Part B tables; remaining Part A observations |
 
 ## Findings
 
@@ -20,6 +20,7 @@ Verdicts are PASS / FAIL / NOT RUN only.
 |---|---|---|
 | RT-01 | MEDIUM | a quoted key defeats the `name = value` rule: `"password": "..."`, `'password': '...'`, `os.environ["DB_PASSWORD"] = "..."`, `define('DB_PASSWORD', '...')` survive in full |
 | RT-02 | MEDIUM | compound names without `_` or `-` are not names: `PGPASSWORD=...`, `dbPassword=...`, `apiSecret=...`, `postgresPassword: ...`, `SECRET_KEY_BASE=...` survive in full |
+| RT-03 | MEDIUM | a key hard-wrapped so that its first line is shorter than the minimum of its rule leaves both halves: 44 of 69 wrapped keys keep 12 or more consecutive characters at each of the widths 60, 64, 72, 76 |
 
 ### RT-01 MEDIUM - a quoted key defeats the assignment rule (`internal/ai/redact.go:69`, the `assignment` pattern)
 
@@ -65,3 +66,29 @@ Verification of the patch on the pinned tree, scratch copy:
 | Part A matrix (class x carrier, 6 samples a cell) | 44 cells improve (253 samples), 0 cells get worse; bad outcomes 5,657 -> 5,404 |
 | time at 1 MiB (worst accepted string is 16 KB) | still linear; `assign_*` inputs +10 to 30 % (for example 1.9 s -> 2.1 s), no input over 2.8 s |
 
+
+### RT-03 MEDIUM - a wrapped key whose first line is too short for any rule leaves both halves (`internal/ai/redact.go:181-247`, `redactWrappedTails`)
+
+The tail rule continues a key only after a redacted marker at the end of a line. When the line break falls early in the key, the first line holds fewer characters than
+the minimum of its rule (`ghp_` + 20, `sk-` + 16, `AKIA` + 16 exactly, `sk_live_` + 10, an unprefixed 40-character run), so nothing is redacted, there is no marker, and the
+tail alone on its line is not touched either. This is not the documented residual ("the tail shares its line with prose", ADR104 Amendment C item 6): here the tail is alone on
+its line and the line is followed by nothing but a newline. Hard-wrapped text is what a paste from an e-mail, a PDF, a chat export or a log viewer gives.
+
+Repro: `TestRTReproWrappedKeyHeadTooShort` (Appendix A; secrets drawn at run time). The first line is a 60, 64, 72 or 76 column line of prose that ends with the first
+`head` characters of the key (2 to 30 in steps of 2), the rest of the key stands alone on the next line, then `\nthanks`. Five classes: `ghp_` + 36 alphanumerics,
+`sk-` + 48 alphanumerics, `AKIA` + 16, a 40-character base64 secret key, `sk_live_` + 24. Result on the pinned code: **44 of 69 wrapped keys keep 12 or more consecutive secret
+characters at every width** (first case: the `ghp_` token cut after 2 characters keeps all 36 characters of its body). The one-line cases of the Part A matrix confirm it
+(`Here is the key ghp_<6c>` newline `<30c>`: 20 of 20 samples survive).
+
+Patch (73 added lines, 79-line diff, verified then reverted; Appendix B): `redactSplitKeys` reads the last word of a line together with the lone key-shaped words on
+the next lines (at most three) as one word and redacts the lines when that word is wholly one secret of the prefix rules, a 32+ hex run or, only when the first line is
+48 or more columns (a wrapped paragraph), a 40+ entropic run. It runs before the tail rule, so a three-way wrap is continued by the existing rule.
+
+| check | result |
+|---|---|
+| `TestRTReproWrappedKeyHeadTooShort` | FAIL before (44 of 69 at each width), PASS after (0 of 69) |
+| `gt test -count=1 ./internal/ai` (whole package) with RT-01/02 and RT-03 applied | PASS (30.8 s) |
+| false-positive corpus, 311 + 78 inputs | identical before and after, no new false positive |
+| Part A matrix | 0 cells worse |
+| time | worst 1 MiB input of many key-shaped lines 6.2 s (linear, 4 x size is about 4.5 x time); 16 KB, the largest string the route accepts, 117 ms |
+| residual of the patch | a head glued to prose (`usedAKIA...`), a tail followed by prose, and a break inside the prefix rule's own token class stay as documented |
