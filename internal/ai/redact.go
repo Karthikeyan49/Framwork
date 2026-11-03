@@ -31,9 +31,14 @@ type redactRule struct {
 	re    *regexp.Regexp
 	// ok, when set, decides whether a match really is a secret (a checksum, a decoding); a match it refuses stays as written.
 	ok func(match string) bool
+	// scan, when set, replaces re and ok: a rule whose secrets a single left-to-right match cannot find (the payment card).
+	scan func(s string, n *int) string
 }
 
 func (r redactRule) apply(s string, n *int) string {
+	if r.scan != nil {
+		return r.scan(s, n)
+	}
 	return r.re.ReplaceAllStringFunc(s, func(m string) string {
 		if r.ok != nil && !r.ok(m) {
 			return m
@@ -44,25 +49,25 @@ func (r redactRule) apply(s string, n *int) string {
 }
 
 var redactRules = []redactRule{
-	{"pem", regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)`), nil},
-	{"url_credentials", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/?#@"'<>\\]*@[^\s"'<>\\]+`), nil},
-	{"jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*`), nil},
-	{"api_key", regexp.MustCompile(`\b(?:(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|api_org_[A-Za-z0-9]{30,}|whsec_[A-Za-z0-9]{16,}|GOCSPX-[A-Za-z0-9_-]{24,}|dckr_pat_[A-Za-z0-9_-]{20,}|shp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32}|hvs\.[A-Za-z0-9_-]{20,}|gl(?:rt|dt|ptt|ft|imt|oas|soat|cbt)-[A-Za-z0-9_-]{16,}|sq0(?:atp|csp)-[A-Za-z0-9_-]{22,}|NRAK-[A-Z0-9]{27}|\d{8,10}:A[A-Za-z0-9_-]{34}|[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}|[A-Za-z0-9_.-]{3}\dQ~[A-Za-z0-9_.~-]{31,34})`), nil},
-	{"aws_key_id", regexp.MustCompile(`\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[0-9A-Z]{16}\b`), nil},
-	{"bearer", regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}`), nil},
-	{"authorization", regexp.MustCompile(`(?i)\bauthorization\s*[:=]\s*(?:bearer\s+|basic\s+|token\s+)?[^\s,;"']{8,}`), nil},
+	{"pem", regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)`), nil, nil},
+	{"url_credentials", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/?#@"'<>\\]*@[^\s"'<>\\]+`), nil, nil},
+	{"jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*`), nil, nil},
+	{"api_key", regexp.MustCompile(`\b(?:(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|api_org_[A-Za-z0-9]{30,}|whsec_[A-Za-z0-9]{16,}|GOCSPX-[A-Za-z0-9_-]{24,}|dckr_pat_[A-Za-z0-9_-]{20,}|shp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32}|hvs\.[A-Za-z0-9_-]{20,}|gl(?:rt|dt|ptt|ft|imt|oas|soat|cbt)-[A-Za-z0-9_-]{16,}|sq0(?:atp|csp)-[A-Za-z0-9_-]{22,}|NRAK-[A-Z0-9]{27}|\d{8,10}:A[A-Za-z0-9_-]{34}|[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}|[A-Za-z0-9_.-]{3}\dQ~[A-Za-z0-9_.~-]{31,34})`), nil, nil},
+	{"aws_key_id", regexp.MustCompile(`\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[0-9A-Z]{16}\b`), nil, nil},
+	{"bearer", regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}`), nil, nil},
+	{"authorization", regexp.MustCompile(`(?i)\bauthorization\s*[:=]\s*(?:bearer\s+|basic\s+|token\s+)?[^\s,;"']{8,}`), nil, nil},
 	// The signature of an Azure shared access signature (a query value, URL-encoded base64) and of any other "sig=" link.
-	{"sas_signature", regexp.MustCompile(`(?i)\b(?:sig|signature)=[A-Za-z0-9%+/_-]{16,}={0,3}`), nil},
+	{"sas_signature", regexp.MustCompile(`(?i)\b(?:sig|signature)=[A-Za-z0-9%+/_-]{16,}={0,3}`), nil, nil},
 	// "Basic <token>" without the header name around it; only a token that decodes to "user:password" is a credential, so "basic
 	// information" and "basic requirements" stay.
-	{"basic_auth", regexp.MustCompile(`(?i)\bbasic\s+[A-Za-z0-9+/_-]{6,}={0,2}`), basicCredentials},
+	{"basic_auth", regexp.MustCompile(`(?i)\bbasic\s+[A-Za-z0-9+/_-]{6,}={0,2}`), basicCredentials, nil},
 	// A Cookie or Set-Cookie header whose line holds a pair with a value of eight characters or more: a session, not a preference.
-	{"cookie", regexp.MustCompile(`(?i)\b(?:set-)?cookie[ \t]*:[^\r\n]*?[A-Za-z0-9_.%-]+=[^\s;]{8,}[^\r\n]*`), nil},
-	// A payment card number: 13 to 19 digits, alone or in groups, with a known issuer prefix and a valid check digit.
-	{"card", regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`), cardNumber},
+	{"cookie", regexp.MustCompile(`(?i)\b(?:set-)?cookie[ \t]*:[^\r\n]*?[A-Za-z0-9_.%-]+=[^\s;]{8,}[^\r\n]*`), nil, nil},
+	// A payment card number: 13 to 19 digits, alone or in groups, with a known issuer prefix and a valid check digit (redactCards).
+	{"card", nil, nil, redactCards},
 	// A password given as an argument or as a quoted literal after the word: curl -u user:SECRET, mysql -pSECRET, sshpass -p SECRET, docker login -p SECRET,
 	// IDENTIFIED BY SECRET, a .netrc "password SECRET", SQL PASSWORD 'SECRET'.
-	{"password_arg", regexp.MustCompile(`(?i)(?:(?:\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?[^\s:"']+:|\b(?:sshpass|redis-cli|mongo(?:sh)?|docker\s+login|zip)\b[^\n]*?\s(?:-p|-a|--password)\s*|\bwget\b[^\n]*?--(?:http-|ftp-)?password[\s=]+|\bmysql(?:dump|admin)?\b[^\n]*?\s-p|\bidentified\s+by\s+|\bmachine\b[^\n]*?\bpassword\s+)["']?[^\s"';]{4,}["']?|\bpassword\s+["'][^"'\n]{4,200}["'])`), nil},
+	{"password_arg", regexp.MustCompile(`(?i)(?:(?:\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?[^\s:"']+:|\b(?:sshpass|redis-cli|mongo(?:sh)?|docker\s+login|zip)\b[^\n]*?\s(?:-p|-a|--password)\s*|\bwget\b[^\n]*?--(?:http-|ftp-)?password[\s=]+|\bmysql(?:dump|admin)?\b[^\n]*?\s-p|\bidentified\s+by\s+|\bmachine\b[^\n]*?\bpassword\s+)["']?[^\s"';]{4,}["']?|\bpassword\s+["'][^"'\n]{4,200}["'])`), nil, nil},
 }
 
 // assignment finds "name = value" pairs with a secret-like name, also at the end of a longer variable name (DB_PASSWORD, PGPASSWORD,
@@ -129,15 +134,104 @@ func basicCredentials(m string) bool {
 	return true
 }
 
-// cardNumber reports whether the match of the card rule is a payment card number.
-func cardNumber(m string) bool {
-	digits := make([]int, 0, 19)
-	for i := 0; i < len(m); i++ {
-		if m[i] >= '0' && m[i] <= '9' {
-			digits = append(digits, int(m[i]-'0'))
+// digitGroup is a run of digits of the text, as byte offsets (the end is exclusive).
+type digitGroup struct{ start, end int }
+
+func digit(c byte) bool { return c >= '0' && c <= '9' }
+
+// wordByte is the \w of a regular expression: a word boundary lies between it and any other byte.
+func wordByte(c byte) bool { return digit(c) || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
+
+// digitChain reads the groups of digits that begin at s[i], a digit: each group is followed by one space or hyphen and a digit of the
+// next group, or the chain ends. It returns the groups and the offset after the last one.
+func digitChain(s string, i int) ([]digitGroup, int) {
+	var groups []digitGroup
+	for {
+		j := i
+		for j < len(s) && digit(s[j]) {
+			j++
+		}
+		groups = append(groups, digitGroup{i, j})
+		if j+1 < len(s) && (s[j] == ' ' || s[j] == '-') && digit(s[j+1]) {
+			i = j + 1
+			continue
+		}
+		return groups, j
+	}
+}
+
+// cardWindow looks for the payment card number that starts with groups[a]: the longest window of 13 to 19 digits made of whole groups,
+// with a word boundary before and after it, that has the prefix and the length of a card network and a valid check digit. It returns the
+// index of the last group of the window.
+func cardWindow(s string, groups []digitGroup, a int) (int, bool) {
+	if a == 0 && groups[0].start > 0 && wordByte(s[groups[0].start-1]) {
+		return 0, false // a letter or an underscore right before the first group: no word boundary
+	}
+	var ends [8]int
+	count, total := 0, 0
+	for b := a; b < len(groups); b++ {
+		if total += groups[b].end - groups[b].start; total > 19 {
+			break
+		}
+		if total < 13 {
+			continue
+		}
+		if b == len(groups)-1 && groups[b].end < len(s) && wordByte(s[groups[b].end]) {
+			continue // a letter or an underscore right after the last group: no word boundary
+		}
+		ends[count] = b
+		count++
+	}
+	var buf [19]int
+	for ; count > 0; count-- {
+		b := ends[count-1]
+		digits := buf[:0]
+		for _, g := range groups[a : b+1] {
+			for k := g.start; k < g.end; k++ {
+				digits = append(digits, int(s[k]-'0'))
+			}
+		}
+		if cardIssuer(digits) && luhn(digits) {
+			return b, true
 		}
 	}
-	return cardIssuer(digits) && luhn(digits)
+	return 0, false
+}
+
+// redactCards redacts the payment card numbers of s: 13 to 19 digits, alone or in groups separated by one space or hyphen, with a known
+// issuer prefix and a valid check digit. Every window of a chain of digit groups is tried, the longest first, so that a card number that
+// follows another number ("Order 99871 4111 ..."), is followed by one (the expiry date: "... 1111 12/27") or lies inside a longer run of
+// groups is found (PF-09); one regular expression takes the longest match from the left, and when the check refuses that match the card
+// that starts inside it is never looked at. A window of numbers that passes both checks by chance is redacted as well (about one window
+// in two hundred): a marker for a number is the cheaper error.
+func redactCards(s string, n *int) string {
+	var out strings.Builder
+	last := 0 // s[:last] is in out
+	for i := 0; i < len(s); {
+		if !digit(s[i]) {
+			i++
+			continue
+		}
+		groups, next := digitChain(s, i)
+		for a := 0; a < len(groups); {
+			b, found := cardWindow(s, groups, a)
+			if !found {
+				a++
+				continue
+			}
+			out.WriteString(s[last:groups[a].start])
+			out.WriteString(marker("card"))
+			last = groups[b].end
+			*n++
+			a = b + 1
+		}
+		i = next
+	}
+	if last == 0 {
+		return s
+	}
+	out.WriteString(s[last:])
+	return out.String()
 }
 
 // cardIssuer checks the prefix and the length of the major card networks (Visa, Mastercard, American Express, Discover, JCB, Diners
