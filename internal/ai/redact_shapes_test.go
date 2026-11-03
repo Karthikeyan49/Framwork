@@ -297,6 +297,9 @@ func TestRedactionIsIdempotentOnMixedFragments(t *testing.T) {
 		alnum("frag-a", 12), alnum("frag-b", 20), alnum("frag-c", 34), alnum("frag-d", 44), b64("frag-e", 24), b64("frag-f", 33),
 		luhnNumber("4", "frag-card", 16), groups(luhnNumber("5", "frag-card-2", 16), " "), groups(luhnNumber("37", "frag-card-3", 15), "-"), "4111 11",
 		"ѕ", "а", "ο", "ｓ", "ｋ", "­", "‍", " ", "‑", "\U0001d41a", "ⓒ", "Привет", "日本語", "[REDACTED:secret]", "[REDACTED:api_key]\n",
+		// the forms of the password_arg rules and of the operators (independent review TF-01, TF-09)
+		"CREATE USER ", "alter role ", "GRANT ", " ON ", " to ", " IDENTIFIED BY ", " identified with plugin by ", "PASSWORD ", "WITH ", "LOGIN ", "machine ", " login ", "default ",
+		"curl -u ", "sshpass -p ", "mysql -p", "redis-cli -a ", "--password ", "zip -P ", ":=", "=>", "==", "bob:", "'abcd1'", "\"abcd 2\"", "[REDACTED:password_arg]", "; ",
 	}
 	runs := 6000
 	if v, err := strconv.Atoi(os.Getenv("REDACT_PROPERTY_RUNS")); err == nil && v > 0 {

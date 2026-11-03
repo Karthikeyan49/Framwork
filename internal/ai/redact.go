@@ -48,6 +48,106 @@ func (r redactRule) apply(s string, n *int) string {
 	})
 }
 
+// passwordValue is the value of a password argument: quoted (with spaces inside), or one word of four or more characters that is not an option.
+const passwordValue = `(?:'[^'\n]{4,200}'|"[^"\n]{4,200}"|["']?[^\s"';-][^\s"';]{3,}["']?)`
+
+var (
+	// The flag of each command is written for that command: curl -u/--user USER:PASSWORD, sshpass -p, redis-cli -a/--pass (-p is its port), the password flag of
+	// mongo, mongosh, docker login and az login, zip -P, wget, mysql -pPASSWORD (glued; -P is its port), gpg --passphrase, ldapsearch -w. Flags with a capital
+	// are case sensitive, the words around them are not. --password-stdin is not a password.
+	passwordOfACommand = regexp.MustCompile(`(?i)(?:\bcurl\b[^\n]*?\s(?:-u|--user)\s*["']?[^\s:"']+:` +
+		`|\bsshpass\b[^\n]*?\s(?-i:-p)\s*` +
+		`|\bredis-cli\b[^\n]*?\s(?:(?-i:-a)\s*|--pass\s+)` +
+		`|\b(?:mongo|mongosh|docker\s+login|az\s+login)\b[^\n]*?\s(?:(?-i:-p)\s*|--password(?:\s+|=))` +
+		`|\bzip\b[^\n]*?\s(?:(?-i:-P)\s*|--password\s+)` +
+		`|\bwget\b[^\n]*?--(?:http-|ftp-)?password[\s=]+` +
+		`|\bmysql(?:dump|admin)?\b[^\n]*?\s(?-i:-p)` +
+		`|\bgpg2?\b[^\n]*?\s--passphrase(?:\s+|=)` +
+		`|\bldap(?:search|modify|add|delete|passwd|compare)\b[^\n]*?\s(?-i:-w)\s*)` + passwordValue)
+
+	// A .netrc entry: "machine HOST login USER password SECRET" (on one line or several), "default login ... password ...", or a host with a dot and no login.
+	passwordOfANetrcEntry = regexp.MustCompile(`(?i)\b(?:(?:machine\s+[^\s"']+|default)\s+login\s+[^\s"']+\s+password\s+` +
+		`|machine\s+[^\s"'/]+\.[^\s"'/]+\s+password\s+)` + passwordValue)
+)
+
+// sqlStatementSpan is how far past its first words a statement that names a user or a role is read for a password.
+const sqlStatementSpan = 1000
+
+var (
+	// The first words of a statement that creates or alters a user or a role, or grants rights (MySQL grants a password with IDENTIFIED BY).
+	sqlUserHead = regexp.MustCompile(`(?i)\b(?:(?:create|alter)\s+(?:user|role|group|login)\b|grant\b)`)
+	// The target of a GRANT: ... ON ... TO. Only what follows it can name a password.
+	sqlGrantTarget = regexp.MustCompile(`(?is)^grant\b.*?\son\s.*?\sto\s`)
+	// IDENTIFIED [WITH plugin] BY value.
+	sqlIdentifiedBy = regexp.MustCompile(`(?i)\bidentified\s+(?:with\s+\w+\s+)?by\s+` + passwordValue)
+	// The quoted PASSWORD of PostgreSQL's CREATE|ALTER ROLE: only the option words of the statement may stand between the name and the word, so that
+	// "Create user roles with a password \"hint\" field" is not one. The first group is kept.
+	sqlRolePassword = regexp.MustCompile(`(?i)^((?:create|alter)\s+(?:user|role|group|login)\s+[^\s;]+(?:\s+(?:with|login|nologin|(?:un)?encrypted|(?:no)?(?:superuser|createdb|createrole|createuser|inherit|replication|bypassrls)))*\s+)` +
+		`(password\s+(?:'[^'\n]{4,200}'|"[^"\n]{4,200}"))`)
+)
+
+// bareSecretOrQuoted decides on an IDENTIFIED BY clause: a quoted literal is a password, a bare word is one only when it has a digit or a symbol, as the
+// connector of assignment does ("identified by email address" is a way of naming things, "identified by Welcome1" is not).
+func bareSecretOrQuoted(match string) bool {
+	if last := match[len(match)-1]; last == '\'' || last == '"' {
+		return true
+	}
+	return strings.ContainsAny(match[strings.LastIndexAny(match, " \t\r\n")+1:], "0123456789@!#$%^&*+/=")
+}
+
+// redactStatementPasswords redacts the password of a statement that creates, alters or grants a user or a role (CREATE USER ... IDENTIFIED BY '...',
+// ALTER ROLE ... PASSWORD '...', MySQL's GRANT ... TO ... IDENTIFIED BY ..., several users in one statement). The statement runs from its first words to
+// the ";" or the next such words, at most sqlStatementSpan bytes; the words of the statement stay, only the clause with the secret is replaced. The same
+// words in a request ("each customer is identified by email address") are not in such a statement and are not touched (TF-01).
+func redactStatementPasswords(s string, n *int) string {
+	heads := sqlUserHead.FindAllStringIndex(s, -1)
+	if len(heads) == 0 {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for i, h := range heads {
+		end := min(len(s), h[1]+sqlStatementSpan)
+		if i+1 < len(heads) && heads[i+1][0] < end {
+			end = heads[i+1][0]
+		}
+		if j := strings.IndexByte(s[h[1]:end], ';'); j >= 0 {
+			end = h[1] + j
+		}
+		for end > h[1] && end < len(s) && !utf8.RuneStart(s[end]) {
+			end--
+		}
+		span, from := s[h[0]:end], h[1]-h[0]
+		if loc := sqlGrantTarget.FindStringIndex(span); strings.EqualFold(span[:min(5, len(span))], "grant") {
+			if loc == nil {
+				continue
+			}
+			from = loc[1]
+		}
+		out := span[:from] + sqlIdentifiedBy.ReplaceAllStringFunc(span[from:], func(m string) string {
+			if !bareSecretOrQuoted(m) {
+				return m
+			}
+			*n++
+			return marker("password_arg")
+		})
+		if sub := sqlRolePassword.FindStringSubmatchIndex(out); sub != nil {
+			*n++
+			out = out[:sub[4]] + marker("password_arg") + out[sub[5]:]
+		}
+		if out != span {
+			b.WriteString(s[last:h[0]])
+			b.WriteString(out)
+			last = end
+		}
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
 var redactRules = []redactRule{
 	{"pem", regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)`), nil, nil},
 	{"url_credentials", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/?#@"'<>\\]*@[^\s"'<>\\]+`), nil, nil},
@@ -65,9 +165,14 @@ var redactRules = []redactRule{
 	{"cookie", regexp.MustCompile(`(?i)\b(?:set-)?cookie[ \t]*:[^\r\n]*?[A-Za-z0-9_.%-]+=[^\s;]{8,}[^\r\n]*`), nil, nil},
 	// A payment card number: 13 to 19 digits, alone or in groups, with a known issuer prefix and a valid check digit (redactCards).
 	{"card", nil, nil, redactCards},
-	// A password given as an argument or as a quoted literal after the word: curl -u user:SECRET, mysql -pSECRET, sshpass -p SECRET, docker login -p SECRET,
-	// IDENTIFIED BY SECRET, a .netrc "password SECRET", SQL PASSWORD 'SECRET'.
-	{"password_arg", regexp.MustCompile(`(?i)(?:(?:\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?[^\s:"']+:|\b(?:sshpass|redis-cli|mongo(?:sh)?|docker\s+login|zip)\b[^\n]*?\s(?:-p|-a|--password)\s*|\bwget\b[^\n]*?--(?:http-|ftp-)?password[\s=]+|\bmysql(?:dump|admin)?\b[^\n]*?\s-p|\bidentified\s+by\s+|\bmachine\b[^\n]*?\bpassword\s+)["']?[^\s"';]{4,}["']?|\bpassword\s+["'][^"'\n]{4,200}["'])`), nil, nil},
+	// A password given as an argument of a command, or as the literal of a statement, not as NAME=value: curl -u user:SECRET, mysql -pSECRET,
+	// sshpass -p SECRET, docker login -p SECRET, IDENTIFIED BY 'SECRET', a .netrc "password SECRET", PostgreSQL PASSWORD 'SECRET'. Every form
+	// needs the command or the statement around it, because the same words are ordinary prose ("each customer is identified by email address",
+	// "a password hint field", "a machine learning model", "zip codes"); a rule that took them out would blind the model to a request
+	// (independent review of the takeover fixes, TF-01). The flag of each command is its own: -p is the port of redis-cli and -P that of mysql.
+	{"password_arg", passwordOfACommand, nil, nil},
+	{"password_arg", passwordOfANetrcEntry, nil, nil},
+	{"password_arg", nil, nil, redactStatementPasswords},
 }
 
 // assignment finds "name = value" pairs with a secret-like name, also at the end of a longer variable name (DB_PASSWORD, PGPASSWORD,
@@ -76,17 +181,24 @@ var redactRules = []redactRule{
 // characters; the ":" form (ordinary prose such as "Password: required") only when the value looks like a credential; "name is
 // value" (the admin password is ...) and "name', 'value" (a call that passes the name and the value) only when the value has a digit or a
 // symbol and so is not a word like "required" (independent red team RT-01, RT-02).
-var assignment = regexp.MustCompile(`(?i)\b[a-z0-9_-]*(api[_-]?key|apikey|secret(?:[_-]?(?:access[_-]?)?key)?(?:[_-]base)?|client[_-]?secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|token|password|passwd|pwd|passphrase|private[_-]?key|account[_-]?key|(?:shared[_-]?)?access[_-]?key|credentials?)\b(["'\x60\]]*\s*[:=]\s*|["']\s*,\s*|\s+(?:is|was|are)\s+)("[^"\n]{1,200}"|'[^'\n]{1,200}'|[^\s,;&"']{1,200})`)
+var assignment = regexp.MustCompile(`(?i)\b[a-z0-9_-]*(api[_-]?key|apikey|secret(?:[_-]?(?:access[_-]?)?key)?(?:[_-]base)?|client[_-]?secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|token|password|passwd|pwd|passphrase|private[_-]?key|account[_-]?key|(?:shared[_-]?)?access[_-]?key|credentials?)\b(["'\x60\]]*\s*(?::=|=>|==|[:=])\s*|["']\s*,\s*|\s+(?:is|was|are)\s+)("[^"\n]{1,200}"|'[^'\n]{1,200}'|[^\s,;&"']{1,200})`)
 
 var (
 	longHex    = regexp.MustCompile(`\b[0-9A-Fa-f]{32,}\b`)
 	longBase64 = regexp.MustCompile(`[A-Za-z0-9+/_-]{40,}={0,2}`)
 )
 
-// proseSpecification matches a value that says what a credential is rather than being one: a number or a name followed by a plain
-// lower-case word ("64-character", "HS256-signed", "OAuth2-compliant", "256-bit") or an algorithm with its size ("SHA-256", "AES-256"). "The
-// token is 64-character hex." keeps its subject (independent red team RT-05); "the password is Summer-2026" does not match and is redacted.
-var proseSpecification = regexp.MustCompile(`^(?:[A-Za-z0-9]+-)+[a-z]{3,}$|^[A-Za-z]{2,4}-[0-9]+$`)
+// proseSpecification matches a value that says what a credential is rather than being one: a size with its unit ("64-character", "256-bit",
+// "15-minute") or a named algorithm, standard or protocol, alone or with its size or a plain participle ("SHA-256", "AES256", "RSA-2048",
+// "HS256-signed", "OAuth2-compliant", "2FA-verified", "RFC-7519"). "The token is 64-character hex." keeps its subject (independent red team
+// RT-05). The lists are closed on purpose: the first version let through any word, a hyphen and a lower-case word, which is also the shape of a
+// passphrase ("the password is <word>-<word>" was kept, independent review TF-04). A secret that is spelled like one of these stays kept (a value
+// that is only an algorithm name is not worth hiding); any other value that has a digit or a symbol is redacted.
+var proseSpecification = regexp.MustCompile(`(?i)^(?:` +
+	`[0-9]{1,4}-(?:bits?|bytes?|chars?|characters?|digits?|letters?|symbols?|words?|hex|hexadecimal|alphanumeric|seconds?|minutes?|hours?|days?|weeks?|months?|years?)` +
+	`|(?:sha|aes|rsa|md|hmac|des|ecdsa|eddsa|rs|hs|es|ps|bcrypt|scrypt|argon|pbkdf|blake|base|utf|ascii|iso|rfc|fips|pkcs|oauth|oidc|saml|jwt|jws|jwe|totp|hotp|2fa|mfa|sso|tls|ssl|ldap|ntlm)` +
+	`-?[0-9]{0,5}(?:-(?:[0-9]{1,5}|based|compliant|signed|encoded|verified|hashed|encrypted|protected|secured|generated|safe|style|formatted|only))?` +
+	`)$`)
 
 func assignmentReplace(m string) string {
 	parts := assignment.FindStringSubmatch(m)
@@ -97,6 +209,11 @@ func assignmentReplace(m string) string {
 	switch {
 	case strings.Contains(sep, "="):
 		if len(value) < 4 {
+			return m
+		}
+		// A comparison, a short declaration and a hash rocket (password == "...", dbPassword := "...", 'password' => '...') are redacted for a literal
+		// only: a bare word on their right is a name or an expression ("password == confirmPassword", "password => password.length").
+		if (strings.Contains(sep, "==") || strings.Contains(sep, ":=") || strings.Contains(sep, "=>")) && parts[3][0] != '"' && parts[3][0] != '\'' {
 			return m
 		}
 	case strings.Contains(sep, ":"):
