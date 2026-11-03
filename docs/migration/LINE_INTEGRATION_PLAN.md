@@ -154,6 +154,27 @@ documented and not fixed are PF-04 to PF-08, RT-06, RT-07, RT-09, TS-03, TS-05, 
 FS-01 to FS-06 and IS-04 to IS-10 (one row each in the ledger). The README still names Go 1.27.2 (DT-02 and the Go line are in the owner's proposal). No independent reviewer
 has seen any change of this section. The recorded FAILs of the remediation line (aggregate capacity D5, injected driver panic D1) are untouched.
 
+Gate on the code head `d6ed47b` (3 November 2026, this host, the isolated Compose stack; the development database `MAIN` was not touched). The host restarted between the
+build and the integration step, so the gate has two parts on the same code: `make check`, `make test-unit` and `make build` ran on `d6ed47b`, the heavy steps on `0155f7b`, which
+differs from it by documents only (`git diff d6ed47b 0155f7b -- . ':!docs'` is empty). The first build with Go 1.27.3 had a cold cache (`make check` took 82 s then, 17 s warm).
+One run of each step; the evidence says nothing about flake rates.
+
+| Step | Result |
+|---|---|
+| `make check` (docs checksums, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 17 s |
+| `make test-unit` (Go packages with `-race`, script tests, frontend tests) | PASS, 376 s: 30 Go packages (`internal/ai` 338 s under `-race`), 15 script tests, 126 frontend tests in 19 files |
+| `make build` | PASS, 18 s |
+| Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` | **PASS**, one uninterrupted run: 2,372.8 s Go time, 2,507 s wall including the stack reset (the run is not `-v`, so no test count was taken) |
+| `make test-e2e` / `make test-signin-e2e` | 11 passed (43.6 s) / 7 passed (10.8 s) |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS, 155 s |
+| `make test-event-outage` (real ten-minute consumer absence) | PASS, 609.6 s test time: recovery after 600.0 real seconds with 3 completed, 3 inbox rows, 3 effects, 3 audits, 3 immutable intents, 19 retained attempts and 2 unconfirmed redeliveries |
+
+What this gate exercises of the takeover fixes: the integration suite ran the changed policy matrix and AI route tests, the tool-pin and M10 tool tests (with the allowlist now checked by
+the compiler), every candidate staged under `verifier-v4`, and every AI context through the redactor; the shutdown timeout, the Redis logger, the readiness-probe recover and the
+paced retry are covered by unit tests and a child-process test, not by the integration suite. **Not run, and so not claimed:** the reference-scale performance gates and the `driverpanic`
+diagnostic of the remediation line, `TestM8RedisACLStreamLossAndPendingRecovery` (coupled to the main Compose project), a real API process under SIGTERM with a running AI phase (ER-03),
+the burst of more than 132 database requests of the edge rehearsal (ER-04), and an independent review of any change of this section. The code commits after `d6ed47b` are documents only.
+
 ### Migration numbers from here on (proposal; the owner decides)
 
 Wording from the upgrade and ordering rehearsal ([report](../verification/UPGRADE_AND_ORDERING_REHEARSAL.md), which tested the numbering sentences of the first proposal (not its ADR reservations) against a real goose, a

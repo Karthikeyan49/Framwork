@@ -45,7 +45,8 @@ checkpoint `a1d8b00` is pushed on `remediation/m9r-foundation`; main stays
 - Takeover by the integrator, 3 November 2026 (see the [integration plan](LINE_INTEGRATION_PLAN.md)): thirteen independent audit and red-team
   reports pinned at `11a4ee4` were imported into `docs/verification/` and their branches merged into `integration/m9r-m14`. They found no HIGH finding. The
   MEDIUM findings PF-01, PF-09, PF-11 (partly), RT-01 to RT-04 and RT-08, AO-02, TS-02, ER-03, ER-04, LE-02 and IS-01 are fixed with regression tests and
-  negative controls (rows below); **TS-01 is open** and reproduced on the database. Nothing in this paragraph has been seen by an independent reviewer, the
+  negative controls (rows below); **TS-01 is open** and reproduced on the database. The full gate on the code head (check, unit, build, the integration suite with `-race`, both
+  browser suites, the fuzz targets and the ten-minute outage) PASSES, as recorded in the plan. Nothing in this paragraph has been seen by an independent reviewer, the
   remediation line's recorded FAILs (aggregate capacity D5, injected driver panic D1) are unchanged, and `main` is untouched.
 - C updates live documentation and the [handoff](AGENT_HANDOFFS.md);
   [agent-rule changes](M9R_AGENT_CONTRACT_UPDATE_PROPOSAL.md) are proposed only.
