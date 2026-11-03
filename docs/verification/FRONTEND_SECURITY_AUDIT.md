@@ -11,9 +11,9 @@ Not rediscovered: `M9R_R5C_UI_INDEPENDENT_REVIEW.md` (R5C-UI-01..03) and `M9R_R5
 
 ## Verdict
 
-**PASS WITH FINDINGS** for this scope: no HIGH and no MEDIUM finding. Five LOW findings (FS-01..FS-05): two
-hardening or documentation gaps, one that quantifies a residual the documents already state, one that contradicts
-an ADR sentence without a practical leak, and one spoofing class. Every attack listed under "Attacks that held"
+**PASS WITH FINDINGS** for this scope: no HIGH and no MEDIUM finding. Six LOW findings (FS-01..FS-06): three
+hardening or documentation gaps (FS-01, FS-02, FS-06), one that quantifies a residual the documents already state
+(FS-03), one that contradicts an ADR sentence without a practical leak (FS-04), and one spoofing class (FS-05). Every attack listed under "Attacks that held"
 was executed; what could not be executed is listed under "NOT RUN".
 
 ## Progress
@@ -23,7 +23,7 @@ was executed; what could not be executed is listed under "NOT RUN".
 | Static review of every file in `apps/web/src`, `vite.config.ts`, `index.html`, lockfile, `signin.go`, `login.go`, `cache/login.go`, `httpserver.go`, config validation, ADR039/ADR061, runbook | done |
 | Server-side sign-in attack probe (real `signin.API` behind real `httpserver.Handler`, fake IdP with PKCE) and three mutation checks | done |
 | Frontend lint, typecheck, unit tests, production build, dev-server header capture, hostile-data jsdom probe, mutation check, `npm audit` | done (one `hv` job, 06:54:30 to 06:55:41, after an 18 minute wait for the lock) |
-| Second short `hv` job: probe detail lines, lint-guard probe in a component and in a plain module, `.env` fallback check, `npm audit` including dev dependencies | queued; results are added under "Second job" when it has run |
+| Second short `hv` job (07:08:24 to 07:09:32, after a 10 minute wait): probe detail lines, `.env` fallback check, dev-server header count, `npm audit` including dev dependencies | done; the two lint-guard runs of that job failed on a probe-command error (see "Second job") |
 
 ## Executed commands
 
@@ -34,6 +34,7 @@ was executed; what could not be executed is listed under "NOT RUN".
 | same job: `npm test` (`vitest run`) | PASS, 19 files, 126 tests, 26.0 s |
 | same job: `npm run build -- --outDir <scratch> --emptyOutDir` | PASS, 45 modules, `index.html` 452 B, JS 351,729 B, CSS 5,354 B |
 | same job: `npm audit --omit=dev --audit-level=high` (the CI step, `.github/workflows/ci.yml:41-42`) | PASS, "found 0 vulnerabilities" (registry reachable through the proxy on 2026-11-03) |
+| second job: `npm audit` (all dependencies) | FAIL as a gate would see it: 13 advisories (2 high, 11 moderate), all in development tooling, see FS-06 |
 | `gt test -count=1 ./internal/platform/signin ./internal/identity` | PASS |
 | `gt test -count=1 ./internal/platform/httpserver ./internal/config` | PASS |
 | `gt test -count=1 -run TestZZ -v ./internal/platform/signin` (auditor probe, not committed) | PASS, 4 tests |
@@ -86,8 +87,8 @@ Severity scale of the brief. No finding is HIGH or MEDIUM.
   configuration: `2 problems (1 error, 1 warning)`, both from the React Compiler rules of the `react-hooks` preset
   (`react-hooks/immutability` on the `window.location.href` assignment, `react-hooks/unsupported-syntax` on one
   other construct), which apply only inside components and hooks and are not security rules. Nothing was reported for the
-  remaining constructs. The per-construct result for a plain module and for a component without the location
-  assignment is under "Second job".
+  remaining constructs. A second run for a plain module failed because of a probe-command error (see "Second job"); for
+  plain modules the claim therefore rests on reading the configuration, which contains none of those rules.
 * Fix (core ESLint, no new dependency): `no-eval`, `no-implied-eval`, `no-new-func`, `no-script-url`,
   `no-restricted-globals`/`no-restricted-properties` for the storage APIs and `document.write`, and
   `no-restricted-syntax` with `JSXAttribute[name.name='dangerouslySetInnerHTML']`.
@@ -147,6 +148,26 @@ Severity scale of the brief. No finding is HIGH or MEDIUM.
 * Fix: apply the promotion-note rule to team names, show the team ID beside the name in selects, isolate user text
   with `unicode-bidi: isolate`.
 
+### FS-06 LOW: the CI dependency gate omits development dependencies; the full audit reports 13 advisories (2 high)
+
+* `.github/workflows/ci.yml:41-42` runs `npm audit --omit=dev --audit-level=high`, which passes (executed: "found 0
+  vulnerabilities"). A full `npm audit` of the locked tree (executed twice on 2026-11-03, text and JSON) reports 13
+  advisories, 2 high and 11 moderate, all in development tooling:
+  `undici` 8.11.2 (high, range 8.0.0 to 8.12.1, 8 advisories, among them GHSA-4w7w-5xrc-9h26 cache poisoning and
+  cross-user disclosure via cross-origin redirects and GHSA-2m5v-pch6-74hx TLS certificate validation bypass via dropped
+  `tls` options), pulled in by `jsdom` (the unit-test environment); `zod` 4.6.5 (high, below 4.6.6, GHSA-mrhx-c7xc-m3w5
+  memory exhaustion), pulled in by `eslint-plugin-react-hooks`; `minimatch` 10.2.6 (moderate, below 11.0.1, ReDoS through
+  glob-part amplification), pulled in by `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree`,
+  which marks `eslint`, `@eslint/js` and the typescript-eslint packages as affected (the other 9 moderate entries).
+* Impact: development and test tooling that processes trusted repository inputs (the tests mock `fetch`; lint reads the
+  repository's own sources); nothing reaches the production bundle (0 advisories with `--omit=dev`). It is also the
+  toolchain that serves `127.0.0.1:5173` for the browser suites. No exploit was attempted and jsdom's use of undici
+  was not traced, so reachability of the undici TLS and redirect advisories is not established. These advisories come
+  from the registry's database, not from the auditor's knowledge.
+* Fix: add the full audit (at least `--audit-level=high`) to CI, then move `undici` to 8.12.2 or later (jsdom update or
+  an `overrides` entry), `zod` to 4.6.6 or later and `minimatch` to 11.0.1 or later (eslint and typescript-eslint
+  update).
+
 ## Attacks that held
 
 ### Sign-in server
@@ -188,30 +209,44 @@ store with atomic take, and a fake IdP that enforces S256 PKCE, the exact `redir
 | Probe has teeth | the same probe with one label rendered through `dangerouslySetInnerHTML` | FAIL: `<svg onload="window.__pwned=4">` found |
 | Error pages that echo input | a 400 reply whose body and `X-Request-ID` contain `<img onerror>` and `<script>` | the UI shows only the fixed message (`Workspace.tsx:21-35`); no body text is rendered |
 | Prototype pollution | no merge or deep-set helper exists (`grep "Object.assign\|merge\|lodash\|deepSet"` outside tests: none); decoders fed `{"__proto__":...}` and `{"constructor":{"prototype":...}}` in record values, result pages and role condition values, and `parseConditionValue` fed the same | `Object.prototype` untouched (asserted); `JSON.parse` creates own properties only |
-| DOM clobbering | no data-driven HTML exists, so no element with an attacker `id` or `name`; the only DOM lookup is `document.getElementById('root')` at start (`main.tsx:11`), before any data | none possible through data |
+| DOM clobbering | no data-driven HTML exists, so no element with an attacker `id` or `name`; the only DOM lookup is `document.getElementById('root')` at start (`main.tsx:11`), before any data. The `id` and `name` attributes present in the rendered tree were only `input-0.0.0` to `input-0.0.4` and `choices-input-0.0.4`, all index-derived | none possible through data |
 | `window.location.assign` target | 17 hostile authorization URLs through `loginClient.start`: `javascript:`, tab-split `java\tscript:`, mixed-case, `data:`, `file:`, `blob:`, `vbscript:`, protocol-relative, `http://` non-loopback, userinfo, fragment, duplicated `state`, foreign `redirect_uri`, `code_challenge_method=plain`, short nonce, wrong scope, no parameters | all rejected (asserted); https and http-loopback positive controls accepted |
-| Callback returns | 9 hostile callbacks: extra `redirect_uri`, `return_to`, `next`, 4,097-character code, fragment token, CRLF in code, 42-character state, 2,049-character `iss`, duplicated `state` | all `{kind:"error"}` (asserted). `/auth/callback/` (trailing slash) is not scrubbed because it is not the registered redirect URI and carries no IdP secret |
+| Callback returns | 9 hostile callbacks: extra `redirect_uri`, `return_to`, `next`, 4,097-character code, fragment token, CRLF in code, 42-character state, 2,049-character `iss`, duplicated `state` | all `{kind:"error"}` (asserted); `replaceState` was called 9 times, every time with `/auth/callback`. `/auth/callback/` (trailing slash) returns `undefined` and is not scrubbed because it is not the registered redirect URI and carries no IdP secret |
 | Token and session storage | grep of non-test source and of the production bundle | 0 occurrences of `localStorage`, `sessionStorage`, `document.cookie`; the token lives only in React state (`Session.tsx`) |
 | Source maps | `find dist -name '*.map'` and `grep -r sourceMappingURL dist` | 0 and 0 |
 | Third-party scripts and leaks | bundle string and URL census | external names are only XML namespaces (`www.w3.org`), documentation links in React and React Router error strings (`react.dev`, `reactrouter.com`) and `http://localhost` (URL parsing); no `postgres://`, `redis://`, `rediss://`, `framework_login`, `http://127.0.0.1:8080`. `innerHTML` (5), `dangerouslySetInnerHTML` (13) and `postMessage` (1) come from react-dom and react-router vendor code, not from application source |
-| Dev server | `npx vite --port 48391` + `curl` | foreign `Origin` gets 200 without `Access-Control-Allow-Origin`; foreign `Host: evil.example` gets 403; `/@fs/etc/passwd` 403; `/@fs/.../go.mod?raw` (outside the root) 403; `/.env` and `/@fs/.../.env` return 604 bytes, the size of the SPA index (the body comparison is in the second job); WebSocket upgrade with a foreign Origin and a bad token, and with the same Origin and no token, both 400 |
+| Dev server | `npx vite --port 48391` + `curl` | foreign `Origin` gets 200 without `Access-Control-Allow-Origin`; foreign `Host: evil.example` gets 403; `/@fs/etc/passwd` 403; `/@fs/.../go.mod?raw` (outside the root) 403; `/.env`, `/.env?raw`, `/@fs/.../.env`, `/@fs/.../.env?raw` and `/.env.example` return 200 with a body whose md5 equals the SPA index (the SPA fallback, not the file), `/@fs/.../.env.example` 403; none of the five security headers is present on `/`; WebSocket upgrade with a foreign Origin and a bad token, and with the same Origin and no token, both 400 |
 | Dependencies | lockfile census | 264 resolved packages all from `registry.npmjs.org` with integrity; no git or URL dependency; the only lifecycle script is the optional macOS `fsevents`; direct versions pinned exactly; `scripts/bootstrap.sh:19` installs with `npm ci --ignore-scripts`; production dependencies are react 19.3.0, react-dom 19.3.0, react-router-dom 7.18.4 (+ `cookie` 1.1.1, `set-cookie-parser` 2.7.2, `scheduler` 0.28.0); `npm audit --omit=dev` found 0 vulnerabilities |
 
 ### Dependency review from the auditor's knowledge
 
 Every locked version (react 19.3, react-router 7.18, vite 8.3, vitest 5, jsdom 30, eslint 10, TypeScript 6,
-Playwright 1.64) is newer than what the auditor knows, so this is "no known problem", not "verified clean". The
+Playwright 1.64) is newer than what the auditor knows, so the knowledge-based part of this review is "no known
+problem", not "verified clean"; the registry audit is the stronger evidence (0 advisories for production
+dependencies, 13 for development tooling, FS-06). The
 historic issue classes of this stack are all fixed in versions below the locked ones: Vite dev-server file read and
 `server.fs` bypasses and cross-origin WebSocket access (6.x, 7.x), the esbuild dev-server CORS issue (esbuild is not in
 the lockfile; Vite 8 uses rolldown), the Vitest API-server RCE (3.0.4), React Router header-spoofing and redirect
 issues (framework mode, 7.9 and earlier; this SPA uses only declarative `BrowserRouter`), `tough-cookie` prototype
 pollution (4.1.2), `cookie` (0.7), Playwright browser download without TLS verification (1.55). The CI audit
 (`ci.yml:41-42`) uses `--omit=dev`, so the development toolchain that serves `127.0.0.1:5173` for the browser suites
-is outside it; the second job adds the full audit.
+is outside it, which is how FS-06 stays invisible to the gate.
 
 ## Second job
 
-Queued behind the heavy lock; this section is filled when it has run.
+Ran 07:08:24 to 07:09:32 under `hv`. Results:
+
+* Hostile-data probe, details written to a file because Vitest 5 prints nothing for passing tests: 6 passed. Lines:
+  `dangerous-elements: [] on*-attributes: []`; the rendered tree held 97 nodes and 905,447 bytes of HTML (the 150,000
+  character labels) and contained the literal hostile strings as text; `error-text: "Check the field values or query
+  limits and try again."`; teams console `dangerous-elements: []`; `own __proto__ on row.values: true polluted: undefined`;
+  17 of 17 authorization URLs `REJECTED`; 9 of 9 callbacks `error`. (A `root intact: null` line is meaningless: the probe
+  renders into a test container, not `index.html`.)
+* Dev server: the `.env` body comparison and the header count are in the table above (0 of 5 security headers).
+* Lint-guard runs for a component and a plain module: both exited 2 with "The unix formatter is no longer part of core
+  ESLint" because the probe command asked for `-f unix`, which ESLint 10 dropped. That is an error of the probe command,
+  not a repository result. It was not repeated (the lock queue took 10 minutes); NOT RUN.
+* Full `npm audit`: FS-06.
 
 ## Observations (not findings)
 
@@ -228,6 +263,8 @@ Queued behind the heavy lock; this section is filled when it has run.
   no database stack in this task. The in-process equivalents above were executed instead.
 * Redis-backed admission and flow store (the Lua script and ACL were read, not executed) and the SQL name
   validation (`[[:cntrl:]]`) against the real database locale.
+* ESLint behaviour for the sink constructs in a plain module (the probe command used a formatter ESLint 10 removed; the
+  component run of the first job stands).
 * Layout of very long labels and names, and any real browser rendering (jsdom has no layout); the candidate CSP in
   FS-01 was not tried in a browser.
 * A real external IdP, a TLS-terminating gateway or any production header set (none exists in the repository).
