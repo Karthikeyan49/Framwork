@@ -10,12 +10,14 @@ disposable database per test, real `httpserver.New` server (production timeouts:
 | time | state |
 |---|---|
 | 29 Oct 17:46 | run 1 (scenarios 1 and 6) finished: PASS, 340 s test time, 391 s with the lock wait |
-| 3 Nov 06:22 | report with scenarios 1 and 6 pushed; run 2 (scenarios 2 and 4, real `cmd/api` processes) queued; 5, 3, 7 follow |
+| 3 Nov 06:22 | report with scenarios 1 and 6 pushed |
+| 3 Nov 06:35 | run 2 finished (scenarios 2 and 4, real `cmd/api` processes, 94 s): ER-03 found; run 3 (scenario 5, h2 status codes, result shed) queued; 3 follows |
 
 ## Verdict (so far)
 
-Scenarios 1 and 6 executed: **PASS WITH FINDINGS** (no integrity violation; the 60 s phase works end to end behind the production server; behind a proxy it works only if the
-proxy waits longer than about 75 s, otherwise the user pays for an answer that is lost; the production server speaks HTTP/1.1 only). Scenarios 2 to 5 and 7: see the table.
+Scenarios 1, 4 and 6: **PASS WITH FINDINGS** (no integrity violation: the 60 s phase works end to end behind the production server; limits and the pessimistic charge are global and exact
+across processes; behind a proxy the phase works only if the proxy waits longer than about 75 s; the production server speaks HTTP/1.1 only). Scenario 2: **FAIL**, a routine SIGTERM
+abandons every in-flight paid phase longer than 10 s (ER-03). Scenarios 3, 5, 7: see the table.
 
 ## Scenario table
 
@@ -25,9 +27,9 @@ proxy waits longer than about 75 s, otherwise the user pays for an answer that i
 | 1b | keep-alive, pipelining, other routes | next request on a kept connection: own 10 s deadline (GET stalled 9 s: 200; stalled 11 s: EOF at 11.01 s), same as a fresh connection; pipelined 201 then 200, 200 in order; only `aiPropose` sets `nextWithin` (`ai.go:428`) | PASS |
 | 1c | behind a Go reverse proxy, upstream timeout 30/60/120 s, client write timeout 60/120 s, plus cut-in-result, retry and idempotency probes | see section "Scenario 1 behind a proxy" | PASS WITH FINDINGS (ER-01, ER-02) |
 | 6 | protocol probes against the production server; h2 TLS proxy in front | HTTP/1.1 only (h2c prior knowledge, h2 preface, upgrade header, TLS ALPN all fail or are ignored); behind an h2 proxy: long stream 12.08 s, 30 parallel reads p50 65 ms p99 98 ms | N/A for the server; PASS behind a proxy |
-| 2 | queued (run 2) | | NOT RUN yet |
+| 2 | real `cmd/api` process, SIGTERM during five 30 s phases (and during one 5 s phase), then a fresh process over the same database | in-grace phase served (201 at 5.17 s, exit 0); the five 30 s phases: all cut at SIGTERM+10.00 s, exit 1, **5 of 5 left PENDING**, 307,335 tokens charged pessimistically at the sweep (exactly once) | **FAIL (ER-03)** |
 | 3 | queued | | NOT RUN yet |
-| 4 | queued (run 2) | | NOT RUN yet |
+| 4 | two (three) real `cmd/api` processes over one database: in-flight limit, daily budget, SIGKILL mid-phase, sweeps inside and after the lease, two sweeps at once | limit 2: 2 of 6 admitted over two processes; budget for 2.5 reservations: 2 of 6 admitted (one on each process); sweep inside the lease touched nothing; after the lease 2 rows EXPIRED and charged 61,467 once each, also with two sweepers at once | PASS |
 | 5 | queued | | NOT RUN yet |
 | 7 | UTC day rollover | no clock injection; `ai_begin` reads `clock_timestamp()` (`00089:142`) and the usage table refuses writes outside the port (`ai_port_write` trigger) | NOT RUN |
 
@@ -104,6 +106,37 @@ creation returned 201 READY at 12.08 s while 30 reads on the same h2 connection 
 355 x 200 and **345 x 503**, 0 x 429: the 503 of this path is `service_unavailable`, a failed transaction admission (4 active + 128 queued), not the traffic gate (700 requests in 1 s is under its
 600 burst + 300/s; run 1 recorded the status only, the code is recorded in a later run). By code (`gate.go:140`, ADR061) all clients behind one proxy share one peer key.
 
+## Scenario 2, shutdown during a phase (run 2, `TestZZEdgeProcesses`, real process)
+
+`cmd/api` built from this tree (`gt build -o .local/edge/api ./cmd/api`), started with `APP_ENV=test`, a scripted provider file (`wall_clock_ms` 60000, `in_flight_per_tenant` 8), no operator
+credential in its environment (the process refuses to start with one, `operator_env.go`), the disposable database and the stack's Redis. The signal path is `cmd/api/main.go:12` ->
+`app.go:312-317`: `server.Shutdown(ctx)` with `ShutdownTimeout` = **10 s, fixed in `config.go:57`, no environment variable**; on expiry `server.Close()`, `Run` returns, `Main` exits 1.
+
+| step | observed |
+|---|---|
+| control: one 5 s phase, SIGTERM about 1 s after its admission | client 201 READY at 5.17 s; process exit code **0** at SIGTERM+5.33 s, log "API stopped" |
+| five 30 s phases admitted, SIGTERM | listener closed at once (a request 1 s later: connection refused); the five clients end with EOF at SIGTERM+10.0 s; process exit code **1** at SIGTERM+10.00 s; its log says only "service failed; inspect configuration and dependency status" |
+| database right after the exit | **5 PENDING rows, 0 FAILED**; audit admitted 6, created 1 (the control); `used_tokens` 5,972 (the control only); reservations of 5 x 61,467 = 307,335 tokens still held |
+| in-flight slots | held until the lease (80 s after admission): an instance configured for 8 per tenant admitted a new request at once (201 READY); with the default of 2 the tenant would get 429 `ai_busy` for 80 s |
+| first creation after the lease (81.5 s), fresh process | the 5 rows become EXPIRED/EXPIRED, each charged its whole reservation: `used_tokens` 325,253 = 5,972 + 5 x 61,467 + 2 x 5,973; one more creation: 331,226 = the sum over the rows, no second charge |
+
+So a phase that ends inside the 10 s grace is served and the process exits 0; every phase that needs longer is cut, its result exchange never runs (0 of 5 reached FAILED, so
+the answer is lost and the proposal cannot even say so), and the pessimistic charge is about ten times the actual use (61,467 against 5,973 here).
+
+## Scenario 4, several API processes over one database (run 2)
+
+Three to five real processes (A, B, C, ...) over one database; the limits are decided in `ai_begin` under one tenant advisory lock (`00089:142`).
+
+| check | executed | observed | result |
+|---|---|---|---|
+| 4a in-flight limit (2) is global | 3 creations on A and 3 on B at once, both configured for 2 per tenant | 2 admitted (201 READY at 20.4 s), 4 x 429 `ai_busy` at 0.40 to 0.45 s, 2 proposal rows | PASS |
+| 4b daily budget is global | both configured for a budget of 2.5 reservations (153,668); 3 + 3 creations | 2 admitted (one on each process), 4 x 429 `ai_budget_exhausted`; usage requests 2, used 11,946 = sum over rows | PASS |
+| 4c kill and sweep | A holds 2 + 2 PENDING runs (two tenants), SIGKILL after 5 s (clients: EOF at 5.31 s) | rows stay PENDING; at +30 s an instance configured for 2 gets 429 `ai_busy` (the dead process still holds its slots), one configured for 8 gets 201; **the sweep inside the lease touched nothing** (both A rows PENDING, `used_tokens` = only B's own 5,973) | PASS |
+| 4c after the lease (81.5 s) | B alone creates in tenant K; B and C create in tenant L at the same moment | K: both A rows EXPIRED, usage 140,853 = 2 x 61,467 + 3 x 5,973 (exactly once); L (two sweepers at once): both creations 201, both rows EXPIRED, usage 134,880 = 2 x 61,467 + 2 x 5,973 | PASS |
+
+The in-flight and budget numbers come from the configuration of the process that handles the request (`p_inflight`, `p_daily_tokens` are arguments of the port), so replicas with different
+`in_flight_per_tenant` or `daily_token_budget` apply different limits to the same tenant (seen in 4c: the same dead rows refuse one instance and not the other).
+
 ## Findings
 
 **ER-01 (LOW, a documented residual that now has numbers and a constraint that is not written down): a proxy timeout below the API's own 60 s wall clock loses the paid answer.**
@@ -117,6 +150,14 @@ of at least 75 s on the AI creation routes (4 s admission retries + 60 s wall cl
 provider calls. Creations are not idempotent (`ai_begin` stores only the request hash, it never compares it). Write down: no automatic retry of `POST .../patch-proposals` or
 `.../requirement-proposals` at any layer (the same rule ADR061 already states for 429).
 
+**ER-03 (MEDIUM, availability and cost): SIGTERM abandons every in-flight AI phase that needs more than 10 s, and the process exits 1.** `config.go:57` fixes `ShutdownTimeout` at 10 s;
+a phase lasts up to 60 s plus a 10 s margin (ADR104 A5). Evidence: scenario 2 table (5 of 5 phases lost, all PENDING, 307,335 tokens charged at the sweep, tenant slots held 80 s). ADR104 A12
+describes the slot and the charge for a "crashed request" only; nothing says that an ordinary stop or restart does the same. Repro: `TestZZEdgeProcesses` (S2 lines). Consequence for a
+routine deployment: every restart costs each running request its answer, 61,467 tokens of daily budget (about 31% of the default 200,000 per request, so two requests in flight at the default
+limit burn 61%) and 80 s of that tenant's capacity. What to change (not done here): a shutdown grace of at least 75 s when the AI builder is configured, or stop admitting creations on
+SIGTERM and wait for the running ones, and let a cancelled run store its FAILED result before the process ends; and log how many requests were abandoned.
+Also write down: the orchestrator's termination grace must exceed the application's (the application ends itself at 10 s today).
+
 (Further findings are added below as the scenarios finish.)
 
 ## Deployment constraints that follow (so far)
@@ -124,7 +165,9 @@ provider calls. Creations are not idempotent (`ai_begin` stores only the request
 1. Response and idle timeout of every proxy or load balancer in front of the API: at least 75 s (recommended 90 s) for the two AI creation routes; a client-facing write timeout of 60 s
    makes the client see EOF instead of the API's own 503 at 60.2 s.
 2. No automatic POST retry on the creation routes (proxy `retry` on 5xx/reset, client libraries, service-mesh defaults).
-3. TLS and HTTP/2, if wanted, are terminated in front of the API: the API cannot do either. Behind a proxy all users share one peer bucket (300/s, burst 600) and one 4+128 admission queue.
+3. Rolling restarts: until ER-03 is addressed, drain a replica of AI traffic (and wait 80 s) before stopping it, or accept the loss of every running proposal and its 61,467-token charge.
+4. All replicas need identical `in_flight_per_tenant` and `daily_token_budget` (the limits are arguments of the database port, not database state).
+5. TLS and HTTP/2, if wanted, are terminated in front of the API: the API cannot do either. Behind a proxy all users share one peer bucket (300/s, burst 600) and one 4+128 admission queue. The traffic gate, the body budget and the AI in-flight cap are per process (replicas multiply them).
 
 ## NOT RUN
 
