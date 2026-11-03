@@ -9,13 +9,13 @@ Stack lock caveat found during the run: `it-run` releases the stack lock between
 
 ## Progress
 
-Status at this commit: PARTIAL, in progress. The run was cut off once by an account limit and resumed; everything below is regenerated from the run log.
+Status at this commit: PARTIAL. The run was cut off once by an account limit and resumed; everything below is regenerated from the run log (`results.tsv` of the auditor, rows below).
 
-- Target 1 (M13): unit mutants of `internal/policy` (U), `internal/promotion` (D, T, R, B) done; SQL mutant S01 done (MA-01); further M13 SQL mutants pending.
-- Target 2 (M12 verifier and oracle): done (V, O); findings MA-02 (promotion, runtime components) and MA-03 (verifier, sameRoles) have verified killing tests.
-- Target 3 (M14): gateway/repair/patch/schema/service unit mutants (A, G, P, K, SV, SC) in progress; SQL mutants of migration 00089 (X) pending.
-- Target 4 (front door, traffic): body budget (F) and traffic gate (TR) in progress.
-- Target 5: not reached.
+- Target 1 (M13): policy (U, 38 mutants), promotion (D, T, R, B, 59), handler authority helpers (AU, 9), SQL mutant S01 (finding MA-01). NOT REACHED: the end-to-end mutants H01 (`holdingApprovers` narrowing), U010i (selector entity) and the SQL mutants S02 to S08: the run of H01 was queued on `it-run fix` for 15 minutes behind seven other agents for the global heavy lock (`/tmp/framework-heavy.lock`) and never started; the other ones were never submitted.
+- Target 2 (M12 verifier and oracle): done (V, O); findings MA-03 (verifier) and, through the runtime components, MA-02.
+- Target 3 (M14): gateway, repair loop, patch, kinds, schema (A, G, P, K, SC) done; the service helpers SV were reached up to the id shown in the table; SQL mutant X06 done (killed); X01 to X05 NOT RUN (same lock queue).
+- Target 4 (front door, traffic): body budget (F), traffic gate (TR), `AcceptsPOST`, `enforce`, route to action mapping (AC) at unit level; the route table needs the integration suite (NOT RUN).
+- Target 5 (tools gateway, network policy, sandbox context): done (TL, N, SB); the freeze/evidence manifest is SQL (`runtime.freeze_sandbox`) and was NOT RUN.
 
 ## Mutation score per target
 
@@ -28,12 +28,12 @@ KILLED / SURVIVED / EQUIVALENT after the reclassification below; the score is ki
 | 1c | Target 1 - M13 SQL ports (migrations 00084-00092), through it-run fix | 0 | 1 | 0 | 0% (0/1) |
 | 1d | Target 1 - M13 handlers (holdingApprovers end to end; authority helpers, unit; internal/platform/access/promote.go) | 0 | 8 | 1 | 0% (0/8) |
 | 2 | Target 2 - M12 verifier and oracle | 36 | 10 | 5 | 78% (36/46) |
-| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 39 | 18 | 3 | 68% (39/57) |
+| 3a | Target 3 - M14 gateway, repair loop, patch, kinds, schema, service helpers (internal/ai) | 42 | 20 | 4 | 68% (42/62) |
 | 3b | Target 3 - M14 SQL (migration 00089), through it-run fix | 1 | 0 | 0 | 100% (1/1) |
 | 3c | Targets 3 and 4 - front door and handlers (internal/platform/access: ai.go, promote.go, metadata.go), unit | 4 | 25 | 0 | 14% (4/29) |
 | 4 | Target 4 - body budget and traffic gate | 18 | 9 | 1 | 67% (18/27) |
 | 5 | Target 5 - M10 tools gateway, network policy and M11 sandbox context | 21 | 8 | 1 | 72% (21/29) |
-| all | all targets reached | 167 | 121 | 15 | 58% (167/288) |
+| all | all targets reached | 170 | 123 | 16 | 58% (170/293) |
 
 Discarded (did not compile or the edit did not apply, redone or dropped): B09, AC17, AC18, AC21, AC25, AC32.
 
@@ -126,7 +126,7 @@ func TestRuntimeComponentsRecordTheLiveVersions(t *testing.T) {
 
 ### MA-03 (MEDIUM) - a gate whose approval states name only some of the required roles passes (`sameRoles`, mutant V23)
 
-`internal/verification/verifier.go:631-643`: `sameRoles` compares the sorted role lists. Deleting `len(x) == len(y) &&` (V23) leaves every `internal/verification` test green, yet the comparison then accepts a prefix of the required list (and indexes past the end of `y` when the plan names more roles). With `approver_roles: ["admin","owner"]` required, a plan whose approval state lists only `["admin"]` passes the approval-gate requirement: the weaker gate is verified as the required one. The existing gate tests use a wrong role (`member`) and an equal two-role list, never a subset.
+`internal/verification/verifier.go:631-643`: `sameRoles` compares the sorted role lists. Deleting `len(x) == len(y) &&` (V23) leaves every `internal/verification` test green, yet the comparison then accepts a prefix of the required list. With `approver_roles: ["admin","owner"]` required, a plan whose approval state lists only `["admin"]` passes the approval-gate requirement: the weaker gate is verified as the required one. The existing gate tests use a wrong role (`member`) and an equal two-role list, never a subset.
 Killing test, verified (passes on the original, fails on V23: `a gate with only the admin role passed for admin+owner: PASS`):
 
 ```go
@@ -436,11 +436,21 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 
 - D25 (`internal/promotion/decisions.go:551`): the dedupe key `lower(actor)+actor` is injective in the actor id, so `CountEligible` counts the same set.
 - U002 (`internal/policy/holds.go:16`): `permits` and `permitsSelf` both return false for an empty actor, so the `member != ""` guard of `NativeHolds` is redundant.
+- T05 (`internal/promotion/staleness.go:108`): `assessment.Blocked` cannot become true in `Staleness`: the blocking rules read facts that a built candidate cannot have (`release_risk_v1.go:58-60`) and only the BREAKING storage row blocks by volume (`release_risk_v1.go:84`), which Restore refuses (`bundle2.go:541`).
+- B08 (`internal/promotion/bundle2.go:642`): the same condition `Hash(raw) != hash` is checked first at `bundle.go:107` and tested at `bundle2_test.go:294`.
+- V14, V26, V28, V32, V41 (`internal/verification/verifier.go`): the wrong-currency probe has the same amount text as the "at" probe (oracle.go:163,167); `tools.NewCatalog` rejects an unknown sandbox mode (`catalog.go:355-381`); `classBounds` has no ADDITIVE (`requirements.go:112`); `intent.ValidateAcceptance` repeats the binding check (`acceptance.go:163`); the threshold field is money-typed and the mining switch skips every kind but string, enum, bool and integer.
+- F09 (`internal/platform/access/bodybudget.go:81`): `Release` zeroes `h.n`, so a second release subtracts nothing whatever the guard says.
+- A13, A24, A25 (`internal/ai/repair.go`): `remaining == 0` is refused by the next check; `chargeUsage` takes `min(..., 2*in+1024)` after the clamp and `max(clamp, estimate)` with a non-negative estimate.
+- TL06 (`internal/tools/catalog.go`): definition tenants must match a whole tenant id (`tenantPattern`, line 37) or be `*`, so a prefix match equals equality.
+- AU03 (`internal/platform/access/promote.go:207`): `tenant.ValidID` refuses an upper-case actor before the comparison and party ids are canonical, so `==` and `EqualFold` agree.
+- SC11 (`internal/ai/schema.go:326`): `checkText` already applies `cleanText` to every string value of the tree (`schema.go:109`).
 
 ## NOT RUN
 
-- Integration cover of the unit-surviving mutants of `internal/policy` (U001-U003, U009-U022, U027, U028, U031, U033-U036) was NOT RUN end to end; they are reported as unit-only survivors.
-- Targets 2 to 5 are listed as not reached in the score table until their rows appear.
+- Integration or SQL mutants that were planned and never ran: H01 (`holdingApprovers` narrowing, `promote.go:270`), U010i (selector entity ignored, end to end), S02 to S08 (M13 ports: CRITICAL quorum, approve pointer lock and fence, approval-count exclusions, rollback fence and span), X01 to X05 (M14 ports: pending reservations in the budget, decide ownership, finish charge and requester, in-flight limit). Reason: after S01 and X06 (about 20 minutes each under the load of the host) the `it-run fix` run of H01 waited more than 15 minutes for the global heavy lock behind seven other agents and did not start; it could not be cancelled from this session, so a log `/home/user/logs/ma-H01.log` may appear later: it is NOT a valid result (the mutation is reverted).
+- Integration cover of the unit-surviving mutants of `internal/policy` (U001 to U003, U009 to U022, U033 to U036), of the route table (AC rows) and of the handlers' Go-side pre-checks (AC19 to AC25) was NOT RUN end to end; the rows say "unit-only".
+- Mutants whose edit did not compile or apply and were not redone: B09, AC17, AC18, AC21, AC25, AC32 (handler details covered only by integration tests anyway).
+- M11 freeze and evidence manifest (SQL), M10 `Execute`/gateway outcome paths beyond the network policy and the catalog, redaction (excluded by the brief).
 
 ## Mutant table
 
@@ -667,7 +677,7 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 | A25 | internal/ai/repair.go:57 | clampTokens: negative figures refill the budget | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | EQUIVALENT | chargeUsage takes max(clamp(v), estimate) with estimate >= 0, so a negative figure and 0 give the same charge |
 | N07 | internal/tools/netpolicy.go:149 | embeddedClass: an internal IPv4 inside a translation form is public | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
 | G01 | internal/ai/gateway.go:95 | RunPatch: apply conflicts ignored | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' | KILLED | TestRunPatchHostileAnswersNeverProduceADocument |
-| G02 | internal/ai/gateway.go:98 | RunPatch: forbidden kind reported as a plain conflict | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget\|Hostile\|Adversarial' ; widened: ./internal/ai | SURVIVED |  |
+| G02 | internal/ai/gateway.go:98 | RunPatch: forbidden kind reported as a plain conflict | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget\|Hostile\|Adversarial' ; widened: ./internal/ai | SURVIVED | LOW: a forbidden-kind conflict is reported with the outcome CONFLICT instead of FORBIDDEN_TARGET; the run is still refused |
 | G03 | internal/ai/gateway.go:143 | RunPatch: an infrastructure failure becomes NEEDS_HUMAN | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget\|Hostile\|Adversarial' | KILLED | TestAdversarialCorpus |
 | N08 | internal/tools/netpolicy.go:165 | DeniedAddress: internal addresses are always allowed | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointResolvingToDeniedAddressIsBlockedWithoutConnecting |
 | N09 | internal/tools/netpolicy.go:200 | dialContext: any address may be dialed | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
@@ -676,7 +686,7 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 | AC01 | internal/platform/access/metadata.go:28 | AcceptsPOST: the AI POST routes are not admitted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: no unit test pins that the AI POST routes are admitted by AcceptsPOST (the comment at ai.go:36 cites an ai_test.go that does not exist); the integration suite would see every AI POST refused |
 | N12 | internal/tools/netpolicy.go:271 | controlContext: the port is not re-validated | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
 | N13 | internal/tools/netpolicy.go:271 | controlContext: the literal address is not re-validated | go test ./internal/tools (whole package) | KILLED | TestPublicEndpointRejectsAddressesRevalidatedAtConnect |
-| G04 | internal/ai/gateway.go:201 | RunRequirements: NEEDS_HUMAN for any last outcome | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| G04 | internal/ai/gateway.go:201 | RunRequirements: NEEDS_HUMAN for any last outcome | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: NEEDS_HUMAN for a requirements run whose last outcome is not a schema error |
 | N14 | internal/tools/netpolicy.go:296 | AddressGuard: the denied predicate is not consulted | go test ./internal/tools (whole package) | SURVIVED | MA-08 |
 | AC02 | internal/platform/access/ai.go:67 | aiPOST: an unregistered route is admitted | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: no unit test pins aiPOST against the registered routes |
 | N15 | internal/tools/netpolicy.go:296 | AddressGuard: any port | go test ./internal/tools (whole package) | SURVIVED | MA-08 |
@@ -686,7 +696,7 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 | AC04 | internal/platform/access/ai.go:43 | aiPatterns: creating a patch proposal needs only ai.read | go test ./internal/platform/access (whole package) | KILLED | TestAICreateRoutesAreExactlyTheProposeRoutes |
 | AC05 | internal/platform/access/ai.go:47 | aiPatterns: apply needs ai.propose instead of ai.apply | go test ./internal/platform/access (whole package) | KILLED | TestAICreateRoutesAreExactlyTheProposeRoutes |
 | AC06 | internal/platform/access/ai.go:57 | aiCreatePOST: requirement proposals are not repeated after a known abort | go test ./internal/platform/access (whole package) | KILLED | TestAICreateRoutesAreExactlyTheProposeRoutes |
-| G05 | internal/ai/gateway.go:110 | RunPatch: a program the compiler returned invalid is accepted | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED |  |
+| G05 | internal/ai/gateway.go:110 | RunPatch: a program the compiler returned invalid is accepted | go test ./internal/ai -run 'RunPatch\|RunRequirements\|Charge\|Cancel\|Adapter\|Abandoned\|Label\|Budget' ; widened: ./internal/ai | SURVIVED | LOW: an invalid program is still refused later, by DeriveSensitiveAspects (patch.go:293), with the diagnostic diff_unsupported instead of invalid_program |
 | AC07 | internal/platform/access/ai.go:84 | aiCreateBody 32 KiB -> 64 KiB | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the body caps are tested by the integration suite only |
 | AC08 | internal/platform/access/ai.go:87 | aiRejectBody 4 KiB -> 64 KiB | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: the body caps are tested by the integration suite only |
 | AC09 | internal/platform/access/ai.go:107 | aiBody: a body of exactly the limit is too large | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: boundary of the body cap |
@@ -704,7 +714,7 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 | AC22 | internal/platform/access/promote.go:691 | rollbackRelease: a never-activated target is not refused in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side never-activated check (the port repeats it) |
 | AC23 | internal/platform/access/promote.go:706 | rollbackRelease: no plan is required in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side plan requirement (the port repeats it) |
 | AC24 | internal/platform/access/promote.go:698 | rollbackRelease: a rejected target is not refused in Go | go test ./internal/platform/access (whole package) | SURVIVED | unit-only: Go-side rejected-target check (the port repeats it) |
-| P03 | internal/ai/patch.go:118 | apply: definition kind need not match the target | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED |  |
+| P03 | internal/ai/patch.go:118 | apply: definition kind need not match the target | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED | LOW: redundant with validateOperation (schema.go:482) on every production path (Apply and RunPatch parse the proposal first); a direct ApplyProposal call is unprotected |
 | N11b | internal/tools/netpolicy.go:210 | dialContext: no bound on the resolved answers (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | LOW: the bound on resolved answers of the AI adapter is untested |
 | P04 | internal/ai/patch.go:121 | apply: the kind of a definition may change | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED |  |
 | X06 | db/migrations/00089_m14_ai_proposals.sql:160 | ai_begin: an expired pending request is not charged its reservation | it-run fix 'TestM14' -v (32 top-level tests passed, canary ok) | KILLED | TestM14APIAdmissionBudgetsAndLimits/a_stale_PENDING_row_expires_and_frees_its_slot |
@@ -712,7 +722,7 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 | N14b | internal/tools/netpolicy.go:296 | AddressGuard: the denied predicate is not consulted (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | MA-08 |
 | P06 | internal/ai/patch.go:127 | apply: schema version mismatch accepted | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestApplyProposalValidatesDefinitionsWithTheMetadataSchema |
 | P07 | internal/ai/patch.go:130 | apply: namespace mismatch accepted | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
-| P08 | internal/ai/patch.go:150 | apply: an add may carry an expected hash | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED |  |
+| P08 | internal/ai/patch.go:150 | apply: an add may carry an expected hash | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' ; widened: ./internal/ai | SURVIVED | LOW: redundant with validateOperation (schema.go:462) on every production path |
 | P09 | internal/ai/patch.go:152 | apply: an add over an existing id | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
 | P10 | internal/ai/patch.go:157 | apply: update/delete of a missing definition | go test ./internal/ai -run 'Apply\|Patch\|Allowlist\|Sensitive\|Kind\|Hostile\|Adversarial\|Corpus\|Swap' | KILLED | TestAdversarialCorpus |
 | N15b | internal/tools/netpolicy.go:296 | AddressGuard: any port (tests of internal/ai, the AI provider adapter dials through AddressGuard) | go test ./internal/ai -run 'Provider\|HTTP\|Dial\|Guard\|Address\|Rebind\|Config' ; widened: ./internal/ai | SURVIVED | MA-08 |
@@ -753,3 +763,9 @@ func TestCleanTextRefusesEveryInvisibleOrReorderingCharacter(t *testing.T) {
 | SC08 | internal/ai/schema.go:476 | validateOperation: a tool payload under another kind | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
 | SC09 | internal/ai/schema.go:464 | validateOperation: update/delete without an expected hash | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
 | SC10 | internal/ai/schema.go:395 | validatePatchProposal: an empty proposal | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestAdversarialCorpus |
+| SC11 | internal/ai/schema.go:326 | textOK: text hygiene dropped | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' ; widened: ./internal/ai | EQUIVALENT | checkText applies cleanText to every string value of the tree before textOK runs (schema.go:109, 277-279), so the second application changes nothing |
+| SC12 | internal/ai/schema.go:326 | textOK: bound off by one | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestAdversarialCorpus |
+| SC13 | internal/ai/schema.go:109 | decodeStrict: text hygiene not applied to the tree | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
+| SC14 | internal/ai/schema.go:106 | decodeStrict: required keys not required | go test ./internal/ai -run 'Schema\|Parse\|Strict\|Hostile\|Adversarial\|Corpus\|Text\|Proposal' | KILLED | TestParsePatchProposalRejects |
+| SV01 | internal/ai/service.go:57 | Effective: attempts ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED | LOW: ServiceLimits.Effective attempts ceiling; configuration path, trusted |
+| SV02 | internal/ai/service.go:63 | Effective: output token ceiling dropped | go test ./internal/ai -run 'Limits\|Effective\|Service\|Config' ; widened: ./internal/ai | SURVIVED |  |
