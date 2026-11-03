@@ -9,7 +9,6 @@ import (
 	"github.com/Karthikeyan49/Framwork/internal/identity"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
 	"github.com/Karthikeyan49/Framwork/internal/platform/postgres"
-	"github.com/Karthikeyan49/Framwork/internal/promotion"
 	"github.com/Karthikeyan49/Framwork/internal/tenant"
 )
 
@@ -18,7 +17,9 @@ import (
 // requires the capability of the underlying write, so ai.apply alone never bypasses
 // metadata.write or requirements.decide.
 
-// aiApplyView is the answer to a successful apply.
+// aiApplyView is the answer to a successful apply: the summary of the proposal and the header of the new revision, without the body of the
+// proposal and without the document. The role that applies holds ai.apply and metadata.write, not necessarily metadata.read, and the new
+// revision holds the definitions it was not allowed to read (independent review TF-02); the caller reads the result where it may.
 type aiApplyView struct {
 	Proposal  ai.Proposal      `json:"proposal"`
 	Revision  metadata.Version `json:"revision"`
@@ -55,14 +56,27 @@ func (a API) aiApply(ctx context.Context, q postgres.Executor, r *http.Request, 
 	evidence.Action = "ai.proposal.applied"
 	evidence.State.AIAckHash = res.AckHash
 	metadataEvidence(ctx, evidence, res.Revision)
-	return reply{status: 200, body: aiApplyView{Proposal: res.Proposal, Revision: res.Revision, Sensitive: res.Sensitive}}, nil
+	header := res.Revision
+	header.Document = nil
+	return reply{status: 200, body: aiApplyView{Proposal: res.Proposal, Revision: header, Sensitive: res.Sensitive}}, nil
 }
 
-// aiConfirmView is the answer to a successful confirm.
+// aiRequirementsHeader is a stored requirement set without its body.
+type aiRequirementsHeader struct {
+	AppID     string `json:"app_id"`
+	Version   int64  `json:"version"`
+	Hash      string `json:"hash"`
+	DecidedBy string `json:"decided_by"`
+	DecidedAt string `json:"decided_at"`
+}
+
+// aiConfirmView is the answer to a successful confirm: the summary of the proposal and the header of the new requirement set. The role that
+// confirms holds ai.apply and requirements.decide, not necessarily requirements.read or metadata.read, and the set holds every requirement
+// of the application (independent review TF-02).
 type aiConfirmView struct {
-	Proposal     ai.Proposal                  `json:"proposal"`
-	Requirements promotion.StoredRequirements `json:"requirements"`
-	Recorded     []ai.RecordedRequirement     `json:"recorded"`
+	Proposal     ai.Proposal              `json:"proposal"`
+	Requirements aiRequirementsHeader     `json:"requirements"`
+	Recorded     []ai.RecordedRequirement `json:"recorded"`
 }
 
 func (a API) aiConfirm(ctx context.Context, q postgres.Executor, r *http.Request, u identity.User, access tenant.Access, app, id string, evidence *audit.Entry) (reply, error) {
@@ -86,7 +100,9 @@ func (a API) aiConfirm(ctx context.Context, q postgres.Executor, r *http.Request
 	aiEvidence(evidence, res.Proposal)
 	evidence.Action = "ai.proposal.confirmed"
 	evidence.State.RequirementsVersion, evidence.State.ManifestHash = res.Requirements.Version, res.Requirements.Hash
-	return reply{status: 200, body: aiConfirmView{Proposal: res.Proposal, Requirements: res.Requirements, Recorded: res.Recorded}}, nil
+	stored := res.Requirements
+	return reply{status: 200, body: aiConfirmView{Proposal: res.Proposal, Requirements: aiRequirementsHeader{AppID: stored.AppID, Version: stored.Version, Hash: stored.Hash,
+		DecidedBy: stored.DecidedBy, DecidedAt: stored.DecidedAt}, Recorded: res.Recorded}}, nil
 }
 
 func (a API) aiReject(ctx context.Context, q postgres.Executor, r *http.Request, access tenant.Access, app, id string, evidence *audit.Entry) (reply, error) {

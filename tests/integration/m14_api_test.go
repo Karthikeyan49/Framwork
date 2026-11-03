@@ -192,8 +192,21 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 	if strings.Contains(vetoed.Body.String(), "By author") || strings.Contains(vetoed.Body.String(), `"operations"`) {
 		t.Fatalf("the veto of a role without metadata.read answered with the body of the proposal: %s", vetoed.Body.String())
 	}
-	if w := e.apply(withMeta.token, ready.ID, 1, nil); w.Code != 200 {
-		t.Fatalf("ai.apply with metadata.write refused: %d %s", w.Code, w.Body.String())
+	applied := e.apply(withMeta.token, ready.ID, 1, nil)
+	if applied.Code != 200 {
+		t.Fatalf("ai.apply with metadata.write refused: %d %s", applied.Code, applied.Body.String())
+	}
+	// The answer of a role that may write and not read holds the summary and the header of the new revision: not the body of the proposal and not
+	// the document (independent review TF-02; this role's GET of the proposal is the 403 asserted above).
+	for _, leak := range []string{`"operations"`, `"document"`, "Purchase order", `"definitions"`} {
+		if strings.Contains(applied.Body.String(), leak) {
+			t.Fatalf("the answer to an apply by a role without metadata.read holds %s: %s", leak, applied.Body.String())
+		}
+	}
+	for _, want := range []string{`"status":"APPLIED"`, `"result_revision":2`, `"revision":2`, `"source_hash":`} {
+		if !strings.Contains(applied.Body.String(), want) {
+			t.Fatalf("the answer to an apply lacks %s: %s", want, applied.Body.String())
+		}
 	}
 	// A different human decides: the requester is recorded, not required.
 	var decidedBy string
@@ -207,8 +220,24 @@ func TestM14APIPolicyMatrix(t *testing.T) {
 	if w := e.confirm(withMeta.token, req.ID, 0, decisions); w.Code != 403 {
 		t.Fatalf("confirm without requirements.decide: %d", w.Code)
 	}
-	if w := e.confirm(withReq.token, req.ID, 0, decisions); w.Code != 200 {
-		t.Fatalf("confirm with requirements.decide: %d %s", w.Code, w.Body.String())
+	confirmed := e.confirm(withReq.token, req.ID, 0, decisions)
+	if confirmed.Code != 200 {
+		t.Fatalf("confirm with requirements.decide: %d %s", confirmed.Code, confirmed.Body.String())
+	}
+	// Nor does the answer to a confirm hand out the proposal or the stored requirement set (independent review TF-02).
+	for _, leak := range []string{`"semantics"`, "Orders above 500 USD", `"statement"`, `"operations"`} {
+		if strings.Contains(confirmed.Body.String(), leak) {
+			t.Fatalf("the answer to a confirm by a role without requirements.read holds %s: %s", leak, confirmed.Body.String())
+		}
+	}
+	// The header of the stored set is the one "requirements" member; the set itself was the second, inside it.
+	if n := strings.Count(confirmed.Body.String(), `"requirements":`); n != 1 {
+		t.Fatalf("the answer to a confirm holds the requirement set (%d members named requirements): %s", n, confirmed.Body.String())
+	}
+	for _, want := range []string{`"status":"CONFIRMED"`, `"recorded":[{"id":"po-approval"`, `"hash":`} {
+		if !strings.Contains(confirmed.Body.String(), want) {
+			t.Fatalf("the answer to a confirm lacks %s: %s", want, confirmed.Body.String())
+		}
 	}
 }
 

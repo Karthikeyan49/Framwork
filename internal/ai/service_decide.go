@@ -188,7 +188,9 @@ func (s *Service) Apply(ctx context.Context, q postgres.Executor, a tenant.Acces
 		ResultHash: appended.SourceHash, DecisionHash: apiDigest(record)}); err != nil {
 		return ApplyResult{}, err
 	}
-	stored, err := st.Get(ctx, q, a, in.App, p.ID)
+	// The answer holds the summary of the proposal, not its body: a caller who holds ai.apply and metadata.write and not metadata.read applies a
+	// proposal that was made from the whole draft, and must not read the definitions it carries or the ones it changed (AO-02, TF-02).
+	stored, err := st.Summary(ctx, q, a, in.App, p.ID)
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -349,7 +351,7 @@ func (s *Service) Confirm(ctx context.Context, q postgres.Executor, a tenant.Acc
 		ResultHash: stored.Hash, DecisionHash: apiDigest(record)}); err != nil {
 		return ConfirmResult{}, err
 	}
-	final, err := st.Get(ctx, q, a, in.App, p.ID)
+	final, err := st.Summary(ctx, q, a, in.App, p.ID) // the summary, as the answer to an apply: no body (TF-02)
 	if err != nil {
 		return ConfirmResult{}, err
 	}
