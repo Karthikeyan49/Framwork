@@ -6,17 +6,14 @@ Branch `review/ai-output-redteam`, from `11a4ee40a12e0301472b275203ac10d8347eaad
 
 | state | detail |
 |---|---|
-| Part A items (classes 1-3, 5-7, 9) run | 645 items through the builder's expander/checker, the scripted gateway and the pure functions: 0 panics, no hostile answer caught later than its declared layer; one family of expectation failures (36 items, AO-01). |
-| Part A class 4 run | 45 payloads in 6 equivalence groups plus requirement semantics: one canonical form per meaning, no collision. |
-| Part A class 5 sweep run | 3,202 single-definition mutants over 7 drafts; 677 compile; 304 change the executed IR; 0 under-reported, 0 over-reported. |
-| Part A class 8 run | 12 loop scenarios, 3 diagnostic floods, 300 cancel-during-call races, 1 budget case: all held. |
-| Part A class 10 run | 38 hostile HTTP provider responses (gzip bomb, truncation, chunked without end, slow drip, 20 KB header, redirects, Content-Length lies, envelope variants, 13 status codes) plus 2 label cases: all held. |
-| Part B/C run 1 and 2 (`it-run m12db`, logs `zzaiout-1`, `zzaiout-2`, rc=0 for the second) | B1 (AO-02), B2 decision races, B3 ids/oracles/routes, B4 (bound, secret), B5 acknowledge variants, C1 fifty parallel admissions, C2 binding/ACL: all held except B1. |
-| Part B/C run 3 (`zzaiout-3`) | B4 amplification at the route, B6 wire-level games, C3 accounting under expiry races: queued behind the shared lock. |
+| Part A (no database) done | 645 corpus-format items through the builder's expander/checker, the scripted gateway and the pure functions; 45 canonical-form payloads; a 3,202-mutant sensitivity sweep against an independent IR oracle; 12 repair-loop scenarios, 3 diagnostic floods, 300 cancel races; 38 hostile HTTP provider responses; 158 aliasing checks. 0 panics. |
+| Part B/C run 1 and 2 (`it-run m12db`, `zzaiout-1`, `zzaiout-2`, rc=0) | B1 (AO-02), B2 decision races, B3 ids/oracles/routes, B4 bound and secret (AO-05), B5 acknowledge variants, C1 fifty parallel admissions, C2 binding/ACL. |
+| Part B/C run 3 (`zzaiout-3`) | B4 amplification at the route, B6 wire-level games, C3 accounting under expiry races: result in the Part B/C table below. |
+| Findings | AO-02 MEDIUM; AO-01, AO-03, AO-04, AO-05 LOW. No HIGH. |
 
 ## Verdict
 
-Not yet decided.
+**PASS WITH FINDINGS** for the AI-output scope. No model-controlled server-derived field, no forbidden kind, no forged hash and no port reachable with more authority than documented was found; the pipeline refused or correctly classified every one of the 645 + 3,202 attacks that is not listed as a finding. The one MEDIUM (AO-02) is a missing composition rule for reads, not a break of a stated invariant. Everything was run against the pinned commit `11a4ee4`; nothing was changed.
 
 ## Part A results (pure pipeline, no database)
 
