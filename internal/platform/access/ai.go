@@ -585,7 +585,7 @@ func aiResultRetriable(err error) bool {
 // the database, so the waits grow, 100 ms to 1.5 s, and the six tries fit the budget.
 func aiResultPause(attempt int, err error) (time.Duration, bool) {
 	if errors.Is(err, postgres.ErrAdmissionFull) {
-		return min(1500*time.Millisecond, 100*time.Millisecond<<(attempt-1)), true
+		return min(1500*time.Millisecond, 100*time.Millisecond<<max(0, min(attempt-1, 4))), true
 	}
 	return postgres.ConflictPause(attempt, err)
 }

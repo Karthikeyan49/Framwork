@@ -113,4 +113,10 @@ func TestAIResultExchangeRepeatsOnlyWhatLeavesNothingBehind(t *testing.T) {
 	if total < 2*time.Second || total > aiResultBudget {
 		t.Errorf("the pauses of a full queue add up to %v; they must span seconds and fit the %v budget", total, aiResultBudget)
 	}
+	// The pause is a function of any try number: no shift can overflow or go negative.
+	for _, attempt := range []int{-3, 0, 1, 5, 6, 37, 38, 64, 1 << 20} {
+		if d, ok := aiResultPause(attempt, postgres.ErrAdmissionFull); !ok || d < 100*time.Millisecond || d > 1500*time.Millisecond {
+			t.Errorf("pause for try %d after a full queue: %v %v", attempt, d, ok)
+		}
+	}
 }
