@@ -50,10 +50,11 @@ func toolInputCompatible(input tools.Field, f Field) bool {
 
 // toolActivities resolves every 1.3.0 tool activity in the trusted catalog,
 // type-checks its input mapping against the workflow entity and enforces
-// approval dominance. Tenant allowlists are checked at execution, where the
-// tenant is known. The returned resolver yields the pinned definition hash and
-// its database-enforced contract.
-func toolActivities(w *metadata.Workflow, path string, entity Entity, catalog tools.Catalog, add func(string, string, string)) (workflow.ToolResolver, bool) {
+// approval dominance. When the compile is made for a tenant, a tool restricted to
+// other tenants is unknown (ADR100 decision 2); the allowlist is checked again at
+// execution and by the release builder. The returned resolver yields the pinned
+// definition hash and its database-enforced contract.
+func toolActivities(w *metadata.Workflow, path string, entity Entity, catalog tools.Catalog, tenant string, add func(string, string, string)) (workflow.ToolResolver, bool) {
 	fields := map[string]Field{}
 	for _, f := range entity.Fields {
 		fields[f.ID] = f
@@ -73,6 +74,9 @@ func toolActivities(w *metadata.Workflow, path string, entity Entity, catalog to
 		}
 		at := path + "/" + s.ID + "/activity"
 		definition, ok := catalog.Lookup(a.ToolRef, a.Version, "")
+		if ok && tenant != "" && !definition.AllowsTenant(tenant) {
+			ok = false // the same answer as for a tool that is not registered
+		}
 		if !ok {
 			report(at, "unknown_tool", "Tool reference and version must be registered in the trusted tool catalog")
 			continue

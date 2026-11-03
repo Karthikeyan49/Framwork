@@ -72,6 +72,16 @@ func (a API) catalog() compiler.Catalog {
 	return compiler.PlatformCatalog()
 }
 
+// catalogFor is the compile catalog as one tenant sees it: a tool that the operator catalog restricts to other tenants is unknown to
+// the tenant's compile, so a tenant can neither pin another tenant's private tool nor learn that it exists (ADR100 decision 2,
+// independent red team TS-02). The stored-program provenance check (witness) compiles with the platform view, as it proves what the
+// platform compiler makes of a source and answers nothing to the caller.
+func (a API) catalogFor(access tenant.Access) compiler.Catalog {
+	c := a.catalog()
+	c.Tenant = access.TenantID()
+	return c
+}
+
 func (a API) Register(mux *http.ServeMux) {
 	if a.Traffic == nil {
 		var err error

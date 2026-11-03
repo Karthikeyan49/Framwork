@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -93,6 +94,13 @@ func (e *m13Env) buildWithTool(toolRef string, requester m13Actor) string {
 
 // stageWithTool prepares the artifacts and asks the builder for the candidate; it returns the reply.
 func (e *m13Env) stageWithTool(toolRef string, requester m13Actor) *httptest.ResponseRecorder {
+	e.t.Helper()
+	return e.candidate(requester.token, e.artifactsWithTool(toolRef))
+}
+
+// artifactsWithTool registers a source that calls toolRef and prepares the sandbox, the requirement set and the acceptance spec of
+// its candidate.
+func (e *m13Env) artifactsWithTool(toolRef string) m12Artifacts {
 	t := e.t
 	t.Helper()
 	doc := orderDocument(e.app, "500")
@@ -122,7 +130,7 @@ func (e *m13Env) stageWithTool(toolRef string, requester m13Actor) *httptest.Res
 	}
 	var spec promotion.StoredAcceptance
 	_ = json.Unmarshal(w.Body.Bytes(), &spec)
-	return e.candidate(requester.token, m12Artifacts{revision: revision, requirementsVersion: stored.Version, acceptanceID: spec.ID, sandboxID: sandbox})
+	return m12Artifacts{revision: revision, requirementsVersion: stored.Version, acceptanceID: spec.ID, sandboxID: sandbox}
 }
 
 func TestM13ToolPinStalenessAtViewApproveAndActivate(t *testing.T) {
@@ -168,18 +176,52 @@ func TestM13ToolPinStalenessAtViewApproveAndActivate(t *testing.T) {
 	m13Code(t, "activate once the catalog is restored", e.httpActivate(e.dave.token, hash, "", 0), 200)
 }
 
-// A tool the tenant may not use is refused when the candidate is built (422: the risk assessment blocks the
-// unresolved pin, BLOCK.tool_unresolved), so a tenant-denied pin never reaches approval. After a build, narrowing the tenant list
+// A tool the tenant may not use is unknown to the tenant's compile (independent red team TS-02, ADR100 decision 2): the build of a
+// candidate is refused with the diagnostics of a tool that is not registered (422 unknown_tool), and so are the compile and the preview
+// of the revision, so a tenant can neither pin another tenant's private tool nor tell that it exists. The risk assessment's
+// BLOCK.tool_unresolved and the execution check stay behind it as defence in depth. After a build, narrowing the tenant list
 // changes the pinned hash (the list is part of the definition), which reads as TOOL_CHANGED: the
 // TOOL_TENANT_DENIED reason of the pure rule cannot arise through the API and stays defence in depth.
 func TestM13ToolPinTenantListIsPartOfThePinAndOfTheBuildCheck(t *testing.T) {
 	e := m13Setup(t)
 	m13RequireStack(t, e, true)
 	otherTenant := "00000000-0000-4000-8000-000000000001"
-	e.useToolCatalog(m13ToolCatalog(t, func(d *tools.Definition) { d.Tenants = []string{otherTenant} }))
-	w := e.stageWithTool("tool.contact_lookup", e.carol)
-	if w.Code != 422 || !strings.Contains(strings.ToLower(w.Body.String()), "tool_unresolved") {
-		t.Fatalf("a tool the tenant may not use was built into a candidate: %d %s", w.Code, w.Body.String())
+	restricted := m13ToolCatalog(t, func(d *tools.Definition) { d.Tenants = []string{otherTenant} })
+	e.useToolCatalog(m13ToolCatalog(t, nil))
+	artifacts := e.artifactsWithTool("tool.contact_lookup")
+	revision := strconv.FormatInt(artifacts.revision, 10)
+	unknown := func(step string, w *httptest.ResponseRecorder) {
+		t.Helper()
+		if w.Code != 422 || !strings.Contains(w.Body.String(), "unknown_tool") || strings.Contains(w.Body.String(), otherTenant) || strings.Contains(w.Body.String(), `"tool_hash"`) {
+			t.Fatalf("%s for a tool restricted to another tenant: %d %s", step, w.Code, w.Body.String())
+		}
+	}
+	// The tool is open to the tenant: the preview and the compile accept the revision.
+	for step, w := range map[string]*httptest.ResponseRecorder{
+		"preview":  m3Call(e.h, "GET", e.root+"/versions/"+revision, e.alice, 0, nil),
+		"compile":  m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/"+revision+"/compile", e.alice, 0, nil),
+		"revision": m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/"+revision, e.alice, 0, nil),
+	} {
+		if w.Code != 200 {
+			t.Fatalf("%s with the tool open to the tenant: %d %s", step, w.Code, w.Body.String())
+		}
+	}
+	// The operator narrows the tool to another tenant: every compile of the tenant answers as for a tool that is not registered.
+	e.useToolCatalog(restricted)
+	unknown("preview", m3Call(e.h, "GET", e.root+"/versions/"+revision, e.alice, 0, nil))
+	unknown("compile", m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/"+revision+"/compile", e.alice, 0, nil))
+	unknown("build of a candidate", e.candidate(e.carol.token, artifacts))
+	// A tenant that never saw the tool gets the answer of an empty catalog, byte for byte.
+	empty, err := tools.NewCatalog(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.useToolCatalog(empty)
+	absent := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/"+revision+"/compile", e.alice, 0, nil)
+	e.useToolCatalog(restricted)
+	hidden := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/"+revision+"/compile", e.alice, 0, nil)
+	if absent.Code != hidden.Code || absent.Body.String() != hidden.Body.String() {
+		t.Fatalf("a restricted tool is told apart from an unregistered one:\n absent: %d %s\n hidden: %d %s", absent.Code, absent.Body.String(), hidden.Code, hidden.Body.String())
 	}
 
 	e = m13Setup(t)

@@ -50,6 +50,11 @@ type Catalog struct {
 	// excluded from CatalogHash: each resolved definition's canonical hash is
 	// pinned inside the workflow plan instead, so existing IR hashes are stable.
 	ToolCatalog tools.Catalog `json:"-"`
+	// Tenant, when set, is the tenant that compiles: a tool the catalog restricts to other tenants is then unknown, exactly like a tool
+	// that is not registered, so a tenant can neither pin a private tool of another tenant nor tell that it exists (ADR100 decision 2,
+	// independent red team TS-02). Empty means no tenant is asking (examples, fixtures, tooling), and the allowlist is checked at
+	// execution and by the release builder as before. Like ToolCatalog it is not part of CatalogHash.
+	Tenant string `json:"-"`
 }
 
 func PlatformCatalog() Catalog {
@@ -316,7 +321,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 				var resolver workflow.ToolResolver
 				toolErrors := false
 				if doc.SchemaVersion == metadata.ToolWorkflowSchemaVersion {
-					resolver, toolErrors = toolActivities(w, path, entity, catalog.ToolCatalog, add)
+					resolver, toolErrors = toolActivities(w, path, entity, catalog.ToolCatalog, catalog.Tenant, add)
 				}
 				executable, err := workflow.CompileDefinitionWithTools(d.ID, *w, definition.Fields, []string{"local.noop"}, resolver)
 				if err != nil {

@@ -283,16 +283,14 @@ func TestM10ApprovalIsBoundToTheApprovedRecordVersion(t *testing.T) {
 }
 
 func TestM10CatalogTenantPinAndNetworkPolicyFailClosedWithoutIO(t *testing.T) {
-	// Tool not licensed for the tenant.
-	m := m10Setup(t, m10Options{allowInternal: true, tenantOnly: uuidFor(t)})
-	x := m.drive(t, m.startFlow(t, "read").ID, "DEAD")
-	if m.provider.requests("", "") != 0 || m.ledgerRows(t, x.ID) != 0 {
-		t.Fatal("unlicensed tool performed I/O")
-	}
+	// A tool not licensed for the tenant is unknown to the tenant's compile (independent red team TS-02), so no flow that pins it can be
+	// started: TestM13ToolPinTenantListIsPartOfThePinAndOfTheBuildCheck covers the refusal through the compile route and the builder, and
+	// the compiler tests cover the rule. The execution check of the allowlist stays behind it as defence in depth: the list is part of the
+	// pinned hash, so it cannot be reached through the API any more.
 	// Tool removed from the worker's operator catalog.
 	empty := tools.EmptyCatalog()
-	m = m10Setup(t, m10Options{allowInternal: true, workerCatalog: &empty})
-	x = m.drive(t, m.startFlow(t, "read").ID, "DEAD")
+	m := m10Setup(t, m10Options{allowInternal: true, workerCatalog: &empty})
+	x := m.drive(t, m.startFlow(t, "read").ID, "DEAD")
 	if m.provider.requests("", "") != 0 {
 		t.Fatal("removed tool performed I/O")
 	}
@@ -317,8 +315,6 @@ func TestM10CatalogTenantPinAndNetworkPolicyFailClosedWithoutIO(t *testing.T) {
 		t.Fatal("SSRF policy not enforced", l)
 	}
 }
-
-func uuidFor(t *testing.T) string { return uuid(t) }
 
 func TestM10StaleLeaseCannotContinueAndWorkerSQLIsConfined(t *testing.T) {
 	m := m10Setup(t, m10Options{allowInternal: true})

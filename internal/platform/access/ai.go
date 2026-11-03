@@ -340,8 +340,8 @@ func (a API) compilerHash() string {
 // aiCompile is the CompileFunc of the running server: the metadata validator and the
 // compiler with the operator catalogs. A document the validator refuses yields its
 // issues as diagnostics, not an error.
-func (a API) aiCompile() ai.CompileFunc {
-	catalog := a.catalog()
+func (a API) aiCompile(access tenant.Access) ai.CompileFunc {
+	catalog := a.catalogFor(access)
 	return func(doc metadata.Document) (compiler.Program, []compiler.Diagnostic, error) {
 		raw, err := json.Marshal(doc)
 		if err != nil {
@@ -368,7 +368,7 @@ func (a API) aiCompile() ai.CompileFunc {
 // tenant scope: the active release program, the tool summaries, role names and the
 // requirement set.
 func (a API) aiPlatform(ctx context.Context, q postgres.Executor, access tenant.Access, app string) (ai.PlatformInputs, error) {
-	in := ai.PlatformInputs{Compile: a.aiCompile(), CompilerHash: a.compilerHash()}
+	in := ai.PlatformInputs{Compile: a.aiCompile(access), CompilerHash: a.compilerHash()}
 	_, _, base, err := a.activeBase(ctx, q, access, app)
 	if err != nil {
 		return in, err

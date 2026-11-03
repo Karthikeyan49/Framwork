@@ -345,7 +345,6 @@ func m10Flow(tool string, inputs map[string]string, approval bool, approvers []s
 type m10Options struct {
 	workerCatalog  *tools.Catalog // nil = same as the API catalog
 	allowInternal  bool
-	tenantOnly     string // restrict every tool to one tenant ("" = all)
 	omitFromWorker bool
 	approvers      []string // roles of the approval state of every flow (nil: admin and owner)
 	customRoles    bool     // the API decides with the tenant-defined roles, as the production wiring does
@@ -385,11 +384,6 @@ func m10Setup(t *testing.T, o m10Options) *m10Fixture {
 	f := newIAM(t)
 	provider := newM10Provider(t)
 	definitions := m10Tools(provider.port)
-	if o.tenantOnly != "" {
-		for i := range definitions {
-			definitions[i].Tenants = []string{o.tenantOnly}
-		}
-	}
 	catalog, err := tools.NewCatalog(definitions)
 	if err != nil {
 		t.Fatal(err)

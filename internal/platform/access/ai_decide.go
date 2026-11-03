@@ -43,7 +43,7 @@ func (a API) aiApply(ctx context.Context, q postgres.Executor, r *http.Request, 
 	if err != nil {
 		return reply{}, err
 	}
-	in := ai.ApplyInput{App: app, ProposalID: id, ExpectedRevision: body.ExpectedRevision, Acknowledge: body.Acknowledge, Compile: a.aiCompile()}
+	in := ai.ApplyInput{App: app, ProposalID: id, ExpectedRevision: body.ExpectedRevision, Acknowledge: body.Acknowledge, Compile: a.aiCompile(access)}
 	if base.Valid() {
 		in.Base = &base
 	}

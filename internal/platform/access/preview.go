@@ -79,7 +79,7 @@ func (a API) preview(ctx context.Context, q postgres.Executor, r *http.Request, 
 	if err != nil {
 		return reply{}, err
 	}
-	program, diagnostics := compiler.Compile(source, a.catalog())
+	program, diagnostics := compiler.Compile(source, a.catalogFor(access))
 	if !program.Valid() {
 		return reply{status: 422, body: struct {
 			Diagnostics []compiler.Diagnostic `json:"diagnostics"`

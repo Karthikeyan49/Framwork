@@ -421,7 +421,7 @@ func (a API) postCandidate(ctx context.Context, q postgres.Executor, r *http.Req
 		return reply{}, err
 	}
 	metadataEvidence(ctx, evidence, version)
-	catalog := a.catalog()
+	catalog := a.catalogFor(access)
 	program, diagnostics := compiler.Compile(source, catalog)
 	if !program.Valid() {
 		return reply{status: 422, body: struct {

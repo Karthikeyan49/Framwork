@@ -109,7 +109,7 @@ func (a API) metadata(ctx context.Context, q postgres.Executor, r *http.Request,
 			if err != nil {
 				return reply{}, err
 			}
-			program, diagnostics := compiler.Compile(source, a.catalog())
+			program, diagnostics := compiler.Compile(source, a.catalogFor(scope))
 			compilerVersion := compiler.Version
 			if program.Valid() {
 				compilerVersion = program.IR().CompilerVersion
