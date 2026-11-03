@@ -237,6 +237,9 @@ func TestM14APIAskingAndReadingNeedMetadataRead(t *testing.T) {
 	if w := e.ai("GET", "/proposals/"+ready.ID, reader.token, nil); w.Code != 403 || leaks(w.Body.String()) {
 		t.Fatalf("a role with ai.read alone read a proposal: %d %s", w.Code, w.Body.String())
 	}
+	if n := e.auditCount("ai.read.rejected", false); n != 1 {
+		t.Errorf("the refused read is audited as ai.read.rejected with allowed=false: %d rows", n)
+	}
 	if w := e.ai("GET", "/proposals", reader.token, nil); w.Code != 200 || leaks(w.Body.String()) {
 		t.Fatalf("the list of a role with ai.read alone: %d %s", w.Code, w.Body.String())
 	}
