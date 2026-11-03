@@ -124,6 +124,25 @@ Replace with "near-miss lists for the Basic, prose-password, cookie, `sig=`, car
 Evidence: the rehearsal's own verdict table marks its item 4 (ADR reservations, documents have no order constraint) NOT RUN, "no ADR tooling was exercised" (`UPGRADE_AND_ORDERING_REHEARSAL.md:306`, progress table :23), and for the 58-79 sentence "a database still at 57 was not tested" (:301).
 Replace "every sentence of the first proposal" with "the numbering sentences of the first proposal (not its ADR reservations)" and "every sentence of the proposed numbering rule" with "every numbering sentence of the proposed rule (its ADR reservations were not exercised)".
 
+## Cross-document pairs (same fact, two statements)
+
+| Fact | Statement A | Statement B | Finding |
+|---|---|---|---|
+| Verdict of the merge / M14 review | plan:20-23, ledger:36-37: PASS at `0e13abe` | plan:177, ledger:22-24, supersession map:42, M14 banner:11: FAIL | DT-06, DT-03 |
+| Third-pass status of F-03 / F-04 | plan:61: attacked, found incomplete | ledger:252: the reviewer did not re-run them | DT-08 |
+| `migrate status` | ledger:250: marks the file, exits 1 | ledger:253: still plain pending | DT-07 |
+| Does the merge review judge the fixes | plan:20-23: IR-01 to IR-06 verified FIXED | ledger:244: "it does not judge the fixes" | DT-08 |
+| Unique / restore fixes re-verified | reports: second review A3, merge review A.7, IR-01 | ledger:213, :240: "independent re-review pending" | DT-09 |
+| Verifier version | `report.go:27`, ADR102:405, appendix:148: `verifier-v3` | ledger:216, remediation plan:484, ADR103:346, supersession map:42: `verifier-v2` | DT-10, DT-03 |
+| F-05 residual | ADR103:370 retracts "harmless"; ADR103:380 "inert at the pointer" | plan:50, ledger:40, handoffs:323: "harmless" | DT-11 |
+| Reliability of the version-gate scan | plan:27, :41: "a guard, not a proof" | handoffs:219-220, :278, :305: "will tell you" | DT-13 |
+| Next free migration number | handoffs:281, :310, :325: `00093` (tree: 70 files, highest `00092`) | handoffs:218, :236: `00091` | DT-14 |
+| `MAIN` database | plan:185-186: preserved, no rebuild authorized | plan:297: "has to be rebuilt" | DT-20 |
+| Go packages with tests | logs, `go list`: 30 | plan:95, :113: 29 (plan:70: 29, true for `507c12c`) | DT-04 |
+| Rows done after `0e13abe` | plan:38-43: six rows | plan:23, :53: "the last five rows" | DT-01 |
+| M10-M14 | README:659-660: M10 tools ... M13 services | README:14, :651, :658, :763: paused / only `local.noop` | DT-02 |
+| Rehearsal coverage | rehearsal:23, :306: rule 4 NOT RUN | plan:119-120, ledger:253: "every sentence" | DT-26 |
+
 ## Authority and open decisions
 
 The three owner decisions are not taken and no document says so: numbering rule "The owner has not decided" (plan:120, ledger:234, handoffs:235-238, :313); contract proposal "PROPOSED ONLY - NOT APPLIED" (proposal:3), `AGENTS.md` / `CLAUDE.md` hashes equal the proposal baseline (`d449d4d6...`, `a947da39...`) and are unchanged since `b00da36`; rebuild of `MAIN`: DT-20. No document says that either file was changed, the proposal applied or the rule ratified (grep of all `.md`). `db/migrations/numbering_test.go` encodes the proposal and says the owner has not decided; it fails on 00058, a duplicate and a gap (executed with temporary files, removed).
