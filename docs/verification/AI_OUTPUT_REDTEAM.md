@@ -39,6 +39,17 @@ Class 4 (canonical form) is the 45-payload differential below; class 5 additiona
 `internal/ai/redact.go:460-463` (`holdsRedaction`, used at `internal/ai/patch.go:124`) is `strings.Contains(json.Marshal(definition), "[REDACTED:")`. ADR104 B.4 states that a placeholder "the model echoes back can never be written into the draft". Only the byte-exact prefix is refused. Executed (`zz-a7-placeholder-{label,component,enum}-*`, 12 spellings at 3 positions = 36 items, all stored `READY`): `[redacted:secret]`, `[Redacted:secret]`, `[REDACTED :secret]`, `[ REDACTED:secret]`, `[REDACT<U+200C>ED:secret]`, `[REDACTED<U+200D>:secret]`, `[REDAC<U+00AD>TED:secret]`, fullwidth brackets and colon, a Cyrillic E, `[REDACTED` without the colon, `&#91;REDACTED:secret]` and the escape `\u005bREDACTED:secret]` all pass; the exact `[REDACTED:secret]` and `see [REDACTED:pem] above` are refused. Repro: `gt test -count=1 -run TestZZReviewA567 ./internal/ai` with the probe in the appendix (any `update` of `page.order.list` whose label is `[Redacted:secret]`).
 Breaks: a model (or a prompt-injected one) can overwrite a label, a component label or an enum value with text that a reviewer reads as the server's placeholder; the original text is lost from the draft revision and nothing marks the lookalike. No secret is exposed and a human still applies, so LOW. Zero-width and soft-hyphen variants are invisible in a review UI.
 
+Minimal repro (package `ai`, observed: the first label gives 1 conflict, the others 0):
+```go
+func TestReproAO01(t *testing.T) {
+	doc := fixtureDoc(t, exWorkflow)
+	for _, label := range []string{"[REDACTED:secret]", "[redacted:secret]", "[REDACT\u200cED:secret]"} {
+		_, conflicts, err := ApplyProposal(doc, parseOK(t, proposalMap(updateLabelOp(t, doc, "entity.contact", label))))
+		t.Logf("label %q: err=%v conflicts=%d", label, err, len(conflicts))
+	}
+}
+```
+
 ### AO-02 MEDIUM: `ai.read` and `ai.propose` reach draft definitions that `metadata.read` protects (no composition rule for reads)
 
 `internal/platform/access/ai.go:266-310` authorises the read and propose routes with `ai.read` / `ai.propose` alone; the composition rule of ADR104 A6 exists only for the writes (`ai_decide.go:39` `metadata.write` for apply, `ai_decide.go:79` `requirements.decide` for confirm). `Service.Admit`/`Prepare` (`internal/ai/service.go:242-309`) builds the context from the whole draft inside the caller's scope, and a proposal view returns the full definition of every definition it updates.
@@ -46,25 +57,77 @@ Executed (`TestZZB1CustomRolesReachTheDraftThroughTheAISurface`, `it-run m12db`,
 Breaks: default-deny at the capability level. A custom role created to audit or to ask the model (a plausible role) reads, and has sent to the operator's provider, metadata it cannot read through the metadata routes. Default roles are unaffected (`ai.propose` is owner/admin only, who hold `metadata.read`; viewers hold both reads). The ADR states the composition for writes only, so this is a gap in the stated contract rather than a defect against it.
 Fix direction (not applied): require `metadata.read` for the list/get/propose routes, as apply requires `metadata.write`, or document that granting `ai.read`/`ai.propose` grants read of draft definitions.
 
+Minimal repro (`tests/integration`, `gt` + `it-run m12db <worktree> <log> 'TestReproAO02' -v`; observed: draft read 403, proposal read 200, `true`):
+```go
+func TestReproAO02(t *testing.T) {
+	e := m14Setup(t, m14Options{})
+	e.draft("500")
+	reader := e.customRole("zz_reader", "ai.read")
+	if w := m3Call(e.h, "GET", "/v1/tenants/"+e.f.tenantA+"/metadata/"+e.app+"/versions/1", reader.token, 0, nil); w.Code == 200 {
+		t.Fatal("premise: the role can read the draft")
+	}
+	ready := e.readyPatch(1, "workflow.order.approve", "Relabelled") // made by the owner
+	got := e.proposal(e.ai("GET", "/proposals/"+ready.ID, reader.token, nil), 200)
+	t.Log(strings.Contains(string(got.Proposal), "approval_roles")) // true
+}
+```
+
 ### AO-03 LOW: a NEEDS_HUMAN proposal reports `derived.sensitive: []` and `aspects: []` for changes that are sensitive
 
 `internal/ai/gateway.go:146` sets `run.Derived = Derived{Targets: targetsOf(*parsed), Sensitive: []string{}, Aspects: []string{}}` when the loop ends with diagnostics, and `internal/ai/service.go:559-564` stores it with the proposal, so the API view of a NEEDS_HUMAN proposal says "no sensitive aspects" about content that was never classified. Executed (gateway, scripted provider, orders draft): one answer that deletes `workflow.order.approval` and `rule.order.high_value` and adds a page that references a missing field ends `NEEDS_HUMAN` with `derived.targets` = the three operations and `derived.sensitive = []`, `aspects = []`; the same two deletions without the broken page are `READY` with `sensitive = [rule.order.high_value:RULE_FINANCIAL, rule.order.high_value:RULE_LOGIC, workflow.order.approval:APPROVAL_GATE, workflow.order.approval:WORKFLOW_GRAPH]`.
 Breaks: `derived` is documented as what the server computed (ADR104 A9). NEEDS_HUMAN cannot be applied through the API (`proposal_not_ready`), but its purpose is that a human takes over; a reviewer who reads an empty sensitive list and re-does the change through the ordinary metadata routes meets none of the acknowledgement. Fix direction: leave `sensitive`/`aspects` null (unknown) for NEEDS_HUMAN, or classify the operations that apply.
+
+Minimal repro (package `ai`; observed `NEEDS_HUMAN sensitive=[] aspects=[] targets=2`):
+```go
+func TestReproAO03(t *testing.T) {
+	doc := fixtureDoc(t, exWorkflow)
+	broken := addPageOp(t, doc, "page.zz_broken", "x")
+	broken["definition"].(map[string]any)["page"].(map[string]any)["entity_ref"] = "entity.missing"
+	payload := mustJSON(t, proposalMap(deleteOp(t, doc, "workflow.contact.review"), broken))
+	g := NewGateway(NewScriptedProvider(ScriptStep{Payload: payload}, ScriptStep{Payload: payload}, ScriptStep{Payload: payload}), Options{})
+	bundle, _ := g.BuildContext(ContextInput{Task: TaskApplicationPatch, Request: "x", Draft: doc, DraftRevision: 1, DraftHash: strings.Repeat("a", 64)})
+	run, _ := g.RunPatch(context.Background(), PatchInput{Context: bundle, Draft: doc, Compile: newCompiler(t).Compile, Budget: DefaultEvalBudget()})
+	t.Logf("status %s sensitive=%v aspects=%v targets=%d", run.Status, run.Derived.Sensitive, run.Derived.Aspects, len(run.Derived.Targets))
+}
+```
 
 ### AO-04 LOW: the invisible-character rule for model text leaves the common smuggling characters open
 
 `cleanText` (`internal/ai/schema.go:304-319`, applied to every string and key of a proposal) names "the invisible-instruction smuggling channel" and refuses C0/C1 controls, bidi overrides and isolates, U+2028/2029, U+FEFF, U+200B, U+2060, U+180E and the tag block U+E0000-E007F. Executed (probe over all 1.1 million code points, then `zz-a7-rationale-char-*`): 326 invisible or format characters still pass as rationale, assumption, risk-flag detail and, through `ApplyProposal`, as definition labels: variation selectors U+FE00-FE0F and **U+E0100-E01EF** (the supplement block used for hidden-text injection), U+200C/U+200D, U+200E/U+200F, U+061C, U+00AD, U+034F, Hangul fillers U+115F/1160/3164/FFA0, U+17B4/17B5, Mongolian selectors U+180B-180D, invisible operators U+2061-2064, U+FFF9-FFFB, U+13430-1343F. The human's request rule (`validRequestText`, `internal/ai/service.go:156-175`) is stricter than the model-output rule: it also refuses U+061C, U+200E/200F, U+2061-2064 and U+FFF9-FFFB (10 of the 326); the input-side `dirtyRune` (`internal/ai/redact.go:358-372`) is the same list as `cleanText`, so these characters also reach later prompts.
 Breaks: a hidden payload in a label that a human applies is stored in the draft, returned, and placed in later contexts as UNTRUSTED data (a persistent injection channel the code comment says it closes), and a reviewer cannot see text that the model attached to a rationale. Defence in depth only (the segments are labelled UNTRUSTED, a human applies), hence LOW. Fix direction: refuse all `unicode.Cf` characters and the default-ignorable code points in model text, and make the request and output rules one function.
 
+Minimal repro (package `ai`; observed `cleanText=true` for all six, `validRequestText=false` for the last two):
+```go
+func TestReproAO04(t *testing.T) {
+	for _, r := range []rune{0x200d, 0xfe0f, 0xe0100, 0x3164, 0x200e, 0x061c} {
+		s := "a" + string(r) + "b"
+		t.Logf("U+%04X cleanText=%v validRequestText=%v", r, cleanText(s), validRequestText(s))
+	}
+}
+```
+
 ### AO-05 LOW: model free text is stored and returned unredacted to every `ai.read` holder
 
 ADR104 B.4 redacts text on the way into a prompt; nothing redacts what comes back. Executed (`TestZZB4LargeAndSecretAnswers`, `it-run m12db`, and 9 pure items `zz-a7-secret-in-output-*` with the builder's canaries): a rationale carrying a run-time generated GitHub-token-shaped string (`ghp_` + 36 random alphanumerics) in a READY proposal is stored byte for byte in `control.ai_proposals.body`, returned by `GET .../ai/proposals/{id}` to a viewer, and appears in no audit row (0 of the tenant's rows) and in no trace column. Eight other shapes (sk-, AKIA, JWT, DSN with password, Slack, bearer header, card number, e-mail) behave the same; the PEM canary only because its newlines are escaped in the canonical JSON.
 Breaks: a secret that the model reproduces (from its training data or from a request the human wrote around the redactor) becomes tenant-readable evidence, kept for ever (proposals are never deleted). The builder's corpus prints this as `OBSERVED` but neither ADR104 nor its residuals state that output is unfiltered, hence LOW (documentation and defence in depth). Fix direction: run the output text fields through `redactString` before they are stored, or state the residual.
 
+Minimal repro (package `ai`; the token is built at run time, observed `true`):
+```go
+func TestReproAO05(t *testing.T) {
+	token := "ghp_" + strings.Repeat("Z", 36)
+	doc := fixtureDoc(t, exWorkflow)
+	op := updateLabelOp(t, doc, "entity.contact", "Contact")
+	op["rationale"] = "See " + token + " for access."
+	canonical, _, err := CanonicalPatch(parseOK(t, proposalMap(op)))
+	t.Log(err, strings.Contains(string(canonical), token)) // <nil> true: stored byte for byte
+}
+```
+
 ## Attacks that held
 
 - Authority: 135 spellings of server-derived names (case, kebab, space, fullwidth, Cyrillic, zero-width, soft hyphen, RLO, `__proto__`, `$schema`, `@type`) at five positions (top level, operation, definition, definition payload, risk flag): all refused at parse. Three advisory-text items (risk flags and assumptions claiming a cosmetic change, an open question claiming prior approval, a proposed test asserting NO_APPROVAL) were stored READY and left the derived sensitive list intact (`zz-a1-advisory-claims-do-not-lower-sensitivity`, `zz-a1-open-question-claims-approval`).
 - Sensitivity: an independent oracle (the compiled IR minus labels and pages, compared as JSON, not `compiler.ComputeDiff`) agreed with `DeriveSensitiveAspects` on 3,202 mutants (every leaf of every definition of orders, orders+tool-pin, vendors, minimal and three published examples: string alternatives, numbers, booleans, array removal/swap/duplicate/reverse, key removal, definition deletion and renamed copies). 133 READY hand-written items re-checked against the IR oracle: 0 changed IR with an empty sensitive list. The builder's own `oracleAspects` is `ComputeDiff` again and so is not independent of the code under test; this oracle is.
+- Oracle power (mutation check): with `plainAspects` temporarily widened to include `RULE_LOGIC` (`internal/ai/patch.go:280`, reverted with `git checkout`), the same sweep reported UNDER-REPORTED changes at once (8 in the first draft alone, e.g. `rule.contact.named` swap of the first two arguments), so a zero result is not a blind oracle.
 - Aliasing and determinism: 158 applied documents were vandalised through every slice, map and `json.RawMessage` they hold; the input draft and the proposal never changed and a second `ApplyProposal` gave the same bytes.
 - Decision races (B2): six rounds, each 6 concurrent applies and 3 concurrent rejects of one READY proposal (54 requests): exactly one decision succeeded per round (1 apply, 5 rejects), the draft head moved by one exactly when the status was APPLIED, no 5xx; the losers got 36 `409 proposal_decided` and 12 `409 ai_conflict`.
 - Ids and oracles (B3): for get, apply, reject and confirm the answers for another application's id, another tenant's id through the caller's own tenant path, and a missing id were byte-identical `404 not_found` (request id removed); a tenant-B owner on tenant A's path got the same `403` as for a tenant that does not exist; ten spellings of list query parameters (`limit=-1`, `limit=9999...`, `cursor=%00`, `offset=-5`, `order=asc;drop`, `?%zz`) returned the plain page; 26 route-confusion requests (trailing and double slashes, `%2e%2e`, `%2f`, `%00`, `;x=y`, upper-case and padded ids, PUT/DELETE/PATCH/HEAD/OPTIONS, `/apply/../reject`) produced no 5xx and no state change. Medians over 25 requests were 24 to 49 ms for the three unknown-id cases and 26 ms for an existing id; the slowest was the first one measured, so no timing oracle is claimed or excluded beyond that noise.
