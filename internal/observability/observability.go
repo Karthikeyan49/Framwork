@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -49,6 +50,8 @@ func Start(ctx context.Context, service, environment, endpoint string, logger *s
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	// Exporter errors are redacted; transport errors may contain credential-bearing URLs.
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) { logger.Warn("telemetry export unavailable") }))
+	// The Redis client logs on its own, to standard error, with the dial target and the driver's error text (LE-02).
+	redis.SetLogger(&redisLogger{logger: logger})
 	if err := runtime.Start(runtime.WithMeterProvider(providers.Metrics)); err != nil {
 		logger.Warn("runtime metrics unavailable")
 	}
