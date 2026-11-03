@@ -108,11 +108,16 @@ Non-test Go files in `cmd/` and `internal/`: 187. Counted with ripgrep on the pi
   `state.entity_id` and `state.field_id` <- path of the GET index routes and `entity_id` of the GET record-access route (`access/preview.go:154-155`, `:225-226`, `:232`;
   `access/records.go:60`); `state.operator_ref` <- body of a workflow signal, charset-checked only for `recover` and `reconcile` (`runtime/workflow/signals.go:16-18` against `:188`).
   POST routes are protected by the allowlist regexes of `AcceptsPOST` (identifier-shaped app, entity, rule and workflow segments); GET routes and body fields are not.
-- Repro (executed, no database; fake driver, real `access.API`): `POST /v1/tenants/{t}/members/{m}/role` with `{"role":"Not A Role <canary>","expected_role":"viewer"}`
-  answers `400 invalid_role` (fixed text) and appends the audit row `roles.assign.rejected` with `state = {"policy_subject":"...","role":"Not A Role <canary>"}`.
-  `GET /v1/tenants/{t}/preview/app.x/datasets/<canary>/evolutions/<uuid>` answers `400 invalid_evolution` and appends `datasets.evolve.rejected` with
-  `state = {"dataset_id":"<canary>","metadata_app":"app.x"}`. Not executed (needs the registry and the database): the `entity_id`, `field_id`, `workflow_id`
-  and `operator_ref` paths above, which are read from the code; the stack-level probe plants them (see "Real-stack probe").
+- Repro (executed, no database; fake `database/sql` driver that serves the stored contacts example as revision 1, real `access.API`, real registry, compiler and
+  policy; temporary probes `zz_review_audit*_test.go` in `internal/platform/access`, not committed). Each request answers a fixed typed refusal and appends an audit row
+  that holds the text:
+  `POST /v1/tenants/{t}/members/{m}/role` with `{"role":"Not A Role <canary>","expected_role":"viewer"}` -> `400 invalid_role`; row `roles.assign.rejected`,
+  `state.role = "Not A Role <canary>"`.
+  `GET /v1/tenants/{t}/preview/app.x/datasets/<canary>/evolutions/<uuid>` -> `400 invalid_evolution`; row `datasets.evolve.rejected`, `state.dataset_id = "<canary>"`.
+  `GET .../versions/1/entities/<canary1>/indexes/<canary2>` -> `400 invalid_index`; row `indexes.manage.rejected`, `state.entity_id = "<canary1>"`, `state.field_id = "<canary2>"`.
+  `GET .../versions/1/entities/<canary>/records/<uuid>/access` -> `400 invalid_record_access`; row `preview.read.rejected`, `state.entity_id = "<canary>"`.
+  `GET .../versions/1/workflows/<canary>/instances/<uuid>` -> `404 not_found`; row `workflows.rejected`, `state.workflow_id = "<canary>"`.
+  Read from the code, not executed: `state.operator_ref` from the body of a workflow signal.
 - Impact: audit rows are insert-only and no API route reads them, so the text reaches only whoever queries the table. A pasted secret in a `role` field of a
   failed assignment, or in a GET path, is stored for good in an immutable table (up to 64 or 160 bytes). A value longer than the bound makes `Append` fail and the
   request answers `503 service_unavailable` instead of the typed 4xx (an availability quirk of the same cause; no leak).
@@ -204,8 +209,7 @@ status and trace state, M = metric data point attributes, A = audit row, P = pro
 | bearer secret, tool arguments, provider error body, headers and cookie (tool gateway, 12 executions) | no | - | no | - | - | - |
 | authorization code, state, issuer, cookie, provider error description, provider tokens (sign-in, 13 requests) | no | no | - | - | - | - |
 | passwords in `DATABASE_URL`, `REDIS_URL`, `EVENT_REDIS_URL`, `SIGNIN_REDIS_URL`, `MIGRATION_DATABASE_URL`, `AUTH_ISSUER`; canary values for 12 other variables; operator flags (38 starts) | no | no (but the go-redis line of LE-02) | - | - | - | no (one echo of an operator's own numeric flag) |
-| role text in a rejected role assignment (body) | no | no | - | - | YES (LE-04) | - |
-| dataset path text in a rejected evolution read | no | no | - | - | YES (LE-04) | - |
+| role text in a rejected role assignment (body); dataset, entity, index and workflow path text in rejected GET requests | no | no | - | - | YES (LE-04, 5 fields, executed) | - |
 | `OTEL_EXPORTER_OTLP_HEADERS` value with an unreachable collector | - | no | - | - | - | no |
 
 ## Mutation check of the probes
@@ -218,7 +222,7 @@ two stored texts, so each of the span and audit sinks has a positive control; th
 ## Observations (not findings)
 
 - `GET /readyz` is public and lists twelve dependency names with `ok` or `unavailable` (`postgres`, `redis`, `workflows`, `signin`, `policy`, `events`, `identity`,
-  `tenant`, `audit`, `data`, `metadata`, `ai`); text of the failure is never included (`httpserver.go:53-95`, executed: `{"status":"not_ready","dependencies":{...}}`).
+  `tenant`, `audit`, `data`, `metadata`, `ai`); text of the failure is never included (`httpserver.go:53-94`, executed: `{"status":"not_ready","dependencies":{...}}`).
   Unconfigured `signin` and `ai` report `ok`, so the list does not reveal configuration.
 - An anonymous caller can tell a development or test deployment from production by `POST` with a body to a preview or AI route: `401 unauthenticated` when preview
   is enabled, `413 body_not_allowed` when it is not (`AcceptsPOST` allowlist, executed with `PreviewEnabled` true and false). It reveals the mode and which route
