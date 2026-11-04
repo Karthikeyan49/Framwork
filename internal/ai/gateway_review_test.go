@@ -101,13 +101,23 @@ func TestProviderLabelsAreReducedBeforeTheyAreStoredOrAudited(t *testing.T) {
 func TestACanceledCallIsChargedTheReservedOutput(t *testing.T) {
 	r := newRig(t, Options{}, ScriptStep{Payload: nil, Delay: 5 * time.Second})
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(60 * time.Millisecond); cancel() }()
-	start := time.Now()
+	// The caller leaves when the provider has been called and is working, not after a fixed time. The work before the first call (the check of the context, the schema, the
+	// request) takes longer than any fixed wait on a host that is busy enough, and the unit gate runs every package with the race detector at once: a cancellation that comes
+	// before the call is another case (nothing was sent and nothing is charged: gateway_test.go) and made this test fail once with "attempts [], want one TIMEOUT".
+	var cancelledAt atomic.Int64
+	go func() {
+		for end := time.Now().Add(30 * time.Second); r.prov.Calls() == 0 && time.Now().Before(end); {
+			time.Sleep(time.Millisecond)
+		}
+		cancelledAt.Store(time.Now().UnixNano())
+		cancel()
+	}()
 	run, err := r.g.RunPatch(ctx, r.patchInput(okBudget()))
+	returned := time.Now()
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err %v, want the cancellation", err)
 	}
-	if time.Since(start) > 2*time.Second {
+	if at := cancelledAt.Load(); at == 0 || returned.Sub(time.Unix(0, at)) > 2*time.Second {
 		t.Fatal("the cancellation was not honoured")
 	}
 	// The provider may have worked (and a vendor billed) until the cancellation: the budget sees it as a crash it cannot measure.

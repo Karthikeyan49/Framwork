@@ -370,9 +370,12 @@ func TestRunPatchBudgets(t *testing.T) {
 	})
 	t.Run("an expired parent deadline is a budget outcome, not an error", func(t *testing.T) {
 		r := newRig(t, Options{}, ScriptStep{Payload: nil, Delay: 2 * time.Second})
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		// The deadline starts after the input is built, and is long enough for the work before the first call on a busy host (that work takes 50 ms with the race detector): a
+		// deadline that has passed before the run starts is an error, not a budget outcome (with the race detector, alone, the 50 ms of the first form failed 31 of 40 runs).
+		in := r.patchInput(okBudget())
+		ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 		defer cancel()
-		run, err := r.g.RunPatch(ctx, r.patchInput(okBudget()))
+		run, err := r.g.RunPatch(ctx, in)
 		if err != nil || run.Status == RunReady {
 			t.Fatalf("status %s err %v", run.Status, err)
 		}
