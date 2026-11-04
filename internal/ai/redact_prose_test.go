@@ -387,6 +387,14 @@ func TestRedactionOfAQuotedPasswordOfLettersNeedsTheEndOfAStatement(t *testing.T
 		"postgres, more options after it":                   "ALTER ROLE bob WITH PASSWORD '" + word + "' VALID UNTIL 'infinity';",
 		"the literal closes the statement":                  "CREATE ROLE bob LOGIN PASSWORD '" + word + "'",
 		"the literal closes it, blanks after":               "CREATE ROLE bob LOGIN PASSWORD '" + word + "'  \n",
+		// A string that holds the statement closes after the literal: the statement is SQL, whatever the end of the text is (the form before the follow-up to FU-01 redacted these).
+		"a shell string":                  `psql -c "ALTER USER postgres PASSWORD '` + word + `'"`,
+		"a shell string, mysql":           `mysql -e "CREATE USER 'app'@'%' IDENTIFIED BY '` + word + `'" && restart`,
+		"a shell string in single quotes": `mysql -e 'CREATE USER app IDENTIFIED BY "` + word + `"' && restart`,
+		"a value of JSON":                 `{"query": "CREATE ROLE app LOGIN PASSWORD '` + word + `'", "wait": true}`,
+		"a list of arguments":             `command: ["psql", "-c", "ALTER USER app PASSWORD '` + word + `'"]`,
+		"a call of code":                  `cur.execute("ALTER ROLE app PASSWORD '` + word + `'")`,
+		"a code span of a document":       "Run `CREATE USER app IDENTIFIED BY '" + word + "'` first, then restart.",
 	} {
 		if out, n := redactText(text); n == 0 || strings.Contains(out, word) {
 			t.Errorf("%s: the password survives: %s", name, strings.ReplaceAll(out, word, "<WORD>"))

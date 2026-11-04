@@ -146,10 +146,22 @@ func sqlLiteral(match string) (bool, string) {
 	return false, ""
 }
 
-// sqlCredential decides whether the clause of a statement names a password. ends: the clause is the last thing of the statement; terminated: a ";" ended the
-// statement. A quoted literal is one when the statement is SQL by its ending (a ";", or the literal closes it) or the literal has a digit or a symbol: in
-// "Create user form with password 'confirm' field" the word is a label. A bare word is one when it has a digit or a symbol, or when it ends a statement that a ";"
-// ended (Oracle writes passwords bare: "CREATE USER scott IDENTIFIED BY tiger;").
+// clauseEnds reports that the clause that ends at span[to] is the last thing of the statement (end is the length of the statement without its trailing blanks), or is
+// followed by the closing quote of a string that holds the statement: psql -c "ALTER USER app PASSWORD 'x'", a JSON value, a line of code, a code span of a document. A
+// word of a sentence is followed by another word, a full stop or a line end, none of which closes anything. The first form of the statement scan did not look at what follows
+// and so let such a password through when it had no digit and no symbol, which the form before it redacted.
+func clauseEnds(span string, to, end int) bool {
+	if to >= end {
+		return true
+	}
+	rest := strings.TrimLeft(span[to:], " \t")
+	return rest != "" && strings.IndexByte("\"'`", rest[0]) >= 0
+}
+
+// sqlCredential decides whether the clause of a statement names a password. ends: the clause is the last thing of the statement or is followed by the closing quote of the
+// string that holds it (clauseEnds); terminated: a ";" ended the statement. A quoted literal is one when the statement is SQL by its ending (a ";", or the literal closes it)
+// or the literal has a digit or a symbol: in "Create user form with password 'confirm' field" the word is a label. A bare word is one when it has a digit or a symbol, or
+// when it ends a statement that a ";" ended (Oracle writes passwords bare: "CREATE USER scott IDENTIFIED BY tiger;").
 func sqlCredential(match string, ends, terminated bool) bool {
 	if quoted, content := sqlLiteral(match); quoted {
 		return ends || terminated || hasDigitOrSymbol(content)
@@ -212,13 +224,13 @@ func redactStatement(span string, terminated bool, n *int) string {
 	var edits [][2]int
 	for _, loc := range sqlIdentifiedBy.FindAllStringIndex(span, -1) {
 		if userFrom >= 0 && loc[0] >= userFrom || grantFrom >= 0 && loc[0] >= grantFrom {
-			if sqlCredential(span[loc[0]:loc[1]], loc[1] == end, terminated) {
+			if sqlCredential(span[loc[0]:loc[1]], clauseEnds(span, loc[1], end), terminated) {
 				edits = append(edits, [2]int{loc[0], loc[1]})
 			}
 		}
 	}
 	for _, loc := range sqlPasswordLiteral.FindAllStringIndex(span, -1) {
-		if userFrom >= 0 && loc[0] >= userFrom && sqlCredential(span[loc[0]:loc[1]], loc[1] == end, terminated) {
+		if userFrom >= 0 && loc[0] >= userFrom && sqlCredential(span[loc[0]:loc[1]], clauseEnds(span, loc[1], end), terminated) {
 			edits = append(edits, [2]int{loc[0], loc[1]})
 		}
 	}
