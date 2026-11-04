@@ -1,0 +1,254 @@
+# Independent adversarial review — R5d
+
+Date: 15 October 2026 IST. Reviewed implementation: `88c8528`, based on
+`cbf323e`, branch `remediation/m9r-foundation`. Reviewer is a separate agent
+from the implementation author. Implementation was frozen throughout this
+review. The reviewer edited only regression tests and this report.
+
+Initial result: **PARTIAL — two HIGH findings require implementation fixes and
+independent re-verification before R5d completion.** Overall M9R remains PARTIAL;
+this review does not authorize production activation, a main merge or M10.
+
+Final re-review at `a4d6054`: **PASS for bounded R5d adversarial review**. The two
+initial HIGH findings and the subsequently demonstrated strict-rule input HIGH
+are closed by executed regressions. Twenty focused integration tests passed in
+41.567s, plus eight decoder tests. Full repository/build/browser verification
+remains the implementation author's separate completion gate. The initial
+workflow Name interpretation was incorrect and is explicitly withdrawn below.
+
+## Findings
+
+1. **HIGH — partial writes omit trusted owner attributes from field decisions.**
+   `patch` checks touched field actions before loading the row, with a record ID
+   but no owner ID, and never rechecks those decisions using the actual owner.
+   An existing supported owner-dependent field-write policy denies replacement
+   update with 403, yet the new patch operation updates the protected field and
+   returns 200. A complementary policy that allows a field only to its owner
+   incorrectly rejects a legitimate owner's patch with 403. Execute the
+   `TestIndependentR5dPatchPreservesTrustedFieldOwnerABAC` and
+   `TestIndependentR5dPatchAllowsTrustedOwnerFieldPolicy` regressions. Move the
+   definitive field action checks after trusted row/owner loading and before
+   field-value validation/mutation. Do not use caller-supplied owner attributes.
+
+2. **HIGH — contextless field action decisions can expose owner-restricted
+   projections and authorize hidden predicates.** `visibleJSON` evaluates the
+   action guard with only entity/field IDs; the query predicate guard similarly
+   lacks the actual row/owner. A policy returning an entity-wide SQL scope while
+   denying field access to the row's owner is accepted by the current public
+   Engine/Guard ports. Point lookup and list projection return the denied value;
+   a filter over that value succeeds. The shipped tenant-definition adapter uses
+   SQL DataScope for per-record conditions, but that fact cannot silently make
+   other accepted central-policy denials ineffective. Preserve SQL-only masking
+   and fail closed for predicate scope coverage. A per-page header check alone
+   is insufficient for sort/filter admission over an entire visible entity set.
+   See the independent point/list/predicate owner regressions.
+
+Three historical regressions also still asserted the superseded whole-request
+projection behavior: `TestM5RecordSpecificFieldABACAndReferenceEntityPolicy`,
+`TestIndependentM6RFieldScopeBypass` and
+`TestM9RCustomSortPagePreservesTiesNullsScopesAndJoins`. The reviewer updated only
+those projection assertions to demand retained entity-visible rows, explicit
+masks and absence of hidden values. Their existing filter/sort, write and
+reference-denial assertions remain intact. The updated checks passed.
+
+## Executed probes
+
+All integration fixtures used `m8Database`, which creates a disposable local
+PostgreSQL database, verifies effective driver target/database/role, migrates
+through 46 and drops its owned database afterward. No customer database or
+production credentials were used. API probes used signed test identities,
+live tenant membership and real role definitions where testing native roles.
+Owner-sensitive probes exercise the existing public central policy port.
+
+Observed successful boundaries:
+
+- Twenty additional string fields remain patchable when fully readable, both
+  with small and with approximately 30 KiB of populated values.
+- The same wide schemas with hidden fields reject byte-budget admission
+  consistently for paired small/large hidden values. Writable hints are empty;
+  denied commands create no receipt, record mutation or outbox fact.
+- Field scopes identical to the entity OWNER boundary admit predicates without
+  revealing another owner's records. Unrelated hidden projections stay masked.
+- A cursor cannot bypass live field revocation; joining through a hidden source
+  relationship key is rejected. A plain projection retains that visible row
+  while omitting the hidden reference.
+- Two concurrent receipted patches using the same expected row version produce
+  one 200 and one 409. Hidden values remain intact; exactly one receipt and
+  update event commit.
+- Numeric projection value/source version track a numeric patch and a later
+  unrelated patch. A fault after audit insertion rolls back record version,
+  numeric projection, receipt and outbox together.
+- Existing strict rule and workflow/worker field-scope denial regressions pass;
+  they receive no masked null as an executable input.
+- Eight frontend decoder probes preserve legacy/optional rows and reject hidden
+  values coexisting with a mask, writable/masked intersections, duplicate keys,
+  non-string IDs and access lists exceeding 32 entries.
+
+## Exact commands and outcomes
+
+| Command actually executed | Outcome |
+| --- | --- |
+| `./scripts/go.sh fmt ./tests/integration` | PASS; formatting only reviewer test changes |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestIndependentR5d.*\|TestIndependentM6RFieldScopeBypass\|TestM5RecordSpecificFieldABACAndReferenceEntityPolicy\|TestM9RCustomSortPagePreservesTiesNullsScopesAndJoins)$' ./tests/integration` | Initial FAIL 9.778s on three historical projection assertions; initial three new independent probes passed. After updating assertions and adding owner probes, FAIL 17.142s only on the three owner-related probes |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dPatchPreservesTrustedFieldOwnerABAC$' ./tests/integration` | FAIL 2.804s; protected patch returned 200 |
+| `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestIndependentR5d.*\|TestIndependentM6RFieldScopeBypass\|TestM5RecordSpecificFieldABACAndReferenceEntityPolicy\|TestM9RCustomSortPagePreservesTiesNullsScopesAndJoins\|TestM7PreviewRuleAuthorizationIsolationAndAuditFailClosed\|TestM9FieldScopeDeniesStartSnapshotAndWorkerResume)$' ./tests/integration` | FAIL 25.516s only on the three owner-related probes; wide admission, predicates/revocation/joins, concurrent CAS, numeric rollback, historical projection checks and strict rule/workflow checks passed |
+| `npm --prefix apps/web test -- --run src/preview/contracts.review.test.ts` | PASS 8/8, 1.47s |
+
+The additional general-list and predicate owner probes were executed separately;
+their outcome and any subsequent fixes/re-verification follow below. Full
+`make check test build` and browser E2E are the implementation author's final
+verification gate and are not claimed as executed by this independent review.
+
+## Threat model and limits
+
+This verifies API-mediated policy, SQL projection and transactional behavior
+under trusted application composition, including an adversarial central-policy
+adapter. It does not prove timing/physical noninterference, arbitrary policy
+correctness, protection from a compromised application database credential or
+production delivery readiness. CONDITION partial writes and conservative hidden
+size reservations remain explicit ADR037 restrictions. Create/delete/replacement
+update remain whole-record operations. R3b–R3d, remaining R5 administration and
+identity UX, R6 and R7 are separate open work.
+
+Additional initial-source evidence:
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dVisible(List|Predicate)HonorsTrustedFieldOwnerABAC$' ./tests/integration`
+
+**FAIL 3.027s**. The general list omitted the owner denial, and the hidden-value
+filter returned 200. Both fixtures were populated, including another visible
+owner's record in the list case. These are regression tests for finding 2;
+implementation and re-verification remain pending at this review checkpoint.
+
+## First fix checkpoint — `c96c534`
+
+The implementation author added trusted row/owner field actions for opaque
+interactive queries, SQL ID-array masks, a bounded complete predicate universe,
+a concrete Native/Defined optimization proof and a closed WithRuntime stable
+snapshot proof. Patch checks now use the loaded owner before validation.
+Source review found those changes consistent with the intended fixes. One
+executed wrapper embedding Native correctly remained opaque and its denied
+balance was masked by the interactive endpoint. Full independent closure of the
+original regressions is deferred until the following alternate path is fixed.
+
+3. **HIGH — strict rule inputs bypass the same owner-sensitive field
+   action denial.** The strict `Store.Query` port still checks fields without
+   actual row/owner context. With a Native-embedding policy denying read access
+   to the owner's balance and returning SQL scope ALL, the interactive endpoint
+   correctly masks that balance, but the rule evaluation endpoint returns 200
+   and its threshold result. This is an alternate value inference path and
+   prevents R5d closure even though the new visible
+   port itself is corrected. Strict point inputs must obtain trusted header
+   context and enforce the field/row actions before consuming record values.
+   Preserve the private worker source adapter; do not substitute generic worker
+   table access or masked nulls.
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dStrict(Rule|Workflow)Cannot' ./tests/integration`
+
+**FAIL 3.951s**: the rule returned 200 using an owner-denied consumed balance.
+The workflow also returned 200, but its Name field was not a consumed input;
+the workflow test's expected denial was mistaken. Both probes used populated
+disposable databases and central policy ports.
+No source edits or unrelated test workloads ran during the review. The reviewer
+added the two independent strict-input regressions. Status remains **PARTIAL**
+pending a source fix and re-verification, including the original owner probes,
+joined target checks, bounded universes and executor-isolation negatives.
+
+A follow-up evidence assertion queried durable workflow bindings:
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=3m -count=1 -run '^TestIndependentR5dStrictWorkflowCannot' ./tests/integration`
+
+**FAIL 2.934s**: workflow start returned 200 and one workflow binding persisted.
+This command/result is retained as executed evidence, but the interpretation of
+an unauthorized Name capture is **withdrawn**. The executable workflow consumes
+Status; Name is referenced only by an unrelated rule. Starting a workflow while
+an unrelated field is hidden is legitimate, and the response/binding count did
+not prove that Name entered its snapshot. The corrected negative denies Status,
+and a separate positive now asserts the stored snapshot excludes Name.
+
+## Final independent re-verification — `a4d6054`
+
+Implementation fixes were stable while this reviewer added/executed tests;
+there were no simultaneous source edits or other agent test workloads. Only
+review tests and this report changed during this phase.
+
+The exact command below passed all 20 selected top-level integration tests in
+**41.567s** with the race detector:
+
+`node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestIndependentR5d.*|TestIndependentM6RFieldScopeBypass|TestM5RecordSpecificFieldABACAndReferenceEntityPolicy|TestM9RCustomSortPagePreservesTiesNullsScopesAndJoins|TestM7PreviewRuleAuthorizationIsolationAndAuditFailClosed|TestM9FieldScopeDeniesStartSnapshotAndWorkerResume)$' ./tests/integration`
+
+`npm --prefix apps/web test -- --run src/preview/contracts.review.test.ts`
+also passed **8/8 in 1.50s**. `git diff --check` passed.
+
+Closure evidence:
+
+- Finding 1: a real owned record's protected patch is denied just as its full
+  replacement is denied. A complementary owner-only allow policy can patch its
+  owned field. Both use the row's loaded ID/owner, before value validation.
+- Finding 2: owned fields are SQL-masked in point reads and general lists while
+  another owner's allowed field remains readable. Hidden filters/sorts fail
+  before value execution. An engine embedding Native but overriding decisions
+  remains opaque. Interactive joins preserve an entity-visible target and mask
+  its denied field using the target's actual owner; strict point joins reject
+  that target input. Source fields remain correct in both cases.
+- Finding 3: the threshold rule now returns 403 without a result when its
+  consumed balance is denied by an owner-dependent Go policy. The corrected
+  workflow negative denies its consumed Status and persists no binding. The
+  unrelated hidden Name positive starts successfully, and SQL inspection of the
+  stored snapshot confirms Status is included and Name is absent from both
+  fields and values. No workflow Name-capture exploit is claimed.
+- Exact Native and live tenant-defined policies successfully read 41 populated
+  records, beyond the opaque bound, while still enforcing explicit field DENY.
+  An opaque wrapper cannot shrink its complete predicate universe using a
+  selective filter or limit 1. An exact record selection remains usable.
+- A real `WithRuntime` executor successfully reads the populated fixture. Plain
+  autocommit pools, an autocommit connection with an actual REPEATABLE READ
+  default, a raw REPEATABLE READ transaction and an opaque executor wrapper are
+  not certified. Visible/strict point entry rejects those unknown ports rather
+  than assuming one stable snapshot from an isolation label alone.
+- Prior wide-schema hidden-size admission, cursor revocation, hidden source
+  joins, concurrent CAS/private-value preservation, numeric index maintenance,
+  audit/receipt/outbox rollback and legacy/strict field-scope regressions pass.
+
+No remaining HIGH finding was found within this bounded review. Opaque Go
+policy universes/projected headers are capped at 32; native/tenant-defined
+policy query budgets stay unchanged. Unknown executor wrappers are deliberately
+rejected. Full `make check test build` and browser E2E remain **NOT RUN by this
+reviewer**; the implementation author must record their actual final results.
+Overall R5/M9R remain PARTIAL for the separately tracked remaining slices.
+
+## Final numeric-index fixture review — `ea6d20e`
+
+The implementation author reported that the first full repository run failed
+only `TestM9RNumericIndexDataScopeEquivalence`: its 78-row custom Go callback
+exceeded the intentionally closed 32-header opaque admission budget. This
+reviewer did not execute that full run. The fixture-only correction at
+`ea6d20e` changes this index-equivalence fixture to the actual live tenant-role
+SQL-scope kernel; runtime source remains `a4d6054`.
+
+Independent diff review confirms the fixture retains all 78 records, four
+modes (OWNER, SHARE, CONDITION and explicit field DENY), the numeric sort/index
+build and exact before/after record comparison. The assigned role is loaded
+from live membership; it is not asserted through token claims. A distinct
+owner authorizes role publication and governed index creation. No application
+policy, admission limit or opaque negative was relaxed.
+
+The reviewer strengthened the fixture to reject vacuous equivalence: both
+before and after index creation it must return exactly 39 owned records, 39
+shared foreign-owned records, one matching condition record and 78 records with
+Name explicitly masked in the field-DENY mode. Nonmatching/unshared/foreign-owned
+rows are excluded as appropriate. Name is absent from masked values and present
+in allowed modes. These are populated positive and negative expectations, not
+merely a comparison of two potentially empty results.
+
+Executed commands:
+
+- `./scripts/go.sh fmt ./tests/integration` — PASS.
+- `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration -timeout=5m -count=1 -run '^(TestM9RNumericIndexDataScopeEquivalence|TestM9RFieldOpaqueHeaderBudgetAndNativePageCompatibility|TestIndependentR5dOpaqueBoundCannotBeShrunkAndNativeBudgetsRemain|TestIndependentR5dVisiblePredicateHonorsTrustedFieldOwnerABAC)$' ./tests/integration`
+  — **PASS 11.370s**, all four selected top-level tests, including unchanged
+  opaque-budget failures and owner-sensitive hidden-predicate rejection.
+- `git diff --check` — PASS.
+
+**PASS for this fixture-only correction.** Root-owned AGENTS/README edits were
+left untouched. No runtime edits or concurrent test workloads occurred during
+this review; full final repository/build/browser execution remains the
+implementation author's completion gate.

@@ -1,0 +1,1429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:framework:metadata:1.5.0",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.5.0"
+    },
+    "app_id": {
+      "type": "string",
+      "maxLength": 160,
+      "pattern": "^app\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "namespace": {
+      "type": "string",
+      "maxLength": 100,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "base_version": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^release\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        }
+      ]
+    },
+    "definitions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/definition"
+      },
+      "maxItems": 500,
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "app_id",
+    "namespace",
+    "base_version",
+    "definitions"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "entity": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 160,
+            "pattern": "^field\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    "field": {
+      "type": "object",
+      "properties": {
+        "entity_ref": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "bool",
+            "integer",
+            "decimal",
+            "money",
+            "date",
+            "datetime",
+            "enum",
+            "reference"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "enum_values": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "reference_to": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "unique": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entity_ref",
+        "type",
+        "required"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "enum"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "enum_values"
+            ],
+            "properties": {
+              "enum_values": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "money"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "reference"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reference_to"
+            ]
+          }
+        }
+      ]
+    },
+    "relationship": {
+      "type": "object",
+      "properties": {
+        "from_entity": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "to_entity": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "from_field": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^field\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "to_field": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^field\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "cardinality": {
+          "enum": [
+            "one_to_one",
+            "many_to_one",
+            "many_to_many"
+          ]
+        }
+      },
+      "required": [
+        "from_entity",
+        "to_entity",
+        "from_field",
+        "to_field",
+        "cardinality"
+      ],
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "form",
+            "section",
+            "text_input",
+            "number_input",
+            "money_input",
+            "date_input",
+            "select",
+            "relation_picker",
+            "file_input",
+            "table",
+            "detail",
+            "tabs",
+            "kpi",
+            "chart",
+            "button",
+            "status_badge"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "field_ref": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^field\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "entity_ref": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/component"
+          },
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "page": {
+      "type": "object",
+      "properties": {
+        "entity_ref": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/component"
+          },
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "entity_ref",
+        "components"
+      ],
+      "additionalProperties": false
+    },
+    "expression": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "literal"
+            },
+            "value": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ],
+              "maxLength": 1000,
+              "minimum": -1000000000000,
+              "maximum": 1000000000000,
+              "multipleOf": 1e-18
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "field"
+            },
+            "field_ref": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^field\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            }
+          },
+          "required": [
+            "op",
+            "field_ref"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "enum": [
+                "eq",
+                "neq",
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "in",
+                "not_in",
+                "contains",
+                "is_null",
+                "and",
+                "or",
+                "not",
+                "add",
+                "sub",
+                "mul",
+                "div",
+                "round",
+                "money_round",
+                "if",
+                "coalesce",
+                "list",
+                "concat",
+                "lower",
+                "upper",
+                "trim",
+                "date_add_days",
+                "datetime_add_seconds",
+                "date_diff_days",
+                "date_in_zone",
+                "business_add_days",
+                "is_business_day",
+                "business_is_open",
+                "fiscal_year"
+              ]
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/expression"
+              },
+              "maxItems": 64,
+              "minItems": 1
+            }
+          },
+          "required": [
+            "op",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "string"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "integer"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -1000000000000000000,
+                  "maximum": 1000000000000000000
+                },
+                {
+                  "type": "string",
+                  "maxLength": 64,
+                  "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,18})?$"
+                }
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "decimal"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": -1000000000000000000,
+                  "maximum": 1000000000000000000
+                },
+                {
+                  "type": "string",
+                  "maxLength": 64,
+                  "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,18})?$"
+                }
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "money"
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "amount": {
+                  "type": "string",
+                  "maxLength": 64,
+                  "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,18})?$"
+                },
+                "currency": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                }
+              },
+              "required": [
+                "amount",
+                "currency"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "date"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "datetime"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 35
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "typed_literal"
+            },
+            "value_type": {
+              "const": "null"
+            },
+            "value": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "op",
+            "value_type",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "properties": {
+        "entity_ref": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "result_type": {
+          "enum": [
+            "string",
+            "bool",
+            "integer",
+            "decimal",
+            "money",
+            "date",
+            "datetime",
+            "enum",
+            "reference",
+            "list"
+          ]
+        },
+        "expression": {
+          "$ref": "#/$defs/expression"
+        },
+        "dsl_version": {
+          "const": "2.0.0"
+        },
+        "calendars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/calendar"
+          },
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "entity_ref",
+        "result_type",
+        "expression",
+        "dsl_version"
+      ],
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "initial_backoff_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "max_backoff_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 3600000
+        }
+      },
+      "required": [
+        "max_attempts",
+        "initial_backoff_ms",
+        "max_backoff_ms"
+      ],
+      "additionalProperties": false
+    },
+    "activity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "local_ref": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^local\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "version": {
+              "const": "1.0.0"
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "retry": {
+              "$ref": "#/$defs/retry"
+            },
+            "compensation_local_ref": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^local\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            }
+          },
+          "required": [
+            "local_ref",
+            "version",
+            "timeout_ms",
+            "retry"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool_ref": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^tool\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,3}\\.[0-9]{1,4}\\.[0-9]{1,4}$",
+              "maxLength": 20
+            },
+            "inputs": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 160,
+                "pattern": "^field\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+              },
+              "minProperties": 1,
+              "maxProperties": 32
+            },
+            "retry": {
+              "$ref": "#/$defs/retry"
+            }
+          },
+          "required": [
+            "tool_ref",
+            "version",
+            "inputs",
+            "retry"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "transition": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^state\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "condition": {
+          "$ref": "#/$defs/expression"
+        },
+        "on": {
+          "enum": [
+            "always",
+            "approved",
+            "rejected"
+          ]
+        }
+      },
+      "required": [
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^state\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "type": {
+          "enum": [
+            "start",
+            "activity",
+            "approval",
+            "timer",
+            "complete",
+            "failed"
+          ]
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/transition"
+          },
+          "maxItems": 20
+        },
+        "activity": {
+          "$ref": "#/$defs/activity"
+        },
+        "approval_roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "maxLength": 64
+          },
+          "maxItems": 100,
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "timer_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        },
+        "approval_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800000
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "transitions"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "activity"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "activity"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "approval"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "approval_roles",
+              "approval_timeout_ms"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "timer"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "timer_ms"
+            ]
+          }
+        }
+      ]
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "entity_ref": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "trigger": {
+          "enum": [
+            "record.created",
+            "record.updated",
+            "manual"
+          ]
+        },
+        "initial_state": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^state\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "states": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/state"
+          },
+          "maxItems": 100,
+          "minItems": 1
+        },
+        "dsl_version": {
+          "const": "2.1.0"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,3}\\.[0-9]{1,4}\\.[0-9]{1,4}$",
+          "maxLength": 20
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800000
+        }
+      },
+      "required": [
+        "entity_ref",
+        "trigger",
+        "initial_state",
+        "states",
+        "dsl_version",
+        "version",
+        "timeout_ms"
+      ],
+      "additionalProperties": false
+    },
+    "value_schema": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "object",
+            "array",
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "maxProperties": 50,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/value_schema"
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "additionalProperties": {
+          "const": false
+        },
+        "items": {
+          "$ref": "#/$defs/value_schema"
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "properties",
+              "required",
+              "additionalProperties"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "array"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "items",
+              "maxItems"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "string"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "maxLength"
+            ]
+          }
+        }
+      ]
+    },
+    "tool": {
+      "type": "object",
+      "properties": {
+        "input_schema": {
+          "$ref": "#/$defs/value_schema"
+        },
+        "output_schema": {
+          "$ref": "#/$defs/value_schema"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 100,
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "side_effect": {
+          "enum": [
+            "none",
+            "read",
+            "write",
+            "destructive",
+            "financial"
+          ]
+        },
+        "sandbox_mode": {
+          "enum": [
+            "block",
+            "simulate",
+            "reroute",
+            "read_only",
+            "test_account"
+          ]
+        },
+        "approval": {
+          "enum": [
+            "none",
+            "user",
+            "elevated"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300000
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        },
+        "audit": {
+          "const": "required"
+        },
+        "tenant_scope": {
+          "const": "required"
+        }
+      },
+      "required": [
+        "input_schema",
+        "output_schema",
+        "permissions",
+        "side_effect",
+        "sandbox_mode",
+        "approval",
+        "timeout_ms",
+        "retry",
+        "audit",
+        "tenant_scope"
+      ],
+      "additionalProperties": false
+    },
+    "definition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^entity\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "schema_version": {
+              "const": "1.5.0"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "const": "entity"
+            },
+            "entity": {
+              "$ref": "#/$defs/entity"
+            }
+          },
+          "required": [
+            "id",
+            "schema_version",
+            "namespace",
+            "label",
+            "kind",
+            "entity"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^field\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "schema_version": {
+              "const": "1.5.0"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "const": "field"
+            },
+            "field": {
+              "$ref": "#/$defs/field"
+            }
+          },
+          "required": [
+            "id",
+            "schema_version",
+            "namespace",
+            "label",
+            "kind",
+            "field"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^relationship\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "schema_version": {
+              "const": "1.5.0"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "const": "relationship"
+            },
+            "relationship": {
+              "$ref": "#/$defs/relationship"
+            }
+          },
+          "required": [
+            "id",
+            "schema_version",
+            "namespace",
+            "label",
+            "kind",
+            "relationship"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^page\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "schema_version": {
+              "const": "1.5.0"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "const": "page"
+            },
+            "page": {
+              "$ref": "#/$defs/page"
+            }
+          },
+          "required": [
+            "id",
+            "schema_version",
+            "namespace",
+            "label",
+            "kind",
+            "page"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^rule\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "schema_version": {
+              "const": "1.5.0"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "const": "rule"
+            },
+            "rule": {
+              "$ref": "#/$defs/rule"
+            }
+          },
+          "required": [
+            "id",
+            "schema_version",
+            "namespace",
+            "label",
+            "kind",
+            "rule"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^workflow\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "schema_version": {
+              "const": "1.5.0"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "const": "workflow"
+            },
+            "workflow": {
+              "$ref": "#/$defs/workflow"
+            }
+          },
+          "required": [
+            "id",
+            "schema_version",
+            "namespace",
+            "label",
+            "kind",
+            "workflow"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^tool\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "schema_version": {
+              "const": "1.5.0"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "const": "tool"
+            },
+            "tool": {
+              "$ref": "#/$defs/tool"
+            }
+          },
+          "required": [
+            "id",
+            "schema_version",
+            "namespace",
+            "label",
+            "kind",
+            "tool"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "calendar": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^calendar\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "zone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "working_days": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "minItems": 1,
+          "maxItems": 7,
+          "uniqueItems": true
+        },
+        "holidays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "maxItems": 512,
+          "uniqueItems": true
+        },
+        "open_minute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1439
+        },
+        "close_minute": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "fiscal_start_month": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "zone",
+        "working_days",
+        "holidays",
+        "open_minute",
+        "close_minute",
+        "fiscal_start_month"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

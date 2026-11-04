@@ -1,0 +1,1163 @@
+{
+ "corpus_version": "m14-corpus-v1",
+ "class": "golden",
+ "items": [
+  {
+   "id": "gld-page-label",
+   "class": "golden",
+   "subclass": "presentation",
+   "adr": [
+    "\u00a77",
+    "\u00a79",
+    "\u00a714"
+   ],
+   "description": "Rename a page. Presentation only: no acknowledgement may be demanded.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true,
+    "oracle_diff": {
+     "page.order.list": [
+      "LABEL"
+     ]
+    }
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "gld-page-add",
+   "class": "golden",
+   "subclass": "presentation",
+   "adr": [
+    "\u00a77",
+    "\u00a79",
+    "\u00a714"
+   ],
+   "description": "Add a detail page (PAGE aspect only).",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Add a detail page for orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.detail",
+         "definition": {
+          "id": "page.order.detail",
+          "schema_version": "1.5.0",
+          "namespace": "acme.orders",
+          "label": "Order detail",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "detail",
+             "entity_ref": "entity.order"
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true,
+    "oracle_diff": {
+     "page.order.detail": [
+      "PAGE"
+     ]
+    }
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-page-component",
+   "class": "golden",
+   "subclass": "presentation",
+   "adr": [
+    "\u00a77",
+    "\u00a79",
+    "\u00a714"
+   ],
+   "description": "Add a component to an existing page.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Show the order detail below the list.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "add",
+            "path": "/page/components/-",
+            "value": {
+             "type": "detail",
+             "entity_ref": "entity.order"
+            }
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true,
+    "oracle_diff": {
+     "page.order.list": [
+      "PAGE"
+     ]
+    }
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-field-add",
+   "class": "golden",
+   "subclass": "storage",
+   "adr": [
+    "\u00a77",
+    "\u00a79",
+    "\u00a714"
+   ],
+   "description": "Add a field and list it in its entity. Storage is sensitive: the apply must echo it.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Add an optional internal note to orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "field.order.note",
+         "definition": {
+          "id": "field.order.note",
+          "schema_version": "1.5.0",
+          "namespace": "acme.orders",
+          "label": "Internal note",
+          "kind": "field",
+          "field": {
+           "entity_ref": "entity.order",
+           "type": "string",
+           "required": false
+          }
+         },
+         "rationale": "add"
+        },
+        {
+         "op": "update",
+         "target": "entity.order",
+         "expected_hash": "{{hash:entity.order}}",
+         "definition": {
+          "$def": "entity.order",
+          "patch": [
+           {
+            "op": "add",
+            "path": "/entity/fields/-",
+            "value": "field.order.note"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [
+        "The note is optional free text."
+       ],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_contains": [
+     "field.order.note:STORAGE",
+     "entity.order:STORAGE"
+    ],
+    "oracle_diff": {
+     "field.order.note": [
+      "STORAGE"
+     ],
+     "entity.order": [
+      "STORAGE"
+     ]
+    }
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "gld-enum-add",
+   "class": "golden",
+   "subclass": "storage",
+   "adr": [
+    "\u00a77",
+    "\u00a79",
+    "\u00a714"
+   ],
+   "description": "Add an enum value (storage aspect).",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Orders can also be paid.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "field.order.status",
+         "expected_hash": "{{hash:field.order.status}}",
+         "definition": {
+          "$def": "field.order.status",
+          "patch": [
+           {
+            "op": "add",
+            "path": "/field/enum_values/-",
+            "value": "paid"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_contains": [
+     "field.order.status:STORAGE"
+    ],
+    "oracle_diff": {
+     "field.order.status": [
+      "STORAGE"
+     ]
+    }
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-noop-update",
+   "class": "golden",
+   "subclass": "presentation",
+   "adr": [
+    "\u00a79"
+   ],
+   "description": "Update a page to an identical definition (convergent no-op).",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Keep the list page as is.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list"
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true,
+    "ambiguous": "a no-op patch may be READY or refused; it must never be sensitive"
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-repair-second-attempt",
+   "class": "golden",
+   "subclass": "repair",
+   "adr": [
+    "\u00a77"
+   ],
+   "description": "Attempt 1 references a field that does not exist (compile error); attempt 2 fixes it.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Add an order detail page with the title.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.detail",
+         "definition": {
+          "id": "page.order.detail",
+          "schema_version": "1.5.0",
+          "namespace": "acme.orders",
+          "label": "Order detail",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.nonexistent",
+               "label": "Note"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.detail",
+         "definition": {
+          "id": "page.order.detail",
+          "schema_version": "1.5.0",
+          "namespace": "acme.orders",
+          "label": "Order detail",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.title",
+               "label": "Title"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "attempts": [
+     "COMPILE_ERROR",
+     "OK"
+    ],
+    "max_provider_calls": 2,
+    "sensitive_empty": true
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "gld-needs-human",
+   "class": "golden",
+   "subclass": "repair",
+   "adr": [
+    "\u00a77"
+   ],
+   "description": "Three attempts, three compile errors: NEEDS_HUMAN with the last diagnostics; the draft is untouched.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Add a page for a field that does not exist.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.broken",
+         "definition": {
+          "id": "page.order.broken",
+          "schema_version": "1.5.0",
+          "namespace": "acme.orders",
+          "label": "Broken",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.nope0",
+               "label": "X"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.broken",
+         "definition": {
+          "id": "page.order.broken",
+          "schema_version": "1.5.0",
+          "namespace": "acme.orders",
+          "label": "Broken",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.nope1",
+               "label": "X"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    },
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "add",
+         "target": "page.order.broken",
+         "definition": {
+          "id": "page.order.broken",
+          "schema_version": "1.5.0",
+          "namespace": "acme.orders",
+          "label": "Broken",
+          "kind": "page",
+          "page": {
+           "entity_ref": "entity.order",
+           "components": [
+            {
+             "type": "form",
+             "children": [
+              {
+               "type": "text_input",
+               "field_ref": "field.order.nope2",
+               "label": "X"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         "rationale": "add"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "compile",
+    "status": [
+     "NEEDS_HUMAN"
+    ],
+    "attempts": [
+     "COMPILE_ERROR",
+     "COMPILE_ERROR",
+     "COMPILE_ERROR"
+    ],
+    "max_provider_calls": 3
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "gld-unresolved",
+   "class": "golden",
+   "subclass": "intent",
+   "adr": [
+    "\u00a75",
+    "\u00a710"
+   ],
+   "description": "A READY proposal that carries an unresolved requirement as an open question; it never blocks the draft.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Show the orders waiting for approval.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "Orders to approve"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [
+        {
+         "id": "req.order.threshold",
+         "question": "Which amount needs approval?",
+         "category": "approval_threshold"
+        }
+       ],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-req-threshold",
+   "class": "golden",
+   "subclass": "intent",
+   "adr": [
+    "\u00a710"
+   ],
+   "description": "A valid approval_threshold requirement and an open question.",
+   "task": "requirement_capture",
+   "fixture": "orders",
+   "request": "Orders above 500 dollars need an admin or owner approval.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-requirement-proposal-v1",
+       "requirements": [
+        {
+         "id": "req.order.threshold",
+         "category": "approval_threshold",
+         "statement": "Orders above 500 USD need approval.",
+         "semantics": {
+          "workflow_id": "workflow.order.approval",
+          "entity_id": "entity.order",
+          "field_id": "field.order.total",
+          "currency": "USD",
+          "op": "GT",
+          "amount": "500.00",
+          "approver_roles": [
+           "admin",
+           "owner"
+          ]
+         }
+        }
+       ],
+       "open_questions": [
+        {
+         "id": "q.order.currency",
+         "question": "Is the threshold in USD for every customer?",
+         "category": "approval_threshold"
+        }
+       ],
+       "proposed_tests": [],
+       "assumptions": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ]
+   },
+   "tags": [
+    "swap",
+    "e2e"
+   ]
+  },
+  {
+   "id": "gld-req-gate",
+   "class": "golden",
+   "subclass": "intent",
+   "adr": [
+    "\u00a710"
+   ],
+   "description": "A valid approval_gate requirement.",
+   "task": "requirement_capture",
+   "fixture": "orders",
+   "request": "Every order must be approved by an admin.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-requirement-proposal-v1",
+       "requirements": [
+        {
+         "id": "req.order.gate",
+         "category": "approval_gate",
+         "statement": "Orders above 500 USD need approval.",
+         "semantics": {
+          "workflow_id": "workflow.order.approval",
+          "approver_roles": [
+           "admin"
+          ]
+         }
+        }
+       ],
+       "open_questions": [],
+       "proposed_tests": [],
+       "assumptions": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ]
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-req-tool",
+   "class": "golden",
+   "subclass": "intent",
+   "adr": [
+    "\u00a710"
+   ],
+   "description": "A valid tool_effect requirement.",
+   "task": "requirement_capture",
+   "fixture": "orders",
+   "request": "The notify tool must stay read-only.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-requirement-proposal-v1",
+       "requirements": [
+        {
+         "id": "req.tool.notify",
+         "category": "tool_effect",
+         "statement": "Orders above 500 USD need approval.",
+         "semantics": {
+          "tool_ref": "tool.vendor_notify",
+          "max_side_effect": "READ",
+          "requires_approval": true,
+          "max_sandbox_mode": "SIMULATE"
+         }
+        }
+       ],
+       "open_questions": [],
+       "proposed_tests": [],
+       "assumptions": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ]
+   }
+  },
+  {
+   "id": "gld-req-unknown-category",
+   "class": "golden",
+   "subclass": "intent",
+   "adr": [
+    "\u00a710"
+   ],
+   "description": "builder decision (ADR104 amendment B): a requirement in a category the verifier does not understand is not a draft; the proposal is refused with a diagnostic that sends it to the open questions, so the run ends NEEDS_HUMAN and nothing is stored as a requirement.",
+   "task": "requirement_capture",
+   "fixture": "orders",
+   "request": "Orders must be delivered within two days.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-requirement-proposal-v1",
+       "requirements": [
+        {
+         "id": "req.order.sla",
+         "category": "delivery_sla",
+         "statement": "Orders ship in two days.",
+         "semantics": {
+          "days": 2
+         }
+        }
+       ],
+       "open_questions": [],
+       "proposed_tests": [],
+       "assumptions": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "invalid_semantics",
+    "status": [
+     "NEEDS_HUMAN"
+    ]
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-ops-50",
+   "class": "golden",
+   "subclass": "limits",
+   "adr": [
+    "\u00a75",
+    "\u00a711"
+   ],
+   "description": "Exactly MaxOperations (50) independent page adds: accepted at the limit.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Add fifty pages.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "$gen": "repeat",
+         "count": 50,
+         "value": {
+          "op": "add",
+          "target": "page.order.p{{i}}",
+          "definition": {
+           "id": "page.order.p{{i}}",
+           "schema_version": "1.5.0",
+           "namespace": "acme.orders",
+           "label": "Page {{i}}",
+           "kind": "page",
+           "page": {
+            "entity_ref": "entity.order",
+            "components": [
+             {
+              "type": "table",
+              "entity_ref": "entity.order"
+             }
+            ]
+           }
+          },
+          "rationale": "add"
+         }
+        }
+       ],
+       "assumptions": [],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true
+   },
+   "tags": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gld-text-2000",
+   "class": "golden",
+   "subclass": "limits",
+   "adr": [
+    "\u00a75"
+   ],
+   "description": "An assumption of exactly MaxTextRunes (2000) runes: accepted.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [
+        "{{repeat:a:2000}}"
+       ],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true
+   }
+  },
+  {
+   "id": "gld-text-2000-emoji",
+   "class": "golden",
+   "subclass": "limits",
+   "adr": [
+    "\u00a75"
+   ],
+   "description": "2000 four-byte runes: the limit counts runes, not bytes.",
+   "task": "application_patch",
+   "fixture": "orders",
+   "request": "Rename the order list page to All orders.",
+   "script": [
+    {
+     "payload": {
+      "json": {
+       "version": "ai-patch-proposal-v1",
+       "operations": [
+        {
+         "op": "update",
+         "target": "page.order.list",
+         "expected_hash": "{{hash:page.order.list}}",
+         "definition": {
+          "$def": "page.order.list",
+          "patch": [
+           {
+            "op": "replace",
+            "path": "/label",
+            "value": "All orders"
+           }
+          ]
+         },
+         "rationale": "update"
+        }
+       ],
+       "assumptions": [
+        "{{rune_repeat:1F600:2000}}"
+       ],
+       "unresolved_requirements": [],
+       "proposed_tests": [],
+       "risk_flags": []
+      }
+     },
+     "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300
+     },
+     "model": "scripted-model-1"
+    }
+   ],
+   "expect": {
+    "layer": "accepted",
+    "status": [
+     "READY"
+    ],
+    "sensitive_empty": true
+   }
+  }
+ ]
+}

@@ -1,0 +1,35 @@
+{
+  "definition": {
+    "grants": [
+      {
+        "actions": [
+          "data.entity.read"
+        ],
+        "effect": "ALLOW",
+        "resource": {
+          "app_id": "*",
+          "entity_id": "*",
+          "field_id": "*"
+        },
+        "scope": {
+          "condition": {
+            "field": "field.invoice.value",
+            "op": "eq",
+            "value": {
+              "10": true,
+              "2": null,
+              "exact": "9007199254740993.01",
+              "text": "\u003c\u003e\u0026\u2028\u2029",
+              "": "bmp",
+              "𐀀": "astral"
+            }
+          },
+          "kind": "CONDITION"
+        }
+      }
+    ],
+    "name": "wire_fixture",
+    "schema_version": "tenant-capabilities-v1"
+  },
+  "expected_http_hash": "09c665ea41696cb0710d580d4da50671994b9d01bca56aaae8f7940c8717c439"
+}

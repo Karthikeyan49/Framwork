@@ -41,22 +41,36 @@ func (u User) MarshalJSON() ([]byte, error) {
 type Authenticator interface {
 	Verify(string) (Principal, error)
 }
+
+// Expiring is implemented by an Authenticator that can also say how long the token it verified stays valid. A request that has to
+// authenticate again after a long wait (the result of an AI proposal, after the provider phase) uses it to refuse, before it
+// spends anything, a token that will have lapsed by then.
+type Expiring interface {
+	VerifyRemaining(string) (Principal, time.Duration, error)
+}
 type Verifier struct {
 	issuer, audience string
 	keys             map[string]*rsa.PublicKey
 	now              func() time.Time
+	clockSkew        time.Duration
 }
 
 // NewVerifier pins an operator-controlled public JWKS. No token-controlled URLs,
 // key discovery, private keys, or symmetric algorithms are accepted.
 func NewVerifier(issuer, audience string, jwks []byte) (*Verifier, error) {
+	return NewVerifierWithClockSkew(issuer, audience, jwks, 0)
+}
+
+// NewVerifierWithClockSkew permits only an explicit bounded clock tolerance.
+// It never extends the signed token's maximum one-hour lifetime.
+func NewVerifierWithClockSkew(issuer, audience string, jwks []byte, skew time.Duration) (*Verifier, error) {
 	var set struct {
 		Keys []struct{ Kty, Kid, Alg, Use, N, E string } `json:"keys"`
 	}
-	if issuer == "" || audience == "" || len(jwks) > 65536 || json.Unmarshal(jwks, &set) != nil || len(set.Keys) == 0 || len(set.Keys) > 16 {
+	if issuer == "" || audience == "" || skew < 0 || skew > 2*time.Minute || skew%time.Second != 0 || len(jwks) > 65536 || json.Unmarshal(jwks, &set) != nil || len(set.Keys) == 0 || len(set.Keys) > 16 {
 		return nil, errors.New("invalid authentication key configuration")
 	}
-	v := &Verifier{issuer: issuer, audience: audience, keys: map[string]*rsa.PublicKey{}, now: time.Now}
+	v := &Verifier{issuer: issuer, audience: audience, keys: map[string]*rsa.PublicKey{}, now: time.Now, clockSkew: skew}
 	var raw struct {
 		Keys []map[string]json.RawMessage `json:"keys"`
 	}
@@ -88,34 +102,23 @@ func NewVerifier(issuer, audience string, jwks []byte) (*Verifier, error) {
 }
 
 func (v *Verifier) Verify(token string) (Principal, error) {
-	fail := func() (Principal, error) { return Principal{}, ErrUnauthenticated }
-	if len(token) > 8192 {
-		return fail()
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return fail()
-	}
-	header, err := base64.RawURLEncoding.DecodeString(parts[0])
+	p, _, err := v.verify(token)
+	return p, err
+}
+
+// VerifyRemaining verifies the token exactly as Verify does and also returns how long it stays valid from now, by the verifier's
+// own clock and without the clock skew that Verify tolerates, so that a caller never counts on time the token does not have.
+func (v *Verifier) VerifyRemaining(token string) (Principal, time.Duration, error) {
+	p, exp, err := v.verify(token)
 	if err != nil {
-		return fail()
+		return Principal{}, 0, err
 	}
-	var h struct {
-		Alg, Kid, Typ string
-		Crit          []string
-	}
-	if json.Unmarshal(header, &h) != nil || h.Alg != "RS256" || h.Typ != "at+jwt" || len(h.Crit) != 0 || v.keys[h.Kid] == nil {
-		return fail()
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return fail()
-	}
-	hash := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if rsa.VerifyPKCS1v15(v.keys[h.Kid], crypto.SHA256, hash[:], sig) != nil {
-		return fail()
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	return p, time.Unix(exp, 0).Sub(v.now()), nil
+}
+
+func (v *Verifier) verify(token string) (Principal, int64, error) {
+	fail := func() (Principal, int64, error) { return Principal{}, 0, ErrUnauthenticated }
+	payload, err := v.signedPayload(token, false)
 	if err != nil {
 		return fail()
 	}
@@ -140,11 +143,55 @@ func (v *Verifier) Verify(token string) (Principal, error) {
 			matched = true
 		}
 	}
-	now := v.now().Unix()
-	if !matched || c.Exp <= now || c.Iat <= 0 || c.Iat > now || c.Nbf > now || c.Exp <= c.Iat || c.Exp-c.Iat > 3600 {
+	if !matched || !v.validTimes(c.Exp, c.Iat, c.Nbf) {
 		return fail()
 	}
-	return Principal{c.Iss, c.Sub}, nil
+	return Principal{c.Iss, c.Sub}, c.Exp, nil
+}
+
+func (v *Verifier) validTimes(exp, iat, nbf int64) bool {
+	now, skew := v.now().Unix(), int64(v.clockSkew/time.Second)
+	return exp > now-skew && iat > 0 && iat <= now+skew && nbf <= now+skew && exp > iat && exp-iat <= 3600
+}
+
+// Both token classes use pinned keys. They deliberately accept distinct typ
+// values, so an ID token can never become an API bearer token.
+func (v *Verifier) signedPayload(token string, idToken bool) ([]byte, error) {
+	fail := func() ([]byte, error) { return nil, ErrUnauthenticated }
+	if len(token) > 8192 {
+		return fail()
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return fail()
+	}
+	header, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return fail()
+	}
+	var h struct {
+		Alg, Kid, Typ string
+		Crit          []string
+	}
+	if json.Unmarshal(header, &h) != nil || h.Alg != "RS256" || len(h.Crit) != 0 || v.keys[h.Kid] == nil {
+		return fail()
+	}
+	if !idToken && h.Typ != "at+jwt" || idToken && h.Typ != "" && h.Typ != "JWT" {
+		return fail()
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return fail()
+	}
+	hash := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if rsa.VerifyPKCS1v15(v.keys[h.Kid], crypto.SHA256, hash[:], sig) != nil {
+		return fail()
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return fail()
+	}
+	return payload, nil
 }
 
 type Store struct{}

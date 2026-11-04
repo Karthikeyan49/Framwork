@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfiguration(t *testing.T) {
@@ -25,6 +26,20 @@ func TestConfiguration(t *testing.T) {
 		{"bad address", map[string]string{"HTTP_ADDR": "invalid"}, true},
 		{"invalid log level", map[string]string{"LOG_LEVEL": "verbose"}, true},
 		{"invalid telemetry", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://user:secret@collector"}, true},
+		{"bad event flag", map[string]string{"EVENTS_ENABLED": "maybe"}, true},
+		{"bad workflow flag", map[string]string{"WORKFLOWS_ENABLED": "maybe"}, true},
+		{"production preview workflow", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "WORKFLOWS_ENABLED": "true"}, true},
+		{"production preview events", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "EVENTS_ENABLED": "true"}, true},
+		{"dedicated broker", map[string]string{"EVENT_REDIS_URL": "redis://event_worker:private@localhost:6379/0"}, false},
+		{"secondary worker broker", map[string]string{"WORKER_DATABASE_URL": "postgres://tenant_worker:private@localhost/db?sslmode=disable", "EVENT_REDIS_URL": "redis://event_tenant_worker:private@localhost:6379/0"}, false},
+		{"ambient broker admin", map[string]string{"EVENT_REDIS_URL": "redis://:private@localhost:6379/0"}, true},
+		{"named broker admin", map[string]string{"EVENT_REDIS_URL": "redis://event_operator:private@localhost:6379/0"}, true},
+		{"AI provider file in development", map[string]string{"AI_PROVIDER_FILE": "/run/ai/provider.json"}, false},
+		{"AI provider file in test", map[string]string{"APP_ENV": "test", "AI_PROVIDER_FILE": "/run/ai/provider.json"}, false},
+		{"AI provider file with NUL", map[string]string{"AI_PROVIDER_FILE": "/run/ai/\x00provider.json"}, true},
+		{"AI provider file too long", map[string]string{"AI_PROVIDER_FILE": "/" + strings.Repeat("a", 4096)}, true},
+		{"AI provider file in production", map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://app:private@db/db?sslmode=verify-full", "REDIS_URL": "rediss://:private@cache:6379/0", "AI_PROVIDER_FILE": "/run/ai/provider.json"}, true},
+		{"broker credential alias", map[string]string{"EVENT_REDIS_URL": "redis://event_worker:private@localhost:6379/0?password=override"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,6 +58,43 @@ func TestConfiguration(t *testing.T) {
 				t.Fatal("credential in error")
 			}
 		})
+	}
+}
+
+func TestAPIDatabaseConcurrencyBounds(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"", 4}, {"1", 1}, {"4", 4}, {"10", 10},
+		{"0", 0}, {"-1", 0}, {"11", 0}, {"four", 0}, {"4.0", 0}, {" 4", 0},
+	} {
+		t.Run("value="+tc.raw, func(t *testing.T) {
+			values := map[string]string{"DATABASE_URL": "postgres://app:private@localhost/db?sslmode=disable", "REDIS_URL": "redis://:private@localhost:6379/0", "API_DB_CONCURRENCY": tc.raw}
+			c, err := Load(func(k string) string { return values[k] })
+			if tc.want == 0 {
+				if err == nil || !strings.Contains(err.Error(), "API_DB_CONCURRENCY") {
+					t.Fatal("invalid concurrency accepted or incorrectly classified")
+				}
+			} else if err != nil || c.APIConcurrency != tc.want {
+				t.Fatal("valid concurrency rejected or changed")
+			}
+		})
+	}
+}
+
+func TestSecondaryWorkerServiceBinding(t *testing.T) {
+	base := map[string]string{"DATABASE_URL": "postgres://app:private@localhost/db?sslmode=disable", "REDIS_URL": "redis://:private@localhost:6379/0", "AUTH_ISSUER": "https://issuer.example", "AUTH_AUDIENCE": "api", "AUTH_JWKS_FILE": "/run/auth/public.json", "WORKER_DATABASE_URL": "postgres://tenant_worker:private@localhost/db?sslmode=disable", "EVENT_REDIS_URL": "redis://event_tenant_worker:private@localhost:6379/0"}
+	c, err := Load(func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.EventBinding("framework-worker"); err != nil {
+		t.Fatal("matching secondary audience rejected", err)
+	}
+	c.EventRedisURL = "redis://event_other_worker:private@localhost:6379/0"
+	if c.EventBinding("framework-worker") == nil {
+		t.Fatal("foreign receiver audience accepted")
 	}
 }
 
@@ -99,5 +151,55 @@ func TestProductionDriverTrustCannotBeOverridden(t *testing.T) {
 				t.Fatal("runtime accepted Redis trust override")
 			}
 		})
+	}
+}
+
+// ER-03 (independent edge rehearsal): the API gave its running requests 10 s after SIGTERM whatever they were, and a paid AI creation
+// holds its request for up to 70 s. Every restart then cost each running creation its answer and its whole reservation.
+func TestShutdownTimeoutFollowsTheAIBuilder(t *testing.T) {
+	base := map[string]string{"DATABASE_URL": "postgres://app:private@localhost/db?sslmode=disable", "REDIS_URL": "redis://:private@localhost:6379/0", "AUTH_ISSUER": "https://issuer.example", "AUTH_AUDIENCE": "api", "AUTH_JWKS_FILE": "/run/auth/public.json"}
+	load := func(extra map[string]string) (Config, error) {
+		env := map[string]string{}
+		for k, v := range base {
+			env[k] = v
+		}
+		for k, v := range extra {
+			env[k] = v
+		}
+		return Load(func(k string) string { return env[k] })
+	}
+	for _, c := range []struct {
+		name    string
+		env     map[string]string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"no AI builder", nil, 10 * time.Second, false},
+		{"AI builder configured", map[string]string{"AI_PROVIDER_FILE": "/run/ai/provider.json"}, AIShutdownTimeout, false},
+		{"explicit, no AI builder", map[string]string{"SHUTDOWN_TIMEOUT": "30s"}, 30 * time.Second, false},
+		{"explicit overrides the AI default", map[string]string{"AI_PROVIDER_FILE": "/run/ai/provider.json", "SHUTDOWN_TIMEOUT": "2m"}, 2 * time.Minute, false},
+		{"lower bound", map[string]string{"SHUTDOWN_TIMEOUT": "1s"}, time.Second, false},
+		{"upper bound", map[string]string{"SHUTDOWN_TIMEOUT": "5m"}, 5 * time.Minute, false},
+		{"below the lower bound", map[string]string{"SHUTDOWN_TIMEOUT": "999ms"}, 0, true},
+		{"above the upper bound", map[string]string{"SHUTDOWN_TIMEOUT": "301s"}, 0, true},
+		{"negative", map[string]string{"SHUTDOWN_TIMEOUT": "-5s"}, 0, true},
+		{"not a duration", map[string]string{"SHUTDOWN_TIMEOUT": "soon"}, 0, true},
+		{"a bare number", map[string]string{"SHUTDOWN_TIMEOUT": "30"}, 0, true},
+	} {
+		got, err := load(c.env)
+		if (err != nil) != c.wantErr || !c.wantErr && got.ShutdownTimeout != c.want {
+			t.Errorf("%s: shutdown timeout %v, error %v; want %v, error %v", c.name, got.ShutdownTimeout, err, c.want, c.wantErr)
+		}
+		if err != nil && strings.Contains(err.Error(), "soon") {
+			t.Errorf("%s: the error echoes the value: %v", c.name, err)
+		}
+	}
+	// A bare number is the usual way to write it and is refused; the message says what is needed (independent review of the follow-up, FU-08).
+	if _, err := load(map[string]string{"SHUTDOWN_TIMEOUT": "30"}); err == nil || !strings.Contains(err.Error(), "with a unit") {
+		t.Errorf("a bare number is refused without saying that a unit is needed: %v", err)
+	}
+	// The wait for an AI creation must be longer than one: provider wall clock (60 s) plus the result margin (10 s).
+	if AIShutdownTimeout < 70*time.Second {
+		t.Errorf("AIShutdownTimeout %v is shorter than a creation", AIShutdownTimeout)
 	}
 }

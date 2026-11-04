@@ -101,3 +101,53 @@ func TestInvalidKeySets(t *testing.T) {
 		}
 	}
 }
+
+// VerifyRemaining says how long a verified token stays valid, by the verifier's own clock and without the skew; it accepts and
+// refuses exactly the tokens Verify does, and a Verifier is an Expiring authenticator.
+func TestVerifyRemainingReportsTheRestOfTheLifetime(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b64 := base64.RawURLEncoding.EncodeToString
+	set, _ := json.Marshal(map[string]any{"keys": []any{map[string]any{"kty": "RSA", "kid": "key1", "alg": "RS256", "use": "sig", "n": b64(key.N.Bytes()), "e": "AQAB"}}})
+	v, err := NewVerifierWithClockSkew("https://issuer.example", "api", set, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ Expiring = v
+	at := time.Unix(1_800_000_000, 0)
+	v.now = func() time.Time { return at }
+	sign := func(exp int64) string {
+		h, _ := json.Marshal(map[string]any{"alg": "RS256", "typ": "at+jwt", "kid": "key1"})
+		c, _ := json.Marshal(map[string]any{"iss": "https://issuer.example", "aud": "api", "sub": "alice", "iat": at.Unix() - 60, "nbf": at.Unix() - 60, "exp": exp})
+		input := b64(h) + "." + b64(c)
+		hash := sha256.Sum256([]byte(input))
+		sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return input + "." + b64(sig)
+	}
+	for _, left := range []time.Duration{900 * time.Second, 61 * time.Second, 1 * time.Second} {
+		p, remaining, err := v.VerifyRemaining(sign(at.Unix() + int64(left/time.Second)))
+		if err != nil || remaining != left || p.Subject() != "alice" {
+			t.Fatalf("left %v: remaining %v, subject %q, err %v", left, remaining, p.Subject(), err)
+		}
+	}
+	// Inside the skew Verify still accepts a token that has just lapsed; the remaining time is then not positive, never rounded up.
+	lapsed := sign(at.Unix() - 1)
+	if _, err := v.Verify(lapsed); err != nil {
+		t.Fatalf("a token that lapsed one second ago is within the 30 s skew: %v", err)
+	}
+	if _, remaining, err := v.VerifyRemaining(lapsed); err != nil || remaining >= 0 {
+		t.Fatalf("a lapsed token within the skew reports %v (err %v)", remaining, err)
+	}
+	// The same refusals as Verify.
+	if _, _, err := v.VerifyRemaining("a.b.c"); err == nil {
+		t.Fatal("garbage accepted")
+	}
+	if _, _, err := v.VerifyRemaining(sign(at.Unix() - 3600)); err == nil {
+		t.Fatal("an expired token accepted")
+	}
+}

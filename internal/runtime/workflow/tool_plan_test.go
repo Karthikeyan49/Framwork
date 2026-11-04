@@ -1,0 +1,445 @@
+package workflow
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
+)
+
+const testToolHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func itemFields() []rules.Field {
+	return []rules.Field{
+		{ID: "field.item.id", Type: rules.Type{Kind: "string"}, Required: true},
+		{ID: "field.item.qty", Type: rules.Type{Kind: "integer"}},
+		{ID: "field.item.note", Type: rules.Type{Kind: "string"}},
+	}
+}
+
+var testToolContract = ToolContract{SideEffect: "READ", Approval: "NONE", IdempotencyMode: "NONE", RetryMode: "SAFE_RETRY", TimeoutMS: 1000}
+
+func itemResolver(hash string) ToolResolver {
+	return func(ref, version string) (ToolResolution, bool) {
+		return ToolResolution{Hash: hash, Contract: testToolContract}, ref == "tool.vendor_lookup" && version == "1.0.0"
+	}
+}
+func toolActivity() *metadata.Activity {
+	return &metadata.Activity{ToolRef: "tool.vendor_lookup", Version: "1.0.0", Inputs: map[string]string{"vendor_id": "field.item.id"}, Retry: metadata.Retry{MaxAttempts: 2, InitialBackoffMS: 100, MaxBackoffMS: 1000}}
+}
+
+// toolWorkflow authors DSL 2.1.0, the contract of schema 1.5.0: tool activities and tenant approval roles.
+func toolWorkflow() metadata.Workflow {
+	return metadata.Workflow{DSLVersion: TenantRoleVersion, Version: "1.0.0", EntityRef: "entity.item", Trigger: "manual", TimeoutMS: 60000, InitialState: "state.start", States: []metadata.WorkflowState{
+		{ID: "state.start", Type: "start", Transitions: []metadata.Transition{{To: "state.call"}}},
+		{ID: "state.call", Type: "activity", Activity: toolActivity(), Transitions: []metadata.Transition{{To: "state.done"}}},
+		{ID: "state.done", Type: "complete", Transitions: []metadata.Transition{}},
+	}}
+}
+func toolProgram(t *testing.T) Program {
+	t.Helper()
+	p, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, itemResolver(testToolHash))
+	if e != nil {
+		t.Fatal(e)
+	}
+	return p
+}
+func restorePlan(plan Plan) error {
+	raw, _ := json.Marshal(plan)
+	_, e := Restore(raw, Hash(raw))
+	return e
+}
+func planState(plan *Plan, id string) *State {
+	for i := range plan.States {
+		if plan.States[i].ID == id {
+			return &plan.States[i]
+		}
+	}
+	return nil
+}
+
+func TestToolPlanPinsHashAndUsesDSL220(t *testing.T) {
+	p := toolProgram(t)
+	plan := p.Plan()
+	call, _ := p.State("state.call")
+	if plan.DSLVersion != ToolDSLVersion || ToolDSLVersion != "2.2.0" || call.ToolContract == nil || *call.ToolContract != testToolContract || !p.HasTools() || !call.IsTool() || call.ToolHash != testToolHash {
+		t.Fatal("tool plan is not pinned", plan.DSLVersion, call.ToolHash)
+	}
+	if call.Activity.LocalRef != "" || call.Activity.TimeoutMS != 0 || !reflect.DeepEqual(call.Activity.Inputs, map[string]string{"vendor_id": "field.item.id"}) {
+		t.Fatal("tool activity shape")
+	}
+	if raw := string(p.JSON()); !strings.Contains(raw, `"tool_hash":"`+testToolHash+`"`) || strings.Contains(raw, `"timeout_ms":0`) {
+		t.Fatal("canonical encoding", raw)
+	}
+	again, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, itemResolver(testToolHash))
+	if e != nil || again.Hash() != p.Hash() || !bytes.Equal(again.JSON(), p.JSON()) {
+		t.Fatal("tool plan is nondeterministic")
+	}
+	other, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, itemResolver(strings.Repeat("a", 64)))
+	if e != nil || other.Hash() == p.Hash() {
+		t.Fatal("pin is not part of plan identity")
+	}
+	restored, e := Restore(p.JSON(), p.Hash())
+	if e != nil || !reflect.DeepEqual(restored.Plan(), plan) {
+		t.Fatal("restore", e)
+	}
+	next, e := restored.Next(t.Context(), "state.call", "always", nil)
+	if e != nil || next != "state.done" {
+		t.Fatal("tool state transition", next, e)
+	}
+}
+
+func TestToolActivitiesRequireAResolverThatKnowsThem(t *testing.T) {
+	if _, e := CompileDefinition("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}); e == nil {
+		t.Fatal("legacy entry point admitted a tool")
+	}
+	if _, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, nil); e == nil {
+		t.Fatal("nil resolver admitted a tool")
+	}
+	denied := func(string, string) (ToolResolution, bool) {
+		return ToolResolution{Hash: testToolHash, Contract: testToolContract}, false
+	}
+	if _, e := CompileDefinitionWithTools("workflow.item", toolWorkflow(), itemFields(), []string{"local.noop"}, denied); e == nil {
+		t.Fatal("unresolved tool admitted")
+	}
+	w := toolWorkflow()
+	w.DSLVersion = ToolDSLVersion
+	if _, e := CompileDefinitionWithTools("workflow.item", w, itemFields(), []string{"local.noop"}, itemResolver(testToolHash)); e == nil {
+		t.Fatal("authored DSL 2.2.0 accepted; only the compiler may select it")
+	}
+	w.DSLVersion = Version
+	if _, e := CompileDefinitionWithTools("workflow.item", w, itemFields(), []string{"local.noop"}, itemResolver(testToolHash)); e == nil {
+		t.Fatal("a tool activity was accepted under the closed-role DSL 2.0.0")
+	}
+	// A tool-free workflow never consults the resolver and stays DSL 2.0.0.
+	consulted := false
+	free := func(string, string) (ToolResolution, bool) {
+		consulted = true
+		return ToolResolution{Hash: testToolHash, Contract: testToolContract}, true
+	}
+	plain := testPlanWorkflow()
+	p, e := CompileDefinitionWithTools("workflow.item", plain, []rules.Field{{ID: "field.item.id", Type: rules.Type{Kind: "string"}, Required: true}}, nil, free)
+	if e != nil || consulted || p.Plan().DSLVersion != Version || p.HasTools() {
+		t.Fatal("tool-free plan changed", e)
+	}
+}
+
+func testPlanWorkflow() metadata.Workflow {
+	return metadata.Workflow{DSLVersion: Version, Version: "1.0.0", EntityRef: "entity.item", Trigger: "manual", TimeoutMS: 1000, InitialState: "state.start", States: []metadata.WorkflowState{{ID: "state.start", Type: "start", Transitions: []metadata.Transition{{To: "state.done"}}}, {ID: "state.done", Type: "complete", Transitions: []metadata.Transition{}}}}
+}
+
+// This hash was produced before DSL 2.1.0 existed (base a6889dd). Admitting
+// tools must not change one byte of a tool-free plan.
+const legacyTestPlanHash = "1221fc184595b985f227df148c028be77566a49e494d0af92f22b77b2af09920"
+
+func TestToolFreePlansKeepLegacyBytesAndHash(t *testing.T) {
+	p := testPlan(t)
+	if p.Hash() != legacyTestPlanHash || p.Plan().DSLVersion != Version {
+		t.Fatal("tool-free plan identity changed", p.Hash())
+	}
+	if raw := string(p.JSON()); strings.Contains(raw, "tool_hash") || strings.Contains(raw, `"inputs"`) {
+		t.Fatal("tool fields leaked into a tool-free plan", raw)
+	}
+	via, e := CompileDefinitionWithTools("workflow.item", testPlanWorkflow(), []rules.Field{{ID: "field.item.id", Type: rules.Type{Kind: "string"}, Required: true}}, nil, itemResolver(testToolHash))
+	if e != nil || via.Hash() != p.Hash() || !bytes.Equal(via.JSON(), p.JSON()) {
+		t.Fatal("variant entry point changed tool-free bytes")
+	}
+	// A DSL 2.0.0 plan can never carry a tool, however it is assembled.
+	plan := toolProgram(t).Plan()
+	plan.DSLVersion = Version
+	if restorePlan(plan) == nil {
+		t.Fatal("DSL 2.0.0 accepted a tool_ref")
+	}
+	// A local-only plan labelled 2.2.0 is rejected: 2.2.0 means "has a pinned tool". The same plan
+	// labelled 2.1.0 is a tenant-role plan and restores (2.1.0 is shared with the legacy tool shape).
+	local := p.Plan()
+	local.DSLVersion = ToolDSLVersion
+	if restorePlan(local) == nil {
+		t.Fatal("DSL 2.2.0 accepted without a tool state")
+	}
+	local.DSLVersion = TenantRoleVersion
+	if e := restorePlan(local); e != nil {
+		t.Fatal("a tool-free tenant-role plan was rejected", e)
+	}
+}
+
+func TestValidatePlanRejectsMalformedToolStates(t *testing.T) {
+	if e := restorePlan(toolProgram(t).Plan()); e != nil {
+		t.Fatal(e)
+	}
+	many := map[string]string{}
+	for i := 0; i < MaxToolInputs+1; i++ {
+		many[fmt.Sprintf("in_%02d", i)] = "field.item.id"
+	}
+	exactly := map[string]string{}
+	for i := 0; i < MaxToolInputs; i++ {
+		exactly[fmt.Sprintf("in_%02d", i)] = "field.item.id"
+	}
+	cases := map[string]func(*State){
+		"tool ref without prefix":    func(s *State) { s.Activity.ToolRef = "vendor_lookup" },
+		"tool ref uppercase":         func(s *State) { s.Activity.ToolRef = "tool.Vendor" },
+		"tool ref too long":          func(s *State) { s.Activity.ToolRef = "tool." + strings.Repeat("a", 156) },
+		"local ref shaped as tool":   func(s *State) { s.Activity.ToolRef = "local.noop" },
+		"version not semver":         func(s *State) { s.Activity.Version = "1.0" },
+		"version leading zero":       func(s *State) { s.Activity.Version = "01.0.0" },
+		"version empty":              func(s *State) { s.Activity.Version = "" },
+		"hash empty":                 func(s *State) { s.ToolHash = "" },
+		"hash short":                 func(s *State) { s.ToolHash = testToolHash[:63] },
+		"hash long":                  func(s *State) { s.ToolHash = testToolHash + "0" },
+		"hash uppercase":             func(s *State) { s.ToolHash = strings.ToUpper(testToolHash) },
+		"hash not hex":               func(s *State) { s.ToolHash = strings.Repeat("g", 64) },
+		"inputs missing":             func(s *State) { s.Activity.Inputs = nil },
+		"inputs empty":               func(s *State) { s.Activity.Inputs = map[string]string{} },
+		"inputs over limit":          func(s *State) { s.Activity.Inputs = many },
+		"input name uppercase":       func(s *State) { s.Activity.Inputs = map[string]string{"Vendor": "field.item.id"} },
+		"input name leading digit":   func(s *State) { s.Activity.Inputs = map[string]string{"1vendor": "field.item.id"} },
+		"input name too long":        func(s *State) { s.Activity.Inputs = map[string]string{"a" + strings.Repeat("b", 64): "field.item.id"} },
+		"input field not in plan":    func(s *State) { s.Activity.Inputs = map[string]string{"vendor_id": "field.other.id"} },
+		"input field malformed":      func(s *State) { s.Activity.Inputs = map[string]string{"vendor_id": "item.id"} },
+		"input field empty":          func(s *State) { s.Activity.Inputs = map[string]string{"vendor_id": ""} },
+		"local ref set":              func(s *State) { s.Activity.LocalRef = "local.noop" },
+		"compensation local ref":     func(s *State) { s.Activity.CompensationLocalRef = "local.noop" },
+		"compensation tool ref":      func(s *State) { s.Activity.CompensationToolRef = "tool.vendor_lookup" },
+		"timeout set":                func(s *State) { s.Activity.TimeoutMS = 500 },
+		"retry attempts zero":        func(s *State) { s.Activity.Retry.MaxAttempts = 0 },
+		"retry attempts over limit":  func(s *State) { s.Activity.Retry.MaxAttempts = 11 },
+		"retry initial too small":    func(s *State) { s.Activity.Retry.InitialBackoffMS = 99 },
+		"retry max below initial":    func(s *State) { s.Activity.Retry.MaxBackoffMS = 99 },
+		"retry max over limit":       func(s *State) { s.Activity.Retry.MaxBackoffMS = 3600001 },
+		"hash on non-activity state": func(s *State) { s.Type = "timer"; s.Activity = nil; s.TimerMS = 100 },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			plan := toolProgram(t).Plan()
+			mutate(planState(&plan, "state.call"))
+			if restorePlan(plan) == nil {
+				t.Fatal("malformed tool state restored")
+			}
+		})
+	}
+	t.Run("boundary inputs are accepted", func(t *testing.T) {
+		plan := toolProgram(t).Plan()
+		planState(&plan, "state.call").Activity.Inputs = exactly
+		if e := restorePlan(plan); e != nil {
+			t.Fatal(e)
+		}
+	})
+	t.Run("hash on local state", func(t *testing.T) {
+		plan := toolProgram(t).Plan()
+		planState(&plan, "state.start").ToolHash = testToolHash
+		if restorePlan(plan) == nil {
+			t.Fatal("pin on a non-tool state restored")
+		}
+	})
+	t.Run("local activity beside a tool", func(t *testing.T) {
+		w := toolWorkflow()
+		w.States = append(w.States, metadata.WorkflowState{ID: "state.local", Type: "activity", Activity: &metadata.Activity{LocalRef: "local.noop", Version: ActivityVersion, TimeoutMS: 500, Retry: metadata.Retry{MaxAttempts: 1, InitialBackoffMS: 100, MaxBackoffMS: 100}}, Transitions: []metadata.Transition{{To: "state.done"}}})
+		w.States[1].Transitions = []metadata.Transition{{To: "state.local"}}
+		p, e := CompileDefinitionWithTools("workflow.item", w, itemFields(), []string{"local.noop"}, itemResolver(testToolHash))
+		if e != nil {
+			t.Fatal(e)
+		}
+		local, _ := p.State("state.local")
+		if local.IsTool() || local.ToolHash != "" || local.Activity.TimeoutMS != 500 {
+			t.Fatal("local activity changed")
+		}
+		plan := p.Plan()
+		planState(&plan, "state.local").Activity.Inputs = map[string]string{"vendor_id": "field.item.id"}
+		if restorePlan(plan) == nil {
+			t.Fatal("local activity with tool inputs restored")
+		}
+		plan = p.Plan()
+		planState(&plan, "state.local").ToolHash = testToolHash
+		if restorePlan(plan) == nil {
+			t.Fatal("local activity with a pin restored")
+		}
+		plan = p.Plan()
+		planState(&plan, "state.local").Activity.TimeoutMS = 0
+		if restorePlan(plan) == nil {
+			t.Fatal("local activity without a timeout restored")
+		}
+	})
+}
+
+func TestFieldIDsIncludeToolInputsAndConditions(t *testing.T) {
+	if got := testPlan(t).FieldIDs(); len(got) != 0 {
+		t.Fatal("tool-free plan without conditions captured fields", got)
+	}
+	if got := toolProgram(t).FieldIDs(); !reflect.DeepEqual(got, []string{"field.item.id"}) {
+		t.Fatal("tool inputs not captured", got)
+	}
+	w := toolWorkflow()
+	w.States[0].Transitions = []metadata.Transition{
+		{To: "state.call", Condition: &metadata.Expression{Op: "eq", Args: []metadata.Expression{{Op: "field", FieldRef: "field.item.qty"}, {Op: "literal", Value: json.RawMessage(`1`)}}}},
+		{To: "state.done"},
+	}
+	w.States[1].Activity.Inputs = map[string]string{"vendor_id": "field.item.id", "note": "field.item.note", "again": "field.item.id"}
+	p, e := CompileDefinitionWithTools("workflow.item", w, itemFields(), []string{"local.noop"}, itemResolver(testToolHash))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := p.FieldIDs(); !reflect.DeepEqual(got, []string{"field.item.id", "field.item.note", "field.item.qty"}) {
+		t.Fatal("condition and tool fields must merge sorted and unique", got)
+	}
+	// Existing tool-free workflows with a condition keep exactly their old set.
+	free := testPlanWorkflow()
+	free.States[0].Transitions = []metadata.Transition{
+		{To: "state.done", Condition: &metadata.Expression{Op: "eq", Args: []metadata.Expression{{Op: "field", FieldRef: "field.item.qty"}, {Op: "literal", Value: json.RawMessage(`1`)}}}},
+		{To: "state.done"},
+	}
+	q, e := CompileDefinition("workflow.item", free, itemFields(), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := q.FieldIDs(); !reflect.DeepEqual(got, []string{"field.item.qty"}) {
+		t.Fatal("tool-free field set changed", got)
+	}
+}
+
+func TestMatchesDefinitionComparesToolPlansWithoutAHash(t *testing.T) {
+	fields := itemFields()
+	p := toolProgram(t)
+	if !p.MatchesDefinition("workflow.item", toolWorkflow(), fields) {
+		t.Fatal("stored tool plan disagrees with its source")
+	}
+	cases := map[string]func(*metadata.Workflow){
+		"input remapped": func(w *metadata.Workflow) {
+			w.States[1].Activity.Inputs = map[string]string{"vendor_id": "field.item.note"}
+		},
+		"input renamed":   func(w *metadata.Workflow) { w.States[1].Activity.Inputs = map[string]string{"id": "field.item.id"} },
+		"input added":     func(w *metadata.Workflow) { w.States[1].Activity.Inputs["note"] = "field.item.note" },
+		"tool swapped":    func(w *metadata.Workflow) { w.States[1].Activity.ToolRef = "tool.other" },
+		"version changed": func(w *metadata.Workflow) { w.States[1].Activity.Version = "1.1.0" },
+		"retry changed":   func(w *metadata.Workflow) { w.States[1].Activity.Retry.MaxAttempts = 3 },
+		"became local": func(w *metadata.Workflow) {
+			w.States[1].Activity = &metadata.Activity{LocalRef: "local.noop", Version: ActivityVersion, TimeoutMS: 500, Retry: toolActivity().Retry}
+		},
+		"authored dsl 2.2.0":  func(w *metadata.Workflow) { w.DSLVersion = ToolDSLVersion },
+		"authored dsl 2.0.0":  func(w *metadata.Workflow) { w.DSLVersion = Version },
+		"timeout on the tool": func(w *metadata.Workflow) { w.States[1].Activity.TimeoutMS = 500 },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := toolWorkflow()
+			mutate(&w)
+			if p.MatchesDefinition("workflow.item", w, fields) {
+				t.Fatal("source/plan disagreement accepted")
+			}
+		})
+	}
+	// The source has no hash: a source-less pin swap is the runtime's to catch
+	// against the live catalog, but a malformed or missing pin never matches.
+	plan := p.Plan()
+	planState(&plan, "state.call").ToolHash = strings.Repeat("f", 64)
+	raw, _ := json.Marshal(plan)
+	swapped, e := Restore(raw, Hash(raw))
+	if e != nil || !swapped.MatchesDefinition("workflow.item", toolWorkflow(), fields) || swapped.Hash() == p.Hash() {
+		t.Fatal("a well-formed pin is compared by plan identity, not by source", e)
+	}
+	// A tool-free plan must not match a source that now declares a tool, and
+	// the 2.0.0 tool-free comparison is unchanged.
+	if testPlan(t).MatchesDefinition("workflow.item", toolWorkflow(), fields) {
+		t.Fatal("tool-free plan matched a tool source")
+	}
+	if !testPlan(t).MatchesDefinition("workflow.item", testPlanWorkflow(), []rules.Field{{ID: "field.item.id", Type: rules.Type{Kind: "string"}, Required: true}}) {
+		t.Fatal("tool-free comparison regressed")
+	}
+}
+
+// legacyToolPlan is a DSL 2.1.0 tool plan produced by the M10 compiler before
+// ADR100 Amendment A1 (captured from toolProgram at a9d4d66). Stored plans
+// must keep restoring byte-for-byte and still match their authored source.
+const legacyToolPlan = `{"dsl_version":"2.1.0","id":"workflow.item","entity_id":"entity.item","version":"1.0.0","trigger":"manual","timeout_ms":60000,"initial_state":"state.start","fields":[{"id":"field.item.id","type":{"kind":"string"},"required":true},{"id":"field.item.note","type":{"kind":"string"},"required":false},{"id":"field.item.qty","type":{"kind":"integer"},"required":false}],"states":[{"id":"state.call","type":"activity","transitions":[{"to":"state.done","on":"always"}],"activity":{"tool_ref":"tool.vendor_lookup","version":"1.0.0","inputs":{"vendor_id":"field.item.id"},"retry":{"max_attempts":2,"initial_backoff_ms":100,"max_backoff_ms":1000}},"tool_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},{"id":"state.done","type":"complete","transitions":[]},{"id":"state.start","type":"start","transitions":[{"to":"state.call","on":"always"}]}]}`
+const legacyToolPlanHash = "146aba5d07a63abbe11269d64c997ef127fb832b8cdfce5e030741383d35fd7a"
+
+func TestLegacyToolPlanRestoresByteForByte(t *testing.T) {
+	p, e := Restore([]byte(legacyToolPlan), legacyToolPlanHash)
+	if e != nil || p.Hash() != legacyToolPlanHash || string(p.JSON()) != legacyToolPlan || p.Plan().DSLVersion != LegacyToolDSLVersion || !p.HasTools() {
+		t.Fatal("stored DSL 2.1.0 plan no longer restores", e)
+	}
+	if call, _ := p.State("state.call"); call.ToolContract != nil || call.ToolHash != testToolHash {
+		t.Fatal("legacy plan gained a contract", call.ToolContract)
+	}
+	if !p.MatchesDefinition("workflow.item", toolWorkflow(), itemFields()) {
+		t.Fatal("legacy plan no longer matches its source")
+	}
+	// The source the M10 compiler read authored DSL 2.0.0 (closed roles); it still matches its stored plan.
+	oldSource := toolWorkflow()
+	oldSource.DSLVersion = Version
+	if !p.MatchesDefinition("workflow.item", oldSource, itemFields()) {
+		t.Fatal("legacy plan no longer matches the DSL 2.0.0 source it was compiled from")
+	}
+	if toolProgram(t).MatchesDefinition("workflow.item", oldSource, itemFields()) {
+		t.Fatal("a current tool plan matched a DSL 2.0.0 source")
+	}
+	// The current compiler pins the contract under DSL 2.2.0 instead.
+	current := toolProgram(t)
+	if current.Plan().DSLVersion != ToolDSLVersion || current.Hash() == legacyToolPlanHash || !current.MatchesDefinition("workflow.item", toolWorkflow(), itemFields()) {
+		t.Fatal("current tool plan", current.Plan().DSLVersion)
+	}
+	// A legacy plan cannot carry a contract and a current plan requires one.
+	plan := p.Plan()
+	contract := testToolContract
+	planState(&plan, "state.call").ToolContract = &contract
+	if restorePlan(plan) == nil {
+		t.Fatal("DSL 2.1.0 accepted a tool contract")
+	}
+	plan = current.Plan()
+	planState(&plan, "state.call").ToolContract = nil
+	if restorePlan(plan) == nil {
+		t.Fatal("DSL 2.2.0 accepted a tool state without a contract")
+	}
+	for name, mutate := range map[string]func(*ToolContract){
+		"write without approval": func(c *ToolContract) { c.SideEffect, c.Approval = "WRITE", "NONE" },
+		"unknown idempotency":    func(c *ToolContract) { c.IdempotencyMode = "MAYBE" },
+		"keyed without window":   func(c *ToolContract) { c.IdempotencyMode = "NATIVE_KEY" },
+		"window without key":     func(c *ToolContract) { c.ReplayWindowMS = 1000 },
+		"settle without lookup":  func(c *ToolContract) { c.SettleMS = 1000 },
+		"settle too long":        func(c *ToolContract) { c.IdempotencyMode, c.SettleMS = "LOOKUP_BY_REFERENCE", MaxSettleMS+1 },
+		"timeout zero":           func(c *ToolContract) { c.TimeoutMS = 0 },
+		"timeout too long":       func(c *ToolContract) { c.TimeoutMS = 2001 },
+	} {
+		plan = current.Plan()
+		bad := testToolContract
+		mutate(&bad)
+		planState(&plan, "state.call").ToolContract = &bad
+		if restorePlan(plan) == nil {
+			t.Fatal("invalid contract accepted:", name)
+		}
+	}
+	// A local activity never carries a contract.
+	local := testPlan(t).Plan()
+	planState(&local, "state.start").ToolContract = &contract
+	if restorePlan(local) == nil {
+		t.Fatal("contract accepted on a non-tool state")
+	}
+}
+
+// The tool DSL keeps the tenant role grammar of DSL 2.1.0: a pinned tool plan may name a tenant-defined approver,
+// and the closed four-role contract applies only to DSL 2.0.0.
+func TestToolPlanKeepsTenantApprovalRoles(t *testing.T) {
+	w := toolWorkflow()
+	w.States = []metadata.WorkflowState{
+		{ID: "state.start", Type: "start", Transitions: []metadata.Transition{{To: "state.review"}}},
+		{ID: "state.review", Type: "approval", ApprovalRoles: []string{"finance_manager"}, ApprovalTimeoutMS: 1000, Transitions: []metadata.Transition{{To: "state.call", On: "approved"}, {To: "state.done", On: "rejected"}}},
+		{ID: "state.call", Type: "activity", Activity: toolActivity(), Transitions: []metadata.Transition{{To: "state.done"}}},
+		{ID: "state.done", Type: "complete", Transitions: []metadata.Transition{}},
+	}
+	p, e := CompileDefinitionWithTools("workflow.item", w, itemFields(), []string{"local.noop"}, itemResolver(testToolHash))
+	if e != nil || p.Plan().DSLVersion != ToolDSLVersion {
+		t.Fatal("a tool plan with a tenant approval role was rejected", e)
+	}
+	if !p.MatchesDefinition("workflow.item", w, itemFields()) {
+		t.Fatal("tenant-role tool plan disagrees with its source")
+	}
+	plan := p.Plan()
+	planState(&plan, "state.review").ApprovalRoles = []string{"Finance"}
+	if restorePlan(plan) == nil {
+		t.Fatal("a malformed role name was accepted")
+	}
+}

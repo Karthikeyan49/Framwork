@@ -1,0 +1,446 @@
+# R3d — Bounded SQL aggregates and query planning
+
+19 October 2026 (Asia/Kolkata). **R3d STATUS: PASS within the bounded reference
+workload; overall M9R remains PARTIAL.** Final acceptance evidence is at the end
+of this report; earlier progress/failure entries retain their checkpoint status.
+Design: ADR046–059, first committed before source at `8ebc75d`. Branch:
+`remediation/m9r-foundation`; M9R remains PARTIAL. No M10, main merge or production
+activation. Existing records, immutable metadata/IR and pinned workflows remain.
+
+The new opt-in query mode `aggregate.execution: "SQL_V1"` computes count and exact
+integer/decimal/fixed-currency sums in PostgreSQL, with per-input SQL validity,
+live action/DataScope enforcement and a100000-row authorized-matching input cap.
+An empty execution mode preserves the original bounded aggregate behavior and
+canonical request encoding. Workers, legacy adapters, opaque policies and
+uncertified executors cannot use expanded aggregation. The initial implementation
+preserves live-generation semantics through a snapshot-certified source planner
+(ADR047). ADR048 introduces an explicit reference memory profile. ADR049 adds
+migration53's nullable versioned numeric validity witness without rewriting old
+projections. No new dependency is introduced. Bounded independent functional
+review, final source re-verification, whole-suite and all eight capacity targets
+pass. The injected driver-panic/R7 limitation remains open; this is not
+production readiness or completion of every external-review finding.
+
+## Executed evidence and failures
+
+- Existing Node24.19.0/Go1.27.2/Docker28.4.0 and PostgreSQL/Redis verified. All52
+  migrations applied. The reused OTel container was restarting because its public
+  config file was0600 after restoration. Local `chmod644 infra/otel/collector.yaml`
+  and service restart restored its HTTP200 health. No tracked content or private
+  key/credential permissions changed.
+- Focused pre-change aggregate/field privacy baseline: PASS3 groups,4.653s.
+- Independent read-only design review identified the need to validate EACH summed
+  input before aggregation, including wrong currencies and invalid cancelling
+  pairs. ADR046 and the implementation include this correction.
+- Initial focused run: FAIL4.102s from fixture driver parameter encoding; text
+  placeholders now receive text. Next two runs: FAIL5.982s/5.034s because fixture
+  corruption updates lacked the trusted actor context required by the unchanged
+  update trigger. Owned operator transactions now supply that context and retain
+  version increments; no trigger was disabled. Three groups then PASS6.747s.
+- Six populated functional groups: PASS25.483s. Exact independent arithmetic,
+  legacy budgets, unsupported shapes, corruption/cancellation, policy/executor
+  proof,100000/100001 boundary, filtering before cap, live OWNER/TEAM/SHARE/
+  CONDITION combinations, field inference/denial, role revocation, populated
+  foreign tenant and retained-generation ownership/tombstones pass.
+- Initial `make test-aggregate-performance`: FAIL38.676s (test38.65s). The pinned
+  four-CPU/8GiB PG18.6 fixture has100k hot records, nine other tenants with10k
+  each, average1382-byte records and mixed owners/shares. The actual generated
+  full count returns correct results and zero errors at10 clients, but SQL p95
+  1476.616ms and HTTP p95 1527.163ms exceed the unchanged500/750ms limits. This is
+  a real capacity failure. Query-plan instrumentation is being expanded before
+  changing the planner; no timeout/RLS/assertion weakening is authorized.
+
+Further executed evidence (all failures retained):
+
+- Eight raw-path groups PASS29.864s, zero skips, including late-audit SQL abort
+  and checksum-pinned pre49 API SHA256
+  `03811f7cc694f33757aa4b005179f69f4ad6f94c525c6592a4e7cdf3e2537a19`.
+- Planner/canonical/FROZEN/scratch-expanded eight groups PASS33.779s, zero skips.
+- Three witness-era raw compatibility/proof/canonical groups PASS7.656s.
+- New populated317-row/three-index witness group PASS4.170s: exact independent
+  results, forged flag/value, app write/function denial, legacy NULL fallback,
+  missing projection failure, count independence, atomic command/audit abort and
+  actual data readiness. No destructive data migration.
+- Old-view diagnostic capacity FAIL37.313s: count SQL1113.690/HTTP1277.570ms p95.
+  Snapshot raw-source specialization FAIL28.376s:612.464/706.619. Rejected ORDER
+  BY experiment FAIL34.661s:1017.584/1059.142 with sort/temp work.
+- Explicit2GiB reference profile first run FAIL32.832s: count731.963/904.808.
+  Typed normalization with repeated extraction FAIL48.240s: count464.788/523.160
+  but integer sum hits SQLSTATE57014. Isolated raw scalar refinement FAIL59.348s:
+  count427.910/492.782; integer sum1357.396/1398.640, then decimal timeout.
+- Trusted four-slot API admission experiment (still TEN offered clients, all FIFO
+  wait included) FAIL96.611s. Count161.579/471.991 and share228.434/571.621 pass;
+  integer430.161/1070.955, decimal802.588/1794.876, money642.152/1432.376,
+  filtered money335.116/873.720, owner money830.857/1775.645 miss at least one
+  unchanged SQL500/HTTP750ms target. Zero errors in this completed seven-case run.
+- First governed-index witness capacity run FAIL128.179s. Count53.106/186.458,
+  integer316.058/834.514, decimal325.139/798.681, money306.239/720.142,
+  filtered360.853/884.452, owner793.568/2188.610, share222.552/624.868. Zero
+  errors; several HTTP and owner SQL gates remain failures. Count's plan became
+  index-only during the longer build; no explicit VACUUM was run. Do not attribute
+  that visibility-map/cache change purely to aggregate code.
+- First gated-JSON/CacheDescribe experiment FAIL88.068s at integer warmup from an
+  unused positional parameter introduced by replacing the input expression.
+  Reusing the original bound field parameter fixes that query-construction
+  defect. This failed run does not measure indexed-sum capacity for that driver
+  mode; the corrected run remains pending. Data runtime unit race tests PASS1.330s.
+- Corrected gated-JSON/CacheDescribe experiment FAIL138.132s. Full integer HTTP
+  p95 remains801.510ms; decimal1045.755, money970.509, filtered797.308,
+  owner893.723. Zero errors. Driver-mode changes are rejected; default restored.
+- Migration54 fixed covering indexes plus exact late legacy-JSON lookup pass
+  witness functional checks4.158s. Initial default-ten-slot capacity FAIL94.218s
+  with integer SQLSTATE57014. Actual JIT diagnostic then PASS44.485s: same100k
+  generated money statement with JIT on reports394.627ms compilation and577.394ms
+  total, off reports0ms compilation and181.034ms total. This measures a real cost.
+  ADR051 scopes LOCAL JIT disabling/restoration to the certified aggregate kernel.
+- Same-transaction prior-on/off and actual driver cancellation at aggregate/
+  restoration, result suppression and pooled reuse: PASS2 groups4.203s.
+- Default-ten-slot/JIT-off capacity FAIL121.053s: count143.374/230.438 passes,
+  integer755.498/819.925, decimal787.116/819.218, money759.354/804.132,
+  filtered999.777/1037.248, owner1431.314/1475.345 and share748.606/806.323
+  miss the unchanged targets. Zero errors. Explicit four-slot scheduling with
+  this final physical/expression plan is being measured before selecting any
+  application concurrency default. No accepted capacity result is claimed yet.
+- Four-slot/JIT-off/header run FAIL123.770s: full sums pass (worst HTTP617.225),
+  but filtered HTTP807.830 and OWNER SQL664.298/HTTP1543.657 miss; share passes.
+  Projection-namespace boundary run FAIL124.575s: filtered execution times out.
+- Initial prepared-plan instrumentation FAIL109.948s and FAIL97.911s from an
+  observer arity error: pgx's database/sql result-format option was counted as a
+  SQL parameter (12 types versus13 tracer arguments). The observer now strips
+  that known option. Corrected probe/workload FAIL148.276s preserves other tails
+  and directly shows the SAME filtered SUM/parameters: custom182.565ms, generic
+  hits SQLSTATE57014 at2.012s with JIT off. OWNER custom149.433/generic153.273ms
+  both hash joins; this does not establish generic plans as every tail's cause.
+  No driver mode or timeout change. The cloud parent cgroup supplies4 CPUs total
+  shared by Go/API and Docker,32GiB RAM; PostgreSQL itself remains capped4CPU/8GiB.
+
+Earlier runs use128MiB shared buffers; ADR048 runs explicitly use2GiB shared,
+6GiB effective cache estimate, unchanged4MiB work_mem/random_page_cost4 and the
+same4CPU/8GiB/no-swap ceiling. Buffer misses are not proof of physical disk I/O.
+Ordinary `make infra-up` retains lightweight defaults; `make reference-up`
+selects the declared performance profile and preserves the named data volume.
+Every reference test verifies actual connected settings/image/container limits.
+Four-slot admission and a CacheDescribe driver experiment were explicit
+test compositions; default application-mode capacity is NOT certified by them.
+
+Logs are ignored `.local/reports/r3d-*.log`; generated artifacts/secrets do not
+belong in Git. Independent executable review, final root/build/browser and all
+retained capacity gates are NOT RUN. SQL_V1 is not declared accepted or production
+capable. Raw unindexed100k sums remain outside a passing capacity envelope.
+
+## Pending verification and scope
+
+Resolve the measured count plan before claiming aggregate capacity. Measure the
+real generated SQL, including validity checks, under full count/sum, selective
+filters and ownership/sharing cases. Preserve canonical-generation ACL/tombstone
+authority and immutable legacy readers in any optimization. Use stable commits
+and an exclusive independent review/test window.
+
+General GROUP BY, arbitrary expressions, distinct/average, join expansion,
+report/UI builders and arbitrary-workload capacity are outside SQL_V1. R5
+deployment/UI, R6 release authority and R7 operations remain pending. Recovery
+disables opt-in use and forward-fixes; no destructive data change is involved.
+
+## Custom-plan checkpoint — 19 October 2026 (Asia/Kolkata)
+
+ADR053 captures/restores prior JIT and plan-cache mode, with LOCAL off/custom
+restricted to certified SQL_V1. Focused four groups PASS4.324s, covering six
+prior-mode combinations and actual aggregate/restoration cancellation. The
+unchanged unmapped indexed100k/ten-client reference workload now PASS119.819s:
+count SQL/HTTP p95 55.528/177.899ms; integer245.575/573.965; decimal261.648/635.354;
+money245.128/702.126; filtered290.095/731.666; OWNER208.152/492.827;
+SHARE228.720/589.006. Zero request errors. This uses explicit four-slot admission,
+not the still-ten-slot application default, and does not certify mapped/canonical
+capacity. The deliberate diagnostic generic filtered-plan timeout is recorded
+separately from successful API samples. All earlier failures remain above.
+
+Independent read-only review found restoration SQL could run during driver panic
+unwinding. The defer now re-panics immediately and leaves rollback to WithRuntime;
+the independent executable panic probe is still pending. Full/root/browser,
+retained capacity gates, canonical capacity and independent executable review
+remain pending. R3d IN PROGRESS; overall M9R PARTIAL; no M10 or main merge.
+
+## Application configuration and mapped verification checkpoint
+
+ADR054 precedes application wiring in96da469: API_DB_CONCURRENCY integer1..10,
+default4, existing FIFO128, unchanged pool10 and worker behavior. Configuration
+unit tests pass; actual focused aggregate/queued-live-revocation selection
+passes28.382s. That selection did not supply the optional legacy artifact; final
+verification must supply it and report zero skips explicitly. Runtime launcher
+whitelist initially omitted the new setting; a0ede6f forwards it to API only,
+with8/8 Node environment-isolation tests passing.
+
+The mapped workload now uses actual100k adoption and verified shadow evolution,
+then current/retained bindings, governed owner/share/deletion changes and a
+current-only balance101 versus historical1 oracle. The aggregate target now runs
+both raw and mapped fixtures. Its12m total test timeout accommodates the added
+real migration/index builds; no per-query/lock/transaction/queue or latency limit
+changes. This expanded variant has not completed execution yet.
+
+## Canonical failure, independent findings and streaming remediation
+
+The first real100k adoption/evolution/default4 mapped run FAIL720.050s: current
+integer SQL/HTTP p95 353.140/887.348ms, decimal371.763/1134.864,
+money553.856/1267.286, filtered698.319/1653.025, OWNER539.429/1277.209,
+SHARE620.084/1799.529. Retained integer413.520/1133.581,
+decimal421.240/1208.863 and money493.508/1295.064 also fail HTTP. Completed
+cases return correct results with zero errors, but the total test times out
+during retained filtered warmup; its later cases are NOT RUN. Actual migration
+reached ACTIVATED with100k copied/verified and six READY numeric indexes.
+
+ADR055 precedes actual default3 scheduling (strict overrides1..10 unchanged).
+ADR056 precedes the exact canonical identity namespace boundary and streamed
+single-use aggregate CTE. Normalized projection and inner cap remain; no scope,
+RLS, view, data or arithmetic weakening. Individual deadlines remain unchanged.
+The two-fixture aggregate target now has20m total suite time to cover real100k
+adoption/evolution and six index builds; this does not extend any query budget.
+
+Independent review9ecb3b8 passes22 ordinary groups88.328s. Source d7b64dd
+reverification reports those same22 passing, with a combined command FAIL87.352s
+from a new reviewer EXPLAIN-text assertion. The corrected structural probe then
+PASS11.981s: old/current317-row generated plans each have one normalized child
+projection, one identity scan/loop and no CTE Scan. EXPLAIN CASE deparsing did not
+prove duplicate execution. Exact differentiated sums, legacy NULL raw fallback,
+current ownership/sharing/tombstones, snapshots, settings/timeout/fault assertions
+and retained executable compatibility all retain executed evidence.
+
+An injected pgx driver-tracer panic DOES hang database/sql rollback. The explicit
+`integration,driverpanic` supervised diagnostic FAIL8.576s then FAIL7.272s remains
+IR-R3d-01/R7, documented in the [independent report](../verification/M9R_R3D_INDEPENDENT_REVIEW.md).
+Default postgres.Open installs no custom tracer; ordinary callback panic rollback
+and same-backend reuse pass. There is no arbitrary driver-panic recovery claim.
+No assertion is removed: the separate explicit diagnostic still fails. A bounded
+rollback goroutine would not repair the leaked library lock and is not introduced.
+
+Final full/build/browser and all eight capacity gates remain pending. Functional
+review does not accept mapped capacity or declare overall M9R complete.
+
+## Final gate execution checkpoint
+
+`make infra-up migrate migration-status` PASS10.460s: local developer database
+now applies all54 migrations. `make reference-up` PASS8.450s verifies declared
+limits/settings before workload checks. `make test-write-performance` PASS71.581s
+(test62.47s):32 clients,60s,5697 successful writes,94.33/s, HTTP p95406.116ms,
+p99515.602ms, zero errors, unchanged500ms p95 gate. This passes its defined floor
+but is slower than the historical R3c run (12547 writes,p95183.117ms). Those runs
+also differ in source/index/reference settings; no single-cause attribution or
+unchanged-throughput claim is made. Keep this scheduling/write-cost tradeoff visible.
+
+`make test-aggregate-performance` against streamed/default3 source FAIL488.664s.
+The raw fixture fails HTTP integer1130.093ms, decimal1482.324, money784.300,
+filtered1013.037 and SHARE1000.764 (all SQL p95 below500ms, zero completed-case
+errors). The implementer interrupts the later mapped rehearsal after this raw
+failure: mapped acceptance is INCOMPLETE. Root runner records exact
+commands/HEAD/exit/time in ignored `.local/reports/r3d-final-results.jsonl` and
+uniquely named per-attempt logs, so failed retries cannot overwrite earlier logs.
+
+ADR057 precedes the controlled app-role planner-cost diagnostic: PASS81.81s and
+PASS91.382s. The second run corrects missing pg_stats visibility using only
+guarded fixture-admin statistics metadata; business EXPLAIN retains app authority.
+ABBA timings and visibility are preserved in ADR058; these are diagnostics,
+not capacity acceptance. ADR058 introduces a provisional reference-v2 cost1.1
+and default4 admission combination without changing hardware or workload gates.
+`make reference-up` PASS8.584s selects that actual connected candidate.
+
+Candidate `make test-aggregate-performance` FAIL133.412s (test125.385s). Raw
+SQL/HTTP p95 ms: count153.414 HTTP (PASS); integer460.289 HTTP (PASS);
+decimal615.982/1141.316 (FAIL); money180.107/457.880 (PASS);
+filtered321.349/1036.406 (FAIL); OWNER142.951/371.507 (PASS);
+SHARE424.073/1197.209 (FAIL). All seven completed cases return exact expected
+results with zero errors. Unchanged SQL500/HTTP750ms limits still fail.
+`-failfast` then prevents the separate expensive mapped test from starting;
+mapped candidate capacity is NOT RUN. The explicit forced-generic diagnostic
+times out with57014; it is neither an API error nor a passing diagnostic.
+Reference-v2/default4 remains unaccepted. R3d remains INCOMPLETE. Full/build,
+browser and other capacity gates on this candidate remain pending; the earlier
+default3/cost4 write PASS does not certify the new profile.
+
+## Physical namespace refinement (ADR059)
+
+The actual failed-run plans show SHARE20000 records_pkey lookups/80010 hits and
+filtered money38008 scanned record blocks; no observed temp spill. ADR059 and
+independent read-only criticism precede source8f73d47/3a9d23e. Exact physical
+tenant/app/revision/hash/entity predicates now sit inside an OFFSET0 relation,
+without an inner cap. SQL retains custom_data for nested policy conditions and
+filters, all outer authorization before the100001 cap and canonical CI ownership.
+A fence is not a security barrier or a guarantee PostgreSQL avoids a full scan.
+No schema/settings/roles or latency limits changed. PostgreSQL can prune unused
+JSON in certified header scans. Passive case-boundary GC/cgroup/backend counts
+contain no SQL, arguments or business data and do not force GC/vacuum or pauses.
+
+`./scripts/go.sh fmt ./internal/runtime/data ./tests/integration` PASS;
+`./scripts/go.sh test ./internal/runtime/data` PASS0.054s.
+`node scripts/with-env.mjs ./scripts/go.sh test -tags=integration -timeout=5m
+-count=1 -run '^TestM9RSQLAggregate(ExactFullSetAndLegacyCompatibility|RejectsCorruptInputsEvenCancellation|BudgetBoundaryAndFilteredInput|LiveScopesFieldInferenceAndRevocation|RetainedGenerationUsesCurrentOwnersAndTombstones|RestoresExpressionModeWithinSnapshot)$'
+-v ./tests/integration` PASS15.788s: six groups, zero skips. Retained executable
+compatibility is a separate group and is not claimed by this selection.
+
+Sourcee406966 adds one core-ID count case to all seven unchanged capacity cases.
+`make test-aggregate-performance` attempt3 is IN PROGRESS. Its raw fixture passes
+101.08s,100000 hot/9x10000 other-tenant rows,100 samples/ten clients/case,
+zero errors. SQL/HTTP p95 ms: count48.569/153.745, ID44.775/143.219,
+integer162.154/416.369, decimal153.148/401.688, money136.947/387.787,
+filtered183.118/481.529, OWNER131.417/352.292, SHARE92.366/261.093.
+The filtered source still scans38008 blocks despite the fence, so no avoidance
+claim is made. The mapped100k adoption/evolution/current/retained fixture remains
+running; raw success alone does not accept R3d or the provisional profile.
+
+## Completed aggregate capacity and independent re-verification
+
+On source e406966, `make test-aggregate-performance` attempt3 PASS619.747s:
+raw101.08s and real mapped514.72s. Actual adoption verifies100000 records;
+shadow evolution copies/verifies100000, matches manifests and activates before
+current/retained checks. Governed owner/share/deletion plus current-only money101
+versus historical1 distinguish authority from physical values. All six numeric
+indexes are READY. No manual VACUUM, forced GC or quiet-period wait was used.
+All24 cases have100 measured requests, ten clients, exact independent oracles
+and zero errors. Three warmups/case remain separate from measured samples.
+
+| Generation | Case | SQL p95 ms | HTTP p95 ms | HTTP p99 ms | Requests/s | Errors |
+|---|---|---:|---:|---:|---:|---:|
+| unmapped | count | 48.569 | 153.745 | 169.109 | 77.82 | 0 |
+| unmapped | point_count | 44.775 | 143.219 | 151.365 | 83.35 | 0 |
+| unmapped | sum_integer | 162.154 | 416.369 | 445.537 | 26.37 | 0 |
+| unmapped | sum_decimal | 153.148 | 401.688 | 445.252 | 28.97 | 0 |
+| unmapped | sum_money | 136.947 | 387.787 | 433.602 | 31.08 | 0 |
+| unmapped | filtered_money | 183.118 | 481.529 | 509.913 | 24.04 | 0 |
+| unmapped | owner_money | 131.417 | 352.292 | 376.728 | 33.08 | 0 |
+| unmapped | share_count | 92.366 | 261.093 | 271.002 | 45.92 | 0 |
+| current | count | 137.504 | 382.441 | 397.578 | 31.69 | 0 |
+| current | point_count | 70.395 | 233.091 | 247.725 | 53.08 | 0 |
+| current | sum_integer | 227.842 | 697.988 | 749.954 | 18.19 | 0 |
+| current | sum_decimal | 236.861 | 656.619 | 667.731 | 18.57 | 0 |
+| current | sum_money | 218.296 | 608.082 | 626.957 | 19.41 | 0 |
+| current | filtered_money | 205.072 | 592.823 | 609.157 | 20.23 | 0 |
+| current | owner_money | 190.579 | 503.588 | 531.001 | 23.28 | 0 |
+| current | share_count | 231.952 | 586.160 | 607.232 | 19.23 | 0 |
+| retained | count | 115.274 | 319.578 | 329.256 | 36.76 | 0 |
+| retained | point_count | 60.617 | 196.298 | 206.239 | 59.63 | 0 |
+| retained | sum_integer | 229.045 | 584.479 | 615.844 | 20.50 | 0 |
+| retained | sum_decimal | 224.552 | 588.620 | 616.006 | 19.61 | 0 |
+| retained | sum_money | 202.182 | 555.638 | 597.003 | 20.99 | 0 |
+| retained | filtered_money | 236.004 | 712.030 | 731.130 | 17.10 | 0 |
+| retained | owner_money | 179.678 | 474.502 | 482.935 | 23.76 | 0 |
+| retained | share_count | 180.421 | 492.594 | 539.337 | 23.77 | 0 |
+
+Worst HTTP p95 is712.030ms, leaving only37.970ms to the750ms gate;
+no wider hardware, traffic, cardinality or arbitrary-query guarantee follows.
+Per-case resource observations are passive boundary samples, not proof of the
+cause of older tails. An independent LOW diagnostic finding (IR-R3d-02) showed
+cluster-wide autovacuum workers could be confused with fixture-local activity;
+f9cb4fa scopes that outside-timing query to the fixture. No aggregate SQL,
+resource profile, measured workload or latency assertion changed after the pass.
+
+Independent commit1f73033 verifies stable product f9cb4fa. All23 ordinary race
+groups PASS60.415s with zero skips and checksum-pinned old executable; stronger
+nested OWNER+CONDITION and included/excluded rare core-ID filters on100001
+physical rows PASS12.831s; config race tests PASS1.019s. See the exact commands
+and preserved failures in the [review](../verification/M9R_R3D_INDEPENDENT_REVIEW.md).
+IR-R3d-01 driver-panic/R7 remains unresolved, not relabelled as a passing check.
+
+Root final `make check test build`, both browser suites and the seven earlier
+capacity gates are now running serially against this source/profile. Their
+results are pending. The joint ADR058 profile and R3d are not accepted merely
+because aggregate capacity passes; all required regressions must finish first.
+
+## Final root verification and acceptance — 19 October 2026
+
+**R3d STATUS: PASS for the declared bounded reference tier. Overall M9R STATUS:
+PARTIAL.** Product checkpoint `f9cb4fa`, independent review/tests `1f73033`.
+Full verification ran on `1f73033`; later browser/capacity targets ran on
+`44e2c63`, whose only change was the evidence report. No production code changed
+between these final gates. Subsequent completion edits are documentation and a
+Compose comment only. All earlier failed commands above remain failures.
+
+| Exact command actually executed | Result | Elapsed seconds |
+|---|---|---:|
+| `make check test build` | PASS | 602.327 |
+| `make test-e2e` | PASS | 18.465 |
+| `make test-signin-e2e` | PASS | 8.541 |
+| `make test-performance` | PASS | 67.056 |
+| `make test-scalar-performance` | PASS | 79.673 |
+| `make test-choice-performance` | PASS | 93.977 |
+| `make test-native-performance` | PASS | 88.618 |
+| `make test-search-performance` | PASS | 51.017 |
+| `make test-write-performance` | PASS | 62.659 |
+| `make test-unique-performance` | PASS | 173.803 |
+| `make test-aggregate-performance` | PASS | 619.747 |
+| `make docs-verify` | PASS | 0.059 |
+
+The full command includes Go formatting/static checks, unit/race tests,
+TypeScript lint/typecheck, frontend tests and both builds. Its exact integration
+subcommand is `node scripts/with-env.mjs ./scripts/go.sh test -race -tags=integration
+-timeout=20m -count=1 ./tests/integration`; all 269 top-level groups pass in
+568.559 seconds with zero failures and zero skips. Frontend: 97/97 across 15 files.
+Browser application suite: 9/9; sign-in suite: 7/7. The checksum-pinned retained
+API was supplied for full and final tests, rather than silently skipping it.
+
+| Earlier capacity gate | Worst measured HTTP p95 ms | HTTP p99 ms | Unexpected errors |
+|---|---:|---:|---:|
+| Numeric | 101.014 | 118.948 | 0 |
+| Text/date, 12 cases | 289.271 | 332.876 | 0 |
+| Enum/reference, 12 cases | 234.462 | 252.081 | 0 |
+| Datetime/boolean, 12 cases | 264.545 | 313.507 | 0 |
+| Search, 8 cases | 176.219 | 186.043 | 0 |
+| 32-client writes, 8,163 mutations | 283.368 | 392.855 | 0 |
+| Unique fresh/conflict requests and 32-client writes | 359.583 | 368.484 | 0 |
+
+The p99 column reports the maximum observed p99 across each gate's cases; it
+need not come from the same case as maximum p95. Unique conflict requests expect
+100 actual conflicts, not successful mutation: all are classified correctly.
+Unique-key sustained writes complete 7,081 mutations, p95 304.839 ms,
+p99 333.094 ms, 117.53/s, zero errors. Ordinary writes complete 8,163 at 135.58/s.
+Historical R3c writes/unique writes had higher throughput (12,547/10,061), so the
+new joint scheduling/index/profile envelope is not described as throughput
+neutral. No controlled single-change causation claim is made. All eight original
+capacity targets pass without changing client counts or individual latency,
+statement, lock, transaction or queue limits. ADR058 is now accepted for this tier.
+
+`node .local/reports/r3d-startup-smoke.mjs` PASS: the built `bin/api` starts on
+owned temporary loopback ports via `node scripts/with-env.mjs bin/api`, responds
+HTTP 200 on health/readiness with all 11 dependency probes OK, then exits 0 after
+SIGTERM. Repeating with OTLP pointed at an unused local port also PASSes health,
+readiness and graceful exit. Both owned processes are stopped. This verifies
+startup tolerates an unavailable collector; it does not prove telemetry delivery
+during an outage. The helper, logs and result JSON are ignored local artifacts.
+
+`make docs-verify` preserves all 84 V2 and 43 V3 source checksums. The existing
+`make infra-up migrate migration-status` PASS applies all 54 migrations to the
+local developer database; final readiness confirms the aggregate/role contracts.
+No new migration is needed for ADR059. Migrations 53/54 remain immutable. No
+customer records, database volumes, immutable IR, audit, inbox or outbox evidence
+were removed. No new dependency or ERP/business module was introduced.
+
+## Remaining scope and recovery
+
+- SQL_V1 is opt-in count and exact integer/decimal/fixed-currency SUM over up to
+  100,000 authorized matching inputs, with certified snapshots and closed policy.
+  Indexed capacity is not raw/unindexed capacity. GROUP BY, arbitrary expressions,
+  expanded joins, report UI and larger/general workloads are NOT RUN/unsupported.
+- The explicit injected pgx-tracer panic diagnostic remains FAIL under R7
+  (IR-R3d-01). Default connection setup installs no custom tracer. Ordinary callback
+  panic rollback/reuse passes. No arbitrary driver-panic recovery is claimed.
+- R5 role-definition UI/external IdP and gateway deployment, R6 authenticated
+  requirement/verifier/promotion authority, R7 reliability/operations, wider
+  search/uniqueness lifecycle and production active-runtime wiring remain open.
+  Main merge, production deployment, external tools and M10 are NOT RUN.
+- To stop using this path, clients omit `aggregate.execution` and retain the
+  original bounded behavior. This is a client opt-in contract, not a global
+  server kill switch. If the endpoint must be withdrawn, stop the owned preview
+  API pending a reviewed forward fix. Preserve migrations, physical generations,
+  live ACLs and evidence; never run destructive downs or silently recompile IR.
+  Any binary downgrade requires its declared artifact/schema/role compatibility
+  checks; a metadata pointer rollback cannot reverse data or external effects.
+
+## Git and generated files
+
+This continuation started on `remediation/m9r-foundation` at `fab5636` with a
+modified R3d report. The report was preserved and the first checkpoint pushed as
+`9b759f1` before further implementation. Subsequent stable source, review and
+capacity evidence were pushed through `44e2c63`; final completion documentation
+is committed/pushed on that same designated branch. Main is not merged or rewritten.
+Tracked changes comprise ADR059, the physical namespace source, capacity/resource
+and independent tests, plus status/recovery documentation. Reused infrastructure
+and earlier committed M0–M9R work remain intact. Commit source/tests/docs/config
+only. Keep `.local`, `.env`, keys, binaries, dependencies, frontend builds,
+Playwright output and execution logs ignored; none belong in Git.

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Karthikeyan49/Framwork/internal/compiler"
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
@@ -15,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -142,10 +144,17 @@ type cursor struct {
 	Fingerprint string          `json:"fingerprint"`
 }
 
+// Includes worst-case JSON escaping of the existing 4096-byte string contract.
+const maxCursorBytes = 32 << 10
+
 func fingerprint(s Scope, a tenant.Access, e string, q Query) string {
 	q.After = ""
 	raw, _ := json.Marshal(q)
-	h := sha256.Sum256([]byte(a.TenantID() + s.AppID() + fmt.Sprint(s.Revision()) + s.Hash() + e + string(raw)))
+	identity := a.TenantID() + s.AppID() + fmt.Sprint(s.Revision()) + s.Hash() + e + string(raw)
+	if s.DatasetID() != "" {
+		identity += "/dataset/" + s.DatasetID() + "/binding/" + fmt.Sprint(s.BindingVersion())
+	}
+	h := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(h[:])
 }
 func project(r Record, ids []string) Record {
@@ -156,9 +165,37 @@ func project(r Record, ids []string) Record {
 		}
 	}
 	r.Values = out
+	if r.FieldAccess != nil {
+		a := &FieldAccess{Masked: []string{}, Writable: []string{}}
+		for _, id := range ids {
+			if slices.Contains(r.FieldAccess.Masked, id) {
+				a.Masked = append(a.Masked, id)
+			}
+			if slices.Contains(r.FieldAccess.Writable, id) {
+				a.Writable = append(a.Writable, id)
+			}
+		}
+		r.FieldAccess = a
+	}
 	return r
 }
-func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard) (Page, error) {
+func (st Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.Access, entity string, query Query, g Guard, resolve ...ScopeResolver) (page Page, resultErr error) {
+	if query.Search != nil && postgres.RuntimeSnapshot(q) {
+		if _, err := q.ExecContext(ctx, `SELECT set_config('app.search_text','',true)`); err != nil {
+			return Page{}, err
+		}
+		defer func() {
+			// SQL-aborted transactions cannot execute cleanup; WithRuntime rolls
+			// them back and clears its leased connection independently.
+			var state interface{ SQLState() string }
+			if errors.As(resultErr, &state) {
+				return
+			}
+			if _, clearErr := q.ExecContext(ctx, `SELECT set_config('app.search_text','',true)`); clearErr != nil && resultErr == nil {
+				page, resultErr = Page{}, ErrUnavailable
+			}
+		}()
+	}
 	e, err := plan(s, a, entity)
 	if err != nil {
 		return Page{}, err
@@ -169,26 +206,105 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	if err = g.check(ctx, "data.entity.read", Resource{EntityID: entity}); err != nil {
 		return Page{}, err
 	}
-	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > 2048 || len(query.Projection) == 0 || len(query.Projection) > 32 {
+	if err = g.check(ctx, "data.row.read", Resource{EntityID: entity}); err != nil {
+		return Page{}, err
+	}
+	if query.Limit < 1 || query.Limit > MaxPage || len(query.After) > base64.RawURLEncoding.EncodedLen(maxCursorBytes) || len(query.Projection) == 0 || len(query.Projection) > 32 {
 		return Page{}, ErrBudget
+	}
+	if query.Aggregate != nil && query.Aggregate.Execution != "" {
+		span.SetAttributes(attribute.String("query_execution", "aggregate-sql-v1"))
+		return st.aggregateSQL(ctx, q, s, a, e, query, g, resolve)
+	}
+	if st.visible && !st.sqlFields || !st.visible && query.RecordID != "" {
+		if !postgres.RuntimeSnapshot(q) {
+			return Page{}, ErrDenied
+		}
+		var stable bool
+		if err = q.QueryRowContext(ctx, `SELECT current_setting('transaction_isolation') IN ('repeatable read','serializable')`).Scan(&stable); err != nil {
+			return Page{}, err
+		}
+		if !stable {
+			return Page{}, ErrDenied
+		}
 	}
 	seen := map[string]bool{}
 	projected := map[string]bool{}
 	for _, id := range query.Projection {
-		if _, ok := field(e, id); !ok || seen[id] {
+		if _, ok := field(e, id); !ok || projected[id] {
 			return Page{}, ErrInvalid
 		}
-		seen[id] = true
+		seen[id] = !st.visible
 		projected[id] = true
-		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: id}); err != nil {
-			return Page{}, err
+		if !st.visible && query.RecordID == "" {
+			if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: id}); err != nil {
+				return Page{}, err
+			}
 		}
 	}
 	b := builder{args: base(s, a, entity)}
 	where := `r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5`
+	if query.RecordID != "" {
+		if !tenant.ValidID(query.RecordID) {
+			return Page{}, ErrInvalid
+		}
+		where += " AND r.id=" + b.bind(query.RecordID) + "::uuid"
+	}
+	accessScope, err := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity})
+	if err != nil {
+		return Page{}, err
+	}
+	n := 0
+	scopePredicate, err := scopeSQL(ctx, e, accessScope, a, "r", &b, 0, &n)
+	if err != nil {
+		return Page{}, err
+	}
+	where += " AND (" + scopePredicate + ")"
+	predicateGuard := g
+	if !st.visible && query.RecordID != "" {
+		var found bool
+		predicateGuard, found, err = checkPointInputActions(ctx, q, st, s, e, query, where, b, g)
+		if err != nil {
+			return Page{}, err
+		}
+		if !found {
+			return Page{Records: []Record{}}, nil
+		}
+	}
+	if st.visible {
+		predicateGuard = func(ctx context.Context, action string, r Resource) error {
+			if st.sqlFields {
+				if er := g.check(ctx, action, r); er != nil {
+					return er
+				}
+			}
+			fs, er := resolveScope(ctx, resolve, "data.read", r)
+			if er != nil {
+				return er
+			}
+			if !coversEntity(fs, accessScope) {
+				return ErrDenied
+			}
+			return nil
+		}
+	}
+	if st.visible && !st.sqlFields {
+		ids, er := predicateFields(s, e, query)
+		if er != nil {
+			return Page{}, er
+		}
+		for _, id := range ids {
+			if er = predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: id}); er != nil {
+				return Page{}, er
+			}
+		}
+		if er = checkPredicateActions(ctx, q, st, e, where, b, ids, g); er != nil {
+			return Page{}, er
+		}
+	}
 	if query.Filter != nil {
 		nodes := 0
-		condition, err := filterSQL(ctx, e, *query.Filter, &b, g, 0, &nodes)
+		condition, err := filterSQL(ctx, e, *query.Filter, &b, predicateGuard, 0, &nodes)
 		if err != nil {
 			return Page{}, err
 		}
@@ -206,6 +322,28 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	}
 	sf := compiler.Field{Type: "string", CoreID: true}
 	sortExpr, sortType := "r.id", "uuid"
+	indexJoin := ""
+	scalarFrom, scalarPredicate := "", ""
+	searchFrom := ""
+	if query.Search != nil {
+		if st.workerSource {
+			return Page{}, ErrDenied
+		}
+		if !validSearch(*query.Search) || query.Sort != nil || query.Aggregate != nil {
+			return Page{}, ErrInvalid
+		}
+		searchPlan, er := st.prepareSearch(ctx, q, s, a, entity, *query.Search, predicateGuard, &b)
+		if er != nil {
+			return Page{}, er
+		}
+		seen[searchPlan.field] = true
+		indexJoin, searchFrom = searchPlan.join, searchPlan.from
+		where += searchPlan.predicate
+		if searchFrom != "" {
+			sortExpr = "sp.id"
+			span.SetAttributes(attribute.String("query_index", "search-simple-v1"))
+		}
+	}
 	desc := false
 	if query.Sort != nil {
 		var ok bool
@@ -213,18 +351,78 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 		if !ok {
 			return Page{}, ErrInvalid
 		}
-		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: sf.ID}); err != nil {
+		if err = predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: sf.ID}); err != nil {
 			return Page{}, err
 		}
-		sortExpr, sortType = physical(sf, "r", &b)
 		desc = query.Sort.Desc
 		seen[sf.ID] = true
+		if !st.workerSource && !st.legacy && (sf.Type == "integer" || sf.Type == "decimal" || sf.Type == "money") {
+			index, indexErr := numericIndex(ctx, q, s, a, entity, sf.ID)
+			if indexErr != nil && indexErr != ErrNotFound {
+				return Page{}, indexErr
+			}
+			if indexErr == nil && index.State == "READY" {
+				// Same tenant/physical namespace, source row version and snapshot.
+				// All authorization/filter/cursor predicates remain before LIMIT.
+				indexJoin = ` JOIN runtime.numeric_projections ni ON ni.tenant_id=$1 AND ni.app_id=$2 AND ni.metadata_revision=$3 AND ni.ir_hash=$4 AND ni.entity_id=$5 AND ni.field_id=` + b.bind(sf.ID) + ` AND ni.id=r.id AND ni.source_version=r.row_version`
+				sortExpr = "ni.value_number"
+				sortType = "numeric"
+				span.SetAttributes(attribute.String("query_index", "numeric-v1"))
+			}
+		}
+		if !st.workerSource && !st.legacy && scalarType(sf.Type) && !sf.CoreID && postgres.RuntimeSnapshot(q) {
+			index, indexErr := scalarIndex(ctx, q, s, a, entity, sf.ID)
+			if indexErr != nil && indexErr != ErrNotFound {
+				return Page{}, indexErr
+			}
+			if indexErr == nil && index.State == "READY" {
+				usable, indexErr := scalarSortUsable(ctx, q, s, a, entity, sf)
+				if indexErr != nil {
+					return Page{}, indexErr
+				}
+				if usable {
+					scalarPredicate = `si.tenant_id=$1 AND si.app_id=$2 AND si.metadata_revision=$3 AND si.ir_hash=$4 AND si.entity_id=$5 AND si.field_id=` + b.bind(sf.ID)
+					switch sf.Type {
+					case "string":
+						scalarPredicate += ` AND si.field_type='string' AND NOT si.overflow`
+						sortExpr, sortType = "si.value_text", "text"
+					case "enum":
+						scalarPredicate += ` AND si.field_type='enum'`
+						sortExpr, sortType = "si.value_text", "text"
+					case "reference":
+						scalarPredicate += ` AND si.field_type='reference'`
+						sortExpr, sortType = "si.value_text", "text"
+					case "date":
+						scalarPredicate += ` AND si.field_type='date'`
+						sortExpr, sortType = "si.value_date", "date"
+					case "datetime":
+						scalarPredicate += ` AND si.field_type='datetime'`
+						sortExpr, sortType = "si.value_instant", "timestamptz"
+					case "bool":
+						scalarPredicate += ` AND si.field_type='bool'`
+						sortExpr, sortType = "si.value_boolean", "boolean"
+					}
+					indexJoin = ` JOIN runtime.scalar_projections si ON ` + scalarPredicate + ` AND si.id=r.id AND si.source_version=r.row_version`
+					// Prevent the live ACL view from being flattened into a dataset
+					// scan for every projection candidate under cold statistics.
+					// OFFSET 0 keeps namespace/ID/version inside the point lookup.
+					scalarFrom = `runtime.scalar_projections si JOIN LATERAL (SELECT r.* FROM ` + st.recordsTable() + ` r WHERE r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=si.id AND r.row_version=si.source_version OFFSET 0) r ON true`
+					span.SetAttributes(attribute.String("query_index", "scalar-v1-"+sf.Type))
+				}
+			}
+		}
+		if indexJoin == "" {
+			sortExpr, sortType = physical(sf, "r", &b)
+		}
 	}
 	fp := fingerprint(s, a, entity, query)
 	span.SetAttributes(attribute.String("query_fingerprint", fp))
 	if query.After != "" {
+		if len(query.After) > base64.RawURLEncoding.EncodedLen(maxCursorBytes) {
+			return Page{}, ErrInvalid
+		}
 		raw, err := base64.RawURLEncoding.DecodeString(query.After)
-		if err != nil || len(raw) > 1024 {
+		if err != nil || len(raw) > maxCursorBytes {
 			return Page{}, ErrInvalid
 		}
 		var c cursor
@@ -232,12 +430,21 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 			return Page{}, ErrInvalid
 		}
 		idArg := b.bind(c.ID) + "::uuid"
+		cursorID := "r.id"
+		if scalarFrom != "" {
+			// The point lookup proves equality. Keep cursor pruning on the
+			// projection so skipped keys do not fetch business records.
+			cursorID = "si.id"
+		}
+		if searchFrom != "" {
+			cursorID = "sp.id"
+		}
 		value, err := metadata.DecodeJSON(c.Value)
 		if err != nil {
 			return Page{}, ErrInvalid
 		}
 		if value == nil {
-			where += " AND (" + sortExpr + " IS NULL AND r.id>" + idArg + ")"
+			where += " AND (" + sortExpr + " IS NULL AND " + cursorID + ">" + idArg + ")"
 		} else {
 			v, err := fieldValue(sf, value)
 			if err != nil {
@@ -248,7 +455,7 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 			if desc {
 				op = "<"
 			}
-			where += " AND (" + sortExpr + op + val + " OR (" + sortExpr + "=" + val + " AND r.id>" + idArg + ") OR " + sortExpr + " IS NULL)"
+			where += " AND (" + sortExpr + op + val + " OR (" + sortExpr + "=" + val + " AND " + cursorID + ">" + idArg + ") OR " + sortExpr + " IS NULL)"
 		}
 	}
 	joinSQL := ""
@@ -272,19 +479,55 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 		if err = g.check(ctx, "data.entity.read", Resource{EntityID: target.ID}); err != nil {
 			return Page{}, err
 		}
-		if err = g.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: relation.FromField}); err != nil {
+		if err = g.check(ctx, "data.row.read", Resource{EntityID: target.ID}); err != nil {
 			return Page{}, err
 		}
+		if err = predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: relation.FromField}); err != nil {
+			return Page{}, err
+		}
+		joinSeen := map[string]bool{}
 		for _, id := range query.Join.Projection {
-			if _, ok := field(target, id); !ok {
+			if _, ok := field(target, id); !ok || joinSeen[id] {
 				return Page{}, ErrInvalid
 			}
-			if err = g.check(ctx, "data.field.read", Resource{EntityID: target.ID, FieldID: id}); err != nil {
-				return Page{}, err
+			joinSeen[id] = true
+			if !st.visible && query.RecordID == "" {
+				if err = g.check(ctx, "data.field.read", Resource{EntityID: target.ID, FieldID: id}); err != nil {
+					return Page{}, err
+				}
 			}
 		}
-		joinSQL = ` LEFT JOIN runtime.preview_records j ON j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
-		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,j.custom_data`
+		// Fence the canonical view's target lookup to this source row. Flattening
+		// it into the outer join can scan the entire target dataset before a
+		// selective authorized page, including when the source uses a GIN index.
+		joinSQL = ` LEFT JOIN LATERAL (SELECT j.* FROM ` + st.recordsTable() + ` j WHERE j.tenant_id=r.tenant_id AND j.app_id=r.app_id AND j.metadata_revision=r.metadata_revision AND j.ir_hash=r.ir_hash AND j.entity_id=` + b.bind(target.ID) + ` AND j.id=(r.custom_data->>` + b.bind(relation.FromField) + `)::uuid`
+		targetScope, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID})
+		if er != nil {
+			return Page{}, er
+		}
+		ns := 0
+		jp, er := scopeSQL(ctx, target, targetScope, a, "j", &b, 0, &ns)
+		if er != nil {
+			return Page{}, er
+		}
+		joinSQL += " AND (" + jp + ")"
+		if !st.visible {
+			for _, id := range query.Join.Projection {
+				fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: target.ID, FieldID: id})
+				if er != nil {
+					return Page{}, er
+				}
+				nodes := 0
+				pred, er := scopeSQL(ctx, target, fs, a, "j", &b, 0, &nodes)
+				if er != nil {
+					return Page{}, er
+				}
+				joinSQL += " AND (" + pred + ")"
+			}
+		}
+		joinSQL += " OFFSET 0) j ON true"
+		joinedData := "j.custom_data"
+		joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + joinedData
 	}
 	if query.Aggregate != nil {
 		if query.After != "" || query.Sort != nil {
@@ -298,6 +541,12 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 			if !ok || (f.Type != "integer" && f.Type != "decimal" && f.Type != "money") {
 				return Page{}, ErrInvalid
 			}
+			if st.visible {
+				if er := predicateGuard.check(ctx, "data.field.read", Resource{EntityID: entity, FieldID: f.ID}); er != nil {
+					return Page{}, er
+				}
+				seen[f.ID] = true
+			}
 			if !projected[f.ID] {
 				return Page{}, ErrInvalid
 			}
@@ -306,14 +555,90 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 			return Page{}, err
 		}
 	}
-	if err = authorizeCandidates(ctx, q, s, a, entity, seen, query.Join, target, g); err != nil {
-		return Page{}, err
+	keys := []string{}
+	for key, used := range seen {
+		if used {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fs, er := resolveScope(ctx, resolve, "data.read", Resource{EntityID: entity, FieldID: key})
+		if er != nil {
+			return Page{}, er
+		}
+		if st.visible {
+			if !coversEntity(fs, accessScope) {
+				return Page{}, ErrDenied
+			}
+			continue
+		}
+		n := 0
+		fp, er := scopeSQL(ctx, e, fs, a, "r", &b, 0, &n)
+		if er != nil {
+			return Page{}, er
+		}
+		where += " AND (" + fp + ")"
+	}
+	readIDs := append([]string(nil), query.Projection...)
+	if query.Sort != nil && !slices.Contains(readIDs, sf.ID) {
+		readIDs = append(readIDs, sf.ID)
 	}
 	order := "ASC"
 	if desc {
 		order = "DESC"
 	}
-	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,r.custom_data,` + joinedColumns + ` FROM runtime.preview_records r` + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	if !st.visible && query.RecordID != "" && query.Join != nil {
+		if _, er := projectActions(ctx, q, st, e, target, query, readIDs, where, indexJoin, joinSQL, sortExpr, order, b, g, true); er != nil {
+			return Page{}, er
+		}
+	}
+	selectedData := "r.custom_data"
+	if !st.visible && query.RecordID != "" {
+		selectedData = projectedJSON(e, readIDs, "r", &b)
+		if query.Join != nil {
+			joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + projectedJSON(target, query.Join.Projection, "j", &b)
+		}
+	}
+
+	if st.visible {
+		var actions fieldActions
+		if !st.sqlFields {
+			actions, err = projectActions(ctx, q, st, e, target, query, readIDs, where, indexJoin, joinSQL, sortExpr, order, b, g, false)
+			if err != nil {
+				return Page{}, err
+			}
+		}
+		selectedData, err = visibleJSON(ctx, e, readIDs, a, "r", &b, g, resolve, actions)
+		if err != nil {
+			return Page{}, err
+		}
+		if query.Join != nil {
+			joinedData, er := visibleJSON(ctx, target, query.Join.Projection, a, "j", &b, g, resolve, actions)
+			if er != nil {
+				return Page{}, er
+			}
+			joinedColumns = `j.id::text,j.row_version,j.created_by::text,j.created_at,j.updated_at,` + joinedData
+		}
+	}
+
+	statement := `SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM ` + st.recordsTable() + ` r` + indexJoin + joinSQL + ` WHERE ` + where + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,r.id ASC LIMIT ` + b.bind(query.Limit+1)
+	if (query.Sort != nil && !sf.CoreID || searchFrom != "") && !st.workerSource {
+		// Bound the sort tuple to ID/key before fetching wide JSONB records. Both
+		// stages share one statement/snapshot and forced RLS; entity/field/row
+		// DataScope and cursor predicates select the page before LIMIT. The outer
+		// fetch is constrained to the same namespace and those selected IDs.
+		limit := fmt.Sprintf("$%d", len(b.args))
+		pageFrom, pageWhere, pageID := st.recordsTable()+" r"+indexJoin, where, "r.id"
+		if scalarFrom != "" {
+			pageFrom, pageWhere, pageID = scalarFrom, where+" AND "+scalarPredicate, "si.id"
+		}
+		if searchFrom != "" {
+			pageFrom, pageID = searchFrom, "sp.id"
+		}
+		statement = `WITH selected_page AS MATERIALIZED (SELECT ` + pageID + ` AS id,` + sortExpr + ` AS sort_value FROM ` + pageFrom + ` WHERE ` + pageWhere + ` ORDER BY ` + sortExpr + ` ` + order + ` NULLS LAST,` + pageID + ` ASC LIMIT ` + limit + `)
+ SELECT r.id::text,r.row_version,r.created_by::text,r.created_at,r.updated_at,` + selectedData + `,r.owner_user_id::text,COALESCE(r.owner_team_id::text,''),` + joinedColumns + ` FROM selected_page p JOIN LATERAL (SELECT r.* FROM ` + st.recordsTable() + ` r WHERE r.tenant_id=$1 AND r.app_id=$2 AND r.metadata_revision=$3 AND r.ir_hash=$4 AND r.entity_id=$5 AND r.id=p.id OFFSET 0) r ON true` + joinSQL + ` ORDER BY p.sort_value ` + order + ` NULLS LAST,r.id ASC`
+	}
 	rows, err := q.QueryContext(ctx, statement, b.args...)
 	if err != nil {
 		return Page{}, err
@@ -322,38 +647,52 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	records := []Record{}
 	var lastValue any
 	hasMore := false
-	pending := []Resource{}
 	for rows.Next() {
 		var r Record
 		var raw, joinedRaw []byte
 		var jid, owner sql.NullString
 		var version sql.NullInt64
 		var created, updated sql.NullTime
-		if err = rows.Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &jid, &version, &owner, &created, &updated, &joinedRaw); err != nil {
+		if err = rows.Scan(&r.ID, &r.Version, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt, &raw, &r.OwnerID, &r.TeamID, &jid, &version, &owner, &created, &updated, &joinedRaw); err != nil {
 			return Page{}, err
 		}
-		if err = readValues(e, &r, raw); err != nil {
+		readEntity := e
+		if st.workerSource || !st.visible && query.RecordID != "" {
+			readEntity.Fields = nil
+			for _, f := range e.Fields {
+				if f.CoreID || slices.Contains(readIDs, f.ID) {
+					readEntity.Fields = append(readEntity.Fields, f)
+				}
+			}
+		}
+		if st.visible {
+			err = readVisibleValues(e, readIDs, &r, raw)
+		} else {
+			err = readValues(readEntity, &r, raw)
+		}
+		if err != nil {
 			return Page{}, err
-		}
-		pending = append(pending, Resource{EntityID: entity, RecordID: r.ID, OwnerID: r.CreatedBy})
-		keys := make([]string, 0, len(seen))
-		for key := range seen {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			pending = append(pending, Resource{EntityID: entity, FieldID: key, RecordID: r.ID, OwnerID: r.CreatedBy})
 		}
 		if query.Join != nil {
 			r.Related = map[string]*Record{query.Join.Relationship: nil}
 			if jid.Valid {
 				joined := Record{ID: jid.String, Version: version.Int64, CreatedBy: owner.String, CreatedAt: created.Time, UpdatedAt: updated.Time}
-				if err = readValues(target, &joined, joinedRaw); err != nil {
-					return Page{}, err
+				if st.visible {
+					err = readVisibleValues(target, query.Join.Projection, &joined, joinedRaw)
+				} else {
+					joinedEntity := target
+					if query.RecordID != "" {
+						joinedEntity.Fields = nil
+						for _, f := range target.Fields {
+							if f.CoreID || slices.Contains(query.Join.Projection, f.ID) {
+								joinedEntity.Fields = append(joinedEntity.Fields, f)
+							}
+						}
+					}
+					err = readValues(joinedEntity, &joined, joinedRaw)
 				}
-				pending = append(pending, Resource{EntityID: target.ID, RecordID: joined.ID, OwnerID: joined.CreatedBy})
-				for _, key := range query.Join.Projection {
-					pending = append(pending, Resource{EntityID: target.ID, FieldID: key, RecordID: joined.ID, OwnerID: joined.CreatedBy})
+				if err != nil {
+					return Page{}, err
 				}
 				joined = project(joined, query.Join.Projection)
 				r.Related[query.Join.Relationship] = &joined
@@ -376,19 +715,10 @@ func (Store) Query(ctx context.Context, q postgres.Executor, s Scope, a tenant.A
 	if err = rows.Close(); err != nil {
 		return Page{}, err
 	}
-	for _, resource := range pending {
-		action := "data.row.read"
-		if resource.FieldID != "" {
-			action = "data.field.read"
-		}
-		if err = g.check(ctx, action, resource); err != nil {
-			return Page{}, err
-		}
-	}
 	if hasMore && query.Aggregate != nil {
 		return Page{}, ErrBudget
 	}
-	page := Page{Records: records, Next: ""}
+	page = Page{Records: records, Next: ""}
 	// The cursor is generated only when an extra result was observed.
 	if hasMore && query.Aggregate == nil {
 		value, _ := json.Marshal(lastValue)

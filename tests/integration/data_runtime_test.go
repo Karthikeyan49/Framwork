@@ -151,6 +151,10 @@ func pageID(r data.Record) string { return r.ID }
 
 type denyDataPolicy struct{ action, field string }
 
+func (p denyDataPolicy) DataScope(ctx context.Context, s policy.Subject, a string, r policy.Resource, c policy.ScopeContext) (policy.DataScope, error) {
+	return (policy.Native{}).DataScope(ctx, s, a, r, c)
+}
+
 func (p denyDataPolicy) Decide(ctx context.Context, s policy.Subject, a string, r policy.Resource, c policy.Context) policy.Decision {
 	d := (policy.Native{}).Decide(ctx, s, a, r, c)
 	if a == p.action && (p.field == "" || r.FieldID == p.field) {
@@ -279,7 +283,7 @@ func TestM5ReferencesAndConcurrentVersions(t *testing.T) {
 	for status := range statuses {
 		if status == 200 {
 			success++
-		} else if status != 409 && status != 503 {
+		} else if status != 409 {
 			t.Fatal("unexpected concurrent status", status)
 		}
 	}
@@ -328,10 +332,10 @@ func TestM5DeclaredJoinAndReferenceDeleteRace(t *testing.T) {
 	if createStatus == 200 && deleteStatus == 200 {
 		t.Fatal("reference/delete race broke referential integrity")
 	}
-	if createStatus != 200 && createStatus != 400 && createStatus != 503 {
+	if createStatus != 200 && createStatus != 400 && createStatus != 409 {
 		t.Fatal("unexpected reference race status", createStatus)
 	}
-	if deleteStatus != 200 && deleteStatus != 409 && deleteStatus != 503 {
+	if deleteStatus != 200 && deleteStatus != 409 {
 		t.Fatal("unexpected delete race status", deleteStatus)
 	}
 	query = m5Query()
@@ -349,6 +353,15 @@ func TestM5DeclaredJoinAndReferenceDeleteRace(t *testing.T) {
 }
 
 type contextualDataPolicy struct{ mode string }
+
+func (p contextualDataPolicy) DataScope(ctx context.Context, s policy.Subject, a string, r policy.Resource, c policy.ScopeContext) (policy.DataScope, error) {
+	// V3 adapters express record-conditional field restrictions as SQL scopes,
+	// rather than depending on application-memory callbacks after fetching rows.
+	if p.mode == "field_at_row" && a == "data.read" && r.FieldID == "field.contact.name" {
+		return policy.DataScope{Kind: "NONE"}, policy.ErrScope
+	}
+	return (policy.Native{}).DataScope(ctx, s, a, r, c)
+}
 
 func (p contextualDataPolicy) Decide(ctx context.Context, s policy.Subject, action string, r policy.Resource, c policy.Context) policy.Decision {
 	d := (policy.Native{}).Decide(ctx, s, action, r, c)
@@ -368,7 +381,11 @@ func TestM5RecordSpecificFieldABACAndReferenceEntityPolicy(t *testing.T) {
 	r := m5Create(t, h, base, token, "Owned")
 	restricted := m5Handler(t, f, contextualDataPolicy{"field_at_row"}, audit.Postgres{}, true)
 	query := m5Query()
-	if w := m5Call(restricted, base+"/query", token, query); w.Code != 403 {
+	page := m5Page(t, m5Call(restricted, base+"/query", token, query))
+	if len(page.Records) != 1 || page.Records[0].FieldAccess == nil || len(page.Records[0].FieldAccess.Masked) != 1 || page.Records[0].FieldAccess.Masked[0] != "field.contact.name" {
+		t.Fatal("record-specific field must be masked without removing the visible row")
+	}
+	if _, present := page.Records[0].Values["field.contact.name"]; present {
 		t.Fatal("record-specific field projection bypass")
 	}
 	query.Projection = []string{"field.contact.id"}

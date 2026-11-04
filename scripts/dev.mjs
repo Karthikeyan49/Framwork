@@ -1,16 +1,20 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { runtimeEnv } from './runtime-env.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseEnv } from 'node:util'
 import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const env = { ...parseEnv(fs.readFileSync(path.join(root, '.env'), 'utf8')), ...process.env }
+const workerReady=spawnSync(path.join(root,'bin/worker-admin'),['--check'],{cwd:root,env:runtimeEnv(env,'worker'),stdio:'ignore'}).status===0
+if(!workerReady)console.log('Worker paused: provision a local owner and assign its tenant with bin/worker-admin. See README. API and frontend remain available.')
 console.log(`Development coordinator PID: ${process.pid}. Stop with Ctrl-C or SIGTERM to this owned PID.`)
 const children = [
-  spawn(path.join(root, 'bin/api'), [], { cwd: root, env, stdio: 'inherit' }),
-  spawn(path.join(root, 'bin/worker'), [], { cwd: root, env, stdio: 'inherit' }),
+  spawn(path.join(root, 'bin/api'), [], { cwd: root, env:runtimeEnv(env,'api'), stdio: 'inherit' }),
+  ...(workerReady?[spawn(path.join(root, 'bin/worker'), [], { cwd: root, env:runtimeEnv(env,'worker'), stdio: 'inherit' })]:[]),
+  spawn(path.join(root, 'bin/dispatcher'), [], { cwd: root, env:runtimeEnv(env,'dispatcher'), stdio: 'inherit' }),
   // The detached frontend must not take over the parent terminal's raw input.
-  spawn('npm', ['--prefix', 'apps/web', 'run', 'dev'], { cwd: root, env, stdio: ['ignore', 'inherit', 'inherit'], detached: process.platform !== 'win32' }),
+  spawn('npm', ['--prefix', 'apps/web', 'run', 'dev'], { cwd: root, env:runtimeEnv(env,'web'), stdio: ['ignore', 'inherit', 'inherit'], detached: process.platform !== 'win32' }),
 ]
 let stopping = false
 function stop(code) {

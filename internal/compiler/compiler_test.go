@@ -29,7 +29,9 @@ func fixture(t *testing.T) []byte {
 	}
 	return raw
 }
-func vendorCatalog() Catalog { return Catalog{"test-v1", []string{"vendor.notify"}, []string{}} }
+func vendorCatalog() Catalog {
+	return Catalog{Version: "test-v1", Permissions: []string{"vendor.notify"}, Tools: []string{}}
+}
 func TestCompilerGoldenAndOrderDeterminism(t *testing.T) {
 	raw := fixture(t)
 	program, ds := Compile(source(t, raw), vendorCatalog())
@@ -61,7 +63,7 @@ func TestCompilerGoldenAndOrderDeterminism(t *testing.T) {
 	if program.Hash() != before || !json.Valid(program.JSON()) {
 		t.Fatal("caller mutated trusted IR")
 	}
-	changed, ds := Compile(source(t, raw), Catalog{"different-v1", []string{"vendor.notify"}, []string{}})
+	changed, ds := Compile(source(t, raw), Catalog{Version: "different-v1", Permissions: []string{"vendor.notify"}, Tools: []string{}})
 	if len(ds) > 0 || changed.Hash() == program.Hash() {
 		t.Fatal("catalog identity absent from hash")
 	}

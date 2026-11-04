@@ -1,0 +1,236 @@
+{
+  "schema_version": "1.5.0",
+  "app_id": "app.vendor_tools",
+  "namespace": "example.vendors",
+  "base_version": null,
+  "definitions": [
+    {
+      "id": "entity.vendor",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Vendor",
+      "kind": "entity",
+      "entity": {
+        "fields": [
+          "field.vendor.id",
+          "field.vendor.name",
+          "field.vendor.tier",
+          "field.vendor.credit_limit",
+          "field.vendor.active",
+          "field.vendor.employees"
+        ]
+      }
+    },
+    {
+      "id": "field.vendor.id",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Identifier",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.vendor",
+        "type": "string",
+        "required": true
+      }
+    },
+    {
+      "id": "field.vendor.name",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Name",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.vendor",
+        "type": "string",
+        "required": true
+      }
+    },
+    {
+      "id": "field.vendor.tier",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Tier",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.vendor",
+        "type": "enum",
+        "required": false,
+        "enum_values": [
+          "gold",
+          "silver"
+        ]
+      }
+    },
+    {
+      "id": "field.vendor.credit_limit",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Credit limit",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.vendor",
+        "type": "decimal",
+        "required": false
+      }
+    },
+    {
+      "id": "field.vendor.active",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Active",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.vendor",
+        "type": "bool",
+        "required": true
+      }
+    },
+    {
+      "id": "field.vendor.employees",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Employees",
+      "kind": "field",
+      "field": {
+        "entity_ref": "entity.vendor",
+        "type": "integer",
+        "required": false
+      }
+    },
+    {
+      "id": "workflow.vendor.onboard",
+      "schema_version": "1.5.0",
+      "namespace": "example.vendors",
+      "label": "Vendor onboarding",
+      "kind": "workflow",
+      "workflow": {
+        "dsl_version": "2.1.0",
+        "version": "1.0.0",
+        "timeout_ms": 600000,
+        "entity_ref": "entity.vendor",
+        "trigger": "manual",
+        "initial_state": "state.start",
+        "states": [
+          {
+            "id": "state.start",
+            "type": "start",
+            "transitions": [
+              {
+                "to": "state.lookup",
+                "condition": {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "field",
+                      "field_ref": "field.vendor.active"
+                    },
+                    {
+                      "op": "literal",
+                      "value": true
+                    }
+                  ]
+                }
+              },
+              {
+                "to": "state.failed"
+              }
+            ]
+          },
+          {
+            "id": "state.lookup",
+            "type": "activity",
+            "activity": {
+              "tool_ref": "tool.vendor_lookup",
+              "version": "1.0.0",
+              "inputs": {
+                "vendor_id": "field.vendor.id"
+              },
+              "retry": {
+                "max_attempts": 3,
+                "initial_backoff_ms": 100,
+                "max_backoff_ms": 1000
+              }
+            },
+            "transitions": [
+              {
+                "to": "state.approval"
+              }
+            ]
+          },
+          {
+            "id": "state.approval",
+            "type": "approval",
+            "approval_roles": [
+              "admin",
+              "owner"
+            ],
+            "approval_timeout_ms": 300000,
+            "transitions": [
+              {
+                "to": "state.notify",
+                "on": "approved"
+              },
+              {
+                "to": "state.failed",
+                "on": "rejected"
+              }
+            ]
+          },
+          {
+            "id": "state.notify",
+            "type": "activity",
+            "activity": {
+              "tool_ref": "tool.vendor_notify",
+              "version": "1.0.0",
+              "inputs": {
+                "vendor_id": "field.vendor.id",
+                "name": "field.vendor.name",
+                "tier": "field.vendor.tier",
+                "credit_limit": "field.vendor.credit_limit"
+              },
+              "retry": {
+                "max_attempts": 2,
+                "initial_backoff_ms": 200,
+                "max_backoff_ms": 2000
+              }
+            },
+            "transitions": [
+              {
+                "to": "state.record"
+              }
+            ]
+          },
+          {
+            "id": "state.record",
+            "type": "activity",
+            "activity": {
+              "local_ref": "local.noop",
+              "version": "1.0.0",
+              "timeout_ms": 500,
+              "retry": {
+                "max_attempts": 1,
+                "initial_backoff_ms": 100,
+                "max_backoff_ms": 100
+              }
+            },
+            "transitions": [
+              {
+                "to": "state.complete"
+              }
+            ]
+          },
+          {
+            "id": "state.complete",
+            "type": "complete",
+            "transitions": []
+          },
+          {
+            "id": "state.failed",
+            "type": "failed",
+            "transitions": []
+          }
+        ]
+      }
+    }
+  ]
+}

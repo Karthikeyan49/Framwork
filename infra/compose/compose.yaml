@@ -25,7 +25,8 @@ services:
     command:
       - /bin/sh
       - -ec
-      - 'umask 077; printf "bind 0.0.0.0\nprotected-mode yes\nrequirepass %s\nappendonly no\n" "$$REDIS_PASSWORD" > /tmp/redis.conf; exec redis-server /tmp/redis.conf'
+      - 'umask 077; cp /run/framework/users.acl /tmp/users.acl; printf "bind 0.0.0.0\nprotected-mode yes\naclfile /tmp/users.acl\nappendonly no\nsave \"\"\ndbfilename framework-cache.rdb\n" > /tmp/redis.conf; exec redis-server /tmp/redis.conf'
+    volumes: ["../../.local/m8/users.acl:/run/framework/users.acl:ro"]
     ports: ["127.0.0.1:6379:6379"]
     healthcheck:
       test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep -q PONG"]

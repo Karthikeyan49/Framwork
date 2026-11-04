@@ -7,6 +7,7 @@ export interface Field {
   enum_values?: string[];
   currency?: string;
   reference_to?: string;
+  unique?: boolean;
 }
 export interface Entity {
   id: string;
@@ -40,6 +41,9 @@ export interface Preview {
   };
 }
 export interface Row {
+  owner_user_id?: string;
+  owner_team_id?: string;
+  field_access?: { masked: string[]; writable: string[] };
   id: string;
   version: number;
   values: Record<string, unknown>;
@@ -93,8 +97,10 @@ export function decodePreview(
     throw new Error("Invalid preview");
   const ir = raw.ir;
   if (
-    ir.ir_version !== rendererVersion ||
-    ir.compiler_version !== "1.0.0" ||
+    (ir.ir_version !== rendererVersion && ir.ir_version !== "1.1.0" && ir.ir_version !== "1.2.0" && ir.ir_version !== "1.3.0" && ir.ir_version !== "1.4.0" && ir.ir_version !== "1.5.0") ||
+    typeof ir.compiler_version !== "string" ||
+    ir.compiler_version.length === 0 ||
+    ir.compiler_version.length > 80 ||
     ir.schema_snapshot !== "hybrid-preview-v1" ||
     !object(ir.application) ||
     ir.application.app_id !== app ||
@@ -136,7 +142,8 @@ export function decodePreview(
           "reference",
         ].includes(f.type) ||
         typeof f.required !== "boolean" ||
-        typeof f.core_id !== "boolean"
+        typeof f.core_id !== "boolean" ||
+        (f.unique !== undefined && ((ir.ir_version !== "1.4.0" && ir.ir_version !== "1.5.0") || typeof f.unique !== "boolean" || (f.unique && f.core_id)))
       )
         throw new Error("Invalid field");
       if (
@@ -229,8 +236,8 @@ export function decodePreview(
     ir_hash: raw.ir_hash,
     can_write: raw.can_write,
     ir: {
-      ir_version: rendererVersion,
-      compiler_version: "1.0.0",
+      ir_version: String(ir.ir_version),
+      compiler_version: String(ir.compiler_version),
       schema_snapshot: "hybrid-preview-v1",
       entities: [...entities.values()],
       application: { app_id: app, definitions: pages },
@@ -243,9 +250,20 @@ export function decodeRow(v: unknown): Row {
     !uuid(v.id) ||
     !Number.isSafeInteger(v.version) ||
     Number(v.version) < 1 ||
-    !object(v.values)
+    !object(v.values) ||
+    v.owner_user_id !== undefined && !uuid(v.owner_user_id) ||
+    v.owner_team_id !== undefined && !uuid(v.owner_team_id)
   )
     throw new Error("Invalid record");
+  if (v.field_access !== undefined) {
+    const access = v.field_access;
+    if (!object(access) || !Array.isArray(access.masked) || !Array.isArray(access.writable) ||
+      access.masked.length > 32 || access.writable.length > 32 ||
+      [...access.masked, ...access.writable].some((x) => typeof x !== "string") ||
+      new Set(access.masked).size !== access.masked.length || new Set(access.writable).size !== access.writable.length ||
+      access.masked.some((x) => Object.hasOwn(v.values as object, x) || (access.writable as unknown[]).includes(x)))
+      throw new Error("Invalid field access");
+  }
   return v as unknown as Row;
 }
 export function decodeResult(v: unknown): Result {
@@ -254,7 +272,7 @@ export function decodeResult(v: unknown): Result {
     !Array.isArray(v.records) ||
     v.records.length > 100 ||
     typeof v.next !== "string" ||
-    v.next.length > 2048
+    v.next.length > 43691
   )
     throw new Error("Invalid records");
   return { records: v.records.map(decodeRow), next: v.next };

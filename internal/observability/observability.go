@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -24,6 +26,13 @@ type Providers struct {
 }
 
 func Start(ctx context.Context, service, environment, endpoint string, logger *slog.Logger) (*Providers, error) {
+	// The OpenTelemetry libraries log on their own, to standard error, and the exporters hand that logger the raw value of a malformed
+	// OTEL_EXPORTER_OTLP_* variable when they are made (TF-08); the SDK reports a malformed OTEL_TRACES_SAMPLER or OTEL_RESOURCE_ATTRIBUTES to the error
+	// handler, which prints it with the standard logger until one is installed (FU-03). Both are replaced before anything is made. The SDK of the automatic
+	// instrumentation reads its span limits when the program starts and warns about a malformed one on the default logger before main runs: nothing here reaches it.
+	otel.SetLogger(logr.New(&otelLogSink{logger: logger}))
+	// Exporter errors are redacted; transport errors may contain credential-bearing URLs.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) { logger.Warn("telemetry export unavailable") }))
 	res := resource.NewSchemaless(semconv.ServiceName(service), semconv.DeploymentEnvironmentName(environment))
 	traces := []trace.TracerProviderOption{trace.WithResource(res), trace.WithSampler(trace.ParentBased(trace.TraceIDRatioBased(0.1)))}
 	metrics := []metric.Option{metric.WithResource(res)}
@@ -47,8 +56,8 @@ func Start(ctx context.Context, service, environment, endpoint string, logger *s
 	otel.SetTracerProvider(providers.Traces)
 	otel.SetMeterProvider(providers.Metrics)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-	// Exporter errors are redacted; transport errors may contain credential-bearing URLs.
-	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) { logger.Warn("telemetry export unavailable") }))
+	// The Redis client logs on its own, to standard error, with the dial target and the driver's error text (LE-02).
+	redis.SetLogger(&redisLogger{logger: logger})
 	if err := runtime.Start(runtime.WithMeterProvider(providers.Metrics)); err != nil {
 		logger.Warn("runtime metrics unavailable")
 	}

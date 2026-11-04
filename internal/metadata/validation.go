@@ -11,9 +11,12 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	contracts "github.com/Karthikeyan49/Framwork/contracts/jsonschema"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 	js "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -45,32 +48,77 @@ func (s Source) Namespace() string     { return s.document.Namespace }
 func (s Source) Hash() string          { return s.hash }
 func (s Source) JSON() json.RawMessage { return append(json.RawMessage(nil), s.raw...) }
 
-type Validator struct{ schema *js.Schema }
+type Validator struct {
+	schema             *js.Schema
+	rulesSchema        *js.Schema
+	workflowSchema     *js.Schema
+	approvalSchema     *js.Schema
+	integritySchema    *js.Schema
+	toolWorkflowSchema *js.Schema
+}
 type noLoader struct{}
 
 func (noLoader) Load(string) (any, error) {
 	return nil, errors.New("external schema loading is disabled")
 }
+
+// Only fixed, embedded schema graphs are shared. Request/source validation state
+// belongs to each call; tenant metadata and authorization are never cached here.
+var embeddedSchemas = sync.OnceValues(compileEmbeddedSchemas)
+
 func NewValidator() (*Validator, error) {
-	raw, err := contracts.Files.ReadFile("application-v1.schema.json")
+	template, err := embeddedSchemas()
 	if err != nil {
 		return nil, err
 	}
-	schema, err := js.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
+	copy := *template
+	return &copy, nil
+}
+
+func compileEmbeddedSchemas() (*Validator, error) {
+	compile := func(file, version string) (*js.Schema, error) {
+		raw, e := contracts.Files.ReadFile(file)
+		if e != nil {
+			return nil, e
+		}
+		schema, e := js.UnmarshalJSON(bytes.NewReader(raw))
+		if e != nil {
+			return nil, e
+		}
+		c := js.NewCompiler()
+		c.DefaultDraft(js.Draft2020)
+		c.UseLoader(noLoader{})
+		id := "urn:framework:metadata:" + version
+		if e = c.AddResource(id, schema); e != nil {
+			return nil, e
+		}
+		return c.Compile(id)
 	}
-	c := js.NewCompiler()
-	c.DefaultDraft(js.Draft2020)
-	c.UseLoader(noLoader{})
-	if err = c.AddResource("urn:framework:metadata:1.0.0", schema); err != nil {
-		return nil, err
+	old, e := compile("application-v1.schema.json", SchemaVersion)
+	if e != nil {
+		return nil, e
 	}
-	compiled, err := c.Compile("urn:framework:metadata:1.0.0")
-	if err != nil {
-		return nil, err
+	next, e := compile("application-v1.1.schema.json", RuleSchemaVersion)
+	if e != nil {
+		return nil, e
 	}
-	return &Validator{compiled}, nil
+	workflows, e := compile("application-v1.2.schema.json", WorkflowSchemaVersion)
+	if e != nil {
+		return nil, e
+	}
+	approvals, e := compile("application-v1.3.schema.json", ApprovalSchemaVersion)
+	if e != nil {
+		return nil, e
+	}
+	integrity, e := compile("application-v1.4.schema.json", IntegritySchemaVersion)
+	if e != nil {
+		return nil, e
+	}
+	toolWorkflows, e := compile("application-v1.5.schema.json", ToolWorkflowSchemaVersion)
+	if e != nil {
+		return nil, e
+	}
+	return &Validator{old, next, workflows, approvals, integrity, toolWorkflows}, nil
 }
 func (v *Validator) Parse(raw []byte) (Source, error) { return v.parse(raw, MaxBytes) }
 
@@ -87,10 +135,29 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 	if err != nil {
 		return Source{}, err
 	}
-	if err = v.schema.Validate(value); err != nil {
+	active := v.schema
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == RuleSchemaVersion {
+		active = v.rulesSchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == WorkflowSchemaVersion {
+		active = v.workflowSchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == ApprovalSchemaVersion {
+		active = v.approvalSchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == IntegritySchemaVersion {
+		active = v.integritySchema
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["schema_version"] == ToolWorkflowSchemaVersion {
+		active = v.toolWorkflowSchema
+	}
+	if active == nil {
+		return Source{}, ErrUnavailable
+	}
+	if err = active.Validate(value); err != nil {
 		var validation *js.ValidationError
 		if errors.As(err, &validation) {
-			return Source{}, invalid("/"+strings.Join(validation.InstanceLocation, "/"), "schema_violation", "Document violates metadata schema 1.0.0")
+			return Source{}, invalid("/"+strings.Join(validation.InstanceLocation, "/"), "schema_violation", "Document violates its versioned metadata schema")
 		}
 		return Source{}, ErrInvalid
 	}
@@ -120,7 +187,7 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 	// Ensure Go serialization preserves the published contract, including empty
 	// required arrays/maps and numeric spellings normalized for JSONB persistence.
 	roundTrip, err := DecodeJSON(encoded)
-	if err != nil || v.schema.Validate(roundTrip) != nil {
+	if err != nil || active.Validate(roundTrip) != nil {
 		return Source{}, ErrInvalid
 	}
 	if len(encoded) > MaxBytes {
@@ -133,9 +200,28 @@ func (v *Validator) parse(raw []byte, inputLimit int) (Source, error) {
 // DecodeJSON rejects duplicate keys, invalid UTF-8, trailing data and excessive
 // nesting before schema validation. Numbers are exact decimal values with at most
 // 18 fractional digits and bounded exponents; no floating-point hash conversion.
+// foldKey canonicalises a JSON object key the way encoding/json matches struct
+// fields (Unicode simple folding): every rune becomes the smallest member of its
+// folding orbit.
+func foldKey(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		smallest := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < smallest {
+				smallest = f
+			}
+		}
+		b.WriteRune(smallest)
+	}
+	return b.String()
+}
+
 func DecodeJSON(raw []byte) (any, error) { return decodeJSON(raw, MaxBytes+4096) }
 func decodeJSON(raw []byte, maxBytes int) (any, error) {
-	if len(raw) == 0 || len(raw) > maxBytes || !utf8.Valid(raw) {
+	// Bytes that are not UTF-8, and the escape of half of a surrogate pair that the other half does not complete, would be decoded as U+FFFD: two different texts, one
+	// value (independent review of the follow-up, FU-05; the tool gateway, the catalog and the AI provider refuse both since TS-04 and TF-07).
+	if len(raw) == 0 || len(raw) > maxBytes || !utf8.Valid(raw) || tools.HasLoneSurrogateEscape(raw) {
 		return nil, invalid("", "invalid_json", "Invalid or oversized JSON")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -155,6 +241,7 @@ func decodeJSON(raw []byte, maxBytes int) (any, error) {
 		case json.Delim:
 			if token == '{' {
 				values := map[string]any{}
+				foldedKeys := map[string]string{}
 				for dec.More() {
 					key, err := dec.Token()
 					if err != nil {
@@ -167,6 +254,15 @@ func decodeJSON(raw []byte, maxBytes int) (any, error) {
 					if _, exists := values[name]; exists {
 						return nil, invalid("", "duplicate_key", "Duplicate JSON keys are forbidden")
 					}
+					// encoding/json matches struct fields with Unicode simple folding, so
+					// {"revision":1,"Revision":2} (or "revisioN" spelled with a folded rune)
+					// would decode to the LAST spelling while any other JSON reader sees two
+					// unrelated keys. Keys that fold to the same name are duplicates.
+					folded := foldKey(name)
+					if other, exists := foldedKeys[folded]; exists && other != name {
+						return nil, invalid("", "duplicate_key", "JSON keys that differ only by case are forbidden")
+					}
+					foldedKeys[folded] = name
 					value, err := read(depth + 1)
 					if err != nil {
 						return nil, err

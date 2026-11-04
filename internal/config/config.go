@@ -6,34 +6,141 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Karthikeyan49/Framwork/internal/identity"
+	"github.com/Karthikeyan49/Framwork/internal/platform/traffic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 )
 
+var brokerUserPattern = regexp.MustCompile(`^event_[a-z][a-z0-9_]{0,62}$`)
+
 type Config struct {
-	Environment       string
-	HTTPAddr          string
-	DatabaseURL       string
-	RedisURL          string
-	CORSOrigins       []string
-	OTelEndpoint      string
-	LogLevel          slog.Level
-	DependencyTimeout time.Duration
-	ShutdownTimeout   time.Duration
-	AuthIssuer        string
-	AuthAudience      string
-	AuthJWKSFile      string
+	Environment           string
+	HTTPAddr              string
+	APIConcurrency        int
+	APIRequestLimits      traffic.Limits
+	DatabaseURL           string
+	WorkerDatabaseURL     string
+	DispatcherDatabaseURL string
+	EventsEnabled         bool
+	WorkflowsEnabled      bool
+	EventRedisURL         string
+	RedisURL              string
+	CORSOrigins           []string
+	OTelEndpoint          string
+	LogLevel              slog.Level
+	DependencyTimeout     time.Duration
+	ShutdownTimeout       time.Duration
+	AuthIssuer            string
+	AuthAudience          string
+	AuthJWKSFile          string
+	AuthClockSkew         time.Duration
+	OIDC                  *identity.Provider
+	SignInRedisURL        string
+	// Trusted M10 tool registry configuration; values are paths, never secrets.
+	ToolCatalogFile   string
+	ToolSecretsDir    string
+	ToolCAFile        string
+	ToolAllowInternal bool
+	// AIProviderFile names an ai-provider-v1 file (ADR104); empty leaves the AI
+	// builder unconfigured (its routes answer 503). A path, never a secret.
+	AIProviderFile string
 }
 
+// AIShutdownTimeout is how long a stopping API waits for its running requests when the AI builder is configured: the 70 s a creation can
+// hold its request, and ten seconds more. Without the AI builder the wait is ten seconds. SHUTDOWN_TIMEOUT overrides both, and the
+// termination grace of the orchestrator must be longer than the value in force.
+const AIShutdownTimeout = 80 * time.Second
+
 func Load(getenv func(string) string) (Config, error) {
-	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
+	c := Config{Environment: value(getenv, "APP_ENV", "development"), HTTPAddr: value(getenv, "HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: getenv("DATABASE_URL"), WorkerDatabaseURL: getenv("WORKER_DATABASE_URL"), RedisURL: getenv("REDIS_URL"), OTelEndpoint: getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), DependencyTimeout: 2 * time.Second, ShutdownTimeout: 10 * time.Second}
+	var concurrencyErr error
+	c.APIConcurrency, concurrencyErr = strconv.Atoi(value(getenv, "API_DB_CONCURRENCY", "4"))
+	if concurrencyErr != nil || c.APIConcurrency < 1 || c.APIConcurrency > 10 {
+		return c, fmt.Errorf("API_DB_CONCURRENCY must be an integer from 1 to 10")
+	}
+	if err := loadTraffic(getenv, &c); err != nil {
+		return c, err
+	}
+	c.DispatcherDatabaseURL = getenv("DISPATCHER_DATABASE_URL")
+	c.EventRedisURL = getenv("EVENT_REDIS_URL")
+	switch getenv("WORKFLOWS_ENABLED") {
+	case "":
+		c.WorkflowsEnabled = c.Environment == "development" || c.Environment == "test"
+	case "false":
+	case "true":
+		c.WorkflowsEnabled = true
+	default:
+		return c, fmt.Errorf("WORKFLOWS_ENABLED must be true or false")
+	}
+	if c.WorkflowsEnabled && c.Environment == "production" {
+		return c, fmt.Errorf("M9 preview workflows require development/test; production requires approved release activation")
+	}
+	switch getenv("EVENTS_ENABLED") {
+	case "", "false":
+	case "true":
+		c.EventsEnabled = true
+	default:
+		return c, fmt.Errorf("EVENTS_ENABLED must be true or false")
+	}
+	if c.EventsEnabled && c.Environment == "production" {
+		return c, fmt.Errorf("M8 preview event delivery requires development/test; production consumers require release activation")
+	}
+	if c.EventRedisURL != "" {
+		options, err := redis.ParseURL(c.EventRedisURL)
+		u, urlErr := url.Parse(c.EventRedisURL)
+		if err != nil || urlErr != nil || u.Hostname() == "" || u.User == nil || u.RawQuery != "" || u.Fragment != "" || options.Password == "" || !brokerUserPattern.MatchString(options.Username) || options.Username == "event_operator" || (u.Scheme != "redis" && u.Scheme != "rediss") {
+			return c, fmt.Errorf("EVENT_REDIS_URL requires a dedicated unambiguous sender/receiver binding")
+		}
+		if c.Environment == "production" && (options.TLSConfig == nil || options.TLSConfig.InsecureSkipVerify) {
+			return c, fmt.Errorf("EVENT_REDIS_URL requires verified TLS in production")
+		}
+	}
 	switch c.Environment {
 	case "development", "test", "production":
 	default:
 		return c, fmt.Errorf("APP_ENV must be development, test, or production")
+	}
+	c.ToolCatalogFile, c.ToolSecretsDir, c.ToolCAFile = getenv("TOOL_CATALOG_FILE"), getenv("TOOL_SECRETS_DIR"), getenv("TOOL_CA_FILE")
+	switch getenv("TOOL_ALLOW_INTERNAL") {
+	case "", "false":
+	case "true":
+		c.ToolAllowInternal = true
+	default:
+		return c, fmt.Errorf("TOOL_ALLOW_INTERNAL must be true or false")
+	}
+	if c.ToolAllowInternal && c.Environment == "production" {
+		return c, fmt.Errorf("TOOL_ALLOW_INTERNAL is restricted to development/test network policies")
+	}
+	for _, p := range []string{c.ToolCatalogFile, c.ToolSecretsDir, c.ToolCAFile} {
+		if p != "" && (len(p) > 4096 || strings.ContainsRune(p, 0)) {
+			return c, fmt.Errorf("tool configuration paths are invalid")
+		}
+	}
+	if c.AIProviderFile = getenv("AI_PROVIDER_FILE"); c.AIProviderFile != "" {
+		if len(c.AIProviderFile) > 4096 || strings.ContainsRune(c.AIProviderFile, 0) {
+			return c, fmt.Errorf("AI_PROVIDER_FILE is invalid")
+		}
+		if c.Environment == "production" {
+			return c, fmt.Errorf("AI_PROVIDER_FILE is restricted to development/test: the AI builder is a preview capability")
+		}
+		// A creation holds its request up to 70 s (60 s of provider wall clock and the 10 s margin of the result exchange, ADR104 A5):
+		// a stop that waits 10 s abandons every paid phase in flight and the sweep charges each one its whole reservation
+		// (independent edge rehearsal ER-03).
+		c.ShutdownTimeout = AIShutdownTimeout
+	}
+	if raw := getenv("SHUTDOWN_TIMEOUT"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < time.Second || d > 5*time.Minute {
+			return c, fmt.Errorf("SHUTDOWN_TIMEOUT must be a duration with a unit (for example 30s) from 1s to 5m")
+		}
+		c.ShutdownTimeout = d
 	}
 	c.AuthIssuer = getenv("AUTH_ISSUER")
 	c.AuthAudience = getenv("AUTH_AUDIENCE")
@@ -56,10 +163,23 @@ func Load(getenv func(string) string) (Config, error) {
 	if err := c.LogLevel.UnmarshalText([]byte(value(getenv, "LOG_LEVEL", "info"))); err != nil {
 		return c, fmt.Errorf("LOG_LEVEL is invalid")
 	}
-	for _, entry := range []struct {
+	connections := []struct {
 		name, raw string
 		schemes   []string
-	}{{"DATABASE_URL", c.DatabaseURL, []string{"postgres", "postgresql"}}, {"REDIS_URL", c.RedisURL, []string{"redis", "rediss"}}} {
+	}{{"DATABASE_URL", c.DatabaseURL, []string{"postgres", "postgresql"}}, {"REDIS_URL", c.RedisURL, []string{"redis", "rediss"}}}
+	if c.WorkerDatabaseURL != "" {
+		connections = append(connections, struct {
+			name, raw string
+			schemes   []string
+		}{"WORKER_DATABASE_URL", c.WorkerDatabaseURL, []string{"postgres", "postgresql"}})
+	}
+	if raw := getenv("DISPATCHER_DATABASE_URL"); raw != "" {
+		connections = append(connections, struct {
+			name, raw string
+			schemes   []string
+		}{"DISPATCHER_DATABASE_URL", raw, []string{"postgres", "postgresql"}})
+	}
+	for _, entry := range connections {
 		u, err := url.Parse(entry.raw)
 		if err != nil || u.Hostname() == "" || !contains(entry.schemes, u.Scheme) {
 			return c, fmt.Errorf("%s must be a valid connection URL", entry.name)
@@ -72,7 +192,7 @@ func Load(getenv func(string) string) (Config, error) {
 			if !ok || strings.TrimSpace(pass) == "" {
 				return c, fmt.Errorf("%s requires credentials in production", entry.name)
 			}
-			if entry.name == "DATABASE_URL" {
+			if entry.name != "REDIS_URL" {
 				if err := verifyPostgres(entry.raw, u); err != nil {
 					return c, fmt.Errorf("DATABASE_URL %s", err)
 				}
@@ -108,6 +228,9 @@ func Load(getenv func(string) string) (Config, error) {
 			return c, fmt.Errorf("production telemetry requires HTTPS")
 		}
 	}
+	if err := loadLogin(getenv, &c); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 
@@ -116,6 +239,33 @@ func value(getenv func(string) string, key, fallback string) string {
 		return s
 	}
 	return fallback
+}
+
+// EventBinding verifies a process-specific sender/receiver identity before it
+// can consume delivery attempts. A successful Redis PING is not that proof.
+func (c Config) EventBinding(service string) error {
+	u, err := url.Parse(c.EventRedisURL)
+	expected := "event_worker"
+	if service == "framework-dispatcher" {
+		expected = "event_dispatcher"
+	} else if service != "framework-worker" {
+		return fmt.Errorf("unknown event process")
+	} else if c.WorkerDatabaseURL != "" {
+		binding, err := pgx.ParseConfig(c.WorkerDatabaseURL)
+		if err != nil {
+			return fmt.Errorf("worker audience binding required")
+		}
+		if contains([]string{"operator", "dispatcher", "worker"}, binding.User) {
+			return fmt.Errorf("reserved worker audience name")
+		}
+		if binding.User != "framework_worker" {
+			expected = "event_" + binding.User
+		}
+	}
+	if err != nil || u.User == nil || u.User.Username() != expected {
+		return fmt.Errorf("dedicated event process binding required")
+	}
+	return nil
 }
 func contains(xs []string, s string) bool {
 	for _, x := range xs {

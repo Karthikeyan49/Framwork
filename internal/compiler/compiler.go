@@ -10,10 +10,31 @@ import (
 	"strings"
 
 	"github.com/Karthikeyan49/Framwork/internal/metadata"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/rules"
+	"github.com/Karthikeyan49/Framwork/internal/runtime/workflow"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 )
 
 const Version = "1.0.0"
 const IRVersion = "1.0.0"
+const RuleIRVersion = "1.1.0"
+const RuleCompilerVersion = "1.1.0"
+const WorkflowIRVersion = "1.2.0"
+const WorkflowCompilerVersion = "1.2.0"
+const ApprovalIRVersion = "1.3.0"
+const ApprovalCompilerVersion = "1.3.0"
+const IntegrityIRVersion = "1.4.0"
+const IntegrityCompilerVersion = "1.4.0"
+
+// ToolWorkflowIRVersion is emitted only for opt-in schema 1.5.0 (ADR100). 1.3.0 and 1.4.0
+// belong to the approval-role and integrity contracts.
+const ToolWorkflowIRVersion = "1.5.0"
+const ToolWorkflowCompilerVersion = "1.5.0"
+
+func SupportedIRVersions() []string {
+	return []string{IRVersion, RuleIRVersion, WorkflowIRVersion, ApprovalIRVersion, IntegrityIRVersion, ToolWorkflowIRVersion}
+}
+
 const SchemaSnapshot = "hybrid-preview-v1"
 
 type Diagnostic struct {
@@ -25,6 +46,15 @@ type Catalog struct {
 	Version     string   `json:"version"`
 	Permissions []string `json:"permissions"`
 	Tools       []string `json:"tools"`
+	// ToolCatalog is the operator-owned trusted tool registry (ADR100). It is
+	// excluded from CatalogHash: each resolved definition's canonical hash is
+	// pinned inside the workflow plan instead, so existing IR hashes are stable.
+	ToolCatalog tools.Catalog `json:"-"`
+	// Tenant, when set, is the tenant that compiles: a tool the catalog restricts to other tenants is then unknown, exactly like a tool
+	// that is not registered, so a tenant can neither pin a private tool of another tenant nor tell that it exists (ADR100 decision 2,
+	// independent red team TS-02). Empty means no tenant is asking (examples, fixtures, tooling), and the allowlist is checked at
+	// execution and by the release builder as before. Like ToolCatalog it is not part of CatalogHash.
+	Tenant string `json:"-"`
 }
 
 func PlatformCatalog() Catalog {
@@ -40,6 +70,7 @@ type Field struct {
 	EnumValues  []string `json:"enum_values,omitempty"`
 	Currency    string   `json:"currency,omitempty"`
 	ReferenceTo string   `json:"reference_to,omitempty"`
+	Unique      bool     `json:"unique,omitempty"`
 }
 type Entity struct {
 	ID     string  `json:"id"`
@@ -63,14 +94,20 @@ type IR struct {
 	Entities        []Entity          `json:"entities"`
 	Migration       MigrationPlan     `json:"migration"`
 	Tests           []TestCase        `json:"tests"`
+	Rules           []rules.Plan      `json:"rules,omitempty"`
+	Workflows       []workflow.Plan   `json:"workflows,omitempty"`
 }
 
 // Program is minted by Compile. Copies of IR cannot mutate its trusted state.
 type Program struct {
-	raw  []byte
-	hash string
+	raw        []byte
+	hash       string
+	sourceHash string
 }
 
+func (p Program) MatchesSource(s metadata.Source) bool {
+	return p.sourceHash != "" && p.sourceHash == digest(s.JSON())
+}
 func (p Program) Valid() bool           { return len(p.raw) > 0 && p.hash != "" }
 func (p Program) Hash() string          { return p.hash }
 func (p Program) JSON() json.RawMessage { return append(json.RawMessage(nil), p.raw...) }
@@ -138,7 +175,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		values := append([]string{}, f.EnumValues...)
 		sort.Strings(values)
 		f.EnumValues = values
-		fields[d.ID] = Field{d.ID, d.Label, f.Type, f.Required, core, values, f.Currency, f.ReferenceTo}
+		fields[d.ID] = Field{d.ID, d.Label, f.Type, f.Required, core, values, f.Currency, f.ReferenceTo, f.Unique}
 		if f.Type != "enum" && len(f.EnumValues) > 0 || f.Type != "money" && f.Currency != "" || f.Type != "reference" && f.ReferenceTo != "" {
 			add("/"+d.ID, "field_options", "Field options must match its type")
 		}
@@ -153,6 +190,9 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		}
 		sort.Strings(d.Entity.Fields)
 		e := Entity{ID: d.ID, Label: d.Label, Fields: []Field{}}
+		if len(d.Entity.Fields) < 1 || len(d.Entity.Fields) > 32 {
+			add("/"+d.ID, "entity_field_budget", "Runtime entities require 1–32 fields")
+		}
 		for _, id := range d.Entity.Fields {
 			fd, ok := resolve(id, "field", "/"+d.ID+"/fields")
 			if !ok {
@@ -178,9 +218,20 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 			add("/"+id, "orphan_field", "Every field must be listed by its owning entity")
 		}
 	}
+	if err := validateIntegrity(doc.SchemaVersion, entities); err != nil {
+		add("/definitions", "unique_contract", "Unique fields require schema 1.4, supported non-intrinsic types and at most eight per entity / 32 per application")
+	}
 	expression := expressionChecker(fields, membership, add)
-	var component func(metadata.Component, string, string, bool)
-	component = func(c metadata.Component, owner, path string, inForm bool) {
+	rulePlans := []rules.Plan{}
+	workflowPlans := []workflow.Plan{}
+	componentNodes := 0
+	var component func(metadata.Component, string, string, bool, int)
+	component = func(c metadata.Component, owner, path string, inForm bool, depth int) {
+		componentNodes++
+		if componentNodes > 1000 || depth > 8 {
+			add(path, "component_budget", "UI component count/depth exceeds renderer limits")
+			return
+		}
 		if c.Type == "form" && inForm {
 			add(path, "nested_form", "Forms cannot contain another form")
 		}
@@ -208,7 +259,7 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 			add(path, "unavailable_component", "This component requires a capability unavailable in this compiler version")
 		}
 		for i, child := range c.Children {
-			component(child, owner, fmt.Sprintf("%s/children/%d", path, i), inForm || c.Type == "form")
+			component(child, owner, fmt.Sprintf("%s/children/%d", path, i), inForm || c.Type == "form", depth+1)
 		}
 	}
 	for i := range doc.Definitions {
@@ -228,19 +279,65 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 		if p := d.Page; p != nil {
 			resolve(p.EntityRef, "entity", path)
 			for j, c := range p.Components {
-				component(c, p.EntityRef, fmt.Sprintf("%s/components/%d", path, j), false)
+				component(c, p.EntityRef, fmt.Sprintf("%s/components/%d", path, j), false, 0)
 			}
 		}
 		if r := d.Rule; r != nil {
 			resolve(r.EntityRef, "entity", path)
-			typ := expression(r.Expression, r.EntityRef, path+"/expression")
-			if typ != r.ResultType && !(r.ResultType == "decimal" && typ == "integer") {
-				add(path, "rule_type", "Rule result type must match its declared expression type")
+			if doc.SchemaVersion == metadata.RuleSchemaVersion || metadata.WorkflowSchema(doc.SchemaVersion) {
+				var entity Entity
+				for _, e := range entities {
+					if e.ID == r.EntityRef {
+						entity = e
+					}
+				}
+				definition := ruleDefinition(d.ID, *r, entity)
+				executable, err := rules.Compile(definition)
+				if err != nil {
+					add(path, "rule_type", "Rule V2 violates type, currency, calendar or resource contracts")
+				} else {
+					plan := executable.Plan()
+					rulePlans = append(rulePlans, plan)
+					r.Calendars = plan.Calendars
+					tests = append(tests, TestCase{d.ID, "rule_determinism"})
+				}
+			} else {
+				typ := expression(r.Expression, r.EntityRef, path+"/expression")
+				if typ != r.ResultType && !(r.ResultType == "decimal" && typ == "integer") {
+					add(path, "rule_type", "Rule result type must match its declared expression type")
+				}
 			}
 		}
 		if w := d.Workflow; w != nil {
 			resolve(w.EntityRef, "entity", path)
-			validateWorkflow(w, path, symbols, catalog, expression, add)
+			if metadata.WorkflowSchema(doc.SchemaVersion) {
+				var entity Entity
+				for _, e := range entities {
+					if e.ID == w.EntityRef {
+						entity = e
+					}
+				}
+				definition := ruleDefinition(d.ID, metadata.Rule{EntityRef: w.EntityRef}, entity)
+				var resolver workflow.ToolResolver
+				toolErrors := false
+				if doc.SchemaVersion == metadata.ToolWorkflowSchemaVersion {
+					resolver, toolErrors = toolActivities(w, path, entity, catalog.ToolCatalog, catalog.Tenant, add)
+				}
+				executable, err := workflow.CompileDefinitionWithTools(d.ID, *w, definition.Fields, []string{"local.noop"}, resolver)
+				if err != nil {
+					if !toolErrors {
+						add(path, "workflow_contract", "Workflow V2 violates graph, condition, activity or approval contracts")
+					}
+				} else {
+					workflowPlans = append(workflowPlans, executable.Plan())
+					tests = append(tests, TestCase{d.ID, "workflow_failure_recovery"})
+				}
+				for i := range w.States {
+					sort.Strings(w.States[i].ApprovalRoles)
+				}
+			} else {
+				validateWorkflow(w, path, symbols, catalog, expression, add)
+			}
 			sort.Slice(w.States, func(i, j int) bool { return w.States[i].ID < w.States[j].ID })
 		}
 		if t := d.Tool; t != nil {
@@ -274,12 +371,38 @@ func Compile(source metadata.Source, catalog Catalog) (Program, []Diagnostic) {
 	if len(diagnostics) > 0 {
 		return Program{}, diagnostics
 	}
-	ir := IR{IRVersion, Version, digest(catalogJSON), SchemaSnapshot, doc, entities, MigrationPlan{"NONE", []string{}}, tests}
+	ir := IR{IRVersion: IRVersion, CompilerVersion: Version, CatalogHash: digest(catalogJSON), SchemaSnapshot: SchemaSnapshot, Application: doc, Entities: entities, Migration: MigrationPlan{"NONE", []string{}}, Tests: tests}
+	if doc.SchemaVersion == metadata.RuleSchemaVersion {
+		ir.IRVersion = RuleIRVersion
+		ir.CompilerVersion = RuleCompilerVersion
+		ir.Rules = rulePlans
+	}
+	if metadata.WorkflowSchema(doc.SchemaVersion) {
+		ir.IRVersion = WorkflowIRVersion
+		ir.CompilerVersion = WorkflowCompilerVersion
+		ir.Rules = rulePlans
+		ir.Workflows = workflowPlans
+	}
+	if doc.SchemaVersion == metadata.ApprovalSchemaVersion {
+		ir.IRVersion = ApprovalIRVersion
+		ir.CompilerVersion = ApprovalCompilerVersion
+	}
+	if doc.SchemaVersion == metadata.IntegritySchemaVersion {
+		ir.IRVersion = IntegrityIRVersion
+		ir.CompilerVersion = IntegrityCompilerVersion
+	}
+	if doc.SchemaVersion == metadata.ToolWorkflowSchemaVersion {
+		ir.IRVersion = ToolWorkflowIRVersion
+		ir.CompilerVersion = ToolWorkflowCompilerVersion
+	}
 	raw, err := json.Marshal(ir)
 	if err != nil {
 		return Program{}, []Diagnostic{{"", "serialization", "IR serialization failed"}}
 	}
-	return Program{raw, digest(raw)}, diagnostics
+	if len(raw) > 4<<20 {
+		return Program{}, []Diagnostic{{"", "ir_budget", "Compiled application IR exceeds the 4 MiB limit"}}
+	}
+	return Program{raw: raw, hash: digest(raw), sourceHash: digest(source.JSON())}, diagnostics
 }
 func contains(values []string, value string) bool {
 	for _, v := range values {

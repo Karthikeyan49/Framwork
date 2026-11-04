@@ -17,7 +17,7 @@ func TestModuleImportsUsePublicContracts(t *testing.T) {
 		t.Fatal("cannot locate repository")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
-	boundaries := []string{"identity", "tenant", "policy", "metadata", "compiler", "runtime/data", "runtime/rules", "runtime/workflow", "tools", "events", "sandbox", "promotion", "ai", "audit", "observability"}
+	boundaries := []string{"identity", "tenant", "policy", "metadata", "compiler", "runtime/data", "runtime/rules", "runtime/workflow", "tools", "events", "sandbox", "promotion", "risk", "verification", "ai", "audit", "observability"}
 	const prefix = "github.com/Karthikeyan49/Framwork/internal/"
 	for _, tree := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, tree), func(path string, entry fs.DirEntry, err error) error {
