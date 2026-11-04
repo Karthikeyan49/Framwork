@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	contracts "github.com/Karthikeyan49/Framwork/contracts/jsonschema"
+	"github.com/Karthikeyan49/Framwork/internal/tools"
 	js "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -218,7 +219,9 @@ func foldKey(s string) string {
 
 func DecodeJSON(raw []byte) (any, error) { return decodeJSON(raw, MaxBytes+4096) }
 func decodeJSON(raw []byte, maxBytes int) (any, error) {
-	if len(raw) == 0 || len(raw) > maxBytes || !utf8.Valid(raw) {
+	// Bytes that are not UTF-8, and the escape of half of a surrogate pair that the other half does not complete, would be decoded as U+FFFD: two different texts, one
+	// value (independent review of the follow-up, FU-05; the tool gateway, the catalog and the AI provider refuse both since TS-04 and TF-07).
+	if len(raw) == 0 || len(raw) > maxBytes || !utf8.Valid(raw) || tools.HasLoneSurrogateEscape(raw) {
 		return nil, invalid("", "invalid_json", "Invalid or oversized JSON")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
