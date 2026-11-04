@@ -942,6 +942,12 @@ without the change; the reviewers' own probes were run against the fixed code by
     fails with its body. Executed once against the unfixed tree on the isolated stack (`FRAMEWORK_REPRODUCE_TS01=1`): it fails as before, with the message that the plan quotes (`TS-01: 1
     invocation(s) of a CANCELLED instance stay SENDING or UNKNOWN and the reconcile is answered 409 ...`); not executed against a fix, because none exists.
 
+    j. **A flaky unit test, found by the gate and not by the review.** The unit step of the gate failed once, in `TestACanceledCallIsChargedTheReservedOutput`: it cancelled the run after a fixed 60 ms, and the work before
+    the first provider call takes about 50 ms with the race detector. Both it and the 50 ms deadline of a subtest of `TestRunPatchBudgets` were already flaky at `f33a0b5` (5 of 100 and 5 of 40 runs with `-race` on an idle
+    host); the redaction of the document that `patchInput` does is 14% slower with the race detector since item 16 a (2% in a plain build: the `.netrc` rule for forms that a sentence imitates, and a larger password value),
+    and they failed 10 of 100 and 31 of 40. The tests wait for the provider call and give the deadline 400 ms after the input is built (`2d38b30`): 0 failures in 100 idle runs and 60 loaded runs. A test that cancels or times
+    out a run must wait for the call, not for a fixed time. The cost is documented in [the plan](../migration/LINE_INTEGRATION_PLAN.md), not removed.
+
 **Residuals after Amendment C, stated plainly.**
 
 - A bearer token that expires during the provider phase lost the result: the result exchange re-verifies it (A8). About 6.7% of the full-length requests with a

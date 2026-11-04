@@ -246,6 +246,40 @@ What the second reviewer did not run (its NOT RUN list) is covered by the gate o
 toolchain archive itself, and the roles at the database level beyond the two named tests. **TS-01 stays open**, TF-03 stays open, the three owner decisions (the migration numbering rule, the contract proposal, the rebuild
 of the development database `MAIN`) and the question whether to move `main` are unchanged. The changes of this follow-up have not been seen by a reviewer.
 
+Gate on the code head `a76aa7c` (4 November 2026, this host, the isolated Compose stack; the development database `MAIN` was not touched), run in full, one heavy step after the other, on `7e86e93`
+(documents only above `a76aa7c`: `git diff a76aa7c 7e86e93 -- . ':!docs'` is empty). One run of each step; the evidence says nothing about flake rates, and the unit step flaked (below). An earlier start on `42c380a`
+was stopped by the integrator during its unit step, after `make check` (PASS, 60 s), because a comparison of the redactor with `f33a0b5` found the losses of item 16 a (`7329535`, `a76aa7c`); the gate below is the restart.
+The one commit after the gate, `2d38b30`, changes two test files of `internal/ai` and nothing else; the unit step was run again on it.
+
+| Step | Result |
+|---|---|
+| `make check` (docs checksums, format, `go vet` of the packages and of `./tests/integration` with the `integration,performance` tags, `go mod verify`, eslint, tsc) | PASS, 16 s |
+| `make test-unit` (Go packages with `-race`, then the script tests, then the frontend tests) | **First run on `7e86e93`: FAIL**, 450 s: `internal/ai` (442.8 s) failed one test, `TestACanceledCallIsChargedTheReservedOutput` (`attempts [], want one TIMEOUT`); `make` stops at the first failing command, so the script and frontend tests did not run in that run. **Second run on `2d38b30`: PASS**, 461 s: 30 Go packages (`internal/ai` 434.3 s under `-race`), 16 script tests, 126 frontend tests in 19 files |
+| `make build` | PASS, 48 s |
+| Full integration suite with `-race`, `-skip TestM8RedisACLStreamLossAndPendingRecovery` | **PASS**, one uninterrupted run: 2,192.5 s Go time, 2,219 s wall including the stack reset (the run is not `-v`, so no test count was taken) |
+| `make test-e2e` / `make test-signin-e2e` | 11 passed (39.3 s) / 7 passed (10.4 s) |
+| `make test-rules-fuzz test-events-fuzz test-workflows-fuzz` | PASS, 99 s |
+| `make test-event-outage` (real ten-minute consumer absence) | PASS, 609.6 s test time, 631 s wall: recovery after 600.0 real seconds with 3 completed, 3 inbox rows, 3 effects, 3 audits, 3 immutable intents, 19 retained attempts and 2 unconfirmed redeliveries |
+
+**The unit failure, its cause and its fix.** `TestACanceledCallIsChargedTheReservedOutput` cancelled the run after a fixed 60 ms and expected the provider to have been called by then. The work before the first call
+(the context that `patchInput` builds, the check of the context, the schema, the request) takes about 50 ms with the race detector, which this step uses, so the cancellation can come first and `RunPatch` then returns with
+no attempt. Measured on an idle host with `-race`: the median of that work was 45.8 ms at `f33a0b5` and 55.9 ms at `a76aa7c`; the test failed 5 of 100 runs at `f33a0b5` (so it was flaky before this round, and one run of
+a step, as in every earlier gate, says nothing about that) and 10 of 100 at `a76aa7c`; the 50 ms deadline of the subtest "an expired parent deadline is a budget outcome" of `TestRunPatchBudgets` failed 5 of 40 and 31 of 40.
+The redactor, which `patchInput` runs over the document, is 2% slower on short strings in a plain build and 14% slower with the race detector (the table of rules: 378 to 471 ms for 400 strings; the new `.netrc` rule is 59 ms
+of the 93 ms difference, the larger password value 29 ms, the statement scan 3 ms), which moved the median across the two windows. `2d38b30` makes both tests wait for what they mean (the provider has received the request; the deadline starts after
+the input is built and is 400 ms): 0 failures of these two in 100 idle runs and in 60 runs with 8 busy processes on the 4 cores, where the old forms failed 12 and 43 of 60. Under that load other subtests of
+`TestRunPatchBudgets` with budgets of seconds fail with either form, and the wall clocks of 80 ms and 20 ms of three tests (which start inside the loop) passed 40 of 40 runs with `-race`: not changed. **The cost is
+documented, not removed:** the unit step takes about 50 s longer than at `364c7a4` (`internal/ai` 442.8 s under `-race`, against 362 s: the slower redaction and the new tests). A guard that skips the two `.netrc` rules for text without `machine` or `password`
+would give most of it back; it was not added to a security filter after the gates, and the next owner may want it.
+
+What this gate exercises of the follow-up of the second review: the integration suite ran `TestM14APIPolicyMatrix` with the body assertions of the apply and the confirm and the M14 API, M13 tool-pin and M10 groups
+that the answers touch, and every AI context through the redactor; the unit run has the redactor tests of item 16 (the statement scan, the closing quote, capitals, the operators, the linear-cost test, the idempotence
+property at its default of 6,000 texts; the longer runs and the mutants were made by hand, not by the gate), the decoder and request-body tests of FU-05, the child-process test of the OpenTelemetry handler, the order
+tests of the scripts, and the route-neighbour test. The TS-01 reproduction is skipped here by design (it fails until TS-01 is fixed) and was run once by hand. **Not run, and so not claimed:** the reference-scale
+performance gates and the `driverpanic` diagnostic of the remediation line, `TestM8RedisACLStreamLossAndPendingRecovery` (coupled to the main Compose project), a real API process under SIGTERM with a running AI phase
+(ER-03), the burst of more than 132 database requests of the edge rehearsal (ER-04), a run of `scripts/bootstrap.sh`, the SHA-256 and the URL of the toolchain and the advisory identifiers (no network), the TS-01
+reproduction against a fix (none exists), and an independent review of the changes of this round.
+
 ### Migration numbers from here on (proposal; the owner decides)
 
 Wording from the upgrade and ordering rehearsal ([report](../verification/UPGRADE_AND_ORDERING_REHEARSAL.md), which tested the numbering sentences of the first proposal (not its ADR reservations) against a real goose, a
