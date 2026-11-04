@@ -833,41 +833,64 @@ without the change; the reviewers' own probes were run against the fixed code by
     next character, as MySQL reads it) or to the end of the text, so whatever stands between the name and the password, whatever the length, nothing is cut. The clauses it reads are
     `IDENTIFIED [WITH plugin] BY value` after the first `CREATE` or `ALTER` head or after the target (`ON ... TO`) of a `GRANT`, and `PASSWORD value` (a quoted literal, `E'...'`,
     `$$...$$`) after the first `CREATE` or `ALTER` head; the words of the statement stay, and each clause is replaced by one marker, in the order of the text. A quoted literal is a
-    password when it ends the statement, when a `;` ended the statement or when it has a digit or a symbol (in "Create user form with password 'confirm' field" it is a label); a bare
-    word when it has a digit or a symbol or when it ends a statement that a `;` ended (Oracle writes `IDENTIFIED BY tiger;`). Evidence:
+    password when it ends the statement or a closing quote follows it (`psql -c "ALTER USER app PASSWORD 'x'"`, a JSON value, a code span), when a `;` ended the statement, when the
+    head of the statement and the first word of its clause are in capitals (the SQL of a script, a dump or a manual: a sentence does not shout `CREATE USER app IDENTIFIED BY`), or when it
+    has a digit or a symbol (in "Create user form with password 'confirm' field" it is a label); a bare word when it has a digit or a symbol or when it ends a statement that a `;` ended
+    (Oracle writes `IDENTIFIED BY tiger;`); capitals do not decide a bare word (`IDENTIFIED BY RANDOM PASSWORD` has no password in it). Evidence:
     `TestRedactionOfRoleStatementsWhateverStandsBeforeThePassword` (2,340 statements, 9 verbs x 13 option lists x 4 literal forms x 5 endings, each also a fixed point),
     `TestRedactionOfAStatementOfManyUsersAndOfAnyLength` (3, 60 and 700 users), `TestRedactionOfASecretThatHoldsASemicolonOrAQuote` (nine shapes, among them a backslash-escaped
     quote and a quote that nothing closes), the tests of a bare word and of a quoted word of letters, `TestRedactionCountsAClauseOnlyWhereItIsAPassword`,
     `TestRedactStatementMakesItsEditsInTheOrderOfTheText`, `TestSQLStatementEnd`, the idempotence property with the SQL and `.netrc` fragments added (200,000 texts before the cost
-    fix described below and 100,000 after it; the shipped test runs 6,000 by default and `REDACT_PROPERTY_RUNS` lengthens it), and **24 mutants of `redact.go`**, each killed by a test
+    fix described below and 100,000 after it; the shipped test runs 6,000 by default and `REDACT_PROPERTY_RUNS` lengthens it), and **30 mutants of `redact.go`**, each killed by a test
     (a statement end that ignores quotes, backslashes or `$$`; a bare word that is always or never a password; a quoted word that is always or never one; a `GRANT` clause counted from
     the head of the `GRANT`; a `PASSWORD` literal counted anywhere in the statement; edits made in the order they were found; the heads inside a statement scanned again; blanks that
-    hide the end; the plugin form; `OR REPLACE`; the scan removed). Five of them were not detected by the first form of the new tests (the `GRANT` and `PASSWORD` mutants, a `;` that
-    does not make a quoted word a password, the unsorted edits, and the heads scanned again, which only the property test caught); each has its own test now.
+    hide the end; the plugin form; `OR REPLACE`; the scan removed; a closing quote or capitals that do not count, capitals of the head or of the keyword alone, capitals that decide a bare
+    word; every `GRANT` looked at). Nine of them were not detected by the first form of the tests that were meant to kill them (the `GRANT` and `PASSWORD` mutants, a `;` that does not make a
+    quoted word a password, the unsorted edits, the heads scanned again, which only the property test caught, the closing quote, the capitals of the keyword and every `GRANT` looked at,
+    which a run without the linear test missed); each has its own test now.
     **A defect of my own first form of this scan was found by a cost probe before anything was pushed.** It looked for the target of every `GRANT` of a statement, each look reading
     the rest of the statement, so the time grew with the square of the length: `grant ` repeated 8,000 times (48,000 bytes) took 10.9 s (2,000 times: 0.4 s), and `grant on ` and
     `grant a on b ` 8,000 times took more than 20 s. Only the first `GRANT` is looked at now (a later one has a target only where the first one has). Twenty-one shapes from 12 KB to
     1.4 MB then cost time in proportion to their size (four times the size, three to five times the time; the slowest 3.7 microseconds a byte, the largest text 2.4 s), and
     `TestStatementScanIsLinear` fails on the old form (11.6 s against 91 ms for prose of the same size; its limit is 50 times the cost of prose measured in the same run, so it holds
-    with `-race`, which the unit gate uses, and on a busy host). **Not fixed**, open before and after this change in the review's three tables, or found by a probe of mine:
+    with `-race`, which the unit gate uses, and on a busy host). **Three losses of my first form were found by comparing it with `f33a0b5` before the gate, not by the review.** (1) A quoted password of letters only was a label unless the clause ended
+    the text or a `;` ended the statement, so `psql -c "ALTER USER postgres PASSWORD 'changeme'"`, a JSON value, a list of arguments, a call of code and a code span with such a password
+    were not redacted, which `f33a0b5` redacted (nine shapes tried; the closing quote above is the answer). The comparison was then made systematic: 77,760
+    generated contexts (eight verbs, six clauses, five literal forms, nine endings, four wrappers, three kinds of secret, three cases) through both redactors, and the operator and
+    `.netrc` families. It found (2) the same loss in SQL in capitals that has text after the literal (the capitals above are the answer) and (3) the operators: `'password' => 'secret'` and
+    `dbPassword := "changeme"` were no longer redacted (item 16 b says what was done). **What `f33a0b5` redacted and this tree does not:** a quoted password of letters only in SQL that is in lower case or mixed case and has neither a `;` nor a
+    closing quote after the literal (`create user app identified by 'changeme'.`, followed by a full stop, a word or a line; it is the same text as the label `Create user accounts
+    identified by 'email'.`), a bare word of letters followed by a closing quote (`mysql -e "CREATE USER app IDENTIFIED BY changeme"`; `f33a0b5` redacted it by accident), a quoted word of
+    letters after `==` (`if token == 'changeme'`, item 16 b), and the `.netrc` forms that a sentence can imitate when the password is a word of letters
+    (`default login anonymous password changeme`, `machine host.example.com password changeme`, item 16 b). Everything else that the 77,760 contexts and the operator family
+    differ in is a gain (1,448 groups of contexts that `f33a0b5` left in and this tree redacts: a password with a digit or a symbol in a statement without `;`, `$$` and
+    double quotes, `OR REPLACE`, a bulk statement, a statement longer than 1,000 bytes). **Not fixed**, open before and after this change in the review's three tables, or found by a
+    probe of mine:
     `SET PASSWORD FOR 'u'@'h' = PASSWORD('...')` and `= '...'`, the old password after `REPLACE` (MySQL, Oracle), `IDENTIFIED BY VALUES '...'`, MariaDB `IDENTIFIED VIA plugin USING
     PASSWORD('...')`, T-SQL `WITH PASSWORD = N'...'` (the `N` prefix), `sp_addlogin` and `sp_password`, `net user NAME PASSWORD`, and of the commands a `curl` whose `-u USER:PASSWORD` is
     on the line after a backslash, `--proxy-user`, `unzip -P`, `7z -p`, `sqlcmd -P`, `htpasswd -b`, `net use`, `openssl -passin pass:` and `SSHPASS=` with `sshpass -e`. A bare word of
-    letters after `IDENTIFIED BY` in text that no `;` ends stays (a sentence), and so does a quoted word of letters that neither ends the statement nor is followed by a `;`.
+    letters after `IDENTIFIED BY` in text that no `;` ends stays (a sentence), and so does a quoted word of letters in lower case or mixed case SQL that neither ends the statement, nor is
+    followed by a `;` or by a closing quote.
 
     b. **FU-02 (LOW): the narrower rules still destroyed ordinary text, two classes of it new against both older tables.** The `.netrc` forms that a sentence can imitate need a value
     that looks like a credential: `default login USER password WORD` at the start of a line (seven of the review's lines began so; the follow-up had fixed the sentence of its message
     and left the line start) and a host with a dot and no login ("Each machine web01.corp.example.com password rotates every 30 days") need a quoted value or one with a digit or a
-    symbol; the full form `machine HOST login USER password WORD` keeps any word. The operators `==`, `:=` and `=>` redact a quoted literal that has a digit or a symbol and nothing
-    else (`if password == "admin" then ...`, `Warn when token == "expired"`, `password := "required"` and `password => "hidden"` are labels or states). The list of formats grew by what
+    symbol; the full form `machine HOST login USER password WORD` keeps any word. A comparison (`==`) redacts a quoted literal that has a digit or a
+    symbol and nothing else (`if password == "admin" then ...` and `Warn when token == "expired"` are conditions on a state). A declaration (`:=`) and a hash rocket (`=>`) redact any quoted
+    literal, as the first review asked (TF-09): `'password' => 'secret'` and `dbPassword := "changeme"` are how configuration and code hold a password, and the review's two sentences for them
+    (`Set password := "required" for new users.`, `The password => "hidden" mapping in the form.`) are pseudo-code in prose, destroyed again. The first form of this change took the
+    review's direction for all three and lost real passwords; the comparison with `f33a0b5` showed it. The list of formats grew by what
     the review named (`x509`, `ed25519`, `ed448`, `curve25519`, `-or-more`, `-or-fewer`, `-times`, `-uses`, `-bearer`, `HMAC-SHA256`, `TLS1.3`, a size with a decimal). Of the 43 sentences
-    that the review lists as destroyed and kept by `11a4ee4`, 32 are kept now and 11 are not; of its nine format sentences (the review names shapes, not always the sentence), eight are
+    that the review lists as destroyed and kept by `11a4ee4`, 30 are kept now and 13 are not; of its nine format sentences (the review names shapes, not always the sentence), eight are
     kept. **What stays destroyed, by design or for want of a rule:** eight commands that stand in prose and cannot be told from the command (`curl -u username:password`, `curl --user
     USER:PASSWORD`, `mysql ... -pretty`, `mongo -pretty`, `mongosh -pretty`, `docker login -password-stdin`, `sshpass -p option`, `wget --password option`); `Create login screen with
     password "show/hide" icon` (a quoted literal with a symbol after `CREATE LOGIN`); `Create user records identified by 4471 and name` (a bare word with a digit); `Show the machine
-    api.example.com login bob password rotation date` (the full `.netrc` form); and `The token is v4.public.` (a value with a digit that is not on the closed list). Evidence:
-    `redact_prose_test.go` (68 requests, labels and descriptions that stay as written, against 37 at `f33a0b5`; 25 sentences about formats), and five of the mutants of item 16 a (the
-    loose `.netrc` rule removed or without its shape check, the operators without theirs, names taken off the list) are killed.
+    api.example.com login bob password rotation date` (the full `.netrc` form); the two pseudo-code sentences of the operators above; and `The token is v4.public.` (a value with a digit that
+    is not on the closed list). **The price, measured against `f33a0b5`:** a password of letters after `==` in quotes, and on a `default login USER password WORD` line or a `.netrc` entry
+    without a login, is not redacted (a word of letters there is a word, as it has been after `:` and `is` since RT-01 and RT-02); the other direction destroys the sentences above. Evidence:
+    `redact_prose_test.go` (68 requests, labels and descriptions that stay as written, against 37 at `f33a0b5`; 25 sentences about formats), and the mutants of item 16 a for
+    this change (the loose `.netrc` rule removed or without its shape check, the comparison without its rule, a declaration or a hash rocket with or without one, names taken off the list)
+    are killed.
 
     c. **FU-03 (LOW): TF-08 was closed for the OTLP variables and open for the sampler and the resource.** `otel.SetErrorHandler` ran after the tracer provider was built, and until it
     runs the SDK reports a malformed `OTEL_TRACES_SAMPLER` (`unsupported sampler: <value>`) and a malformed `OTEL_RESOURCE_ATTRIBUTES` entry (`partial resource: missing value: [<entry>]`)
