@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -48,8 +49,9 @@ func (r redactRule) apply(s string, n *int) string {
 	})
 }
 
-// passwordValue is the value of a password argument: quoted (with spaces inside), or one word of four or more characters that is not an option.
-const passwordValue = `(?:'[^'\n]{4,200}'|"[^"\n]{4,200}"|["']?[^\s"';-][^\s"';]{3,}["']?)`
+// passwordValue is the value of a password argument: quoted (with spaces inside, and with a backslash before a quote as MySQL writes it), or one word of four or more
+// characters that is not an option.
+const passwordValue = `(?:'(?:[^'\\\n]|\\.){4,200}'|'[^'\n]{4,200}'|"(?:[^"\\\n]|\\.){4,200}"|"[^"\n]{4,200}"|["']?[^\s"';-][^\s"';]{3,}["']?)`
 
 var (
 	// The flag of each command is written for that command: curl -u/--user USER:PASSWORD, sshpass -p, redis-cli -a/--pass (-p is its port), the password flag of
@@ -65,78 +67,117 @@ var (
 		`|\bgpg2?\b[^\n]*?\s--passphrase(?:\s+|=)` +
 		`|\bldap(?:search|modify|add|delete|passwd|compare)\b[^\n]*?\s(?-i:-w)\s*)` + passwordValue)
 
-	// A .netrc entry: "machine HOST login USER password SECRET" (on one line or several), "default login USER password SECRET" at the start of a line, or a host with a
-	// dot and no login. A sentence such as "the default login admin password rotation" is not an entry: the word "default" must begin its line.
-	passwordOfANetrcEntry = regexp.MustCompile(`(?i)(?:(?:\bmachine\s+[^\s"']+|(?m:^)[ \t]*default)\s+login\s+[^\s"']+\s+password\s+` +
+	// A .netrc entry with its login: "machine HOST login USER password SECRET" (on one line or several).
+	passwordOfANetrcEntry = regexp.MustCompile(`(?i)\bmachine\s+[^\s"']+\s+login\s+[^\s"']+\s+password\s+` + passwordValue)
+
+	// The .netrc forms that a sentence can imitate need a value that looks like a credential (a digit or a symbol, or a quoted one): "default login USER password
+	// SECRET" at the start of a line, and a host with a dot and no login. "Each machine web01.example.com password rotates every 30 days" and "Default login admin
+	// password rotation is monthly." are sentences (independent review of the follow-up, FU-02).
+	passwordOfALooseNetrcEntry = regexp.MustCompile(`(?i)(?:(?m:^)[ \t]*default\s+login\s+[^\s"']+\s+password\s+` +
 		`|\bmachine\s+[^\s"'/]+\.[^\s"'/]+\s+password\s+)` + passwordValue)
 )
 
-// sqlStatementSpan is how far past its first words a statement that names a user or a role is read for a password.
-const sqlStatementSpan = 1000
-
 var (
-	// The first words of a statement that creates or alters a user or a role, or grants rights (MySQL grants a password with IDENTIFIED BY).
-	sqlUserHead = regexp.MustCompile(`(?i)\b(?:(?:create|alter)\s+(?:user|role|group|login)\b|grant\b)`)
+	// The first words of a statement that creates or alters a user or a role (MariaDB also CREATE OR REPLACE USER), or grants rights (MySQL grants a password with
+	// IDENTIFIED BY).
+	sqlUserHead = regexp.MustCompile(`(?i)\b(?:(?:create(?:\s+or\s+replace)?|alter)\s+(?:user|role|group|login)\b|grant\b)`)
 	// The target of a GRANT: ... ON ... TO. Only what follows it can name a password.
 	sqlGrantTarget = regexp.MustCompile(`(?is)^grant\b.*?\son\s.*?\sto\s`)
 	// IDENTIFIED [WITH plugin] BY value.
 	sqlIdentifiedBy = regexp.MustCompile(`(?i)\bidentified\s+(?:with\s+\w+\s+)?by\s+` + passwordValue)
-	// The quoted PASSWORD of PostgreSQL's CREATE|ALTER ROLE: only the option words of the statement may stand between the name and the word, so that
-	// "Create user roles with a password \"hint\" field" is not one. The first group is kept.
-	sqlRolePassword = regexp.MustCompile(`(?i)^((?:create|alter)\s+(?:user|role|group|login)\s+[^\s;]+(?:\s+(?:with|login|nologin|(?:un)?encrypted|(?:no)?(?:superuser|createdb|createrole|createuser|inherit|replication|bypassrls)))*\s+)` +
-		`(password\s+(?:'[^'\n]{4,200}'|"[^"\n]{4,200}"))`)
+	// The PASSWORD literal of CREATE|ALTER USER|ROLE (PostgreSQL, Redshift, user mappings): quoted, an escape string or dollar quoted.
+	sqlPasswordLiteral = regexp.MustCompile(`(?i)\bpassword\s+(?:e?'[^'\n]{4,200}'|"[^"\n]{4,200}"|\$\$[^$\n]{4,200}\$\$)`)
 )
 
-// bareSecretOrQuoted decides on an IDENTIFIED BY clause: a quoted literal is a password, a bare word is one only when it has a digit or a symbol, as the
+// bareSecretOrQuoted decides on a match whose last word is the value: a quoted literal is a password, a bare word is one only when it has a digit or a symbol, as the
 // connector of assignment does ("identified by email address" is a way of naming things, "identified by Welcome1" is not).
 func bareSecretOrQuoted(match string) bool {
 	if last := match[len(match)-1]; last == '\'' || last == '"' {
 		return true
 	}
-	return strings.ContainsAny(match[strings.LastIndexAny(match, " \t\r\n")+1:], "0123456789@!#$%^&*+/=")
+	return hasDigitOrSymbol(match[strings.LastIndexAny(match, " \t\r\n")+1:])
 }
 
-// redactStatementPasswords redacts the password of a statement that creates, alters or grants a user or a role (CREATE USER ... IDENTIFIED BY '...',
-// ALTER ROLE ... PASSWORD '...', MySQL's GRANT ... TO ... IDENTIFIED BY ..., several users in one statement). The statement runs from its first words to
-// the ";" or the next such words, at most sqlStatementSpan bytes; the words of the statement stay, only the clause with the secret is replaced. The same
-// words in a request ("each customer is identified by email address") are not in such a statement and are not touched (TF-01).
+// hasDigitOrSymbol reports a value that has a digit or a symbol, which a word of a sentence has not.
+func hasDigitOrSymbol(v string) bool { return strings.ContainsAny(v, "0123456789@!#$%^&*+/=") }
+
+// sqlStatementEnd finds where the statement whose first words end at s[from] ends: at the first ";" that is not inside a quoted literal (single, double or back
+// quotes, a dollar-quoted string), or at the end of s. A backslash inside a quote escapes the next character (MySQL). A literal is read to its closing quote, so a
+// clause is never cut, whatever its length and whatever it contains. It reports whether a ";" ended the statement.
+func sqlStatementEnd(s string, from int) (int, bool) {
+	var quote byte
+	for i := from; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote == 0:
+			switch {
+			case c == ';':
+				return i, true
+			case c == '\'' || c == '"' || c == '`':
+				quote = c
+			case c == '$' && i+1 < len(s) && s[i+1] == '$':
+				quote, i = '$', i+1
+			}
+		case quote == '$':
+			if c == '$' && i+1 < len(s) && s[i+1] == '$' {
+				quote, i = 0, i+1
+			}
+		case c == '\\' && i+1 < len(s):
+			i++
+		case c == quote:
+			quote = 0
+		}
+	}
+	return len(s), false
+}
+
+// sqlLiteral reports whether the match of a clause ends with a quoted literal, and its content.
+func sqlLiteral(match string) (bool, string) {
+	switch {
+	case strings.HasSuffix(match, "$$"):
+		if i := strings.Index(match, "$$"); i >= 0 && i+2 <= len(match)-2 {
+			return true, match[i+2 : len(match)-2]
+		}
+	case strings.HasSuffix(match, "'"), strings.HasSuffix(match, `"`):
+		if i := strings.IndexAny(match, `'"`); i >= 0 && i+1 <= len(match)-1 {
+			return true, match[i+1 : len(match)-1]
+		}
+	}
+	return false, ""
+}
+
+// sqlCredential decides whether the clause of a statement names a password. ends: the clause is the last thing of the statement; terminated: a ";" ended the
+// statement. A quoted literal is one when the statement is SQL by its ending (a ";", or the literal closes it) or the literal has a digit or a symbol: in
+// "Create user form with password 'confirm' field" the word is a label. A bare word is one when it has a digit or a symbol, or when it ends a statement that a ";"
+// ended (Oracle writes passwords bare: "CREATE USER scott IDENTIFIED BY tiger;").
+func sqlCredential(match string, ends, terminated bool) bool {
+	if quoted, content := sqlLiteral(match); quoted {
+		return ends || terminated || hasDigitOrSymbol(content)
+	}
+	return hasDigitOrSymbol(match[strings.LastIndexAny(match, " \t\r\n")+1:]) || ends && terminated
+}
+
+// redactStatementPasswords redacts the password of a statement that creates, alters or grants a user or a role (CREATE USER ... IDENTIFIED BY '...', ALTER ROLE ... WITH
+// CONNECTION LIMIT 5 PASSWORD '...', CREATE OR REPLACE USER, MySQL's GRANT ... TO ... IDENTIFIED BY ..., several users in one statement, a statement of any length). The
+// statement runs from its first words to the first ";" that is outside a quoted literal; the words of the statement stay and only the clause with the secret is replaced.
+// The same words in a request ("each customer is identified by email address") are not in such a statement, and a quoted word in a sentence is not a password unless it
+// has a digit or a symbol (independent review of the takeover fixes TF-01, and of the follow-up, FU-01: the first form of this scan read SQL through closed lists and a
+// bound of 1,000 bytes, and let passwords through that the rule before it redacted).
 func redactStatementPasswords(s string, n *int) string {
 	heads := sqlUserHead.FindAllStringIndex(s, -1)
 	if len(heads) == 0 {
 		return s
 	}
 	var b strings.Builder
-	last := 0
-	for i, h := range heads {
-		end := min(len(s), h[1]+sqlStatementSpan)
-		if i+1 < len(heads) && heads[i+1][0] < end {
-			end = heads[i+1][0]
+	last, pos := 0, 0
+	for _, h := range heads {
+		if h[0] < pos {
+			continue // inside the statement of an earlier head: the scan of that statement reads every clause of it
 		}
-		if j := strings.IndexByte(s[h[1]:end], ';'); j >= 0 {
-			end = h[1] + j
-		}
-		for end > h[1] && end < len(s) && !utf8.RuneStart(s[end]) {
-			end--
-		}
-		span, from := s[h[0]:end], h[1]-h[0]
-		if loc := sqlGrantTarget.FindStringIndex(span); strings.EqualFold(span[:min(5, len(span))], "grant") {
-			if loc == nil {
-				continue
-			}
-			from = loc[1]
-		}
-		out := span[:from] + sqlIdentifiedBy.ReplaceAllStringFunc(span[from:], func(m string) string {
-			if !bareSecretOrQuoted(m) {
-				return m
-			}
-			*n++
-			return marker("password_arg")
-		})
-		if sub := sqlRolePassword.FindStringSubmatchIndex(out); sub != nil {
-			*n++
-			out = out[:sub[4]] + marker("password_arg") + out[sub[5]:]
-		}
-		if out != span {
+		end, terminated := sqlStatementEnd(s, h[1])
+		pos = end
+		span := s[h[0]:end]
+		if out := redactStatement(span, terminated, n); out != span {
 			b.WriteString(s[last:h[0]])
 			b.WriteString(out)
 			last = end
@@ -147,6 +188,57 @@ func redactStatementPasswords(s string, n *int) string {
 	}
 	b.WriteString(s[last:])
 	return b.String()
+}
+
+// redactStatement replaces the clauses of one statement that name a password. A statement can hold several heads ("grant ... create role ..." without a ";" between them):
+// an IDENTIFIED BY clause counts after the first CREATE or ALTER words or after the target of a GRANT, a PASSWORD literal after the first CREATE or ALTER words.
+func redactStatement(span string, terminated bool, n *int) string {
+	userFrom, grantFrom, grants := -1, -1, 0
+	for _, h := range sqlUserHead.FindAllStringIndex(span, -1) {
+		switch {
+		case strings.EqualFold(span[h[0]:min(h[0]+5, len(span))], "grant"):
+			// Only the first GRANT is looked at. Finding the target reads the rest of the statement, and a later GRANT has one only where the first has (its text is a part of the
+			// first one's), so a look at each GRANT of a statement of many would cost the square of its length (a probe of 48,000 bytes of "grant " took 11 s).
+			if grants++; grants == 1 {
+				if loc := sqlGrantTarget.FindStringIndex(span[h[0]:]); loc != nil {
+					grantFrom = h[0] + loc[1]
+				}
+			}
+		case userFrom < 0:
+			userFrom = h[0]
+		}
+	}
+	end := len(strings.TrimRight(span, " \t\r\n")) // the statement without its trailing blanks
+	var edits [][2]int
+	for _, loc := range sqlIdentifiedBy.FindAllStringIndex(span, -1) {
+		if userFrom >= 0 && loc[0] >= userFrom || grantFrom >= 0 && loc[0] >= grantFrom {
+			if sqlCredential(span[loc[0]:loc[1]], loc[1] == end, terminated) {
+				edits = append(edits, [2]int{loc[0], loc[1]})
+			}
+		}
+	}
+	for _, loc := range sqlPasswordLiteral.FindAllStringIndex(span, -1) {
+		if userFrom >= 0 && loc[0] >= userFrom && sqlCredential(span[loc[0]:loc[1]], loc[1] == end, terminated) {
+			edits = append(edits, [2]int{loc[0], loc[1]})
+		}
+	}
+	if len(edits) == 0 {
+		return span
+	}
+	slices.SortFunc(edits, func(a, b [2]int) int { return a[0] - b[0] })
+	var out strings.Builder
+	at := 0
+	for _, e := range edits {
+		if e[0] < at {
+			continue // inside the clause before it ("IDENTIFIED BY PASSWORD 'hash'")
+		}
+		out.WriteString(span[at:e[0]])
+		out.WriteString(marker("password_arg"))
+		at = e[1]
+		*n++
+	}
+	out.WriteString(span[at:])
+	return out.String()
 }
 
 var redactRules = []redactRule{
@@ -173,6 +265,7 @@ var redactRules = []redactRule{
 	// (independent review of the takeover fixes, TF-01). The flag of each command is its own: -p is the port of redis-cli and -P that of mysql.
 	{"password_arg", passwordOfACommand, nil, nil},
 	{"password_arg", passwordOfANetrcEntry, nil, nil},
+	{"password_arg", passwordOfALooseNetrcEntry, bareSecretOrQuoted, nil},
 	{"password_arg", nil, nil, redactStatementPasswords},
 }
 
@@ -196,9 +289,9 @@ var (
 // passphrase ("the password is <word>-<word>" was kept, independent review TF-04). A secret that is spelled like one of these stays kept (a value
 // that is only an algorithm name is not worth hiding); any other value that has a digit or a symbol is redacted.
 var proseSpecification = regexp.MustCompile(`(?i)^(?:` +
-	`[0-9]{1,4}-(?:bits?|bytes?|chars?|characters?|digits?|letters?|symbols?|words?|hex|hexadecimal|alphanumeric|seconds?|minutes?|hours?|days?|weeks?|months?|years?)` +
-	`|(?:sha|aes|rsa|md|hmac|des|ecdsa|eddsa|rs|hs|es|ps|bcrypt|scrypt|argon|pbkdf|blake|base|utf|ascii|iso|rfc|fips|pkcs|oauth|oidc|saml|jwt|jws|jwe|totp|hotp|2fa|mfa|sso|tls|ssl|ldap|ntlm)` +
-	`-?[0-9]{0,5}(?:-(?:[0-9]{1,5}|based|compliant|signed|encoded|verified|hashed|encrypted|protected|secured|generated|safe|style|formatted|only))?` +
+	`[0-9]{1,4}-(?:bits?|bytes?|chars?|characters?|digits?|letters?|symbols?|words?|hex|hexadecimal|alphanumeric|seconds?|minutes?|hours?|days?|weeks?|months?|years?|times?|uses?|or-more|or-fewer)` +
+	`|(?:sha|aes|rsa|md|hmac|des|ecdsa|eddsa|rs|hs|es|ps|bcrypt|scrypt|argon|pbkdf|blake|base|utf|ascii|iso|rfc|fips|pkcs|oauth|oidc|saml|jwt|jws|jwe|totp|hotp|2fa|mfa|sso|tls|ssl|ldap|ntlm|x509|ed25519|ed448|curve25519)` +
+	`-?[0-9.]{0,7}(?:-(?:[0-9]{1,5}|sha-?[0-9]{1,3}|based|compliant|signed|encoded|verified|hashed|encrypted|protected|secured|generated|safe|style|formatted|only|bearer))?` +
 	`)$`)
 
 func assignmentReplace(m string) string {
@@ -212,9 +305,10 @@ func assignmentReplace(m string) string {
 		if len(value) < 4 {
 			return m
 		}
-		// A comparison, a short declaration and a hash rocket (password == "...", dbPassword := "...", 'password' => '...') are redacted for a literal
-		// only: a bare word on their right is a name or an expression ("password == confirmPassword", "password => password.length").
-		if (strings.Contains(sep, "==") || strings.Contains(sep, ":=") || strings.Contains(sep, "=>")) && parts[3][0] != '"' && parts[3][0] != '\'' {
+		// A comparison, a short declaration and a hash rocket (password == "...", dbPassword := "...", 'password' => '...') are redacted for a literal that has a
+		// digit or a symbol only: a bare word on their right is a name or an expression ("password == confirmPassword", "password => password.length"), and a
+		// word in quotes is a state or a label ("if password == "admin" then", "Warn when token == "expired"": independent review of the follow-up, FU-02).
+		if (strings.Contains(sep, "==") || strings.Contains(sep, ":=") || strings.Contains(sep, "=>")) && (parts[3][0] != '"' && parts[3][0] != '\'' || !hasDigitOrSymbol(value)) {
 			return m
 		}
 	case strings.Contains(sep, ":"):

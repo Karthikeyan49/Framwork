@@ -300,6 +300,10 @@ func TestRedactionIsIdempotentOnMixedFragments(t *testing.T) {
 		// the forms of the password_arg rules and of the operators (independent review TF-01, TF-09)
 		"CREATE USER ", "alter role ", "GRANT ", " ON ", " to ", " IDENTIFIED BY ", " identified with plugin by ", "PASSWORD ", "WITH ", "LOGIN ", "machine ", " login ", "default ",
 		"curl -u ", "sshpass -p ", "mysql -p", "redis-cli -a ", "--password ", "zip -P ", ":=", "=>", "==", "bob:", "'abcd1'", "\"abcd 2\"", "[REDACTED:password_arg]", "; ",
+		// the statement scan and the loose netrc forms (independent review FU-01, FU-02): what stands before the password, a quote or a
+		// semicolon inside it, a statement that is never ended, one with many users
+		"CREATE OR REPLACE USER ", "create group ", "alter login ", "CREATE ROLE bob, alice, ", "grant select on t1 to ", "; GRANT ALL ON db.* TO ", " WITH PASSWORD ", " password '",
+		" PASSWORD \"", "e'", "$$", "`", "\\'", "\\\\", "'a;b1'", "'p@ss1'", "\"it's 7\"", "machine example.com password ", "default login ", "\nmachine h.example.org login u password ",
 	}
 	runs := 6000
 	if v, err := strconv.Atoi(os.Getenv("REDACT_PROPERTY_RUNS")); err == nil && v > 0 {

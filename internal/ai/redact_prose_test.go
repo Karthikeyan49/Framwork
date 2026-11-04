@@ -1,8 +1,10 @@
 package ai
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TF-01, TF-04 and TF-09 (independent review of the fixes of 3 November): the rule that redacts passwords given as arguments took words out of
@@ -46,6 +48,38 @@ func TestRedactionKeepsOrdinaryTextThatUsesTheWordsOfTheCommandRules(t *testing.
 		"Machine learning password strength checks run at sign-up.",
 		"The default login admin password rotation is monthly.",
 		"Reset the default login password every 90 days.",
+		// the sentences of the second review (FU-02) that the first form of the rules destroyed
+		"Create user roles with password 'hint' column.",
+		"Create login form password \"hint\" text under the field.",
+		"Create login page with password 'forgot' link at the bottom.",
+		"Create user form with password 'confirm' field.",
+		"Create user account with password \"reset\" button for admins.",
+		"Alter user profile with password 'rules' page.",
+		"Alter role page with password \"policy\" tab.",
+		"Create group chat with password 'optional' setting.",
+		"Create role form password \"strength\" indicator.",
+		"Create user accounts identified by 'email'.",
+		"Create user profiles identified by 'username' and tenant.",
+		"Grant the editor role on the blog to authors identified by 'email'.",
+		"Grant discounts on orders to customers identified by 'loyalty id'.",
+		"Each machine web01.corp.example.com password rotates every 30 days.",
+		"Alert when the machine db01.example.com password expires.",
+		"Show the machine host.internal password rotation date on the asset page.",
+		"The machine srv.local password policy says 14 characters.",
+		"Add machine host.example.com password reset to the runbook.",
+		"Each machine inventory.local password expiry is shown in red.",
+		"Default login admin password rotation is monthly.",
+		"Default login admin password reset after first use.",
+		"Requirements:\nDefault login user password reset after first use.",
+		"Default login user password policy: 12 characters minimum.",
+		"Default login admin password expires after 90 days.",
+		"Default login guest password optional.",
+		"default login admin password reset",
+		"if password == \"admin\" then show a warning banner.",
+		"Warn when token == \"expired\" in the response.",
+		"Reject orders where credentials == \"missing\".",
+		"Set password := \"required\" for new users.",
+		"The password => \"hidden\" mapping in the form.",
 		"Show a password \"hint\" field on the sign-up form.",
 		"Label the password 'Passcode' on the form.",
 		"Rename the password \"Pass phrase\" column.",
@@ -158,6 +192,8 @@ func TestRedactionKeepsMoreSentencesAboutCredentialFormats(t *testing.T) {
 		"The secret is Base-64 encoded.", "The token is RFC-7519 compliant.", "The password is bcrypt-hashed.", "The token is OAuth2-compliant.",
 		"The password was 2FA-verified.", "The token is JWT-based and stateless.", "The credentials are SHA-256 hashed.",
 		"The token is 15-minute and rotates.", "The password is 90-day and rotates.",
+		"The token is x509-style.", "The password is 8-or-more characters.", "The code is 1-time.", "The token is oauth2-bearer style.", "The token is ed25519-signed.",
+		"The token is HMAC-SHA256 signed.", "The token is TLS1.3-protected.",
 	} {
 		if out, n := redactText(keep); out != keep || n != 0 {
 			t.Errorf("%q was changed to %q", keep, out)
@@ -191,6 +227,244 @@ func TestRedactionOfAssignmentsWrittenWithOtherOperators(t *testing.T) {
 	} {
 		if out, n := redactText(keep); out != keep || n != 0 {
 			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+}
+
+// FU-01 (independent review of the follow-up): the statement scan read SQL through a closed list of option words and a bound of 1,000 bytes, and let through the
+// passwords of statements that the rule before it redacted. Whatever stands between the name and the word, the statement is read to its end, and the words of the
+// statement stay.
+func TestRedactionOfRoleStatementsWhateverStandsBeforeThePassword(t *testing.T) {
+	verbs := []string{"CREATE ROLE app", "CREATE USER app", "ALTER ROLE app", "ALTER USER app", "CREATE GROUP app", "CREATE OR REPLACE USER app", `CREATE ROLE "app user"`,
+		"create or replace user app", "Alter Role app"}
+	options := []string{"", "WITH", "WITH LOGIN", "WITH CONNECTION LIMIT 5", "IN ROLE readers", "VALID UNTIL 'infinity'", "ROLE a", "ADMIN b", "SYSID 100",
+		"WITH SUPERUSER CREATEDB NOCREATEROLE", "ENCRYPTED", "LOGIN INHERIT", "WITH REPLICATION BYPASSRLS CONNECTION LIMIT -1 IN GROUP g"}
+	count := 0
+	for i, verb := range verbs {
+		for j, opts := range options {
+			s := alnum(fmt.Sprintf("fu01/role/%d/%d", i, j), 12)
+			for _, literal := range []string{"'" + s + "'", "E'" + s + "'", "$$" + s + "$$", `"` + s + `"`} {
+				for _, tail := range []string{";", "", " ;", " LOGIN;", "\n"} {
+					text := strings.TrimSpace(verb+" "+opts) + " PASSWORD " + literal + tail
+					out, n := redactText(text)
+					count++
+					if n == 0 || strings.Contains(out, s) || !strings.HasPrefix(out, strings.Fields(verb)[0]) {
+						t.Errorf("%q: the password survives or the statement is damaged: %s", strings.ReplaceAll(text, s, "<S>"), strings.ReplaceAll(out, s, "<S>"))
+					}
+					if again, m := redactText(out); again != out || m != 0 {
+						t.Errorf("%q: not a fixed point: %q", strings.ReplaceAll(text, s, "<S>"), strings.ReplaceAll(again, s, "<S>"))
+					}
+				}
+			}
+		}
+	}
+	if count < 1000 {
+		t.Fatalf("only %d statements tried", count)
+	}
+}
+
+func TestRedactionOfAStatementOfManyUsersAndOfAnyLength(t *testing.T) {
+	for _, users := range []int{3, 60, 700} {
+		var b strings.Builder
+		b.WriteString("CREATE USER ")
+		secrets := make([]string, users)
+		for i := range secrets {
+			secrets[i] = alnum(fmt.Sprintf("fu01/bulk/%d/%d", users, i), 12)
+			if i > 0 {
+				b.WriteString(",\n  ")
+			}
+			fmt.Fprintf(&b, "'user%03d'@'%%' IDENTIFIED BY '%s'", i, secrets[i])
+		}
+		b.WriteString(";\nGRANT SELECT ON orders TO 'user000'@'%';")
+		text := b.String()
+		out, n := redactText(text)
+		for i, s := range secrets {
+			if strings.Contains(out, s) {
+				t.Fatalf("%d users (%d bytes): the secret of user %d survives", users, len(text), i)
+			}
+		}
+		if n != users {
+			t.Errorf("%d users: %d replacements", users, n)
+		}
+		for _, kept := range []string{"CREATE USER 'user000'@'%' ", "'user" + fmt.Sprintf("%03d", users-1) + "'@'%' [REDACTED:password_arg];", "GRANT SELECT ON orders TO 'user000'@'%';"} {
+			if !strings.Contains(out, kept) {
+				t.Errorf("%d users: %q was taken out", users, kept)
+			}
+		}
+	}
+}
+
+func TestRedactionOfASecretThatHoldsASemicolonOrAQuote(t *testing.T) {
+	s := alnum("fu01/semicolon", 12)
+	for name, text := range map[string]string{
+		"postgres, semicolon":      "CREATE ROLE app LOGIN PASSWORD 'ab;" + s + "';",
+		"postgres, dollar quoted":  "CREATE ROLE app LOGIN PASSWORD $$ab;" + s + "$$;",
+		"mysql, semicolon":         "CREATE USER bob IDENTIFIED BY 'ab;" + s + "';",
+		"mysql, alter":             "ALTER USER bob IDENTIFIED BY 'x;y;" + s + "' PASSWORD EXPIRE;",
+		"mysql, escaped quote":     `CREATE USER bob IDENTIFIED BY 'ab\'; ` + s + `';`,
+		"grant, semicolon":         "GRANT ALL ON db.* TO bob IDENTIFIED BY 'ab;" + s + "';",
+		"two statements, the 2nd":  "CREATE ROLE a LOGIN PASSWORD 'zz1234';\nCREATE ROLE b LOGIN PASSWORD 'ab;" + s + "';",
+		"a statement after prose":  "Run this one: CREATE USER bob IDENTIFIED BY 'ab;" + s + "'; then restart.",
+		"nothing closes the quote": "CREATE USER bob IDENTIFIED BY '" + s,
+	} {
+		if out, n := redactText(text); n == 0 || strings.Contains(out, s) {
+			t.Errorf("%s: the password survives: %s", name, strings.ReplaceAll(out, s, "<S>"))
+		}
+	}
+}
+
+// A bare word is a password when it has a digit or a symbol, or when it ends a statement that a ";" ended (Oracle writes passwords bare); in a sentence it is a word.
+func TestRedactionOfABarePasswordNeedsTheEndOfAStatement(t *testing.T) {
+	word := lowerWord("fu01/bare", 7)
+	for name, text := range map[string]string{
+		"create user":       "CREATE USER scott IDENTIFIED BY " + word + ";",
+		"alter user":        "ALTER USER scott IDENTIFIED BY " + word + " ;",
+		"grant":             "GRANT ALL ON db.* TO scott IDENTIFIED BY " + word + ";",
+		"with a digit":      "CREATE USER scott IDENTIFIED BY " + word + "7 and more",
+		"mariadb":           "CREATE OR REPLACE USER scott IDENTIFIED BY " + word + ";",
+		"after a statement": "CREATE USER a IDENTIFIED BY 'xyz123';\nALTER USER scott IDENTIFIED BY " + word + ";",
+	} {
+		if out, n := redactText(text); n == 0 || strings.Contains(out, word) {
+			t.Errorf("%s: the password survives: %s", name, strings.ReplaceAll(out, word, "<WORD>"))
+		}
+	}
+	for _, keep := range []string{
+		"Create user accounts identified by email address.",
+		"Create user accounts identified by " + word + " and more words.",
+		"CREATE USER scott IDENTIFIED BY RANDOM PASSWORD;",
+	} {
+		if out, n := redactText(keep); out != keep || n != 0 {
+			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+}
+
+// Each clause of a statement is a password only where it can be one: IDENTIFIED BY after CREATE or ALTER USER or after the target of a GRANT, a PASSWORD literal after
+// CREATE or ALTER USER or ROLE. The same words before that place, or in a sentence that has no such statement, are words (a mutation that counted them from the first
+// word of the statement survived the first version of these tests).
+func TestRedactionCountsAClauseOnlyWhereItIsAPassword(t *testing.T) {
+	s := alnum("fu01/clauses", 12) + "7"
+	for name, text := range map[string]string{
+		"identified by after the target of a grant": "Grant read on orders to analysts identified by '" + s + "' for the quarter.",
+		"identified by in the next statement":       "Grant read on orders to analysts; create user bob identified by '" + s + "' for the quarter.",
+		"password after create user":                "Create user bob with password '" + s + "' for the quarter.",
+		"password after alter role":                 "Alter role bob with connection limit 5 password '" + s + "' for the quarter.",
+	} {
+		if out, n := redactText(text); n == 0 || strings.Contains(out, s) {
+			t.Errorf("%s: the password survives: %s", name, strings.ReplaceAll(out, s, "<S>"))
+		}
+	}
+	// A statement that has both clauses, the PASSWORD literal before the IDENTIFIED BY clause: the edits are made in the order of the text.
+	s2 := alnum("fu01/clauses/2", 12) + "8"
+	mixed := "CREATE USER a WITH PASSWORD '" + s + "', b IDENTIFIED BY '" + s2 + "';"
+	if out, n := redactText(mixed); n != 2 || strings.Contains(out, s) || strings.Contains(out, s2) {
+		t.Errorf("a statement that mixes the two clauses: %d replacements: %s", n, strings.NewReplacer(s, "<S>", s2, "<S2>").Replace(out))
+	}
+	// Two heads in one statement, with no ";" between them: the scan of the first reads the clauses of the second, and the second is not scanned again.
+	twoHeads := "GRANT SELECT ON t TO a IDENTIFIED BY '" + s + "' CREATE ROLE b LOGIN PASSWORD '" + s2 + "'"
+	if out, n := redactText(twoHeads); n != 2 || strings.Contains(out, s) || strings.Contains(out, s2) {
+		t.Errorf("two heads in one statement: %d replacements: %s", n, strings.NewReplacer(s, "<S>", s2, "<S2>").Replace(out))
+	}
+	for _, keep := range []string{
+		"Grant managers identified by 'approver1' on orders the right to approve and to reject.",
+		"Grant read access on orders to analysts, then set the field password 'label1' to bold.",
+		"Grant the role to users identified by 'guest1' on the orders page.",
+		"Alter the screen so that users identified by 'guest1' see less.",
+		"Create the users page so that a user identified by 'guest1' sees it.",
+	} {
+		if out, n := redactText(keep); out != keep || n != 0 {
+			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+}
+
+// A quoted password of letters only (no digit, no symbol) is a password when the statement is SQL by its ending: a ";" ended it, or the literal closes it. In a sentence
+// it is a label ("Create user form with password 'confirm' field").
+func TestRedactionOfAQuotedPasswordOfLettersNeedsTheEndOfAStatement(t *testing.T) {
+	word := lowerWord("fu01/letters", 9)
+	for name, text := range map[string]string{
+		"a clause after it, a semicolon ends the statement": "CREATE USER bob IDENTIFIED BY '" + word + "' PASSWORD EXPIRE;",
+		"postgres, more options after it":                   "ALTER ROLE bob WITH PASSWORD '" + word + "' VALID UNTIL 'infinity';",
+		"the literal closes the statement":                  "CREATE ROLE bob LOGIN PASSWORD '" + word + "'",
+		"the literal closes it, blanks after":               "CREATE ROLE bob LOGIN PASSWORD '" + word + "'  \n",
+	} {
+		if out, n := redactText(text); n == 0 || strings.Contains(out, word) {
+			t.Errorf("%s: the password survives: %s", name, strings.ReplaceAll(out, word, "<WORD>"))
+		}
+	}
+	for _, keep := range []string{
+		"Create user form with password '" + word + "' field",
+		"Create user bob with password '" + word + "' for the quarter.",
+	} {
+		if out, n := redactText(keep); out != keep || n != 0 {
+			t.Errorf("%q was changed to %q", keep, out)
+		}
+	}
+}
+
+// One look at a statement redacts all of its clauses, in the order of the text, whichever kind comes first (the table is applied again until nothing is left, but a single
+// scan must not depend on that).
+func TestRedactStatementMakesItsEditsInTheOrderOfTheText(t *testing.T) {
+	s, s2 := alnum("fu01/order", 12)+"7", alnum("fu01/order/2", 12)+"8"
+	for name, span := range map[string]string{
+		"password first":      "CREATE USER a WITH PASSWORD '" + s + "', b IDENTIFIED BY '" + s2 + "'",
+		"identified by first": "CREATE USER a IDENTIFIED BY '" + s + "', b WITH PASSWORD '" + s2 + "'",
+	} {
+		var n int
+		if out := redactStatement(span, true, &n); n != 2 || strings.Contains(out, s) || strings.Contains(out, s2) {
+			t.Errorf("%s: %d replacements: %s", name, n, strings.NewReplacer(s, "<S>", s2, "<S2>").Replace(out))
+		}
+	}
+}
+
+// The statement scan costs time in proportion to the text, whatever the statement is made of. A probe of "grant " repeated 8,000 times (48,000 bytes) took 11 s while the scan
+// looked at the target of every GRANT of a statement, and the longer shapes took more than 20 s: 200 times the cost of ordinary prose of the same size, where the linear scan
+// costs about twice as much. The limit is 50 times the cost of prose measured in the same run, so it holds with the race detector on (the unit gate runs with it) and on a
+// busy host, and is far from both.
+func TestStatementScanIsLinear(t *testing.T) {
+	timeOf := func(text string) time.Duration {
+		start := time.Now()
+		redactText(text)
+		return time.Since(start)
+	}
+	baseline := max(timeOf(strings.Repeat("The quick brown fox jumps over the lazy dog. ", 1100)), 20*time.Millisecond)
+	for _, c := range []struct {
+		name string
+		text string
+	}{
+		{"grant", strings.Repeat("grant ", 8000)},
+		{"grant a on b", strings.Repeat("grant a on b ", 4000)},
+		{"heads of every kind", strings.Repeat("create role a grant on b create user c grant ", 1500)},
+		{"many short statements", strings.Repeat("create user a; ", 4000)},
+	} {
+		if took := timeOf(c.text); took > 50*baseline {
+			t.Fatalf("%s: %d bytes took %s, prose of 49,500 bytes took %s", c.name, len(c.text), took, baseline)
+		}
+	}
+}
+
+func TestSQLStatementEnd(t *testing.T) {
+	for _, c := range []struct {
+		text       string
+		from       int
+		end        int
+		terminated bool
+	}{
+		{"abc;def", 0, 3, true},
+		{"abc", 0, 3, false},
+		{"a 'x;y' b; c", 0, 9, true},
+		{`a "x;y" b; c`, 0, 9, true},
+		{"a `x;y` b; c", 0, 9, true},
+		{"a $$x;y$$ b; c", 0, 11, true},
+		{`a 'x\'; y' b; c`, 0, 12, true},
+		{"a 'x''y;z' b; c", 0, 12, true},
+		{"a 'unclosed; b", 0, 14, false},
+		{"; leading", 0, 0, true},
+		{"abc;def", 4, 7, false},
+		{"", 0, 0, false},
+	} {
+		if end, terminated := sqlStatementEnd(c.text, c.from); end != c.end || terminated != c.terminated {
+			t.Errorf("sqlStatementEnd(%q, %d) = %d, %v; want %d, %v", c.text, c.from, end, terminated, c.end, c.terminated)
 		}
 	}
 }
