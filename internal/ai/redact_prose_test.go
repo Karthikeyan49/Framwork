@@ -78,8 +78,6 @@ func TestRedactionKeepsOrdinaryTextThatUsesTheWordsOfTheCommandRules(t *testing.
 		"if password == \"admin\" then show a warning banner.",
 		"Warn when token == \"expired\" in the response.",
 		"Reject orders where credentials == \"missing\".",
-		"Set password := \"required\" for new users.",
-		"The password => \"hidden\" mapping in the form.",
 		"Show a password \"hint\" field on the sign-up form.",
 		"Label the password 'Passcode' on the form.",
 		"Rename the password \"Pass phrase\" column.",
@@ -211,9 +209,23 @@ func TestRedactionOfAssignmentsWrittenWithOtherOperators(t *testing.T) {
 		"go short declaration":     "dbPassword := \"" + s + "\"",
 		"go short declaration, tk": "apiToken := '" + s + "'",
 		"comparison":               "if password == \"" + s + "\" {",
+		"comparison with a symbol": "if password == '" + s + "!' {",
 	} {
 		if out, n := redactText(text); n == 0 || strings.Contains(out, s) {
 			t.Errorf("%s: the value survives: %s", name, strings.ReplaceAll(out, s, "<SECRET>"))
+		}
+	}
+	// A declaration and a hash rocket redact a literal whatever its content, a word of letters among them ("'password' => 'secret'" is how a configuration holds a password,
+	// and the first review asked for it); a comparison redacts only a literal that has a digit or a symbol.
+	w := lowerWord("fu02/op", 9)
+	for name, text := range map[string]string{
+		"hash rocket, a word of letters":       "'password' => '" + w + "',",
+		"hash rocket, symbol key, letters":     ":password => \"" + w + "\"",
+		"short declaration, a word of letters": "dbPassword := \"" + w + "\"",
+		"declaration of a token":               "api_token := '" + w + "'",
+	} {
+		if out, n := redactText(text); n == 0 || strings.Contains(out, w) {
+			t.Errorf("%s: the word survives: %s", name, strings.ReplaceAll(out, w, "<WORD>"))
 		}
 	}
 	// A bare word after these operators is a name or an expression, not a literal; the old operators keep their rule.
@@ -387,6 +399,10 @@ func TestRedactionOfAQuotedPasswordOfLettersNeedsTheEndOfAStatement(t *testing.T
 		"postgres, more options after it":                   "ALTER ROLE bob WITH PASSWORD '" + word + "' VALID UNTIL 'infinity';",
 		"the literal closes the statement":                  "CREATE ROLE bob LOGIN PASSWORD '" + word + "'",
 		"the literal closes it, blanks after":               "CREATE ROLE bob LOGIN PASSWORD '" + word + "'  \n",
+		// Lower case or mixed case: only the ending says that it is SQL.
+		"lower case, a semicolon after more clauses": "create user bob identified by '" + word + "' password expire;",
+		"mixed case, a semicolon after more options": "Alter role bob with password '" + word + "' valid until 'infinity';",
+		"lower case, a semicolon after a line":       "create role app login password '" + word + "'\n;",
 		// A string that holds the statement closes after the literal: the statement is SQL, whatever the end of the text is (the form before the follow-up to FU-01 redacted these).
 		"a shell string":                  `psql -c "ALTER USER postgres PASSWORD '` + word + `'"`,
 		"a shell string, mysql":           `mysql -e "CREATE USER 'app'@'%' IDENTIFIED BY '` + word + `'" && restart`,
@@ -395,6 +411,17 @@ func TestRedactionOfAQuotedPasswordOfLettersNeedsTheEndOfAStatement(t *testing.T
 		"a list of arguments":             `command: ["psql", "-c", "ALTER USER app PASSWORD '` + word + `'"]`,
 		"a call of code":                  `cur.execute("ALTER ROLE app PASSWORD '` + word + `'")`,
 		"a code span of a document":       "Run `CREATE USER app IDENTIFIED BY '" + word + "'` first, then restart.",
+		// The same in lower case, where only the closing quote says that it is SQL.
+		"lower case, a shell string":            `psql -c "alter user postgres password '` + word + `'"`,
+		"lower case, a shell string, mysql":     `mysql -e "create user 'app'@'%' identified by '` + word + `'" && restart`,
+		"lower case, a value of JSON":           `{"query": "create role app login password '` + word + `'", "wait": true}`,
+		"lower case, a call of code":            `cur.execute("alter role app password '` + word + `'")`,
+		"lower case, a code span of a document": "Run `create user app identified by '" + word + "'` first, then restart.",
+		// The words of the statement are in capitals, as in a script, a dump or a manual: code, whatever follows the literal.
+		"capitals, text after it":           "Please run CREATE USER app IDENTIFIED BY '" + word + "' and tell me if it works.",
+		"capitals, a full stop":             "ALTER ROLE app WITH PASSWORD '" + word + "'.",
+		"capitals, a line after it":         "CREATE ROLE app LOGIN PASSWORD '" + word + "'\nthen restart the service",
+		"capitals, a double quoted literal": `CREATE USER app IDENTIFIED BY "` + word + `" and the rest`,
 	} {
 		if out, n := redactText(text); n == 0 || strings.Contains(out, word) {
 			t.Errorf("%s: the password survives: %s", name, strings.ReplaceAll(out, word, "<WORD>"))
@@ -403,6 +430,10 @@ func TestRedactionOfAQuotedPasswordOfLettersNeedsTheEndOfAStatement(t *testing.T
 	for _, keep := range []string{
 		"Create user form with password '" + word + "' field",
 		"Create user bob with password '" + word + "' for the quarter.",
+		// Capitals in the head only, or in the keyword only, are a sentence that begins with a capital or a label.
+		"Create user accounts IDENTIFIED BY '" + word + "' and more.",
+		"CREATE user accounts identified by '" + word + "' and more.",
+		"CREATE USER accounts identified by '" + word + "' and more.",
 	} {
 		if out, n := redactText(keep); out != keep || n != 0 {
 			t.Errorf("%q was changed to %q", keep, out)

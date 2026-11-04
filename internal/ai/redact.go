@@ -158,13 +158,27 @@ func clauseEnds(span string, to, end int) bool {
 	return rest != "" && strings.IndexByte("\"'`", rest[0]) >= 0
 }
 
-// sqlCredential decides whether the clause of a statement names a password. ends: the clause is the last thing of the statement or is followed by the closing quote of the
-// string that holds it (clauseEnds); terminated: a ";" ended the statement. A quoted literal is one when the statement is SQL by its ending (a ";", or the literal closes it)
-// or the literal has a digit or a symbol: in "Create user form with password 'confirm' field" the word is a label. A bare word is one when it has a digit or a symbol, or
-// when it ends a statement that a ";" ended (Oracle writes passwords bare: "CREATE USER scott IDENTIFIED BY tiger;").
-func sqlCredential(match string, ends, terminated bool) bool {
+// shouted reports words written in capitals, as the SQL of a script, a dump or a manual is: a sentence does not shout "CREATE USER app IDENTIFIED BY".
+func shouted(words string) bool {
+	return !strings.ContainsFunc(words, func(r rune) bool { return r >= 'a' && r <= 'z' })
+}
+
+// firstWord is the text of s up to its first blank.
+func firstWord(s string) string {
+	if i := strings.IndexAny(s, " \t\r\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// sqlCredential decides whether the clause of a statement names a password. ends: the clause is the last thing of the statement, or is followed by the closing quote of the
+// string that holds it (clauseEnds); shouts: the head of the statement and the word of the clause are in capitals (shouted); terminated: a ";" ended the statement. A quoted
+// literal is one when the statement is SQL by its ending (a ";", the literal closes it or a closing quote follows) or by its capitals, or the literal has a digit or a symbol:
+// in "Create user form with password 'confirm' field" the word is a label. A bare word is one when it has a digit or a symbol, or when it ends a statement that a ";" ended
+// (Oracle writes passwords bare: "CREATE USER scott IDENTIFIED BY tiger;"); capitals do not decide a bare word, "IDENTIFIED BY RANDOM PASSWORD" has no password in it.
+func sqlCredential(match string, ends, shouts, terminated bool) bool {
 	if quoted, content := sqlLiteral(match); quoted {
-		return ends || terminated || hasDigitOrSymbol(content)
+		return ends || shouts || terminated || hasDigitOrSymbol(content)
 	}
 	return hasDigitOrSymbol(match[strings.LastIndexAny(match, " \t\r\n")+1:]) || ends && terminated
 }
@@ -221,16 +235,20 @@ func redactStatement(span string, terminated bool, n *int) string {
 		}
 	}
 	end := len(strings.TrimRight(span, " \t\r\n")) // the statement without its trailing blanks
+	head := sqlUserHead.FindStringIndex(span)
+	shoutedClause := func(clause string) bool { // a script, a dump or a manual: the words of the statement are in capitals
+		return head != nil && shouted(span[head[0]:head[1]]) && shouted(firstWord(clause))
+	}
 	var edits [][2]int
 	for _, loc := range sqlIdentifiedBy.FindAllStringIndex(span, -1) {
 		if userFrom >= 0 && loc[0] >= userFrom || grantFrom >= 0 && loc[0] >= grantFrom {
-			if sqlCredential(span[loc[0]:loc[1]], clauseEnds(span, loc[1], end), terminated) {
+			if sqlCredential(span[loc[0]:loc[1]], clauseEnds(span, loc[1], end), shoutedClause(span[loc[0]:loc[1]]), terminated) {
 				edits = append(edits, [2]int{loc[0], loc[1]})
 			}
 		}
 	}
 	for _, loc := range sqlPasswordLiteral.FindAllStringIndex(span, -1) {
-		if userFrom >= 0 && loc[0] >= userFrom && sqlCredential(span[loc[0]:loc[1]], clauseEnds(span, loc[1], end), terminated) {
+		if userFrom >= 0 && loc[0] >= userFrom && sqlCredential(span[loc[0]:loc[1]], clauseEnds(span, loc[1], end), shoutedClause(span[loc[0]:loc[1]]), terminated) {
 			edits = append(edits, [2]int{loc[0], loc[1]})
 		}
 	}
@@ -317,11 +335,21 @@ func assignmentReplace(m string) string {
 		if len(value) < 4 {
 			return m
 		}
-		// A comparison, a short declaration and a hash rocket (password == "...", dbPassword := "...", 'password' => '...') are redacted for a literal that has a
-		// digit or a symbol only: a bare word on their right is a name or an expression ("password == confirmPassword", "password => password.length"), and a
-		// word in quotes is a state or a label ("if password == "admin" then", "Warn when token == "expired"": independent review of the follow-up, FU-02).
-		if (strings.Contains(sep, "==") || strings.Contains(sep, ":=") || strings.Contains(sep, "=>")) && (parts[3][0] != '"' && parts[3][0] != '\'' || !hasDigitOrSymbol(value)) {
-			return m
+		// A short declaration, a hash rocket and a comparison (dbPassword := "...", 'password' => '...', password == "...") are redacted for a literal: a bare word on
+		// their right is a name or an expression ("password := promptForPassword()", "password => password.length", "password == confirmPassword"). A declaration and a
+		// hash rocket are how code and configuration hold a password, and the first review asked for them (TF-09); a comparison is a condition, and a word in quotes after
+		// it is a state ("if password == "admin" then", "Warn when token == "expired"": independent review of the follow-up, FU-02), so only a literal with a digit or a
+		// symbol is one there.
+		quoted := parts[3][0] == '"' || parts[3][0] == '\''
+		switch {
+		case strings.Contains(sep, "=="):
+			if !quoted || !hasDigitOrSymbol(value) {
+				return m
+			}
+		case strings.Contains(sep, ":=") || strings.Contains(sep, "=>"):
+			if !quoted {
+				return m
+			}
 		}
 	case strings.Contains(sep, ":"):
 		if len(value) < 8 || !strings.ContainsAny(value, "0123456789-_/+=.@!#$%^&*") {
