@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // TF-08 (independent review of the takeover fixes, the sibling of LE-02): the OpenTelemetry exporters report a malformed OTEL_EXPORTER_OTLP_*
@@ -53,8 +54,10 @@ func TestOtelHelperProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	provider := sdktrace.NewTracerProvider() // reads OTEL_TRACES_SAMPLER and OTEL_RESOURCE_ATTRIBUTES, and reports a malformed one to the error handler
 	shutdown, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
+	_ = provider.Shutdown(shutdown)
 	_ = exporter.Shutdown(shutdown)
 }
 
@@ -72,19 +75,25 @@ func runOtelHelper(t *testing.T, mode string, env ...string) (stdout, stderr str
 
 func TestOtelLibrariesLogOnlyThroughSlog(t *testing.T) {
 	headers, endpoint := otelSecret("tf08/headers"), otelSecret("tf08/endpoint")
+	sampler, attrs := otelSecret("fu03/sampler"), otelSecret("fu03/attributes")
 	env := []string{
 		"OTEL_EXPORTER_OTLP_HEADERS=" + headers,                                        // a list that has no "="
 		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://svc:" + endpoint + "@collector:bad", // a port that is not a number
+		"OTEL_TRACES_SAMPLER=" + sampler,                                               // a sampler that does not exist: the SDK prints it through the error handler (FU-03)
+		"OTEL_RESOURCE_ATTRIBUTES=" + attrs,                                            // an entry without a value
 	}
 	t.Run("without Start the library writes the raw value to standard error", func(t *testing.T) {
 		_, stderr := runOtelHelper(t, "plain", env...)
 		if !strings.Contains(stderr, headers) && !strings.Contains(stderr, endpoint) {
 			t.Skipf("the library no longer logs these values, so this test can no longer show the fix: stderr=%q", stderr)
 		}
+		if !strings.Contains(stderr, sampler) && !strings.Contains(stderr, attrs) {
+			t.Skipf("the SDK no longer prints the sampler or the resource entry before an error handler exists, so this test can no longer show that part of the fix: stderr=%q", stderr)
+		}
 	})
 	t.Run("after Start nothing of the value reaches the process output and the log holds one fixed warning", func(t *testing.T) {
 		stdout, stderr := runOtelHelper(t, "start", env...)
-		for _, leak := range []string{headers, endpoint, "parse headers", "parse url", "collector:bad", "invalid port"} {
+		for _, leak := range []string{headers, endpoint, sampler, attrs, "parse headers", "parse url", "collector:bad", "invalid port", "unsupported sampler", "partial resource"} {
 			if strings.Contains(stderr, leak) || strings.Contains(stdout, leak) {
 				t.Fatalf("%q reaches the process output\nstdout: %s\nstderr: %s", leak, stdout, stderr)
 			}
