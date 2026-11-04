@@ -713,7 +713,7 @@ without the change; the reviewers' own probes were run against the fixed code by
    valid window stays (the first form replaced the first window found and consumed it, which left the other groups of a real card visible when a window of
    chance overlapped it: item 15 c). Random digits pass both checks about once in 38 windows of 16 digits, once in 374 of 14 and about once in 100 across the lengths
    (measured by the independent review over 2,000,000 windows per length), so a long list of short numbers separated by single spaces or hyphens can lose a number to
-   the marker (accepted: the cheaper error for a safety net). Evidence: `redact_cards_test.go` (the review's five inputs and seven more; the old rule on the same
+   the marker (accepted: the cheaper error for a safety net; item 16 d has the loss measured: about a tenth of a long list, most of a counter). Evidence: `redact_cards_test.go` (the review's five inputs and seven more; the old rule on the same
    inputs; numbers that are not cards; 10,000 random texts against the exact output of an independent definition; the number of four groups before a card; linear
    time on chains of 100,000 groups) and the negative controls with the old rule and with the first-window loop behind it.
 
@@ -766,14 +766,15 @@ without the change; the reviewers' own probes were run against the fixed code by
     `docker login --password-stdin`); the request the model read lost its meaning, and a definition whose label held such words could not be updated by the AI builder (the
     placeholder is refused when written back). Every form now needs the command or the statement around it. The flag of each command is its own (`-p` is the port of
     redis-cli, `-P` that of mysql; the case of a flag counts). A `.netrc` entry needs `machine HOST login USER password`, a host with a dot, or `default login USER password` at the start of a line ("the default login admin password rotation" is a sentence).
-    The SQL forms are read as a statement that starts with `CREATE|ALTER USER|ROLE` or `GRANT ... ON ... TO` and ends at `;` or after 1,000 bytes: every
-    `IDENTIFIED [WITH plugin] BY` clause in it (so several users), and the quoted `PASSWORD` of a role that only the option words of `CREATE ROLE` precede; the words of the
-    statement stay, the clause is replaced. A quoted literal is a password; a bare word after `IDENTIFIED BY` only when it has a digit or a symbol. Added in the same pass:
-    `curl -uUSER:PASSWORD` without a space, `redis-cli --pass`, `az login`, `gpg --passphrase`, `ldapsearch -w`, a `.netrc` on several lines. **Residuals:** a bare all-letter
-    password after `IDENTIFIED BY` stays, a quoted word in such a statement is redacted whatever it means ("Create user accounts identified by 'email'"), and the value of a
-    command-line password ends at a `;`. Evidence: `redact_prose_test.go` (35 requests and commands that stay as written, 24 command and statement forms that are redacted, a
-    statement keeps its name), the idempotence property run on 300,000 texts with the new fragments, and a cost probe (linear: 1.4 to 3.8 microseconds a byte at 64 and 256 KiB
-    on a shared host, the worst shape is `create user x identified by '...'` repeated); the near-miss tests fail on the first form of the rule.
+    The SQL forms are read as a statement; the words of the statement stay and the clause with the password is replaced. **The first form of that scan** (a statement of at most
+    1,000 bytes, a closed list of option words before `PASSWORD`) **let passwords through that the rule before it redacted, and the second review replaced it (FU-01): item 16 a
+    describes the scan as it is.** Added in the same pass:
+    `curl -uUSER:PASSWORD` without a space, `redis-cli --pass`, `az login`, `gpg --passphrase`, `ldapsearch -w`, a `.netrc` on several lines. **Residuals:** a command that
+    stands in prose is read as a command (`curl -u username:password`, `sshpass -p option`, `mongo -pretty`; item 16 b lists the eight that remain), and the value of a
+    command-line password ends at a `;`. Evidence: `redact_prose_test.go` (37 requests and commands that stay as written at `f33a0b5`, not the 35 that this item first said, and 24
+    command and statement forms that are redacted), the idempotence property run on 300,000 texts with the new fragments (a one-off run through `REDACT_PROPERTY_RUNS`; the shipped test
+    runs 6,000), and a cost probe: the second review measured 3.0 to 4.9 microseconds a byte over 50 shapes, linear, the slowest being `mysql -p<4 characters>` repeated and `sshpass -p`
+    (the shape that this item named, `create user x identified by '...'`, cost 3.0 to 3.7); the near-miss tests fail on the first form of the rule.
 
     b. **TF-04 (MEDIUM): the exemption for sentences about credential formats kept passphrases.** `^(?:[A-Za-z0-9]+-)+[a-z]{3,}$` is also the shape of a passphrase: "the password
     is" followed by a word, a hyphen and a lower-case word was kept, as was the same value in `define('DB_PASSWORD', '...')`. The exemption is now a closed list: a size and its
@@ -789,20 +790,20 @@ without the change; the reviewers' own probes were run against the fixed code by
     d. **TF-02 (MEDIUM): AO-02 was closed for the creations, the read of one proposal and the veto, not for apply and confirm.** The answer to an apply held the proposal with its
     operations and the revision with its document, the answer to a confirm the proposal and the whole stored requirement set, to a role with `ai.apply` and `metadata.write` (or
     `requirements.decide`) and without `metadata.read`. They now hold the summary of the proposal (`Store.Summary`), the header of the new revision (no document) and the header of
-    the new requirement set (no body, `aiRequirementsHeader`); `Recorded` (ids, categories and states of the decisions the caller made) stays. The caller reads the result where it
+    the new requirement set (no body, `aiRequirementsHeader`); `Recorded` stays: the ids, requiredness, status and provenance of the decisions the caller made, and `category`, a token of at most 64 characters that **the model chose** and the caller did not send (FU-06: this item first called it a decision of the caller). The caller reads the result where it
     may. Evidence: `TestM14APIPolicyMatrix` asserts the bodies of the apply and the confirm of the two roles; with the three changes undone it fails ("holds "operations"", run on
     the database).
 
     e. **TF-07 (LOW): a lone surrogate escape was stored as U+FFFD, and the provider adapter substituted.** The check for invalid UTF-8 (TS-04) does not see `\ud800`, which is ASCII,
     and `parseEnvelope` decoded a payload "byte for byte" with a decoder that substitutes. `tools.HasLoneSurrogateEscape` finds the escape of half of a pair that the other half does
     not complete (checked against the decoder on 20,000 random strings, both sides); it is applied to the answers of a tool, to the catalog file, to the envelope of the provider
-    (which now also refuses invalid UTF-8) and to every proposal payload (`strictTree`). A pair and the escape of U+FFFD itself are text and stay. **Not changed:** the general
-    metadata decoder (`metadata.DecodeJSON`) still turns such an escape into U+FFFD in a document an author sends (it refuses invalid bytes).
+    (which now also refuses invalid UTF-8) and to every proposal payload (`strictTree`). A pair and the escape of U+FFFD itself are text and stay. **Not changed in that pass, changed after the second review
+    (item 16 e, FU-05):** the general metadata decoder (`metadata.DecodeJSON`) turned such an escape into U+FFFD in a document an author sends and in the AI request body (it refused invalid bytes).
 
     f. **TF-08 (LOW): the OpenTelemetry exporters wrote the raw value of a malformed `OTEL_EXPORTER_OTLP_*` variable to standard error,** the sibling of LE-02 (`parse headers` with the
     whole header list, `parse url` with the credentials inside the endpoint, at start-up, from the operator's own setting). `observability.Start` replaces the library's logger before
     the first exporter is made; the log holds one fixed warning at most every ten seconds. Evidence: a child-process test (without `Start` the value is on standard error, with `Start`
-    nothing is) that fails without the call.
+    nothing is) that fails without the call. The call covered the exporters; the error handler, and so the sampler and the resource attributes, was left for item 16 c (FU-03).
 
     g. **TF-09 (LOW): forms next to the closed ones.** Fixed, with tests: the hash rocket (`'password' => '...'`, `:password => "..."`), the short declaration (`dbPassword := "..."`) and a
     comparison with a literal (`password == "..."`); a bare word on their right is a name (`password == confirmPassword`) and stays. **Still open, documented:** escaped quotes
@@ -812,12 +813,111 @@ without the change; the reviewers' own probes were run against the fixed code by
     h. **TF-10, TF-11 (LOW).** The comment on the chance rate said one window in two hundred (it is one in 38 for 16 digits and about one in 100 across the lengths); item 12 pointed at
     item 3 (item 4 is the repetition) and item 8 attributed the `is` connector to RT-08 (it was in the table before): corrected. The comment of `operator_env_test.go` said AGENTS.md names
     the six credentials (it does not; the launcher does): corrected. The pauses of ER-04 are jittered (item 12). `scripts/m6r-env.mjs` and `scripts/m8-env.mjs` set the mode of `.env`
-    before they append credentials, not after (IS-03). `scripts/bootstrap.sh` removes `.local/toolchains/go` before it unpacks a toolchain, so two releases are never mixed, and says in
-    the message what a SHUTDOWN_TIMEOUT is.
+    before they append credentials, not after (IS-03). `scripts/bootstrap.sh` removes `.local/toolchains/go` before it unpacks a toolchain, so two releases are never mixed (the block runs only when `scripts/go.sh version` fails, so a
+    local toolchain that runs and is older is not replaced); the message that says a SHUTDOWN_TIMEOUT needs a unit is in `internal/config/config.go`, not in the script (FU-07).
 
     i. **TF-12, TF-11 (tests).** `TestM14APIPolicyMatrix` asserts the bodies (d). TS-01 has a reproduction that the next owner can run: `TestTS01ACancelledInstanceLeavesNoInvocationThatCannotBeSettled`
     (`tests/integration/m10_ts01_test.go`) states the invariant that the fix must give and FAILS today, so it runs only with `FRAMEWORK_REPRODUCE_TS01=1`. `TestBuildContextRefusalCostsNoMoreThanAContextThatFits`
     is a ratio test (threshold 3, measured 1.1 on a quiet host and 1.7 to 2.0 on a loaded one) and can flake on a host that is heavier still.
+
+16. **Corrections after the second independent review ([report](../verification/TAKEOVER_FOLLOWUP_INDEPENDENT_REVIEW.md), pinned at `f33a0b5`, 2026-11-04; PASS WITH
+    FINDINGS: no HIGH, one MEDIUM, eight LOW).** The reviewer did not write the changes under review and changed no product code; its probes were deleted. Each finding was
+    reproduced here before it was changed, and each change has a test that fails without it (the negative controls are named below). The changes are the integrator's and are
+    not re-verified by a reviewer.
+
+    a. **FU-01 (MEDIUM): the statement scan of item 15 a let through passwords that the rule before it redacted.** It read SQL through a closed list of the words that may stand
+    before `PASSWORD` (`WITH LOGIN CONNECTION LIMIT 5`, `IN ROLE`, `VALID UNTIL`, `ROLE`, `ADMIN` and `SYSID` left the password in: 35 of the reviewer's 100 role statements), had no
+    `CREATE OR REPLACE USER` (MariaDB), ended a statement at the first `;` even inside a quoted password (`PASSWORD 'ab;<S>'`) and read at most 1,000 bytes (a `CREATE USER` of 60
+    users showed the secrets of 34; a cut inside a secret left its tail next to the marker). The scan is rewritten. A statement runs from its head (`CREATE [OR REPLACE]
+    USER|ROLE|GROUP|LOGIN`, `ALTER` of the same, `GRANT`) to the first `;` that is outside a quoted literal (single, double and back quotes, `$$`; inside a quote a backslash escapes the
+    next character, as MySQL reads it) or to the end of the text, so whatever stands between the name and the password, whatever the length, nothing is cut. The clauses it reads are
+    `IDENTIFIED [WITH plugin] BY value` after the first `CREATE` or `ALTER` head or after the target (`ON ... TO`) of a `GRANT`, and `PASSWORD value` (a quoted literal, `E'...'`,
+    `$$...$$`) after the first `CREATE` or `ALTER` head; the words of the statement stay, and each clause is replaced by one marker, in the order of the text. A quoted literal is a
+    password when it ends the statement, when a `;` ended the statement or when it has a digit or a symbol (in "Create user form with password 'confirm' field" it is a label); a bare
+    word when it has a digit or a symbol or when it ends a statement that a `;` ended (Oracle writes `IDENTIFIED BY tiger;`). Evidence:
+    `TestRedactionOfRoleStatementsWhateverStandsBeforeThePassword` (2,340 statements, 9 verbs x 13 option lists x 4 literal forms x 5 endings, each also a fixed point),
+    `TestRedactionOfAStatementOfManyUsersAndOfAnyLength` (3, 60 and 700 users), `TestRedactionOfASecretThatHoldsASemicolonOrAQuote` (nine shapes, among them a backslash-escaped
+    quote and a quote that nothing closes), the tests of a bare word and of a quoted word of letters, `TestRedactionCountsAClauseOnlyWhereItIsAPassword`,
+    `TestRedactStatementMakesItsEditsInTheOrderOfTheText`, `TestSQLStatementEnd`, the idempotence property with the SQL and `.netrc` fragments added (200,000 texts before the cost
+    fix described below and 100,000 after it; the shipped test runs 6,000 by default and `REDACT_PROPERTY_RUNS` lengthens it), and **24 mutants of `redact.go`**, each killed by a test
+    (a statement end that ignores quotes, backslashes or `$$`; a bare word that is always or never a password; a quoted word that is always or never one; a `GRANT` clause counted from
+    the head of the `GRANT`; a `PASSWORD` literal counted anywhere in the statement; edits made in the order they were found; the heads inside a statement scanned again; blanks that
+    hide the end; the plugin form; `OR REPLACE`; the scan removed). Five of them were not detected by the first form of the new tests (the `GRANT` and `PASSWORD` mutants, a `;` that
+    does not make a quoted word a password, the unsorted edits, and the heads scanned again, which only the property test caught); each has its own test now.
+    **A defect of my own first form of this scan was found by a cost probe before anything was pushed.** It looked for the target of every `GRANT` of a statement, each look reading
+    the rest of the statement, so the time grew with the square of the length: `grant ` repeated 8,000 times (48,000 bytes) took 10.9 s (2,000 times: 0.4 s), and `grant on ` and
+    `grant a on b ` 8,000 times took more than 20 s. Only the first `GRANT` is looked at now (a later one has a target only where the first one has). Twenty-one shapes from 12 KB to
+    1.4 MB then cost time in proportion to their size (four times the size, three to five times the time; the slowest 3.7 microseconds a byte, the largest text 2.4 s), and
+    `TestStatementScanIsLinear` fails on the old form (11.6 s against 91 ms for prose of the same size; its limit is 50 times the cost of prose measured in the same run, so it holds
+    with `-race`, which the unit gate uses, and on a busy host). **Not fixed**, open before and after this change in the review's three tables, or found by a probe of mine:
+    `SET PASSWORD FOR 'u'@'h' = PASSWORD('...')` and `= '...'`, the old password after `REPLACE` (MySQL, Oracle), `IDENTIFIED BY VALUES '...'`, MariaDB `IDENTIFIED VIA plugin USING
+    PASSWORD('...')`, T-SQL `WITH PASSWORD = N'...'` (the `N` prefix), `sp_addlogin` and `sp_password`, `net user NAME PASSWORD`, and of the commands a `curl` whose `-u USER:PASSWORD` is
+    on the line after a backslash, `--proxy-user`, `unzip -P`, `7z -p`, `sqlcmd -P`, `htpasswd -b`, `net use`, `openssl -passin pass:` and `SSHPASS=` with `sshpass -e`. A bare word of
+    letters after `IDENTIFIED BY` in text that no `;` ends stays (a sentence), and so does a quoted word of letters that neither ends the statement nor is followed by a `;`.
+
+    b. **FU-02 (LOW): the narrower rules still destroyed ordinary text, two classes of it new against both older tables.** The `.netrc` forms that a sentence can imitate need a value
+    that looks like a credential: `default login USER password WORD` at the start of a line (seven of the review's lines began so; the follow-up had fixed the sentence of its message
+    and left the line start) and a host with a dot and no login ("Each machine web01.corp.example.com password rotates every 30 days") need a quoted value or one with a digit or a
+    symbol; the full form `machine HOST login USER password WORD` keeps any word. The operators `==`, `:=` and `=>` redact a quoted literal that has a digit or a symbol and nothing
+    else (`if password == "admin" then ...`, `Warn when token == "expired"`, `password := "required"` and `password => "hidden"` are labels or states). The list of formats grew by what
+    the review named (`x509`, `ed25519`, `ed448`, `curve25519`, `-or-more`, `-or-fewer`, `-times`, `-uses`, `-bearer`, `HMAC-SHA256`, `TLS1.3`, a size with a decimal). Of the 43 sentences
+    that the review lists as destroyed and kept by `11a4ee4`, 32 are kept now and 11 are not; of its nine format sentences (the review names shapes, not always the sentence), eight are
+    kept. **What stays destroyed, by design or for want of a rule:** eight commands that stand in prose and cannot be told from the command (`curl -u username:password`, `curl --user
+    USER:PASSWORD`, `mysql ... -pretty`, `mongo -pretty`, `mongosh -pretty`, `docker login -password-stdin`, `sshpass -p option`, `wget --password option`); `Create login screen with
+    password "show/hide" icon` (a quoted literal with a symbol after `CREATE LOGIN`); `Create user records identified by 4471 and name` (a bare word with a digit); `Show the machine
+    api.example.com login bob password rotation date` (the full `.netrc` form); and `The token is v4.public.` (a value with a digit that is not on the closed list). Evidence:
+    `redact_prose_test.go` (68 requests, labels and descriptions that stay as written, against 37 at `f33a0b5`; 25 sentences about formats), and five of the mutants of item 16 a (the
+    loose `.netrc` rule removed or without its shape check, the operators without theirs, names taken off the list) are killed.
+
+    c. **FU-03 (LOW): TF-08 was closed for the OTLP variables and open for the sampler and the resource.** `otel.SetErrorHandler` ran after the tracer provider was built, and until it
+    runs the SDK reports a malformed `OTEL_TRACES_SAMPLER` (`unsupported sampler: <value>`) and a malformed `OTEL_RESOURCE_ATTRIBUTES` entry (`partial resource: missing value: [<entry>]`)
+    through `log.Print`, to standard error, with the value. `observability.Start` installs the handler first now, next to the logger. Evidence: `TestOtelLibrariesLogOnlyThroughSlog` sets
+    both variables, with the two it had, in the child process and checks that neither the values nor the library's words reach standard output or error, that standard error is empty
+    and that the warning is one; its control (without `Start`) still shows the raw value on standard error; with the handler moved back after the providers the test fails ("reaches the
+    process output"). **Not fixed, and not reachable from `Start`:** the `OTEL_*_LIMIT` variables of the span limits are read by `go.opentelemetry.io/auto/sdk` in a package initializer,
+    before `main`, and a malformed one is written by `slog.Warn` on the default logger with its value; every binary that imports `go.opentelemetry.io/otel` has that initializer. The
+    documented launcher (`scripts/runtime-env.mjs`) hands its children only `OTEL_EXPORTER_OTLP_ENDPOINT` of the `OTEL_*` variables, so these reach a process only when it is started
+    without the launcher; LOW (operator-supplied, start-up only, not reachable by a caller).
+
+    d. **FU-04 (LOW): the card union loses more of a numeric list than item 9 says.** Item 9 says that a long list of short numbers "can lose a number to the marker". Measured by the
+    review on random chains of four-digit groups separated by single spaces: 4.0% of the groups at five groups and 9.7 to 9.8% from 50 to 1,000 (the worst chain lost 152 of 1,000 groups in
+    38 markers); counters lose most of theirs, because a window that begins with 4 or 5 passes the Luhn check far more often than chance does (`4000 4001 ... 4399`: 284 of 400 groups, 71%;
+    `5100 ...`: 70%; 3,000 counters from 1000: 20%); a chain of 400 groups built so that every window from the fifth on is valid collapses into two markers. The chance rates of
+    item 9 hold within sampling error (the review's exact figures: one valid window in 38.7 for 16 digits, one in 385 for 14, about one in 100 on average). No secret is exposed; a pasted table of numbers loses about a tenth of its
+    cells. **Not changed:** the cheaper error for a safety net, as item 9 says, now with the figures. Merging only the windows that overlap by at least one group, with a cap on the span,
+    would lose less and is not done.
+
+    e. **FU-05 (LOW): the other decoders of author text substituted U+FFFD silently.** `metadata.decodeJSON` (behind `DecodeJSON` and `DecodeJSONBounded`) refuses the escape of half of a
+    surrogate pair beside its refusal of bytes that are not UTF-8, so the documents an author sends, previews, promotion, dataset admission and the AI request and decision bodies (`aiBody`)
+    inherit it. Evidence: `TestDecodeJSONRefusesALoneSurrogateEscape` (seven shapes refused; a pair, U+FFFD itself, an escaped backslash that is followed by the letters of an escape and other
+    escapes accepted) and `TestAIBodyRefusesALoneSurrogateEscape` (the review's request, a rename of a page with a lone half in it, is a 400 `invalid_ai_request`); with the check taken out of
+    `decodeJSON` both fail. **Still substitutes (the review's table, read in the source and not executed):** the sign-in body (`signin.readJSON`, which also has no check for bytes that are not
+    UTF-8), the records and datasets of the end users of an application and the workflow signals (`internal/runtime/data`, `internal/runtime/workflow`), `tools.DecodeInput` for an input that
+    does not come through a document, and the operator's AI provider file (`ai/config.go`).
+
+    f. **FU-06 (LOW): what a role without `metadata.read` can still learn from an apply and a confirm.** The review enumerated every member of every body (the views marshalled with every
+    field set, and `aiReply` over every refusal): definition ids and fixed validator texts (`conflicts[].target`, `diagnostics[].path`, `sensitive[]` as `<definition id>:<aspect>`, which the
+    caller must echo), the hashes of the draft and of the request, and `recorded[].category`, a token of at most 64 characters (`categoryPattern`) that the model chose. The boundary of AO-02
+    (definitions, labels, expressions, requirement statements) holds. **Not changed:** the members stay; item 15 d says that `category` is the model's, not the caller's.
+
+    g. **FU-07 (LOW): statements of the documents that the tree did not back.** Corrected: the count of requests that stay as written (37 at `f33a0b5`, not 35; item 15 a), the place of the
+    SHUTDOWN_TIMEOUT message (`internal/config/config.go`; item 15 h), the cost claim (item 15 a), `Recorded` (item 15 d), the sentence of the handoff that the OpenTelemetry libraries log
+    through slog with one fixed warning (true for the OTLP family and, since item 16 c, for the sampler and the resource; not for the span-limit variables), the claim that every fix has a test
+    that fails without it (item 16 h says which ones have), and the residual lists of item 15 a (item 16 a). The review could not check the figures of the gate record and did not claim them;
+    the gate of this round replaces them.
+
+    h. **FU-08 (LOW): tests that did not detect everything they were credited with.** Strengthened, each with a negative control that fails without the fix: the chmod before the append and the
+    `rm -rf` before the `tar` are tested by their order in `m6r-env.mjs`, `m8-env.mjs` and `bootstrap.sh` (`runtime-env.test.mjs`; with the two lines of each swapped it fails); the message that a
+    bare `SHUTDOWN_TIMEOUT` needs a unit (`TestShutdownTimeoutFollowsTheAIBuilder`; with the words removed it fails); RC-04 now generates the neighbours of every registered POST path (a character
+    added before or after a segment, its last character taken away, upper case, an encoded slash, a newline, an empty segment, the path cut after the segment, a trailing slash, an extra or a
+    doubled segment: at least 150) and compares by that, so an extra alternative such as `proposals-x` is found (`TestAIPOSTAllowlistAcceptsExactlyTheRegisteredPOSTRoutes`; with the alternative
+    added it fails); the catalog case "a half in the member name" says that `strictKeys` refuses it as well, so that only the two value cases need the new check. **Not changed:**
+    `TestRedactionOfAStatementKeepsItsName` guards the design of the scan, not TF-01 (it passes against the rule it replaced).
+
+    i. **FU-09 (LOW): the TS-01 reproduction could not pass under a fix that refuses the cancel.** `m.signal` fails the test on any status but 200, so a fix that answers the cancel 409 (the
+    instance waits for its outstanding outcome, nothing is stranded) failed it although the invariant held. The cancel is sent with `m5Call` now: a 409 is a pass and any other status but 200
+    fails with its body. Executed once against the unfixed tree on the isolated stack (`FRAMEWORK_REPRODUCE_TS01=1`): it fails as before, with the message that the plan quotes (`TS-01: 1
+    invocation(s) of a CANCELLED instance stay SENDING or UNKNOWN and the reconcile is answered 409 ...`); not executed against a fix, because none exists.
 
 **Residuals after Amendment C, stated plainly.**
 
@@ -837,4 +937,7 @@ without the change; the reviewers' own probes were run against the fixed code by
   supplement variation selectors among them) and AO-05 (the model's free text is stored and returned to every `ai.read` holder unredacted; the document states that output
   is not filtered, this names the consequence).
 - Items 8 to 14 above were reviewed by the independent review of the takeover fixes (`0155f7b`); its findings are item 15, fixed by the integrator and not re-verified by a
-  reviewer. Item 6 and 7 before them were reviewed in the third pass of the merge review. The red-team reports judge the tree they were pinned to (`11a4ee4`).
+  reviewer. Item 15 and everything else that followed it were reviewed by the second independent review (`f33a0b5`); its findings are item 16, fixed by the integrator and not
+  re-verified by a reviewer. Item 6 and 7 before them were reviewed in the third pass of the merge review. The red-team reports judge the tree they were pinned to (`11a4ee4`).
+- The redactor stays a mechanical filter with closed lists: the forms that item 16 a lists as not fixed leave a password in, and the sentences that item 16 b lists as destroyed lose
+  their words. Each review of it has found both kinds; none of its claims is that it is complete.
