@@ -378,7 +378,7 @@ func TestLoadCatalogRefusesInvalidUTF8(t *testing.T) {
 		// The escape form (independent review TF-07): "@u" stands for the backslash and the u of an escape.
 		"a lone high surrogate escape": "\"region\":\"nor@ud800th\"",
 		"a lone low surrogate escape":  "\"region\":\"nor@udc00th\"",
-		"a half in the member name":    "\"re@ud800gion\":\"north\"",
+		"a half in the member name":    "\"re@ud800gion\":\"north\"", // also refused by strictKeys (a key that is not ASCII), so only the two value cases above need the new check (FU-08)
 	} {
 		bad = strings.ReplaceAll(bad, "@u", `\u`)
 		if _, err := LoadCatalog(bytes.Replace(good, fixture, []byte(bad), 1)); !errors.Is(err, ErrCatalog) {

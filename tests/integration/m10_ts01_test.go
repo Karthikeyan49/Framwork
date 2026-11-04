@@ -43,9 +43,15 @@ func TestTS01ACancelledInstanceLeavesNoInvocationThatCannotBeSettled(t *testing.
 	if l := m.ledger(t, x.ID); l.State != "UNKNOWN" {
 		t.Fatalf("premise not reached: the ledger is %+v", l)
 	}
-	after := m.signal(t, x, "cancel", m.token) // the route needs workflows.cancel, which every role but the viewer holds
-	if after.Termination != "CANCELLED" {
-		t.Fatalf("the cancel did not take: %s %s", after.Status, after.Termination)
+	// The route needs workflows.cancel, which every role but the viewer holds. A fix may refuse the cancel (409: the instance waits for an outstanding outcome and
+	// nothing is stranded), park the instance in RECONCILE, or let it terminate and settle the row; the test asks only that nothing is left that nobody can settle
+	// (independent review of the follow-up, FU-09: the first form failed under the fix that refuses).
+	cancel := m5Call(m.handler, m.base+"/instances/"+x.ID+"/signals", m.token, workflow.Signal{Operation: "cancel", ExpectedVersion: x.Version, StateID: x.StateID, Key: "cancel_" + uuid(t), OperatorRef: "test-review"})
+	if cancel.Code == 409 {
+		return
+	}
+	if cancel.Code != 200 {
+		t.Fatalf("the cancel was answered %d %s", cancel.Code, strings.TrimSpace(cancel.Body.String()))
 	}
 	final, errs := m10rRun(t, m, x.ID, []string{"CANCELLED", "TIMED_OUT", "DEAD", "FAILED", "SUCCEEDED", "RECONCILE"}, 15*time.Second)
 	if len(errs) != 0 {
@@ -57,7 +63,7 @@ func TestTS01ACancelledInstanceLeavesNoInvocationThatCannotBeSettled(t *testing.
 		t.Fatal(err)
 	}
 	if outstanding == 0 {
-		return // the fix may settle the row at the cancel, or refuse the cancel: both leave nothing stranded
+		return // the fix settled the row at the cancel: nothing is stranded
 	}
 	// Something is outstanding: a person must be able to settle it. The operator signal of the red team's repro:
 	signal := workflow.Signal{Operation: "reconcile", ExpectedVersion: final.Version, StateID: final.StateID, Key: "reconcile-" + uuid(t), OperatorRef: "ops-1", Outcome: "NOT_APPLIED"}

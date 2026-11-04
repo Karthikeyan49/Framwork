@@ -150,3 +150,15 @@ test('the shutdown timeout reaches only the API process (ER-03)',()=>{
  assert.equal(runtimeEnv(configured,'api').SHUTDOWN_TIMEOUT,'90s')
  for(const kind of ['worker','dispatcher','web'])assert.equal(runtimeEnv(configured,kind).SHUTDOWN_TIMEOUT,undefined)
 })
+
+test('the mode of .env is set before credentials are appended, and a toolchain is removed before another is unpacked (TF-11, FU-08)',()=>{
+ // The final mode is tested above; the order is not visible in it: between an append and a later chmod the credentials sit in a file with the old mode.
+ for(const name of ['m6r-env.mjs','m8-env.mjs']){
+  const text=fs.readFileSync(fileURLToPath(new URL('./'+name,import.meta.url)),'utf8')
+  const chmod=text.indexOf("fs.chmodSync('.env'"),append=text.indexOf("fs.appendFileSync('.env'")
+  assert.ok(chmod>=0&&append>=0&&chmod<append,name+': credentials are appended to a file that has not been tightened yet')
+ }
+ const boot=fs.readFileSync(fileURLToPath(new URL('./bootstrap.sh',import.meta.url)),'utf8')
+ const remove=boot.indexOf('rm -rf .local/toolchains/go'),unpack=boot.indexOf('tar -xzf')
+ assert.ok(remove>=0&&unpack>=0&&remove<unpack,'bootstrap.sh unpacks a toolchain over another one')
+})

@@ -194,6 +194,10 @@ func TestShutdownTimeoutFollowsTheAIBuilder(t *testing.T) {
 			t.Errorf("%s: the error echoes the value: %v", c.name, err)
 		}
 	}
+	// A bare number is the usual way to write it and is refused; the message says what is needed (independent review of the follow-up, FU-08).
+	if _, err := load(map[string]string{"SHUTDOWN_TIMEOUT": "30"}); err == nil || !strings.Contains(err.Error(), "with a unit") {
+		t.Errorf("a bare number is refused without saying that a unit is needed: %v", err)
+	}
 	// The wait for an AI creation must be longer than one: provider wall clock (60 s) plus the result margin (10 s).
 	if AIShutdownTimeout < 70*time.Second {
 		t.Errorf("AIShutdownTimeout %v is shorter than a creation", AIShutdownTimeout)
